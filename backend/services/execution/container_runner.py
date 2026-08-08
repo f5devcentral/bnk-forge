@@ -886,6 +886,71 @@ class DockerRunner(ContainerRunner):
         except Exception:  # pragma: no cover - best effort
             logger.warning("Could not remove container %s", container_name)
 
+    def kill_task_containers(self, celery_task_id: str) -> list[str]:
+        """Kill every step container owned by ``celery_task_id``.
+
+        Returns the container ids killed (empty when none were running).
+
+        This is the half of cancellation that Celery cannot do. ``revoke(
+        terminate=True)`` SIGKILLs the worker-side client; the step container is
+        detached on the host daemon and keeps running — still holding the
+        workspace and still driving the vendor CLI against live infrastructure
+        while Forge reports the operation cancelled (issue #462).
+
+        Uses the same ``bnkforge.task`` ownership label the reaper reads, so a
+        cancel and a reap agree on which container belongs to which task.
+
+        Best-effort by design: a cancel must still reset DB state when the
+        daemon is unreachable, so failures are logged and reported, never raised.
+        """
+        if not celery_task_id:
+            return []
+
+        run_env = dict(os.environ)
+        run_env["DOCKER_HOST"] = self.docker_host
+
+        try:
+            listed = subprocess.run(
+                self.build_ps_argv(label=f"{_LABEL_TASK}={celery_task_id}"),
+                env=run_env, capture_output=True, text=True, timeout=_DOCKER_CALL_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.warning("kill_task_containers: listing for task %s failed: %s", celery_task_id, exc)
+            return []
+
+        if listed.returncode != 0:
+            logger.warning(
+                "kill_task_containers: docker ps for task %s exited %s: %s",
+                celery_task_id, listed.returncode, (listed.stderr or "").strip(),
+            )
+            return []
+
+        killed: list[str] = []
+        for container_id in [ln.strip() for ln in (listed.stdout or "").splitlines() if ln.strip()]:
+            try:
+                result = subprocess.run(
+                    self.build_kill_argv(container_id),
+                    env=run_env, capture_output=True, text=True, timeout=_DOCKER_CALL_TIMEOUT,
+                )
+            except Exception as exc:
+                logger.warning("kill_task_containers: kill %s failed: %s", container_id, exc)
+                continue
+            if result.returncode == 0:
+                killed.append(container_id)
+            else:
+                # Already exited between ps and kill is the common case and benign.
+                logger.info(
+                    "kill_task_containers: kill %s exited %s: %s",
+                    container_id, result.returncode, (result.stderr or "").strip(),
+                )
+
+        if killed:
+            logger.info(
+                "kill_task_containers: killed %d container(s) for task %s: %s",
+                len(killed), celery_task_id, ", ".join(c[:12] for c in killed),
+            )
+        return killed
+
     def health_check(self) -> bool:
         """Return True when the docker CLI can reach the daemon via the proxy."""
         try:

@@ -18,11 +18,12 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
-from core.errors import BadRequestError, NotFoundError
+from core.errors import BadRequestError, NotFoundError, handle_route_errors
 from database import get_db
 from models import ModuleLibrary, Project, ProjectModule, User
 from models.enums import ModuleStatus, TaskStatus
 from routes.auth import get_username_from_request, require_module_owner, require_viewer
+from schemas.projects import DeploymentOutputResponse
 from services.infrastructure_access_service import normalize_module_outputs_in_place
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,78 @@ def get_deployment_history(
             for dep in deployments
         ]
     }
+
+
+@router.get(
+    "/{module_id}/deployments/{deployment_id}/output",
+    response_model=DeploymentOutputResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("get deployment output")
+def get_deployment_output(
+    module_id: int,
+    deployment_id: int,
+    max_bytes: int = Query(
+        2_000_000,
+        ge=1024,
+        le=20_000_000,
+        description="Cap on returned stdout size; the TAIL is kept when it exceeds this",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the captured output of a single deployment run.
+
+    The deployment list endpoint reports status, timing and resource counts but
+    carries no log, so a failed module could only be diagnosed by opening the UI.
+    This returns the run's stdout/stderr so a headless or CI-driven deploy can
+    find out what actually failed (issue #526).
+
+    Output is kept from the END when it exceeds ``max_bytes`` — a failure message
+    is at the tail of the log, not the head.
+    """
+    from models import Deployment
+
+    module = db.query(ProjectModule).filter(ProjectModule.id == module_id).first()
+    if not module:
+        raise NotFoundError("module", module_id)
+
+    deployment = (
+        db.query(Deployment)
+        .filter(Deployment.id == deployment_id, Deployment.module_id == module_id)
+        .first()
+    )
+    if not deployment:
+        # Scoped to the module on purpose: a deployment id that exists but belongs
+        # to another module must not be readable through this module's path.
+        raise NotFoundError("deployment", deployment_id)
+
+    stdout = deployment.stdout or ""
+    stderr = deployment.stderr or ""
+
+    truncated = False
+    if len(stdout) > max_bytes:
+        stdout = stdout[-max_bytes:]
+        truncated = True
+
+    logger.info(
+        f"Retrieved output for deployment {deployment_id} (module {module_id}, "
+        f"{len(stdout)} chars, truncated={truncated})"
+    )
+
+    return DeploymentOutputResponse(
+        module_id=module_id,
+        deployment_id=deployment.id,
+        action=deployment.action,
+        status=deployment.status,
+        exit_code=deployment.exit_code,
+        started_at=deployment.started_at.isoformat() if deployment.started_at else None,
+        completed_at=deployment.completed_at.isoformat() if deployment.completed_at else None,
+        duration_seconds=deployment.duration_seconds,
+        stdout=stdout,
+        stderr=stderr,
+        truncated=truncated,
+    )
 
 
 @router.get("/project/{project_id}/deployments", dependencies=[Depends(require_viewer)])

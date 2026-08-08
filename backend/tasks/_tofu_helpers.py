@@ -202,6 +202,17 @@ def _trigger_next_stack_module(stack, completed_module: ProjectModule, db) -> No
 
         # Find modules that can now be deployed
         for module in stack_modules:
+            # A disabled module is not runnable — the dependency chain must not
+            # dispatch it just because its predecessor finished (issue #527).
+            # Blueprint manifests rely on this: `optional: true` creates a module
+            # DISABLED, and that guarantee is only as good as this check.
+            if not module.enabled:
+                logger.info(
+                    "Skipping trigger for module %s (%s) — module is disabled",
+                    module.id, module.path_in_project,
+                )
+                continue
+
             # Skip if already applied, applying, or failed
             if module.status in ["applied", "applying", "apply_failed", "plan_failed"]:
                 continue
@@ -297,6 +308,29 @@ def _trigger_next_stack_module(stack, completed_module: ProjectModule, db) -> No
         logger.warning(f"Failed to trigger next stack module: {e}")
 
 
+def _destroy_scope_for(module: ProjectModule, db) -> str | None:
+    """Return the destroy scope stamped on this module's most-recent destroy Task.
+
+    One of "module" / "project" / "stack", or None when the Task predates the
+    stamp (pre-#525 rows) and callers should fall back to their own heuristic.
+
+    Read by both _trigger_next_destroy_module and _run_terminal_detection; kept
+    in one place so the two can never disagree about how far a teardown reaches.
+    """
+    predecessor_task = (
+        db.query(TaskModel)
+        .filter(
+            TaskModel.module_id == module.id,
+            TaskModel.task_type == "destroy",
+        )
+        .order_by(TaskModel.id.desc())
+        .first()
+    )
+    if not predecessor_task:
+        return None
+    return (predecessor_task.meta_data or {}).get("destroy_scope")
+
+
 def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
     """
     Post-destroy trigger hook — invoked when destroy worker completes for module M.
@@ -319,10 +353,25 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
     D in M.dependencies = modules that M depends on = lower layer (root direction).
     Dependents of D = modules X where D in X.dependencies = destroyed before D.
 
-    Works for both project-scope and stack-scope destroys:
+    Works for project-scope and stack-scope destroys:
     - Stack modules: scoped to stack.deployed_modules list
     - Project modules: scoped to project_id
+
+    Module-scope destroys (a single POST /project-modules/{id}/destroy) do NOT
+    chain at all — see the destroy_scope == "module" guard below.
     """
+    if _destroy_scope_for(module, db) == "module":
+        # Single-module destroy: the dependencies are precisely what the caller
+        # asked to keep, and there is no parent stack/project teardown in flight
+        # to finalize. Stop here (issue #525).
+        logger.info(
+            "_trigger_next_destroy_module: module %s was destroyed at module scope — "
+            "not chaining into its %d dependenc(ies)",
+            module.id,
+            len(module.dependencies or []),
+        )
+        return
+
     if not module.dependencies:
         # No dependencies to check — still run terminal detection
         _run_terminal_detection(module, db)
@@ -345,20 +394,7 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
         # first-wave Task.  Blueprint modules have stack_instance_id but MUST be treated
         # as project-scope in a project destroy.  Relying on stack_instance_id alone would
         # misclassify them as stack-scope and break the fail-soft barrier logic.
-        predecessor_task_for_scope = (
-            db.query(TaskModel)
-            .filter(
-                TaskModel.module_id == module.id,
-                TaskModel.task_type == "destroy",
-            )
-            .order_by(TaskModel.id.desc())
-            .first()
-        )
-        scope_from_meta = (
-            (predecessor_task_for_scope.meta_data or {}).get("destroy_scope")
-            if predecessor_task_for_scope
-            else None
-        )
+        scope_from_meta = _destroy_scope_for(module, db)
         # is_stack_scope: True only when there is no explicit meta_data override saying
         # "project" AND the module actually belongs to a stack.
         is_stack_scope = (scope_from_meta != "project") and bool(module.stack_instance_id)
@@ -528,20 +564,12 @@ def _run_terminal_detection(module: ProjectModule, db) -> None:
     try:
         # Resolve scope from task metadata first (prevents blueprint modules with
         # stack_instance_id from being misclassified as stack-scope on project destroy).
-        predecessor_task = (
-            db.query(TaskModel)
-            .filter(
-                TaskModel.module_id == module.id,
-                TaskModel.task_type == "destroy",
-            )
-            .order_by(TaskModel.id.desc())
-            .first()
-        )
-        scope_from_meta = (
-            (predecessor_task.meta_data or {}).get("destroy_scope")
-            if predecessor_task
-            else None
-        )
+        scope_from_meta = _destroy_scope_for(module, db)
+
+        if scope_from_meta == "module":
+            # Single-module destroy — no parent stack/project teardown is in
+            # flight, so there is no entity to finalize or mark failed (#525).
+            return
 
         if scope_from_meta == "project":
             _run_terminal_detection_project(module, db)

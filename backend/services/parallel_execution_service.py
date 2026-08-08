@@ -565,6 +565,16 @@ class ParallelExecutionService:
         modules_by_id = {m.id: m for m in modules}
 
         for module in modules:
+            # A disabled module is not runnable (issue #527). _check_missing_variables
+            # already skips these, so dispatching one here also meant deploying a
+            # module whose required variables were never validated.
+            if not module.enabled:
+                logger.info(
+                    "Skipping first-wave dispatch for module %s — module is disabled",
+                    module.id,
+                )
+                continue
+
             if module.status == ModuleStatus.APPLIED and not workspace.vars_changed(module):
                 continue
 

@@ -11758,6 +11758,72 @@
         }
       }
     },
+    "/api/project-modules/{module_id}/deployments/{deployment_id}/output": {
+      "get": {
+        "tags": [
+          "project-deployments"
+        ],
+        "summary": "Get Deployment Output",
+        "description": "Get the captured output of a single deployment run.\n\nThe deployment list endpoint reports status, timing and resource counts but\ncarries no log, so a failed module could only be diagnosed by opening the UI.\nThis returns the run's stdout/stderr so a headless or CI-driven deploy can\nfind out what actually failed (issue #526).\n\nOutput is kept from the END when it exceeds ``max_bytes`` \u2014 a failure message\nis at the tail of the log, not the head.",
+        "operationId": "get_deployment_output_api_project_modules__module_id__deployments__deployment_id__output_get",
+        "parameters": [
+          {
+            "name": "module_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Module Id"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Deployment Id"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20000000,
+              "minimum": 1024,
+              "description": "Cap on returned stdout size; the TAIL is kept when it exceeds this",
+              "default": 2000000,
+              "title": "Max Bytes"
+            },
+            "description": "Cap on returned stdout size; the TAIL is kept when it exceeds this"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentOutputResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/project-modules/project/{project_id}/deployments": {
       "get": {
         "tags": [
@@ -42035,6 +42101,94 @@
           "created_at"
         ],
         "title": "DeployableReleaseResponse"
+      },
+      "DeploymentOutputResponse": {
+        "properties": {
+          "module_id": {
+            "type": "integer",
+            "title": "Module Id"
+          },
+          "deployment_id": {
+            "type": "integer",
+            "title": "Deployment Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "stdout": {
+            "type": "string",
+            "title": "Stdout"
+          },
+          "stderr": {
+            "type": "string",
+            "title": "Stderr"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "module_id",
+          "deployment_id",
+          "action",
+          "status",
+          "stdout",
+          "stderr"
+        ],
+        "title": "DeploymentOutputResponse",
+        "description": "Response for GET /api/project-modules/{id}/deployments/{deployment_id}/output.\n\nThe captured stdout/stderr of a deployment run. Without this the only place a\nfailed module's step output existed was the UI's log viewer, so a headless or\nCI-driven deploy had no way to find out why it failed (issue #526)."
       },
       "DeploymentPlanPreview": {
         "properties": {

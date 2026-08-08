@@ -1427,3 +1427,197 @@ class TestSubmitAction:
         mock_dispatch.assert_called_once_with(
             result["task_id"], module, "run-scenario", {"scenario": "tcpl4lb", "region": "us-east"}
         )
+
+
+# ── Disabled modules are not runnable (issue #527) ───────────────────
+
+
+class TestDisabledModuleIsNotRunnable:
+    """`enabled: false` must actually hold a module back.
+
+    Issue #527: a blueprint's second module was explicitly disabled, yet the
+    dependency chain dispatched it the moment the first module completed — so
+    there was no way to build a ROKS cluster without BNK landing on it. Blueprint
+    manifests depend on this too: `optional: true` creates a module DISABLED, and
+    that guarantee is only as strong as this check.
+    """
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_validate_rejects_disabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """The shared plan/apply gate refuses a disabled module."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = False
+        db.flush()
+
+        result = svc.validate_module(module.id, operation="apply")
+
+        assert result["valid"] is False, (
+            "a disabled module validated as ready to apply — nothing stops it being "
+            "deployed (issue #527)"
+        )
+        assert any("disabled" in e.lower() for e in result["errors"]), result["errors"]
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_validate_allows_enabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """Contrast: the same module passes once enabled.
+
+        Without this, the assertion above would also hold if validation were
+        broken for every module.
+        """
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = True
+        db.flush()
+
+        result = svc.validate_module(module.id, operation="apply")
+
+        assert not any("disabled" in e.lower() for e in result["errors"]), result["errors"]
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_submit_apply_refuses_disabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """A disabled module cannot be deployed by calling apply directly either."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = False
+        module.status = "initialized"
+        db.flush()
+
+        with patch("services.execution.task_dispatch.dispatch_apply") as mock_dispatch:
+            with pytest.raises(BadRequestError, match="(?i)disabled"):
+                svc.submit_apply(module.id)
+            mock_dispatch.assert_not_called()
+
+
+# ── Cancel actually stops the work (issues #462, #527 part 2) ────────
+
+
+class TestCancelStopsRealWork:
+    """Cancel must revoke queued tasks and kill the daemon-side container.
+
+    Issue #462: `revoke(terminate=True)` SIGKILLs the worker-side `docker run`
+    client; the container keeps running against live infrastructure while Forge
+    reports "cancelled" and drops the module lock. And matching only
+    `status == "in_progress"` left a task queued behind it un-revoked, so the
+    worker ran the full apply after the user was told it stopped.
+    """
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_revokes_and_marks_a_queued_task(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """F4: a queued task is revoked and marked cancelled, not left live."""
+        from models import ProjectModule
+        from models import Task as TaskModel
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        queued = make_task(
+            project=project, module=module, task_type="apply",
+            status="queued", celery_task_id="celery-queued-1",
+        )
+
+        revoked = []
+        with patch("celery_app.celery_app") as mock_celery, \
+             patch.object(svc, "_kill_containers_for_tasks", return_value=[]):
+            mock_celery.control.revoke.side_effect = lambda tid, **kw: revoked.append(tid)
+            result = svc.cancel_operation(module.id)
+
+        assert result["success"] is True
+        assert "celery-queued-1" in revoked, (
+            "queued task was not revoked — the worker would still run the full apply "
+            "after the user was told it stopped (issue #462 F4)"
+        )
+        # The service marks; the route commits (project_execution.cancel_deployment),
+        # so assert on the session object rather than re-reading the DB.
+        assert queued.status == "cancelled", (
+            "a revoked task left in 'queued' still looks live to the rest of the system"
+        )
+        assert result["tasks_cancelled"] == 1
+        assert db.query(TaskModel).filter(
+            TaskModel.module_id == module.id,
+            TaskModel.status.in_(["queued", "pending", "in_progress"]),
+        ).count() == 0
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_kills_the_daemon_side_container(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """F3: the container is killed, and killed BEFORE the lock is released."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        make_task(
+            project=project, module=module, task_type="apply",
+            status="in_progress", celery_task_id="celery-running-1",
+        )
+
+        order = []
+        with patch("celery_app.celery_app"), \
+             patch("services.execution.task_dispatch.get_engine_type", return_value="container"), \
+             patch("services.execution.container_runner.DockerRunner") as mock_runner, \
+             patch("services.module_lock.ModuleLockService") as mock_lock:
+            mock_runner.return_value.kill_task_containers.side_effect = (
+                lambda tid: order.append("kill") or ["abc123def456"]
+            )
+            mock_lock.return_value.force_release.side_effect = lambda mid: order.append("unlock")
+
+            result = svc.cancel_operation(module.id)
+
+        assert result["containers_killed"] == 1, (
+            "the daemon-side container was not killed — it keeps mutating the "
+            "workspace while Forge reports the operation cancelled (issue #462 F3)"
+        )
+        assert order == ["kill", "unlock"], (
+            f"lock must not be released while a container is still live, got {order}"
+        )
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_skips_container_kill_for_non_container_engines(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """An OpenTofu module has no step container — don't go looking for one."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        make_task(
+            project=project, module=module, task_type="apply",
+            status="in_progress", celery_task_id="celery-running-2",
+        )
+
+        with patch("celery_app.celery_app"), \
+             patch("services.execution.task_dispatch.get_engine_type", return_value="opentofu"), \
+             patch("services.execution.container_runner.DockerRunner") as mock_runner:
+            result = svc.cancel_operation(module.id)
+
+        mock_runner.assert_not_called()
+        assert result["containers_killed"] == 0

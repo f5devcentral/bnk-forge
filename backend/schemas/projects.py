@@ -466,6 +466,26 @@ class ModuleActionSubmitResponse(BaseModel):
     status: str
 
 
+class DeploymentOutputResponse(BaseModel):
+    """Response for GET /api/project-modules/{id}/deployments/{deployment_id}/output.
+
+    The captured stdout/stderr of a deployment run. Without this the only place a
+    failed module's step output existed was the UI's log viewer, so a headless or
+    CI-driven deploy had no way to find out why it failed (issue #526).
+    """
+    module_id: int
+    deployment_id: int
+    action: str
+    status: str
+    exit_code: int | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    stdout: str
+    stderr: str
+    truncated: bool = False
+
+
 class ModuleReportFile(BaseModel):
     """One file within a report run (D-034 PR-2.5)."""
     path: str
