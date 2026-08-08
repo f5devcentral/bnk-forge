@@ -517,8 +517,39 @@ class ContainerEngine(DeploymentEngine):
         manifest = ctx.pack_manifest or {}
         state = manifest.get("state")
         if isinstance(state, dict) and isinstance(state.get("outputs_file"), str):
-            return state["outputs_file"].strip() or self.outputs_filename
+            declared = state["outputs_file"].strip()
+            if not declared:
+                return self.outputs_filename
+            if not self._is_workspace_relative(declared):
+                # The manifest value was previously passed to os.path.join with
+                # only a .strip(), so an absolute path or a ../ escape read a
+                # file outside the workspace and normalized it into
+                # module.outputs — surfacing worker files (/app/keys, /app/secrets)
+                # to the user. The validator never checked this field (#408.2).
+                logger.warning(
+                    "Ignoring state.outputs_file %r — it escapes the workspace; "
+                    "falling back to %s",
+                    declared, self.outputs_filename,
+                )
+                return self.outputs_filename
+            return declared
         return self.outputs_filename
+
+    @staticmethod
+    def _is_workspace_relative(candidate: str) -> bool:
+        """True when ``candidate`` stays inside the workspace when joined to it.
+
+        Mirrors the containment the sibling ``_step_marker_path`` gets for free
+        by sanitising its input. Rejects absolute paths, drive-letter/UNC forms,
+        and any ``..`` that climbs out.
+        """
+        if not candidate or os.path.isabs(candidate) or candidate.startswith("\\"):
+            return False
+        if os.path.splitdrive(candidate)[0]:
+            return False
+        # normpath collapses ./ and ../ so a climb shows up as a leading "..".
+        normalized = os.path.normpath(candidate)
+        return not (normalized == ".." or normalized.startswith(".." + os.sep))
 
     def _read_outputs_file(self, filename: str | None = None) -> dict[str, Any]:
         """Read + normalize the artifact's outputs file from the workspace.

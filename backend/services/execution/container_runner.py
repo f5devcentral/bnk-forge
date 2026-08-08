@@ -79,10 +79,6 @@ _LABEL_WORKSPACE = "bnkforge.workspace"
 _LABEL_TASK = "bnkforge.task"
 _MAX_NAME_PREFIX = 48            # keep generated container names comfortably legal
 
-# Image users that mean "root". Docker leaves Config.User empty when the image
-# never declares a USER, which the daemon runs as uid 0.
-_ROOT_USERS = {"", "0", "root", "0:0", "root:root"}
-
 # Env var names: letters/digits/underscore, not starting with a digit.
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -539,8 +535,27 @@ class DockerRunner(ContainerRunner):
 
         An image that never declares USER reports an empty string and runs as
         root — that is the common case and must be caught.
+
+        Only the uid half decides this. Docker's USER is ``<user>[:<group>]``,
+        so an image declaring ``USER 0:100`` or ``USER root:wheel`` runs as uid 0
+        while never matching a fixed set of full strings. Exact-string membership
+        therefore let a root image through the gate documented as *the* protection
+        for the host-mounted workspace (issue #408.1). Compare the uid alone, and
+        numerically, so ``0``, ``00`` and ``0:anything`` are all caught.
+
+        The Kubernetes path is unaffected — ``run_as_non_root=True`` is
+        kubelet-enforced against the resolved numeric uid.
         """
-        return (image_user or "").strip().lower() in _ROOT_USERS
+        uid = (image_user or "").strip().split(":", 1)[0].strip().lower()
+        if uid == "" or uid == "root":
+            return True
+        # A purely numeric uid: 0 (in any zero-padded spelling) is root.
+        if uid.isdigit():
+            return int(uid) == 0
+        # A named user that is not "root" cannot be resolved here (it needs
+        # /etc/passwd from inside the image). Treat as non-root, matching the
+        # prior behaviour for named users.
+        return False
 
     def _gate_image(
         self,

@@ -156,6 +156,14 @@ __COMPOSE__
 YAML
 
 # 4. .env — secrets generated locally on the VSI
+#
+# xtrace is OFF for this whole block. cloud-init runs this script under
+# `set -euxo pipefail` with all output redirected to /var/log/bnk-forge-install.log,
+# which is root-owned but mode 644 — so with xtrace on, the generated Postgres,
+# Redis and MCP passwords were echoed in cleartext and readable by any local user
+# on a public-IP VSI (issue #408.4). `{ set +x; } 2>/dev/null` disables it without
+# the disable itself being traced.
+{ set +x; } 2>/dev/null
 PG="$(openssl rand -hex 16)"
 RD="$(openssl rand -hex 16)"
 MCP="$(openssl rand -hex 24)"
@@ -169,10 +177,15 @@ MCP_USERNAME=admin
 MCP_PASSWORD=${MCP}
 ENV
 chmod 600 .env
+set -x
 
 # 5. Registry login (private registries only)
+# Same treatment: the PAT is a literal argument to printf, so xtrace would print
+# it verbatim into the world-readable install log.
 if [ "__PUBLIC__" != "yes" ]; then
+  { set +x; } 2>/dev/null
   printf '%s' '__PAT__' | docker login __REGISTRY_HOST__ -u '__REGISTRY_USER__' --password-stdin
+  set -x
 fi
 
 # 6. Pull images

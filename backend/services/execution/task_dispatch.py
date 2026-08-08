@@ -192,8 +192,8 @@ def _safe_int(value, default: int) -> int:
         return default
 
 
-def _derive_container_apply_time_limits(module) -> dict:
-    """Per-module Celery time limits derived from a container module's apply budget.
+def _derive_container_time_limits(module, phase: str = "apply", action: str | None = None) -> dict:
+    """Per-module Celery time limits derived from a container module's step budget.
 
     The global ``task_time_limit`` assumes a worst case that a manifest can legitimately
     exceed once per-step retry/backoff is declared (e.g. a long cluster build that
@@ -203,13 +203,24 @@ def _derive_container_apply_time_limits(module) -> dict:
     ``visibility_timeout`` so a long task is never redelivered (double-executed) by the
     broker; a manifest needing more than the ceiling is logged, not silently truncated.
 
+    ``phase`` selects the step-set: "apply", "destroy", or "action" (with the
+    action name). A destroy or a long e2e/scenario action can outlive the global
+    limit exactly as an apply can — and being hard-killed mid-run leaves the
+    module lock behind for the reclaim sweep, so all three need the same
+    treatment (issue #463 F5).
+
     Returns ``apply_async`` kwargs, or ``{}`` to use the global defaults.
     """
     lib = getattr(module, "library_module", None)
     manifest = getattr(lib, "pack_manifest", None)
     if not isinstance(manifest, dict):
         return {}
-    steps = (manifest.get("steps") or {}).get("apply")
+    if phase == "action":
+        declared = (manifest.get("actions") or {})
+        block = declared.get(action) if isinstance(declared, dict) else None
+        steps = (block or {}).get("steps") if isinstance(block, dict) else None
+    else:
+        steps = (manifest.get("steps") or {}).get(phase)
     if not isinstance(steps, list):
         return {}
 
@@ -235,9 +246,9 @@ def _derive_container_apply_time_limits(module) -> dict:
     ceiling = vis_timeout - 600
     if hard > ceiling:
         logger.warning(
-            "Module %s apply budget (%ss) exceeds the safe ceiling (%ss) below the broker "
+            "Module %s %s budget (%ss) exceeds the safe ceiling (%ss) below the broker "
             "visibility_timeout (%ss); capping. Reduce step retries or raise visibility_timeout.",
-            module.id, hard, ceiling, vis_timeout,
+            module.id, phase, hard, ceiling, vis_timeout,
         )
         hard = ceiling
     return {"time_limit": hard, "soft_time_limit": max(global_hard, hard - 300)}
@@ -287,7 +298,7 @@ def dispatch_apply(task_id: int, module, force_new_plan: bool = False, auto_appr
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_apply
 
-        limits = _derive_container_apply_time_limits(module)
+        limits = _derive_container_time_limits(module, "apply")
         logger.info(
             f"Dispatching apply for module {module.id} → Container engine (metadata)"
             + (f" with derived time limits {limits}" if limits else "")
@@ -342,8 +353,12 @@ def dispatch_destroy(task_id: int, module):
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_destroy
 
-        logger.info(f"Dispatching destroy for module {module.id} → Container engine (metadata)")
-        return run_container_destroy.delay(task_id, module.id)
+        limits = _derive_container_time_limits(module, "destroy")
+        logger.info(
+            f"Dispatching destroy for module {module.id} → Container engine (metadata)"
+            + (f" with derived time limits {limits}" if limits else "")
+        )
+        return run_container_destroy.apply_async((task_id, module.id), **limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_destroy
@@ -372,8 +387,14 @@ def dispatch_container_action(task_id: int, module, action: str, action_inputs: 
 
     from tasks.container_tasks import run_container_action
 
-    logger.info(f"Dispatching action '{action}' for module {module.id} → Container engine")
-    return run_container_action.delay(task_id, module.id, action, action_inputs=action_inputs)
+    limits = _derive_container_time_limits(module, "action", action)
+    logger.info(
+        f"Dispatching action '{action}' for module {module.id} → Container engine"
+        + (f" with derived time limits {limits}" if limits else "")
+    )
+    return run_container_action.apply_async(
+        (task_id, module.id, action), {"action_inputs": action_inputs}, **limits
+    )
 
 
 def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False, auto_approve: bool = False):
@@ -419,8 +440,9 @@ def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False,
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_apply
 
+        limits = _derive_container_time_limits(module, "apply")
         logger.info(f"Creating apply signature for module {module.id} → Container engine (metadata)")
-        return run_container_apply.s(task_id, module.id)
+        return run_container_apply.s(task_id, module.id).set(**limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_apply
@@ -470,8 +492,9 @@ def dispatch_destroy_signature(task_id: int, module):
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_destroy
 
+        limits = _derive_container_time_limits(module, "destroy")
         logger.info(f"Creating destroy signature for module {module.id} → Container engine (metadata)")
-        return run_container_destroy.s(task_id, module.id)
+        return run_container_destroy.s(task_id, module.id).set(**limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_destroy

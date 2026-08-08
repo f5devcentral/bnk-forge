@@ -818,3 +818,46 @@ class TestDetachedExecution:
             )
         assert (code, timed_out, transport) == (124, True, None)
         assert any("kill" in str(c) for c in run.call_args_list), "the container must be killed"
+
+
+@pytest.mark.unit
+class TestRootUserGate:
+    """The non-root gate must key on the uid, not on a fixed set of strings.
+
+    Issue #408.1: is_root_user() did exact-string membership against
+    {"", "0", "root", "0:0", "root:root"}. Docker's USER is `<user>[:<group>]`,
+    so `USER 0:100` runs as uid 0 and was NOT in the set — it passed the gate and
+    ran as root over the host-mounted workspace, defeating the boundary the
+    authoring guide documents as the protection.
+    """
+
+    @pytest.mark.parametrize("declared", [
+        "0:100",        # the reported bypass
+        "root:wheel",
+        "0:0",
+        "root:root",
+        "0",
+        "00",           # zero-padded uid is still uid 0
+        "root",
+        "",             # no USER declared — daemon runs it as uid 0
+        None,
+        "  0:100  ",    # whitespace must not smuggle it past
+        "ROOT",
+    ])
+    def test_root_images_are_detected(self, declared):
+        assert DockerRunner.is_root_user(declared) is True, (
+            f"USER {declared!r} resolves to uid 0 but passed the non-root gate — "
+            "the image would run as root over the host-mounted workspace (#408.1)"
+        )
+
+    @pytest.mark.parametrize("declared", [
+        "1000",
+        "1000:1000",
+        "65532:65532",
+        "nonroot",
+        "nonroot:nonroot",
+        "10",
+    ])
+    def test_non_root_images_are_allowed(self, declared):
+        """Contrast: the gate must not start rejecting legitimate images."""
+        assert DockerRunner.is_root_user(declared) is False

@@ -258,9 +258,47 @@ def _build_engine_and_ctx(
         workspace_volume=workspace_volume,
         workspace_subpath=workspace_subpath,
         pull_authfile_json=pull_authfile,
-        secret_values=list(credentials_env.values()) + ([pull_authfile] if pull_authfile else []),
+        secret_values=(
+            list(credentials_env.values())
+            + ([pull_authfile] if pull_authfile else [])
+            + _sensitive_input_values(manifest, effective_variables)
+        ),
     )
     return engine, ctx
+
+
+def _sensitive_input_values(manifest: dict, variables: dict) -> list[str]:
+    """Values of manifest inputs marked (or inferred) sensitive.
+
+    The engine redacts these from streamed and captured log lines. Previously
+    only cloud-credential and pull values were redacted, but a step's argv is
+    echoed verbatim to the task log and the module-log WebSocket — so an
+    artifact declaring ``args: [..., "--token", "{{inputs.api_token}}"]`` leaked
+    that token in cleartext (issue #408.6). The shipped roksbnkctl artifact was
+    unaffected (its secret rides in a redacted ``-e`` env var), which is why this
+    stayed latent.
+    """
+    from utils.security import is_sensitive_input
+
+    values: list[str] = []
+    inputs = (manifest or {}).get("inputs")
+    definitions: list[dict] = []
+    if isinstance(inputs, list):
+        definitions = [d for d in inputs if isinstance(d, dict)]
+    elif isinstance(inputs, dict):
+        # Both shapes appear in the wild: a flat list, or required/optional groups.
+        for group in inputs.values():
+            if isinstance(group, list):
+                definitions.extend(d for d in group if isinstance(d, dict))
+
+    for definition in definitions:
+        name = definition.get("name")
+        if not isinstance(name, str) or not is_sensitive_input(definition):
+            continue
+        value = (variables or {}).get(name)
+        if isinstance(value, str) and value:
+            values.append(value)
+    return values
 
 
 def _streaming_sink(task, db, header: str, lines: list[str], *, interval: float = 2.0):
