@@ -536,6 +536,8 @@ class DockerRunner(ContainerRunner):
         An image that never declares USER reports an empty string and runs as
         root — that is the common case and must be caught.
 
+        Closes the numeric bypass only — see the KNOWN GAP note in the body.
+
         Only the uid half decides this. Docker's USER is ``<user>[:<group>]``,
         so an image declaring ``USER 0:100`` or ``USER root:wheel`` runs as uid 0
         while never matching a fixed set of full strings. Exact-string membership
@@ -552,9 +554,14 @@ class DockerRunner(ContainerRunner):
         # A purely numeric uid: 0 (in any zero-padded spelling) is root.
         if uid.isdigit():
             return int(uid) == 0
-        # A named user that is not "root" cannot be resolved here (it needs
-        # /etc/passwd from inside the image). Treat as non-root, matching the
-        # prior behaviour for named users.
+        # KNOWN GAP: a named user that is not literally "root" cannot be
+        # resolved here — mapping it to a uid needs /etc/passwd from inside the
+        # image. So an image declaring `USER toor`, where toor is uid 0 in its
+        # own passwd file, still passes this gate. #408.1 closed the *numeric*
+        # bypass (0:100, root:wheel); the named-alias case remains open and
+        # needs an image inspect to close properly. Matches the prior behaviour
+        # for named users, so this is not a regression — just not a complete
+        # answer to "does this image run as root".
         return False
 
     def _gate_image(

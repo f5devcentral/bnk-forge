@@ -163,6 +163,7 @@ YAML
 # Redis and MCP passwords were echoed in cleartext and readable by any local user
 # on a public-IP VSI (issue #408.4). `{ set +x; } 2>/dev/null` disables it without
 # the disable itself being traced.
+__XTRACE__="$-"                       # remember whether xtrace was on
 { set +x; } 2>/dev/null
 PG="$(openssl rand -hex 16)"
 RD="$(openssl rand -hex 16)"
@@ -177,15 +178,16 @@ MCP_USERNAME=admin
 MCP_PASSWORD=${MCP}
 ENV
 chmod 600 .env
-set -x
+case "${__XTRACE__}" in *x*) set -x ;; esac
 
 # 5. Registry login (private registries only)
 # Same treatment: the PAT is a literal argument to printf, so xtrace would print
 # it verbatim into the world-readable install log.
 if [ "__PUBLIC__" != "yes" ]; then
+  __XTRACE__="$-"
   { set +x; } 2>/dev/null
   printf '%s' '__PAT__' | docker login __REGISTRY_HOST__ -u '__REGISTRY_USER__' --password-stdin
-  set -x
+  case "${__XTRACE__}" in *x*) set -x ;; esac
 fi
 
 # 6. Pull images

@@ -129,3 +129,46 @@ class TestContainerDispatchRouting:
             sig = task_dispatch.dispatch_destroy_signature(106, module)
             assert sig == "sig-destroy"
             task.s.assert_called_once_with(106, module.id)
+
+
+@pytest.mark.component
+class TestContainerActionTimeLimits:
+    """A long e2e/scenario action needs the same derived limit as apply (#463 F5)."""
+
+    def test_action_dispatch_derives_time_limit_from_the_action_step_set(self, db):
+        module = _container_module(db)
+        module.library_module.pack_manifest = {
+            "actions": {
+                "run-e2e": {
+                    "title": "E2E",
+                    "steps": [
+                        {"name": "e2e", "timeout_seconds": 3600,
+                         "retry": {"max_attempts": 3, "backoff_seconds": 300}},
+                    ],
+                }
+            }
+        }
+        db.flush()
+        with patch("tasks.container_tasks.run_container_action") as task:
+            task.apply_async.return_value = MagicMock(id="celery-act")
+            task_dispatch.dispatch_container_action(107, module, "run-e2e", {"scenario": "x"})
+
+        kwargs = task.apply_async.call_args.kwargs
+        assert kwargs.get("time_limit", 0) > 7500, (
+            "an action budget exceeding the global limit did not raise this task's "
+            "limit — a long e2e run is hard-killed mid-run, leaving the module lock "
+            "for the reclaim sweep (#463 F5)"
+        )
+
+    def test_action_without_a_budget_uses_global_defaults(self, db):
+        """Contrast: a short action must not get a bespoke limit."""
+        module = _container_module(db)
+        module.library_module.pack_manifest = {
+            "actions": {"quick": {"title": "Quick", "steps": [{"name": "q", "timeout_seconds": 60}]}}
+        }
+        db.flush()
+        with patch("tasks.container_tasks.run_container_action") as task:
+            task.apply_async.return_value = MagicMock(id="celery-act2")
+            task_dispatch.dispatch_container_action(108, module, "quick", None)
+
+        assert "time_limit" not in task.apply_async.call_args.kwargs
