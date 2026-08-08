@@ -1036,6 +1036,11 @@ class ProjectModuleService(BaseService):
         """
         module = self.get_module(module_id)
 
+        # An action runs the artifact's own image against live infrastructure,
+        # so a disabled module must not be actionable either (issue #527).
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before running actions")
+
         lib = module.library_module
         manifest = getattr(lib, "pack_manifest", None) if lib else None
         if not isinstance(manifest, dict) or not isinstance(manifest.get("container_image"), dict):
@@ -1160,16 +1165,22 @@ class ProjectModuleService(BaseService):
             .order_by(TaskModel.created_at.desc())
             .all()
         )
-        active_task = cancellable[0] if cancellable else None
+        # Guard on whether ANY cancellable task carries a celery id, not on the
+        # newest one. create_task commits before dispatch stamps the id, and
+        # _trigger_next_stack_module commits its "pending" row before calling
+        # dispatch_apply — so a NEWER, id-less row can sit in front of the
+        # running task. Keying the guard on cancellable[0] meant the whole
+        # cancel was skipped in that window: the running task was never revoked,
+        # no container was killed, and the caller was told
+        # "Reset stuck deployment status" with success=True.
+        dispatchable = [t for t in cancellable if t.celery_task_id]
 
-        if active_task and active_task.celery_task_id:
+        if dispatchable:
             try:
                 # Revoke every non-terminal task for this module, not just the
                 # newest — a queued task behind the running one is exactly the
                 # zombie F4 describes.
-                for task in cancellable:
-                    if not task.celery_task_id:
-                        continue
+                for task in dispatchable:
                     celery_app.control.revoke(
                         task.celery_task_id, terminate=True, signal="SIGKILL"
                     )
@@ -1258,6 +1269,14 @@ class ProjectModuleService(BaseService):
         """
         module = self.get_module(module_id)
 
+        # A disabled module is not runnable by ANY path (issue #527). This one
+        # does not go through _validate_for_operation the way submit_plan and
+        # submit_apply do, so without this check the endpoint the UI's Deploy
+        # button calls would still deploy a disabled module — the headline fix
+        # defeated by the most likely route a user takes.
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before deploying")
+
         if module.status in (ModuleStatus.APPLYING, ModuleStatus.INITIALIZING, ModuleStatus.PLANNING):
             raise BadRequestError(f"Module is already deploying (current status: {module.status})")
 
@@ -1307,6 +1326,9 @@ class ProjectModuleService(BaseService):
         from models import DeploymentLog
 
         module = self.get_module(module_id)
+
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before retrying")
 
         failed_statuses = ["failed", "apply_failed", "init_failed", "destroy_failed"]
         if module.status not in failed_statuses:

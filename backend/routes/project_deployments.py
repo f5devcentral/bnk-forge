@@ -219,9 +219,14 @@ def get_deployment_output(
     stdout = deployment.stdout or ""
     stderr = deployment.stderr or ""
 
+    # Truncate on BYTES, not characters. len() on a str counts characters, and
+    # artifact logs are full of non-ASCII (✓/✗/box-drawing), so a character cap
+    # could return up to 4× the advertised size to a scripted caller.
     truncated = False
-    if len(stdout) > max_bytes:
-        stdout = stdout[-max_bytes:]
+    encoded = stdout.encode("utf-8")
+    if len(encoded) > max_bytes:
+        # Decode with errors="ignore" to drop a partial code point at the cut.
+        stdout = encoded[-max_bytes:].decode("utf-8", errors="ignore")
         truncated = True
 
     logger.info(
