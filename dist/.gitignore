@@ -15,6 +15,10 @@
 !install.sh
 !uninstall.sh
 !nginx/
-!nginx/*.conf
+# Named explicitly rather than `nginx/*.conf`: that glob would also un-ignore a
+# GENERATED conf dropped in this directory, which is exactly what `*` is here to
+# stop. Only these two are tracked upstream.
+!nginx/frontend.local.conf
+!nginx/proxy.local.conf
 !secrets/
 !secrets/.gitkeep
