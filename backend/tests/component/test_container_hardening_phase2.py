@@ -45,6 +45,33 @@ class TestRegistryHostChangeClearsCredential:
             "send it to the new host (#79 item 3)"
         )
 
+    def test_far_service_account_is_also_cleared(self, db):
+        """Every credential family, not just basic-auth (review finding).
+
+        _clear_off_family_credentials preserves the CURRENT family's credential,
+        so clearing only token_encrypted left a FAR registry's service account
+        intact — and _test_far sends it to the same registry_host.
+        """
+        from models import ContainerRegistry
+        from routes.container_registries import ContainerRegistryUpdate
+        from services.container_registry_service import ContainerRegistryService
+
+        reg = ContainerRegistry(name="far-1", type="far",
+                                registry_host="far.internal",
+                                far_service_account_encrypted="enc_sa")
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+
+        ContainerRegistryService(db).update_registry(
+            reg.id, ContainerRegistryUpdate(registry_host="attacker.example.com"))
+        db.refresh(reg)
+
+        assert reg.far_service_account_encrypted is None, (
+            "the FAR service account survived a host change — _test_far would "
+            "send it to the new host (#79 item 3)"
+        )
+
     def test_changing_the_host_WITH_a_new_token_keeps_the_new_one(self, db):
         """Contrast: supplying a token for the new host is the legitimate flow."""
         from models import ContainerRegistry

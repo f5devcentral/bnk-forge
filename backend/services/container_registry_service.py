@@ -263,10 +263,21 @@ class ContainerRegistryService:
         # private-address check would also have blocked a self-hosted Harbor or
         # Artifactory on RFC1918 — a supported configuration — so neither is
         # the right tool here.
+        # Every credential family must be cleared, not just basic-auth.
+        # _clear_off_family_credentials deliberately PRESERVES the current
+        # family's credential, so on its own it would leave a FAR registry's
+        # service account (sent by _test_far to the same registry_host) or a
+        # derived registry's credential_template_id intact — the identical exfil
+        # with a different secret. Clear all three.
         host_changed = old_host and reg.registry_host and reg.registry_host != old_host
-        if host_changed and not token:
-            self._clear_off_family_credentials(reg)
+        supplied_new_credential = bool(token or far_service_account) or (
+            credential_template_id != "__unset__" and credential_template_id is not None
+        )
+        if host_changed and not supplied_new_credential:
+            reg.username = None
             reg.token_encrypted = None
+            reg.far_service_account_encrypted = None
+            reg.credential_template_id = None
             reg.last_test_status = None
             reg.last_test_message = (
                 "Credential cleared because the registry host changed; supply a "
