@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "ocp-connection",
+    "version": "1.0.0",
+    "name": "OpenShift Cluster Connection",
+    "description": "Connects and validates an existing OpenShift/OKD cluster for BNK deployment. Detects platform capabilities automatically."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "openshift",
+  "icon": "shield-check",
+  "color": "#EE0000",
+  "estimated_time": "2-5 minutes",
+  "estimated_cost": "N/A (existing cluster)",
+  "difficulty": "intermediate",
+  "maturity": "beta",
+  "bnk_version": null,
+  "tags": [
+    "openshift",
+    "ocp",
+    "enterprise",
+    "on-prem"
+  ],
+  "outcomes": [
+    "Validated connectivity to OpenShift cluster",
+    "Kubeconfig configured for BNK module deployment",
+    "Platform capabilities detected"
+  ],
+  "prerequisites": [
+    {
+      "type": "kubernetes_cluster",
+      "description": "Existing OpenShift/OKD cluster with admin access"
+    }
+  ],
+  "variable_templates": {
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "required": true
+    },
+    "api_server_url": {
+      "label": "API Server URL",
+      "type": "string",
+      "required": true,
+      "placeholder": "https://api.cluster.example.com:6443"
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "infra-ocp-connect",
+      "module": "infra/ocp/connect",
+      "version": "1.0.0",
+      "name": "OCP Connection",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Validates connectivity to an existing OpenShift cluster"
+    }
+  ],
+  "is_featured": false
+}

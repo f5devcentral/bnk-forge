@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Config
+current-context: aks-cluster
+clusters:
+- name: aks-cluster
+  cluster:
+    certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2Vha3MK
+    server: https://aks-cluster-123.hcp.westeurope.azmk8s.io:443
+contexts:
+- name: aks-cluster
+  context:
+    cluster: aks-cluster
+    user: clusterUser_rg_aks-cluster
+users:
+- name: clusterUser_rg_aks-cluster
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: kubelogin
+      args:
+      - get-token
+      - --server-id
+      - 6dae42f8-4368-4678-94ff-3960e28e3630
+      - --tenant-id
+      - tenant-123
+      - --login
+      - spn

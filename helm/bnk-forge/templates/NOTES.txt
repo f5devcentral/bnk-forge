@@ -1,0 +1,26 @@
+BNK-Forge installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+{{- if .Values.api.enabled }}      api      svc: {{ include "bnk-forge.fullname" . }}-api:{{ .Values.api.service.port }}{{- end }}
+{{- if .Values.worker.enabled }}   worker   replicas: {{ .Values.worker.replicaCount }}{{- end }}
+{{- if .Values.beat.enabled }}     beat     replicas: 1{{- end }}
+{{- if .Values.frontend.enabled }} frontend svc: {{ include "bnk-forge.fullname" . }}-frontend:{{ .Values.frontend.service.port }}{{- end }}
+{{- if .Values.proxy.enabled }}    proxy    svc: {{ include "bnk-forge.fullname" . }}-proxy ({{ .Values.proxy.service.type }}) {{ .Values.proxy.service.httpPort }}/{{ .Values.proxy.service.httpsPort }}{{- end }}
+{{- if .Values.mcp.enabled }}      mcp      svc: {{ include "bnk-forge.fullname" . }}-mcp:{{ .Values.mcp.service.port }}{{- end }}
+
+To reach the UI:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}/
+{{- else if eq .Values.proxy.service.type "LoadBalancer" }}
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "bnk-forge.fullname" . }}-proxy
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "bnk-forge.fullname" . }}-proxy 8443:443
+  open https://localhost:8443/
+{{- end }}
+
+Default admin login: admin / changeme  (change immediately via UI).
+
+IMPORTANT:
+  * Shared volumes use ReadWriteMany. Set global.sharedStorageClass to a
+    RWX-capable StorageClass (NFS / EFS / CephFS / Azure Files / Filestore).
+  * The proxy container runs as non-root (uid 101) and listens on 8080/8443.

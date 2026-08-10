@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "Cert-Manager (Jetstack)",
+    "path": "k8s/cert-manager",
+    "version": "3.1.0",
+    "category": "k8s",
+    "description": "Deploys Jetstack cert-manager chart with BNK-compatible defaults for CRDs and controller/webhook behavior."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "chart_ref": "oci://quay.io/jetstack/charts/cert-manager",
+      "chart_version": "${cert_manager_version}",
+      "namespace": "${namespace}",
+      "release_name": "${release_name}",
+      "create_namespace": true,
+      "values_path": "values.yaml"
+    }
+  },
+  "dependencies": {
+    "required": [
+      {
+        "module": "k8s/bnk-prerequisites",
+        "reason": "Operator namespace must exist before BNK-managed certificate integrations are used"
+      }
+    ],
+    "optional": []
+  },
+  "inputs": {
+    "required": [],
+    "optional": [
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Name of the Kubernetes cluster",
+        "default": "",
+        "source": "user"
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "description": "Namespace for cert-manager deployment",
+        "default": "cert-manager",
+        "source": "user"
+      },
+      {
+        "name": "release_name",
+        "type": "string",
+        "description": "Helm release name for cert-manager",
+        "default": "cert-manager",
+        "source": "user"
+      },
+      {
+        "name": "cert_manager_version",
+        "type": "string",
+        "description": "Jetstack cert-manager chart version",
+        "default": "v1.16.1",
+        "source": "user"
+      },
+      {
+        "name": "controller_replicas",
+        "type": "number",
+        "description": "Number of cert-manager controller replicas",
+        "default": 1,
+        "source": "user"
+      },
+      {
+        "name": "webhook_replicas",
+        "type": "number",
+        "description": "Number of cert-manager webhook replicas",
+        "default": 1,
+        "source": "user"
+      },
+      {
+        "name": "cainjector_replicas",
+        "type": "number",
+        "description": "Number of cert-manager cainjector replicas",
+        "default": 1,
+        "source": "user"
+      },
+      {
+        "name": "resources",
+        "type": "map(any)",
+        "description": "Optional cert-manager chart resources block (null uses chart defaults)",
+        "default": null,
+        "source": "user"
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "cert_manager_ready",
+        "type": "boolean",
+        "description": "Flag indicating cert-manager release is deployed"
+      },
+      {
+        "name": "release_name",
+        "type": "string",
+        "description": "Helm release name used for cert-manager"
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "description": "Namespace where cert-manager is deployed"
+      }
+    ]
+  }
+}

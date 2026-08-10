@@ -1,0 +1,351 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "awsbnkctl-bnk-demo",
+    "version": "1.4.0",
+    "name": "AWS BNK Demo (CLI Deploy)",
+    "description": "Deploy the awsbnkctl bnk-demo topology from the Forge UI. Choose your sizing and interface pattern, then Plan to validate the rendered cluster.yaml with awsbnkctl up --dry-run (zero AWS spend), or Deploy to provision the real AWS infrastructure with awsbnkctl up --auto. Optional demo add-ons and post-deploy use-cases are available under Advanced."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "aws",
+  "icon": "cloud",
+  "color": "blue",
+  "estimated_time": "Plan: 1-2 min · Deploy: 30-60 min",
+  "estimated_cost": "Plan: zero (dry-run) · Deploy: AWS usage-based (EKS cluster + worker nodes; optional BIG-IP VE / SageMaker add extra)",
+  "difficulty": "beginner",
+  "maturity": "reference",
+  "bnk_version": "2.2+",
+  "tags": [
+    "awsbnkctl",
+    "cli",
+    "demo",
+    "aws",
+    "bnk",
+    "infrastructure"
+  ],
+  "outcomes": [
+    "Rendered awsbnkctl cluster.yaml with your chosen topology",
+    "Plan validates the config with awsbnkctl up --dry-run (zero AWS spend)",
+    "Deploy provisions real AWS infrastructure with awsbnkctl up --auto",
+    "Deployment record with streaming output in forge UI",
+    "Optional demo-layer blocks: jumphost bastion, demo TTL, BIG-IP VE migration target, SageMaker AI endpoint",
+    "Optional post-up use-case execution: awsbnkctl demo/scenarios run against the live cluster"
+  ],
+  "prerequisites": [
+    {
+      "type": "cli_tool",
+      "description": "awsbnkctl binary (linux/amd64) available in the forge worker container"
+    }
+  ],
+  "variable_templates": {},
+  "inputs": {
+    "required": [],
+    "optional": [
+      {
+        "name": "bnk_far_archive",
+        "type": "file",
+        "description": "F5 FAR pull-credentials JSON (cne_pull_64.json), supplied as a project secret. Required for a real up --auto; omit for dry-run only.",
+        "required": false,
+        "sensitive": true,
+        "order": 0
+      },
+      {
+        "name": "bnk_jwt",
+        "type": "file",
+        "description": "F5 subscription JWT (license.jwt), supplied as a project secret. Required for a real up --auto; omit for dry-run only.",
+        "required": false,
+        "sensitive": true,
+        "order": 0
+      },
+      {
+        "name": "pattern",
+        "type": "string",
+        "description": "BNK interface pattern for the TMM dataplane",
+        "default": "external-only",
+        "required": false,
+        "order": 1,
+        "options": [
+          {
+            "label": "External Only",
+            "value": "external-only",
+            "description": "Single external ENI with host-device CNI (simplest, kernel socket)"
+          },
+          {
+            "label": "Dual Interface",
+            "value": "dual-interface",
+            "description": "External + internal ENI with Multus and host-device CNI"
+          },
+          {
+            "label": "SR-IOV External (experimental)",
+            "value": "sriov-external",
+            "description": "Single external interface via SR-IOV / vfio-pci (experimental)"
+          }
+        ]
+      },
+      {
+        "name": "instance_type",
+        "type": "string",
+        "description": "EC2 instance type for the worker node group",
+        "default": "m5.2xlarge",
+        "required": false,
+        "order": 2,
+        "options": [
+          { "label": "m5.2xlarge (8 vCPU / 32 GiB)", "value": "m5.2xlarge" },
+          { "label": "m5.4xlarge (16 vCPU / 64 GiB)", "value": "m5.4xlarge" },
+          { "label": "m6i.2xlarge (8 vCPU / 32 GiB)", "value": "m6i.2xlarge" },
+          { "label": "m6i.4xlarge (16 vCPU / 64 GiB)", "value": "m6i.4xlarge" },
+          { "label": "c5.2xlarge (8 vCPU / 16 GiB)", "value": "c5.2xlarge" },
+          { "label": "t3.xlarge (4 vCPU / 16 GiB — dev only)", "value": "t3.xlarge" }
+        ]
+      },
+      {
+        "name": "kubernetes_version",
+        "type": "string",
+        "description": "EKS control-plane Kubernetes version",
+        "default": "1.30",
+        "required": false,
+        "order": 3,
+        "options": [
+          { "label": "1.31", "value": "1.31" },
+          { "label": "1.30", "value": "1.30" },
+          { "label": "1.29", "value": "1.29" },
+          { "label": "1.28", "value": "1.28" }
+        ]
+      },
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Cluster name (metadata.name) — must match ^[a-z][a-z0-9-]{0,38}[a-z0-9]$",
+        "default": "bnk-demo",
+        "required": false,
+        "order": 4
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "description": "AWS region (metadata.region)",
+        "default": "ap-southeast-2",
+        "required": false,
+        "order": 5
+      },
+      {
+        "name": "vpc_cidr",
+        "type": "string",
+        "description": "VPC CIDR block (network.vpcCidr). Subnets are derived inside this range.",
+        "default": "10.0.0.0/16",
+        "required": false,
+        "order": 6
+      },
+      {
+        "name": "node_desired_size",
+        "type": "number",
+        "description": "Desired worker node count (dual-interface needs >= 3)",
+        "default": 3,
+        "required": false,
+        "order": 7
+      },
+      {
+        "name": "node_min_size",
+        "type": "number",
+        "description": "Minimum worker node count",
+        "default": 3,
+        "required": false,
+        "order": 8
+      },
+      {
+        "name": "node_max_size",
+        "type": "number",
+        "description": "Maximum worker node count",
+        "default": 4,
+        "required": false,
+        "order": 9
+      },
+      {
+        "name": "jumphost_enabled",
+        "type": "boolean",
+        "description": "Provision an EC2 jumphost (SSH bastion) inside the external dataPath subnet. Required when demo_enabled is true.",
+        "default": false,
+        "required": false,
+        "order": 10
+      },
+      {
+        "name": "jumphost_instance_type",
+        "type": "string",
+        "description": "EC2 instance type for the SSH jumphost",
+        "default": "t3.small",
+        "required": false,
+        "order": 11,
+        "options": [
+          { "label": "t3.small (2 vCPU / 2 GiB)", "value": "t3.small" },
+          { "label": "t3.medium (2 vCPU / 4 GiB)", "value": "t3.medium" }
+        ]
+      },
+      {
+        "name": "demo_enabled",
+        "type": "boolean",
+        "description": "Mark this as a demo deployment. Writes DEMO_MODE/DEMO_EXPIRY to state.env. Requires jumphost_enabled=true.",
+        "default": false,
+        "required": false,
+        "order": 12
+      },
+      {
+        "name": "demo_ttl",
+        "type": "string",
+        "description": "Demo cluster lifetime (Go duration). Expiry = staged_at + ttl.",
+        "default": "24h",
+        "required": false,
+        "order": 13,
+        "options": [
+          { "label": "24 hours", "value": "24h" },
+          { "label": "48 hours", "value": "48h" },
+          { "label": "72 hours", "value": "72h" }
+        ]
+      },
+      {
+        "name": "bigipve_enabled",
+        "type": "boolean",
+        "description": "Provision a chargeable F5 BIG-IP VE for the traffic-migration demo. Incurs AWS charges and forces the dual-interface pattern.",
+        "default": false,
+        "required": false,
+        "order": 14
+      },
+      {
+        "name": "bigipve_instance_type",
+        "type": "string",
+        "description": "EC2 instance type for the BIG-IP VE appliance",
+        "default": "c5n.2xlarge",
+        "required": false,
+        "order": 15,
+        "options": [
+          { "label": "c5n.2xlarge (8 vCPU / 21 GiB — recommended minimum)", "value": "c5n.2xlarge" },
+          { "label": "c5n.4xlarge (16 vCPU / 42 GiB)", "value": "c5n.4xlarge" }
+        ]
+      },
+      {
+        "name": "bigipve_license_tier",
+        "type": "string",
+        "description": "PAYG BIG-IP license tier — controls the AMI and feature set",
+        "default": "Good",
+        "required": false,
+        "order": 16,
+        "options": [
+          { "label": "Good", "value": "Good" },
+          { "label": "Better", "value": "Better" },
+          { "label": "Best", "value": "Best" }
+        ]
+      },
+      {
+        "name": "bigipve_vip",
+        "type": "string",
+        "description": "BIG-IP virtual-server IP inside network.dataPath.external.cidr. Leave empty to auto-derive as <prefix>.10.120.",
+        "default": "",
+        "required": false,
+        "order": 17
+      },
+      {
+        "name": "ai_sagemaker_enabled",
+        "type": "boolean",
+        "description": "Create a disposable SageMaker LMI (vLLM) endpoint on up, deleted on down. Incurs SageMaker instance charges while running.",
+        "default": false,
+        "required": false,
+        "order": 18
+      },
+      {
+        "name": "ai_sagemaker_model",
+        "type": "string",
+        "description": "Hugging Face model ID for the SageMaker LLM endpoint (required when AI demo enabled).",
+        "default": "meta-llama/Meta-Llama-3-8B-Instruct",
+        "required": false,
+        "order": 19
+      },
+      {
+        "name": "usecases",
+        "type": "string",
+        "description": "Post-up demo/scenario use-cases to run after the cluster is up. Requires demo enabled (set demo_enabled=true in Advanced). 'none' = deploy the cluster only.",
+        "default": "none",
+        "required": false,
+        "order": 20,
+        "options": [
+          {
+            "label": "None — just the cluster",
+            "value": "none",
+            "description": "Deploy the cluster only; skip post-up use-case execution. Default."
+          },
+          {
+            "label": "All green (demos + green scenarios)",
+            "value": "all-green",
+            "description": "Runs awsbnkctl demo run --all (4 demos + 6 green scenarios). Recommended for demo clusters."
+          },
+          {
+            "label": "All demos (4)",
+            "value": "all-demos",
+            "description": "http2, diameter, ingress-migration, bigip-cis"
+          },
+          {
+            "label": "All (incl. AI/amber)",
+            "value": "all",
+            "description": "All demos + all 9 scenarios including amber (egress-snat, ai-token-counting, ai-semantic-cache)"
+          },
+          { "label": "Demo: HTTP/2", "value": "http2" },
+          { "label": "Demo: Diameter", "value": "diameter" },
+          { "label": "Demo: Ingress Migration", "value": "ingress-migration" },
+          { "label": "Demo: BIG-IP CIS", "value": "bigip-cis" },
+          { "label": "Scenario: HTTP Routing E2E", "value": "http-routing-e2e" },
+          { "label": "Scenario: HTTP Traffic Split", "value": "http-traffic-split" },
+          { "label": "Scenario: Proxy Protocol L4", "value": "proxy-protocol-l4" },
+          { "label": "Scenario: Multi-VIP", "value": "multi-vip" },
+          { "label": "Scenario: External Resource Pool", "value": "external-resource-pool" },
+          { "label": "Scenario: AI Inference E2E", "value": "ai-inference-e2e" },
+          { "label": "Scenario: Egress SNAT (amber)", "value": "egress-snat" },
+          { "label": "Scenario: AI Token Counting (amber)", "value": "ai-token-counting" },
+          { "label": "Scenario: AI Semantic Cache (amber)", "value": "ai-semantic-cache" }
+        ]
+      }
+    ]
+  },
+  "modules": [
+    {
+      "id": "awsbnkctl-bnk-demo",
+      "module": "cli-bnkctl/awsbnkctl/bnk-demo",
+      "version": "1.0.0",
+      "name": "AWS BNK Demo",
+      "inputs": {
+        "cluster_name": "${cluster_name}",
+        "region": "${region}",
+        "vpc_cidr": "${vpc_cidr}",
+        "instance_type": "${instance_type}",
+        "pattern": "${pattern}",
+        "kubernetes_version": "${kubernetes_version}",
+        "node_desired_size": "${node_desired_size}",
+        "node_min_size": "${node_min_size}",
+        "node_max_size": "${node_max_size}",
+        "demo_enabled": "${demo_enabled}",
+        "demo_ttl": "${demo_ttl}",
+        "jumphost_enabled": "${jumphost_enabled}",
+        "jumphost_instance_type": "${jumphost_instance_type}",
+        "bigipve_enabled": "${bigipve_enabled}",
+        "bigipve_instance_type": "${bigipve_instance_type}",
+        "bigipve_license_tier": "${bigipve_license_tier}",
+        "bigipve_vip": "${bigipve_vip}",
+        "ai_sagemaker_enabled": "${ai_sagemaker_enabled}",
+        "ai_sagemaker_model": "${ai_sagemaker_model}"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Single-module CLI deploy of the bnk-demo topology via awsbnkctl"
+    },
+    {
+      "id": "usecases",
+      "module": "cli-bnkctl/awsbnkctl/bnk-demo-usecases",
+      "version": "1.0.0",
+      "name": "BNK Demo Use-Cases",
+      "inputs": {
+        "usecases": "${usecases}",
+        "bnkctl_action": "demo-usecases"
+      },
+      "optional": false,
+      "depends_on": ["awsbnkctl-bnk-demo"],
+      "description": "Runs awsbnkctl demo/scenarios after the cluster is up (skipped when usecases=none)"
+    }
+  ]
+}

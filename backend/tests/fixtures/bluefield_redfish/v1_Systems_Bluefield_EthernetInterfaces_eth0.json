@@ -1,0 +1,40 @@
+{
+  "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/EthernetInterfaces/eth0",
+  "@odata.type": "#EthernetInterface.v1_6_0.EthernetInterface",
+  "DHCPv4": {
+    "DHCPEnabled": true,
+    "UseDNSServers": false,
+    "UseDomainName": false,
+    "UseNTPServers": false
+  },
+  "DHCPv6": {
+    "OperatingMode": "Enabled",
+    "UseDNSServers": false,
+    "UseDomainName": false,
+    "UseNTPServers": false
+  },
+  "Description": "Host Network Interface for port eth0",
+  "EthernetInterfaceType": "Physical",
+  "IPv4Addresses": [],
+  "IPv4StaticAddresses": [],
+  "IPv6AddressPolicyTable": [],
+  "IPv6Addresses": [],
+  "IPv6DefaultGateway": "0:0:0:0:0:0:0:0",
+  "IPv6StaticAddresses": [],
+  "IPv6StaticDefaultGateways": [],
+  "Id": "eth0",
+  "InterfaceEnabled": true,
+  "LinkStatus": "LinkUp",
+  "MACAddress": "56:88:72:3c:ee:68",
+  "MTUSize": 1500,
+  "Name": "Host Ethernet Interface",
+  "NameServers": [],
+  "SpeedMbps": 200000,
+  "StatelessAddressAutoConfig": {
+    "IPv6AutoConfigEnabled": false
+  },
+  "StaticNameServers": [],
+  "Status": {
+    "State": "Enabled"
+  }
+}

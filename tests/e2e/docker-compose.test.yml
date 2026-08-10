@@ -1,0 +1,64 @@
+# Docker Compose for running E2E tests in container
+version: '3.8'
+
+services:
+  e2e-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bnk-forge-e2e-tests
+    environment:
+      # Point to docker network hostnames
+      TEST_BASE_URL: http://proxy:80
+      TEST_API_URL: http://backend:8000
+
+      # AWS credentials (passed from host)
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+
+      # Test flags
+      SKIP_CLEANUP: ${SKIP_CLEANUP:-false}
+      VERIFY_AWS: ${VERIFY_AWS:-true}
+      SCREENSHOTS: ${SCREENSHOTS:-true}
+
+    volumes:
+      # Mount test results
+      - ./test-results:/tests/test-results
+      - ./playwright-report:/tests/playwright-report
+
+    networks:
+      - bnk-forge-v2_default
+
+    depends_on:
+      - wait-for-services
+
+  # Helper service to wait for application to be ready
+  wait-for-services:
+    image: curlimages/curl:latest
+    container_name: bnk-forge-wait-services
+    networks:
+      - bnk-forge-v2_default
+    command: >
+      sh -c '
+        echo "Waiting for backend to be ready..."
+        until curl -f http://backend:8000/ > /dev/null 2>&1; do
+          echo "Backend not ready, waiting..."
+          sleep 5
+        done
+        echo "Backend is ready!"
+
+        echo "Waiting for frontend to be ready..."
+        until curl -f http://proxy:80/ > /dev/null 2>&1; do
+          echo "Frontend not ready, waiting..."
+          sleep 5
+        done
+        echo "Frontend is ready!"
+
+        echo "All services ready, starting tests..."
+      '
+
+networks:
+  bnk-forge-v2_default:
+    external: true

@@ -1,0 +1,42 @@
+# Dockerfile.agent — slim image for the built-in Forge benchmark agent.
+#
+# Runs scripts/forge_agent.py: self-registers with Forge, connects via
+# WebSocket, and executes aiperf benchmark runs on demand.
+#
+# Build:  make build-agent
+# Deploy: included in docker-compose.yml as the `forge-agent` service.
+
+FROM python:3.11-slim
+
+# Install aiperf + websockets + requests.
+# aiperf pulls in `crick` (a C-extension stats lib) which compiles from source,
+# so build tooling (gcc) is needed at install time; purge it afterwards to keep
+# the image slim. Pin aiperf to a specific version if a known-good release is
+# required (e.g. aiperf==0.3.1).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && pip install --no-cache-dir \
+        aiperf \
+        websockets \
+        requests \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user for security
+RUN useradd -m -u 1001 -s /bin/bash forgeagent
+
+WORKDIR /app
+
+COPY scripts/forge_agent.py /app/forge_agent.py
+
+RUN chown forgeagent:forgeagent /app/forge_agent.py
+
+USER forgeagent
+
+# Runtime configuration via env vars:
+#   FORGE_URL          — Forge backend URL (required)
+#   AGENT_NAME         — agent name shown in the UI (default: forge-local)
+#   AGENT_TOKEN        — JWT bearer token (optional; only needed when
+#                        BENCHMARK_AGENT_AUTH_REQUIRED is enabled on the server)
+#   AGENT_ADVERTISE_IP — IP to report; override if socket resolution is wrong
+ENTRYPOINT ["python", "/app/forge_agent.py"]

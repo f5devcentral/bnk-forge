@@ -1,0 +1,41 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${otel_server_certificate_name}
+  namespace: ${instance_namespace}
+  labels:
+    app.kubernetes.io/managed-by: bnk-forge
+    app.kubernetes.io/part-of: bnk
+spec:
+  secretName: ${otel_server_secret_name}
+  commonName: ${otel_server_certificate_name}.${instance_namespace}.svc
+  dnsNames:
+    - ${otel_server_certificate_name}
+    - ${otel_server_certificate_name}.${instance_namespace}
+    - ${otel_server_certificate_name}.${instance_namespace}.svc
+    - ${otel_server_certificate_name}.${instance_namespace}.svc.cluster.local
+  subject:
+    countries:
+      - US
+    provinces:
+      - Washington
+    localities:
+      - Seattle
+    organizations:
+      - F5 Networks
+    organizationalUnits:
+      - PD
+  emailAddresses:
+    - clientcert@f5net.com
+  duration: ${otel_duration}
+  renewBefore: ${otel_renew_before}
+  issuerRef:
+    name: ${cluster_issuer_name}
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    rotationPolicy: Always
+    encoding: PKCS1
+    algorithm: RSA
+    size: 4096
+  revisionHistoryLimit: 10

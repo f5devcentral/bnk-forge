@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "BNK Namespaces",
+    "path": "k8s/bnk-namespaces",
+    "version": "2.0.0",
+    "category": "k8s",
+    "description": "Creates required namespaces for F5 BNK deployment across data plane, operator, utilities, and gateway workloads."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "manifest_path": "manifests/"
+    }
+  },
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+  "inputs": {
+    "required": [],
+    "optional": [
+      {
+        "name": "bnk_namespace",
+        "type": "string",
+        "description": "Namespace for BNK data plane (TMM pods)",
+        "default": "f5-bnk",
+        "source": "user"
+      },
+      {
+        "name": "operator_namespace",
+        "type": "string",
+        "description": "Namespace for BNK control plane (FLO, CNE controller, CWC)",
+        "default": "f5-operator",
+        "source": "user"
+      },
+      {
+        "name": "utils_namespace",
+        "type": "string",
+        "description": "Namespace for BNK utility components (IPAM, observability)",
+        "default": "f5-utils",
+        "source": "user"
+      },
+      {
+        "name": "gateway_namespace",
+        "type": "string",
+        "description": "Namespace for Gateway API resources",
+        "default": "gateway-ns",
+        "source": "user"
+      },
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Name of the Kubernetes cluster",
+        "default": "",
+        "source": "user"
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "bnk_namespace",
+        "type": "string",
+        "description": "Name of the BNK data plane namespace (TMM pods)",
+        "used_by": [
+          "bnk/far-setup"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "operator_namespace",
+        "type": "string",
+        "description": "Name of the BNK operator namespace (FLO, CNE, CWC)",
+        "used_by": [
+          "bnk/far-setup",
+          "k8s/network-setup",
+          "k8s/cert-manager",
+          "bnk/flo",
+          "bnk/cneinstance",
+          "bnk/bnk-gatewayclass"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "utils_namespace",
+        "type": "string",
+        "description": "Name of the utilities namespace (IPAM, observability, dSSM)",
+        "used_by": [
+          "bnk/flo"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "gateway_namespace",
+        "type": "string",
+        "description": "Name of the gateway namespace",
+        "used_by": [
+          "bnk/gateway",
+          "bnk/routes",
+          "bnk/bnk-secpolicy",
+          "bnk/bnk-netpolicy"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "namespaces_ready",
+        "type": "boolean",
+        "description": "Flag indicating all namespaces are ready",
+        "used_by": [
+          "bnk/flo",
+          "bnk/far-setup"
+        ],
+        "sensitive": false
+      }
+    ]
+  }
+}

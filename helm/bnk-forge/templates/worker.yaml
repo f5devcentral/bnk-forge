@@ -1,0 +1,71 @@
+{{- if .Values.worker.enabled -}}
+{{- $name := printf "%s-worker" (include "bnk-forge.fullname" .) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bnk-forge.componentLabels" (list . "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-forge.componentLabels" (list . "worker") | nindent 8 }}
+    spec:
+      {{- include "bnk-forge.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "bnk-forge.image" (list . .Values.worker.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery"]
+          args:
+            - "-A"
+            - "celery_app"
+            - "worker"
+            - "--loglevel=info"
+            - "--concurrency={{ .Values.worker.concurrency }}"
+            - "--queues={{ .Values.worker.queues }}"
+          env:
+            {{- include "bnk-forge.backendEnv" . | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'celery -A celery_app inspect ping --destination celery@$HOSTNAME --timeout 5 2>/dev/null | grep -q pong'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'celery -A celery_app inspect ping --destination celery@$HOSTNAME --timeout 5 2>/dev/null | grep -q pong'
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 10
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "bnk-forge.sharedVolumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "bnk-forge.sharedVolumes" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

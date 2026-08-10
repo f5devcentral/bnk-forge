@@ -1,0 +1,11 @@
+# Optional overrides for development / GUI upgrade feature
+# Copy this file to docker-compose.override.yml to activate.
+#
+# SEC-004: The Docker socket grants full Docker daemon access (root-equivalent).
+# Only mount it if you need the GUI "Upgrade Now" button (System → Upgrade).
+# In production, use SSH + upgrade.sh instead.
+
+services:
+  backend:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

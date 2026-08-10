@@ -1,0 +1,71 @@
+{
+  // Generic Python + Node dev container.
+  // Rename `name` to match your project. Everything else is reusable as-is.
+  "name": "My Project Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace",
+
+  // Port labels shown in VS Code's "Ports" panel. Match these to the ports
+  // you exposed in docker-compose.yml. Remove entries you don't use.
+  "forwardPorts": [8000, 8080],
+  "portsAttributes": {
+    "8000": {
+      "label": "Backend / API",
+      "onAutoForward": "silent"
+    },
+    "8080": {
+      "label": "Frontend (dev server)",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "remoteUser": "vscode",
+
+  // post-create runs once, the first time the container is built (install deps).
+  // post-start runs every time the container starts (migrations, start servers).
+  // Both scripts live in .devcontainer/ and are template stubs — edit to match
+  // your project layout.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // ── AI pair programmers ────────────────────────────────────────
+        "saoudrizwan.claude-dev",           // Cline — AI agent that can run commands
+        // ── Python ─────────────────────────────────────────────────────
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-python.mypy-type-checker",
+        // ── JavaScript / TypeScript ────────────────────────────────────
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        // ── Files & infra ──────────────────────────────────────────────
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[javascriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

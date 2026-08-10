@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNK-Forge &mdash; How Tracking Works</title>
+<style>
+  :root{--f5red:#E4002B;--f5red-d:#b80023;--ink:#1b1f24;--ink2:#3a424b;--mut:#69727c;
+        --bg:#f4f5f7;--card:#fff;--bd:#e2e5e9;--link:#0a6ed1;
+        --ship:#1a8a4b;--block:#c5221f;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.62 "Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;}
+  a{color:var(--link);text-decoration:none;} a:hover{text-decoration:underline;}
+  header{background:var(--ink);border-bottom:3px solid var(--f5red);color:#fff;padding:22px 40px 20px;}
+  .brand{display:flex;align-items:center;gap:14px;}
+  .f5mark{background:var(--f5red);color:#fff;font-weight:800;font-size:18px;padding:6px 10px;border-radius:3px;line-height:1;}
+  h1{margin:0;font-size:21px;font-weight:600;} .sub{color:#aeb6bf;font-size:12.5px;margin-top:3px;}
+  .nav{margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;}
+  .btn{background:#2a2f36;border:1px solid #3a414a;color:#dfe4ea;padding:7px 14px;border-radius:4px;font-size:12.5px;}
+  .btn:hover{border-color:var(--f5red);color:#fff;text-decoration:none;}
+  main{max-width:960px;margin:0 auto;padding:18px 40px 70px;}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:1.1px;color:var(--ink2);font-weight:700;margin:34px 0 14px;padding-left:11px;border-left:4px solid var(--f5red);}
+  .flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 8px;}
+  .step{background:var(--card);border:1px solid var(--bd);border-radius:5px;padding:10px 15px;font-weight:600;font-size:13px;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  .arrow{color:var(--f5red);font-weight:700;font-size:16px;}
+  ol{padding-left:0;list-style:none;counter-reset:s;}
+  ol li{position:relative;margin:12px 0;padding:12px 16px 12px 52px;background:var(--card);border:1px solid var(--bd);border-radius:6px;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  ol li::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:12px;background:var(--f5red);color:#fff;font-weight:700;width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:13px;}
+  code{background:#eef0f2;border:1px solid var(--bd);border-radius:3px;padding:1px 5px;font-size:12.5px;color:var(--ink2);}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--bd);padding:9px 12px;text-align:left;vertical-align:top;}
+  th{background:#f0f2f4;color:var(--mut);text-transform:uppercase;font-size:11px;letter-spacing:.5px;}
+  .yes{color:var(--ship);font-weight:700;} .no{color:var(--block);font-weight:700;}
+  .vocab span{display:inline-block;margin:3px 16px 3px 0;}
+  .callout{background:#fff;border-left:4px solid var(--f5red);border-radius:0 6px 6px 0;padding:13px 17px;margin:16px 0;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  footer{max-width:960px;margin:0 auto;color:var(--mut);font-size:12px;padding:18px 40px 40px;border-top:1px solid var(--bd);}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="f5mark">F5</span>
+    <div><h1>How Tracking Works</h1>
+      <div class="sub">ADR &rarr; issue &rarr; roadmap &rarr; PR &rarr; close &nbsp;|&nbsp; for humans and agents, so everyone pulls in the same direction</div>
+    </div>
+  </div>
+  <div class="nav">
+    <a class="btn" href="./roadmap.html">Back to Roadmap</a>
+    <a class="btn" href="https://github.com/f5devcentral/bnk-forge/issues">Issues</a>
+    <a class="btn" href="./ROADMAP_PROCESS.md">Markdown source</a>
+  </div>
+</header>
+<main>
+
+  <div class="flow">
+    <span class="step">ADR</span><span class="arrow">&rarr;</span>
+    <span class="step">GitHub issue</span><span class="arrow">&rarr;</span>
+    <span class="step">Roadmap</span><span class="arrow">&rarr;</span>
+    <span class="step">PR to staging</span><span class="arrow">&rarr;</span>
+    <span class="step">Close</span>
+  </div>
+
+  <h2>The pipeline</h2>
+  <ol>
+    <li><b>Decide &rarr; ADR.</b> Any architecture decision becomes an ADR: <code>docs/adr/D-0XX-title.md</code> (or inline in <code>.agent/DECISIONS.md</code> for legacy D-001&ndash;D-004). Status: <code>Proposed</code> &rarr; <code>Accepted</code> &rarr; (<code>Superseded</code>). One decision = one ADR.</li>
+    <li><b>Slice into GitHub issues.</b> When an ADR has buildable work, create issue(s) &mdash; one per epic, or a tracking issue plus per-slice issues for multi-PR epics. Label <code>enhancement</code> plus a theme label (e.g. <code>dynamic-by-default</code>). The body links its ADR and the roadmap. <b>GitHub issues are the cross-clone source of truth for completion</b> &mdash; the <code>.agent/</code> framework is local and git-ignored, so it cannot be the shared record.</li>
+    <li><b>Add to the roadmap.</b> Place the item in <code>docs/ROADMAP.md</code> (correct section plus the issue index), then regenerate <code>docs/roadmap.html</code>. <code>docs/ROADMAP.md</code> is the shared "what's next"; <code>.agent/backlog/BACKLOG.md</code> is the local agent queue and points here.</li>
+    <li><b>Build &rarr; PR &rarr; <code>staging</code>.</b> PRs target <code>staging</code> (review-gated). Reference the issue in the PR body. Note: <code>staging</code> is non-default, so <code>Closes #N</code> does not auto-fire.</li>
+    <li><b>Close + update status.</b> On merge, close the issue with a comment citing the PR (manually, <code>bin/maf-gh.sh issue close … --as-role lead --confirm-write --reason "…"</code>, or the auto-close Action once #185 ships). Flip the roadmap status to shipped. A partial epic gets a progress comment and stays open &mdash; never close an epic for a single slice.</li>
+    <li><b>Regenerate the views.</b> <code>docs/roadmap.html</code> and this page are generated from the markdown; refresh them whenever the roadmap changes.</li>
+  </ol>
+
+  <div class="callout"><b>Agents &mdash; answering "what's next?"</b> &nbsp;Read <code>docs/ROADMAP.md</code> section 1 (or open <code>roadmap.html</code>). Take the highest-priority <b>unblocked</b> item with an open issue. Discover a new bug or idea mid-work? File an issue and add it to the roadmap &mdash; never leave an orphan TODO. Verify "remaining" against current <code>staging</code> first; memos and the roadmap can lag recent merges.</div>
+
+  <h2>Status vocabulary</h2>
+  <div class="vocab">
+    <span>Shipped</span><span>In progress / partial</span><span>Blocked <i>(state the blocker)</i></span><span>Deferred <i>(state the resume-trigger)</i></span><span>Not started / proposed</span>
+  </div>
+
+  <h2>Where things live</h2>
+  <table>
+    <tr><th>Artifact</th><th>Location</th><th>Shared</th><th>Role</th></tr>
+    <tr><td>Decisions</td><td><code>docs/adr/</code> + <code>.agent/DECISIONS.md</code></td><td class="yes">Yes (docs/)</td><td>the "why"</td></tr>
+    <tr><td>Roadmap (canonical)</td><td><code>docs/ROADMAP.md</code></td><td class="yes">Yes</td><td>the "what's next"</td></tr>
+    <tr><td>Roadmap (human view)</td><td><code>docs/roadmap.html</code></td><td class="yes">Yes</td><td>clickable, generated from ROADMAP.md</td></tr>
+    <tr><td>This process</td><td><code>docs/roadmap-process.html</code> / <code>.md</code></td><td class="yes">Yes</td><td>the "how"</td></tr>
+    <tr><td>Tracking</td><td>GitHub issues</td><td class="yes">Yes</td><td>completion record</td></tr>
+    <tr><td>Local agent queue</td><td><code>.agent/*</code> (symlinks &rarr; docs/)</td><td class="no">No &mdash; per-clone</td><td>local MAF scaffolding</td></tr>
+  </table>
+
+</main>
+<footer>Markdown source: <code>docs/ROADMAP_PROCESS.md</code> &middot; roadmap: <code>docs/ROADMAP.md</code> &rarr; <a href="./roadmap.html">roadmap.html</a></footer>
+</body>
+</html>

@@ -1,0 +1,58 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bnk-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bnk-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bnk-operator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Prometheus scraping on health port
+    - ports:
+        - port: {{ .Values.healthPort }}
+          protocol: TCP
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow K8s API access
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Allow outbound to BNK-Forge control plane (HTTPS/WSS)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+    # Allow Helm OCI registry (repo.f5.com)
+    - ports:
+        - port: 443
+          protocol: TCP
+    {{- if .Values.llmMetrics.enabled }}
+    # Allow direct pod-IP scrape for in-cluster LLM metrics collection.
+    # The operator scrapes vLLM /metrics directly at pod-IP; NetworkPolicy
+    # blocks this unless at least one metrics port is opened here.
+    # Extend networkPolicy.additionalEgress for non-standard port ranges.
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9100
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.additionalEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

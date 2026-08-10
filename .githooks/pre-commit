@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# BNK-Forge v2 — Pre-commit hook
+# Runs lint only on changed files (~5-10s)
+# Also validates alembic migration chain when migration files are staged
+# Install: git config core.hooksPath .githooks   (or: make setup-hooks)
+set -e
+
+# ─── Migration chain check ────────────────────────────────────────────────────
+if git diff --cached --name-only | grep -q 'backend/alembic/versions/'; then
+    echo "=== Migration chain check (pre-commit) ==="
+    python3 scripts/check-migrations.py
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "COMMIT BLOCKED: Fix migration chain errors above before committing."
+        echo "Run 'python3 scripts/check-migrations.py' for details."
+        exit 1
+    fi
+fi
+
+echo "=== Pre-commit: Linting ==="
+
+# Backend lint (ruff) — only if backend files changed
+if git diff --cached --name-only | grep -q "^backend/"; then
+  echo "  Backend files changed — running ruff..."
+  cd backend && source .venv/bin/activate && python -m ruff check . --config pyproject.toml
+  cd ..
+fi
+
+# Frontend lint (eslint) — only if frontend files changed
+if git diff --cached --name-only | grep -q "^frontend-v2/"; then
+  echo "  Frontend files changed — running eslint..."
+  cd frontend-v2 && npm run lint 2>&1 | grep -E "error|✖" | head -5
+  # eslint exits 0 for warnings-only, non-zero for errors
+fi
+
+# Operator lint — only if operator files changed
+if git diff --cached --name-only | grep -q "^bnk-operator/"; then
+  if [ -d "bnk-operator/.venv" ]; then
+    echo "  Operator files changed — running ruff..."
+    cd bnk-operator && source .venv/bin/activate && python -m ruff check . 2>/dev/null || true
+    cd ..
+  fi
+fi
+
+echo "=== Lint passed ==="

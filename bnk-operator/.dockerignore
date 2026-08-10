@@ -1,0 +1,57 @@
+# Slice E / #300: reduce build context, keep secrets out of image.
+# bnk-operator/Dockerfile COPYs:
+#   test stage:    requirements.txt, requirements-dev.txt
+#   runtime stage: requirements.txt, *.py
+# Keep: requirements*.txt, *.py, charts/ (referenced by Helm installs at runtime).
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Tests (not baked into runtime image)
+tests/
+
+# Build scripts (not needed in image)
+build.sh
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Docker files (avoid recursive context)
+Dockerfile

@@ -1,0 +1,369 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "bnk-bare-metal-full-poc",
+    "version": "1.0.0",
+    "name": "DPU + BNK 2.2 Full PoC (All-in-One)",
+    "description": "End-to-end: DPU flash \u2192 K8s cluster \u2192 BNK 2.2 platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately."
+  },
+  "category": "bare-metal",
+  "cloud_provider": null,
+  "icon": "cpu",
+  "color": "orange",
+  "estimated_time": "30-45 minutes",
+  "estimated_cost": "N/A (bare-metal)",
+  "difficulty": "advanced",
+  "maturity": "alpha",
+  "bnk_version": "2.2",
+  "tags": [
+    "bare-metal",
+    "dpu",
+    "bluefield",
+    "bnk",
+    "on-prem"
+  ],
+  "outcomes": [
+    "BlueField DPU flashed with target DOCA version",
+    "Single-node K8s cluster on bare-metal host",
+    "DPU joined as worker node with TMM labels/taints",
+    "F5 BNK platform deployed (FLO + CNEInstance + networking)"
+  ],
+  "prerequisites": [
+    {
+      "type": "bare_metal_host",
+      "description": "Registered bare-metal host with SSH access and BlueField DPU"
+    },
+    {
+      "type": "project_secret",
+      "description": "F5 license JWT token from MyF5 (injected into bnk/flo for connected licensing)",
+      "name": "jwt_token"
+    },
+    {
+      "type": "project_secret",
+      "description": "Base64-encoded F5 FAR service account key JSON content (injected into k8s/bnk-prerequisites). Falls back to encrypted System Default if not set in project.",
+      "name": "cne_pull_secret"
+    }
+  ],
+  "variable_templates": {
+    "bare_metal_host_id": {
+      "label": "Bare-Metal Host",
+      "type": "number",
+      "required": true,
+      "description": "Registered bare-metal host ID"
+    },
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "required": true,
+      "description": "Name for the K8s cluster"
+    },
+    "jwt_token": {
+      "label": "F5 License JWT",
+      "type": "string",
+      "required": false,
+      "sensitive": true,
+      "description": "F5 license JWT for connected licensing"
+    },
+    "external_selfip": {
+      "label": "TMM External Self-IP (CIDR)",
+      "type": "string",
+      "required": false,
+      "description": "Self-IP for TMM on the external (client-facing) network in CIDR notation (e.g., 10.0.10.240/24)",
+      "placeholder": "10.0.10.240/24"
+    },
+    "internal_selfip": {
+      "label": "TMM Internal Self-IP (CIDR)",
+      "type": "string",
+      "required": false,
+      "description": "Self-IP for TMM on the internal (server-facing) network in CIDR notation (e.g., 10.0.20.240/24)",
+      "placeholder": "10.0.20.240/24"
+    },
+    "runc_version": {
+      "label": "Runc Version",
+      "type": "string",
+      "default": "1.2.1",
+      "required": false,
+      "description": "Runc version to install on DPU"
+    },
+    "containerd_version": {
+      "label": "Containerd Version",
+      "type": "string",
+      "default": "1.7.23",
+      "required": false,
+      "description": "Containerd version to install on DPU"
+    },
+    "k8s_version": {
+      "label": "Kubernetes Version",
+      "type": "string",
+      "default": "1.29",
+      "required": false,
+      "description": "Kubernetes version (major.minor) for kubeadm/kubelet/kubectl"
+    },
+    "pause_image_tag": {
+      "label": "Pause Image Tag",
+      "type": "string",
+      "default": "3.10",
+      "required": false,
+      "description": "K8s pause container image tag"
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "bare-metal-probe-dpu",
+      "module": "bare-metal/probe-dpu",
+      "version": "2.0.0",
+      "name": "Probe DPU State",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-set-nic-mode",
+      "module": "bare-metal/set-nic-mode",
+      "version": "1.0.0",
+      "name": "Set NIC Mode (mlxconfig)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Set BlueField to DPU mode via mlxconfig. Idempotent \u2014 safe to run even if already in DPU mode."
+    },
+    {
+      "id": "bare-metal-reboot-host",
+      "module": "bare-metal/reboot-host",
+      "version": "1.0.0",
+      "name": "Reboot Host (if needed)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-flash-dpu",
+      "module": "bare-metal/flash-dpu",
+      "version": "1.0.0",
+      "name": "Flash DPU (BFB)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-wait-dpu-ready",
+      "module": "bare-metal/wait-dpu-ready",
+      "version": "1.0.0",
+      "name": "Wait DPU Ready",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-setup-dpu-networking",
+      "module": "bare-metal/setup-dpu-networking",
+      "version": "1.0.0",
+      "name": "Setup DPU Networking",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Configure NAT on host and routing/DNS on DPU for internet access"
+    },
+    {
+      "id": "bare-metal-install-dpu-prereqs",
+      "module": "bare-metal/install-dpu-prereqs",
+      "version": "1.0.0",
+      "name": "Install DPU Prerequisites",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-k8s-prereqs",
+      "module": "bare-metal/install-k8s-prereqs",
+      "version": "1.0.0",
+      "name": "Install K8s Prerequisites",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-kubeadm-init",
+      "module": "bare-metal/kubeadm-init",
+      "version": "1.0.0",
+      "name": "Initialize K8s Cluster",
+      "inputs": {
+        "cluster_name": "",
+        "pod_cidr": "10.244.0.0/16",
+        "service_cidr": "10.96.0.0/12"
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-cni",
+      "module": "bare-metal/install-cni",
+      "version": "1.0.0",
+      "name": "Install Calico CNI",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-multus",
+      "module": "bare-metal/install-multus",
+      "version": "1.0.0",
+      "name": "Install Multus CNI",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-gateway-api",
+      "module": "bare-metal/install-gateway-api",
+      "version": "1.0.0",
+      "name": "Install Gateway API",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-sriov",
+      "module": "bare-metal/install-sriov",
+      "version": "2.0.0",
+      "name": "Install SR-IOV Operator",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-storage",
+      "module": "bare-metal/install-storage",
+      "version": "1.0.0",
+      "name": "Install Storage Provisioner",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-kubeadm-join",
+      "module": "bare-metal/kubeadm-join",
+      "version": "1.0.0",
+      "name": "Join DPU to Cluster",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-label-dpu-node",
+      "module": "bare-metal/label-dpu-node",
+      "version": "1.0.0",
+      "name": "Label DPU Node",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-taint-dpu-node",
+      "module": "bare-metal/taint-dpu-node",
+      "version": "1.0.0",
+      "name": "Taint DPU Node",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "k8s-bnk-prerequisites",
+      "module": "k8s/bnk-prerequisites",
+      "version": "1.0.0",
+      "name": "BNK Prerequisites",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "k8s-network-setup",
+      "module": "k8s/network-setup",
+      "version": "2.0.0",
+      "name": "Network Setup (NADs)",
+      "inputs": {
+        "cni_type": "sf",
+        "namespace": "f5-bnk",
+        "external_resource_name": "nvidia.com/bf3_p0_sf",
+        "internal_resource_name": "nvidia.com/bf3_p1_sf",
+        "external_nad_name": "sf-external",
+        "internal_nad_name": "sf-internal"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Creates Multus NADs for TMM data-plane interfaces (DPU SF mode)"
+    },
+    {
+      "id": "k8s-cert-manager",
+      "module": "k8s/cert-manager",
+      "version": "3.1.0",
+      "name": "cert-manager",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "k8s-bnk-cert-issuer",
+      "module": "k8s/bnk-cert-issuer",
+      "version": "1.0.0",
+      "name": "BNK Cert Issuer",
+      "inputs": {
+        "namespace": "cert-manager",
+        "self_signed_cluster_issuer_name": "bnk-selfsigned-cluster-issuer",
+        "ca_certificate_name": "bnk-ca",
+        "ca_secret_name": "bnk-ca-secret",
+        "cluster_issuer_name": "bnk-ca-cluster-issuer"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Creates cert-manager issuer chain (self-signed ClusterIssuer, BNK CA, bnk-ca-cluster-issuer)"
+    },
+    {
+      "id": "bnk-flo",
+      "module": "bnk/flo",
+      "version": "2.0.0",
+      "name": "F5 Lifecycle Operator (FLO)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bnk-cneinstance",
+      "module": "bnk/cneinstance",
+      "version": "2.0.0",
+      "name": "BNK CNEInstance",
+      "inputs": {
+        "dpu_enabled": true,
+        "external_nad_name": "sf-external",
+        "internal_nad_name": "sf-internal",
+        "deployment_size": "Large",
+        "instance_namespace": "f5-bnk"
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bnk-bnk-vlans",
+      "module": "bnk/bnk-vlans",
+      "version": "1.0.0",
+      "name": "BNK VLANs",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bnk-bnk-gatewayclass",
+      "module": "bnk/bnk-gatewayclass",
+      "version": "2.1.0",
+      "name": "BNK GatewayClass",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    }
+  ],
+  "is_featured": false
+}

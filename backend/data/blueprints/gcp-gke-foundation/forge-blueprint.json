@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "gcp-gke-foundation",
+    "version": "1.0.0",
+    "name": "GCP GKE Cluster",
+    "description": "Provisions a GCP GKE cluster with VPC-native networking and a default node pool for BNK deployment. Configurable region, machine type, and node count."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "gcp",
+  "icon": "cloud",
+  "color": "#4285F4",
+  "estimated_time": "10-15 minutes",
+  "estimated_cost": "Pay-as-you-go (GCP compute)",
+  "difficulty": "intermediate",
+  "maturity": "alpha",
+  "bnk_version": null,
+  "tags": [
+    "gcp",
+    "gke",
+    "cloud",
+    "infrastructure"
+  ],
+  "outcomes": [
+    "GCP GKE cluster with VPC-native networking",
+    "Default node pool with configurable machine type",
+    "Kubeconfig ready for BNK module deployment"
+  ],
+  "prerequisites": [
+    {
+      "type": "cloud_credentials",
+      "description": "GCP credentials with permissions to create GKE clusters"
+    }
+  ],
+  "variable_templates": {
+    "project_id": {
+      "label": "GCP Project ID",
+      "type": "string",
+      "required": true,
+      "placeholder": "my-gcp-project"
+    },
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "required": true
+    },
+    "region": {
+      "label": "GCP Region",
+      "type": "string",
+      "required": true,
+      "placeholder": "us-central1"
+    },
+    "node_count": {
+      "label": "Node Count",
+      "type": "number",
+      "default": 2,
+      "required": false
+    },
+    "machine_type": {
+      "label": "Machine Type",
+      "type": "string",
+      "default": "e2-standard-4",
+      "required": false
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "infra-gcp-gke",
+      "module": "infra/gcp/gke",
+      "version": "1.0.0",
+      "name": "GKE Cluster",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Provisions GCP GKE cluster with a default node pool"
+    }
+  ],
+  "is_featured": false
+}

@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "Network Attachment Definitions",
+    "path": "k8s/network-setup",
+    "version": "2.0.0",
+    "category": "k8s",
+    "description": "Creates Multus NetworkAttachmentDefinitions for TMM external and internal data-plane networks."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "manifest_path": "manifests/"
+    }
+  },
+  "dependencies": {
+    "required": [
+      {
+        "module": "k8s/bnk-prerequisites",
+        "reason": "NADs deployed to operator namespace created by prerequisites"
+      }
+    ],
+    "optional": []
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "namespace",
+        "type": "string",
+        "description": "Namespace for NADs (must match CNEInstance namespace)",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "operator_namespace",
+        "default": "f5-operator"
+      },
+      {
+        "name": "external_subnet_cidrs",
+        "type": "list(string)",
+        "description": "External subnet CIDRs for IPAM ranges",
+        "source": "module",
+        "from_module": "infra/aws/vpc",
+        "from_output": "private_external_subnet_cidrs",
+        "default": [
+          "10.0.10.0/24",
+          "10.0.11.0/24"
+        ]
+      },
+      {
+        "name": "internal_subnet_cidrs",
+        "type": "list(string)",
+        "description": "Internal subnet CIDRs for IPAM ranges",
+        "source": "module",
+        "from_module": "infra/aws/vpc",
+        "from_output": "private_internal_subnet_cidrs",
+        "default": [
+          "10.0.20.0/24",
+          "10.0.21.0/24"
+        ]
+      }
+    ],
+    "optional": [
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Name of the Kubernetes cluster",
+        "default": "",
+        "source": "auto"
+      },
+      {
+        "name": "tmm_data_plane_mode",
+        "type": "string",
+        "description": "TMM data-plane mode: 'kernel' (default, host-device CNI) or 'sriov' (legacy DPDK/vfio-pci). Must match infra/aws/high-performance-nodes.tmm_data_plane_mode and bnk/cneinstance.tmm_data_plane_mode.",
+        "default": "kernel",
+        "source": "user"
+      },
+      {
+        "name": "external_pci_bus_id",
+        "type": "string",
+        "description": "(kernel mode) PCI bus ID of the external SR-IOV ENI (device 2 by default per high-performance-nodes module).",
+        "default": "0000:00:07.0",
+        "source": "user"
+      },
+      {
+        "name": "internal_pci_bus_id",
+        "type": "string",
+        "description": "(kernel mode) PCI bus ID of the internal SR-IOV ENI (device 1 by default per high-performance-nodes module).",
+        "default": "0000:00:08.0",
+        "source": "user"
+      },
+      {
+        "name": "cni_type",
+        "type": "string",
+        "description": "(sriov mode only) CNI plugin type — 'host-device' (kernel mode default) or 'sriov'/'vfio' (legacy)",
+        "default": "host-device",
+        "source": "user"
+      },
+      {
+        "name": "external_resource_name",
+        "type": "string",
+        "description": "(sriov mode only) SR-IOV device plugin resource name for external network",
+        "default": "intel.com/external_netdevice",
+        "source": "user"
+      },
+      {
+        "name": "internal_resource_name",
+        "type": "string",
+        "description": "(sriov mode only) SR-IOV device plugin resource name for internal network",
+        "default": "intel.com/internal_netdevice",
+        "source": "user"
+      },
+      {
+        "name": "external_nad_name",
+        "type": "string",
+        "description": "Name for external NAD (default: external-netdevice, DPU: sf-external)",
+        "default": "external-netdevice",
+        "source": "user"
+      },
+      {
+        "name": "internal_nad_name",
+        "type": "string",
+        "description": "Name for internal NAD (default: internal-netdevice, DPU: sf-internal)",
+        "default": "internal-netdevice",
+        "source": "user"
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "external_nad_name",
+        "type": "string",
+        "description": "Name of external NAD",
+        "value": "${external_nad_name}",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "internal_nad_name",
+        "type": "string",
+        "description": "Name of internal NAD",
+        "value": "${internal_nad_name}",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "nads_ready",
+        "type": "boolean",
+        "description": "Flag indicating NADs are ready",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "tmm_data_plane_mode",
+        "type": "string",
+        "description": "TMM data-plane mode this module deployed (kernel|sriov). Wire to bnk/cneinstance.tmm_data_plane_mode for consistency.",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "external_pci_bus_id",
+        "type": "string",
+        "description": "PCI bus ID of the external ENI (e.g. 0000:00:07.0). Wire to bnk/cneinstance.external_pci_bus_id.",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "internal_pci_bus_id",
+        "type": "string",
+        "description": "PCI bus ID of the internal ENI (e.g. 0000:00:08.0). Wire to bnk/cneinstance.internal_pci_bus_id.",
+        "used_by": [
+          "bnk/cneinstance"
+        ],
+        "sensitive": false
+      }
+    ]
+  }
+}

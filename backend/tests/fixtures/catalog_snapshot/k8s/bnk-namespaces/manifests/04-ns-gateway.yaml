@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${gateway_namespace}
+  labels:
+    app.kubernetes.io/name: ${gateway_namespace}
+    app.kubernetes.io/component: gateway-api
+    app.kubernetes.io/managed-by: bnk-forge
+    f5.com/product: bnk
+  annotations:
+    description: Namespace for Gateway API resources

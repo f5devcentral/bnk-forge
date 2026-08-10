@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BNK Forge — E2E Testing Personas &amp; Workflows</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --surface: #1a2129;
+    --surface-2: #222b35;
+    --border: #2e3a47;
+    --text: #e6edf3;
+    --muted: #9aa7b4;
+    --accent: #e8313a;        /* F5 red */
+    --day0: #4f8cff;          /* build */
+    --day2-traffic: #9b6cff;  /* traffic */
+    --day2-ops: #2bb673;      /* operate */
+    --validate: #f0a73a;      /* validate */
+    --govern: #e8636f;        /* govern */
+    --dpu: #6b7785;           /* honorable mention */
+    --good: #2bb673;
+    --warn: #f0a73a;
+    --bad: #e8636f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--border); padding-bottom: 28px; margin-bottom: 36px;
+  }
+  .kicker { color: var(--accent); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+  h1 { font-size: 34px; margin: 8px 0 12px; line-height: 1.15; }
+  h2 { font-size: 24px; margin: 48px 0 16px; padding-top: 8px; }
+  .lede { color: var(--muted); max-width: 760px; }
+  a { color: var(--day0); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 8px; }
+  .chip { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; color: #0f1419; }
+
+  table.summary { width: 100%; border-collapse: collapse; margin: 16px 0 8px; font-size: 14px; }
+  table.summary th, table.summary td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.summary th { color: var(--muted); font-weight: 600; }
+  table.summary td.persona { white-space: nowrap; font-weight: 600; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 26px 28px; margin: 26px 0; border-left: 5px solid var(--border); position: relative;
+  }
+  .card .num {
+    position: absolute; top: 22px; right: 26px; font-size: 42px; font-weight: 800;
+    color: var(--surface-2); line-height: 1;
+  }
+  .card h3 { font-size: 21px; margin: 0 0 4px; }
+  .card .stage { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .card .jtbd {
+    margin: 14px 0; padding: 12px 16px; background: var(--surface-2); border-radius: 8px;
+    font-style: italic; color: var(--text); border-left: 3px solid currentColor;
+  }
+  .card .meta { color: var(--muted); font-size: 14px; margin: 6px 0; }
+  .card .meta b { color: var(--text); }
+
+  .section-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin: 18px 0 8px; }
+  .gp { color: var(--good); }
+  .rp { color: var(--warn); }
+  .ix { color: var(--day0); }
+  .ws { color: var(--bad); }
+
+  ol.steps { margin: 0 0 4px; padding-left: 22px; }
+  ol.steps li { margin: 5px 0; }
+  ul.probes { margin: 0; padding-left: 22px; }
+  ul.probes li { margin: 6px 0; }
+  .surf { color: var(--accent); font-weight: 600; }
+  code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 13px; color: #d6e1ec; }
+  .weakspots { font-size: 14px; color: var(--muted); margin-top: 8px; }
+
+  .ops {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 26px 28px; margin-top: 28px;
+  }
+  .tier { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; }
+  .tier > div { flex: 1 1 320px; background: var(--surface-2); border-radius: 10px; padding: 16px 18px; }
+  .tier h4 { margin: 0 0 6px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px; }
+
+  /* color accents per card */
+  .c-day0 { border-left-color: var(--day0); } .c-day0 .stage, .c-day0 .jtbd { color: var(--day0); }
+  .c-traffic { border-left-color: var(--day2-traffic); } .c-traffic .stage, .c-traffic .jtbd { color: var(--day2-traffic); }
+  .c-ops { border-left-color: var(--day2-ops); } .c-ops .stage, .c-ops .jtbd { color: var(--day2-ops); }
+  .c-validate { border-left-color: var(--validate); } .c-validate .stage, .c-validate .jtbd { color: var(--validate); }
+  .c-govern { border-left-color: var(--govern); } .c-govern .stage, .c-govern .jtbd { color: var(--govern); }
+  .c-dpu { border-left-color: var(--dpu); } .c-dpu .stage, .c-dpu .jtbd { color: var(--dpu); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="kicker">BNK Forge · Quality</div>
+    <h1>E2E Testing Personas &amp; Workflows</h1>
+    <p class="lede">Six personas that drive end-to-end testing of BNK Forge. Each owns one stage of the
+      <b>Day‑0 → Day‑1 → Day‑2</b> lifecycle for F5 BIG‑IP Next for Kubernetes — and one isn't human at all:
+      an <b>AI agent</b> driving Forge through MCP/API. Each has a <b>golden path</b> (happy-path smoke test) and
+      <b>rough-edge probes</b> (negative paths that surface the bugs real users hit). Grounded in the 461-feature
+      audit, the 150-tool MCP catalog, the real app navigation, and the existing <code>scripts/e2e/</code> harness.</p>
+    <p class="lede" style="margin-top:12px"><b>Real humans don't move in a straight line.</b> Golden paths here are not a single
+      forward march — they include what people actually do mid-flow: hit <b>Cancel</b>, <b>refresh</b>, click browser <b>Back/Forward</b>,
+      <b>navigate away and come back</b>, open a <b>second tab</b>, <b>bookmark/deep-link</b> a screen, double-click a button, or let a session
+      <b>idle out</b>. Each persona weaves in the relevant ones, and the shared <a href="#xcut">cross-cutting interaction probes</a> apply to all.</p>
+    <div class="legend">
+      <span class="chip" style="background:var(--day0)">Day‑0/1 · Build (cloud + on-prem)</span>
+      <span class="chip" style="background:var(--day2-traffic)">Day‑2 · Traffic</span>
+      <span class="chip" style="background:var(--day2-ops)">Day‑2 · Operate</span>
+      <span class="chip" style="background:var(--validate)">Validate</span>
+      <span class="chip" style="background:var(--govern)">Govern</span>
+      <span class="chip" style="background:var(--dpu)">AI Agent · MCP/API</span>
+    </div>
+  </header>
+
+  <p class="lede">The friction real users feel clusters around the <b>handoffs between roles</b> — the infra person
+    hands a running cluster to the network person, who hands traffic config to ops. Each persona owns one stage,
+    and the seams between them are where bugs hide. Known weak spots from the audit (23 <code>Blocked</code>,
+    2 <code>Error</code>, 1 <code>Partial</code>) are tagged against the persona that trips on them.</p>
+
+  <table class="summary">
+    <thead><tr><th>#</th><th>Persona</th><th>Stage</th><th>Primary surfaces</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td class="persona">Priya (cloud) + Raj (on-prem) — Infra Builders</td><td>Day‑0/1 build</td><td>Auth/SSH Templates, Cloud Credentials, Catalog, Stacks, Projects, Orchestration, Licensing · DPU/BlueField, Bare-Metal Hosts, SSH engine</td></tr>
+      <tr><td>2</td><td class="persona">Marcus — NetOps / ADC Engineer</td><td>Day‑2 traffic</td><td>F5 BNK, CNF, Discovery, Proxy/CIS migration, Connectivity</td></tr>
+      <tr><td>3</td><td class="persona">Sofia — SRE / Operations</td><td>Day‑2 operate</td><td>Dashboard, Fleet, Operators, Alerts, Drift, BNK Upgrade, Tasks, Snapshots/Backup/QKView</td></tr>
+      <tr><td>4</td><td class="persona">Dev/QA — Perf &amp; Validation</td><td>validate</td><td>Benchmarks (Targets/Agents/Configs/Runs/Compare)</td></tr>
+      <tr><td>5</td><td class="persona">Aisha — Platform Admin / Lead</td><td>govern</td><td>Users, Credential Templates, Module Sources/Registry, Config Promotion, Audit, MCP</td></tr>
+      <tr><td>6</td><td class="persona">Atlas — Autonomous AI Agent</td><td>drive (headless)</td><td>MCP server (150 tools), REST API, <code>mcp</code> service account — spans every surface, no UI</td></tr>
+    </tbody>
+  </table>
+
+  <!-- PERSONA 1 -->
+  <section class="card c-day0">
+    <div class="num">01</div>
+    <div class="stage">Day‑0/Day‑1 · Infrastructure Builders</div>
+    <h3>Priya &amp; Raj — Infrastructure Builders (cloud / on-prem)</h3>
+    <p class="meta"><b>One role, two environments.</b> Priya stands infra up in the <b>cloud</b>; Raj stands it up
+      <b>on-prem</b> (DPU / bare-metal). Same job, same handoff: both produce a <b>running, licensed BNK cluster they
+      then hand off</b> to the Day‑2 personas (Marcus for traffic, Sofia for ops). Testing them together keeps the
+      cloud (Terraform/OpenTofu) engine path and the on-prem (SSH) engine path honest <em>against the same downstream
+      contract</em> — whatever they hand off must look identical to operate against.</p>
+    <div class="jtbd">"Give me a working, licensed BNK cluster — from a blueprint in my cloud, or over SSH on my own hardware — without hand-wiring it, and hand it off clean."</div>
+
+    <p class="meta" style="margin-top:18px"><b>1a · Priya — Cloud.</b> Fresh AWS account (SSO), no clusters yet. First-time-user energy, evaluating whether Forge beats her own scripts.</p>
+    <div class="section-label gp">✓ Golden path (cloud) — primary smoke test</div>
+    <ol class="steps">
+      <li>Login → <span class="surf">Auth Templates</span>: create AWS Credential Template, mark default.</li>
+      <li><span class="surf">Cloud Credentials</span>: SSO device-code login → acquire temp creds → account/region appear.</li>
+      <li><span class="surf">Catalog → Blueprints</span> (or <span class="surf">Stacks</span>): pick EKS+BNK blueprint, read modules.</li>
+      <li><span class="surf">Projects → Create</span>: instantiate blueprint; fill vars + secrets; resolve <code>missing:</code> modules.</li>
+      <li><span class="surf">Deploy-all</span>: <span class="surf">Orchestration</span> chain advances (eks-create → cneinstall → ready-gate → license-gate).</li>
+      <li><span class="surf">Licensing</span>: License CR activates → BNK <b>Active</b>.</li>
+      <li><b>Handoff</b> to Marcus/Sofia; later teardown → <b>orphan-free</b> (reverse-DAG destroy).</li>
+    </ol>
+    <div class="section-label rp">⚡ Probes (cloud)</div>
+    <ul class="probes">
+      <li>Missing required variable → UI blocks clearly, not a mid-chain failure.</li>
+      <li>AWS creds expire mid-deploy → friendly 401 + stale-badge clears, not a 500 wall <em>(regression-guard)</em>.</li>
+      <li>Module fails then retries → chain keeps auto-advancing? <em>(D‑031 #320)</em></li>
+      <li>AKS/GKE instead of EKS → documents the token-injection gap (#218).</li>
+      <li>Destroy halts at FLO on a stale token → force-destroy / fail-soft works.</li>
+    </ul>
+
+    <p class="meta" style="margin-top:18px"><b>1b · Raj — On-Prem / DPU &amp; Bare-Metal.</b> Owns physical hosts + BlueField DPUs in his own DC. No cloud console — SSH + PXE/BFB images. DPU is the <b>largest single surface (33 features)</b> and least-mature; exercises the <b>SSH engine</b>, not Terraform.</p>
+    <div class="section-label gp">✓ Golden path (on-prem)</div>
+    <ol class="steps">
+      <li><span class="surf">SSH Credentials</span>: register jumphost + key (auto-bootstrap), Test connection, probe kubeconfig over SSH.</li>
+      <li><span class="surf">Infrastructure → Bare-Metal Hosts</span>: register host; <span class="surf">BlueField Images</span>: upload/select a BFB.</li>
+      <li><span class="surf">Catalog</span>: pick the SSH/DPU BNK blueprint; resolve bare-metal version profile.</li>
+      <li><span class="surf">Projects → Create + Deploy</span>: SSH-deploy BNK layer (scaffolding → manifest/helm → cneinstance → VLANs/gatewayclass).</li>
+      <li><span class="surf">Licensing</span>: BNK <b>Active</b> on the DPU.</li>
+      <li><b>Handoff</b> to Day‑2; destroy cleanly (e2e on dpu-server).</li>
+    </ol>
+    <div class="section-label rp">⚡ Probes (on-prem)</div>
+    <ul class="probes">
+      <li>SSH connection test / key bootstrap on wrong port/host → clear error (these are <code>Blocked</code> audit items).</li>
+      <li>Probe kubeconfig via SSH against a host with no cluster → graceful, no hang.</li>
+      <li>SSH command mid-deploy drops connection → retried/resumed, not silently stuck.</li>
+      <li><b>Handoff contract matches Priya's</b> — a cluster Sofia operates looks the same whether built in cloud or on-prem.</li>
+    </ul>
+
+    <div class="section-label ix">↺ Interaction (non-linear) — the deploy is long, nobody just watches</div>
+    <ul class="probes">
+      <li><b>Refresh the browser mid-deploy</b> → Orchestration progress resumes live, not lost / not stuck "pending".</li>
+      <li><b>Navigate away to Dashboard and back</b> → progress still there and accurate.</li>
+      <li><b>Cancel a deploy in flight</b> → it stops and leaves no orphaned cloud resources / no half-locked modules.</li>
+      <li><b>Cancel the Create-Project wizard halfway</b> → no partial project / orphaned vars.</li>
+      <li><b>Browser Back out of the variable form</b> → re-entry preserves values (or warns), doesn't silently drop them.</li>
+      <li><b>Double-click Deploy-all</b> → exactly one deploy starts (idempotent submit).</li>
+      <li><b>Deep-link / refresh on <code>/projects/:id/:section</code></b> → loads directly, no SPA 404.</li>
+      <li><i>On-prem:</i> cancel a Test-connection / BFB upload → no stuck spinner, no half-uploaded image; refresh during SSH deploy resumes step progress.</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> Cloud Credentials SSO/IAM (Blocked); Deploy Module full chain + OpenTofu Apply (Error); all 7 Licensing (Blocked); SSH test/bootstrap/command/probe (Blocked); SSH-BNK-layer ports in progress (#204/#205/#210).</p>
+  </section>
+
+  <!-- PERSONA 2 -->
+  <section class="card c-traffic">
+    <div class="num">02</div>
+    <div class="stage">Day‑2 · Traffic</div>
+    <h3>Marcus — NetOps / Application Delivery Engineer</h3>
+    <p class="meta"><b>Profile.</b> Owns north-south traffic. Knows F5 classic (TMOS/AS3), VIPs, iRules, CIS. Inherits Priya's
+      running cluster and must make it serve traffic — and migrate the existing F5 estate onto BNK.</p>
+    <p class="meta"><b>Environment.</b> Licensed BNK cluster + an existing classic BIG-IP and/or CIS-managed Ingress.</p>
+    <div class="jtbd">"Configure CNFs/gateways on BNK, and migrate my existing proxies/CIS config onto it without rebuilding by hand."</div>
+
+    <div class="section-label gp">✓ Golden path</div>
+    <ol class="steps">
+      <li><span class="surf">F5 BNK</span>: view licensed instance, health, version.</li>
+      <li><span class="surf">CNF</span> (CRD dashboard): browse live CRs; inspect GatewayClass / VLAN / listener.</li>
+      <li><span class="surf">Discovery</span>: point at existing classic BIG-IP / CIS → inventory VIPs, AS3, Ingress.</li>
+      <li><span class="surf">Migrate</span> (D‑021/D‑023): classify objects (migratable / BNK-native / unsupported) → generate BNK CRs → review diff.</li>
+      <li>Apply config → CRs reconcile, traffic path comes up.</li>
+      <li><span class="surf">Connectivity</span>: verify data-plane end-to-end.</li>
+    </ol>
+
+    <div class="section-label rp">⚡ Rough-edge probes</div>
+    <ul class="probes">
+      <li>CRD write path ("CRD Wizard", D‑018 P3) Blocked on authz/audit → writes gated, not silently dropped.</li>
+      <li>CIS IngressClass kind-aware classify (#295) → edge cases (IngressLink, OpenShift Route, ConfigMap AS3) land in the right bucket.</li>
+      <li>Discovery against unreachable / wrong-cred device → clear error vs hang.</li>
+      <li>Migrate an unsupported object type → warns, doesn't emit a broken CR.</li>
+    </ul>
+    <div class="section-label ix">↺ Interaction (non-linear)</div>
+    <ul class="probes">
+      <li><b>Refresh the CNF/CRD dashboard</b> → live CR list reloads from the cluster, not a stale snapshot.</li>
+      <li><b>Cancel a discovery scan</b> in flight → stops; partial results discarded or clearly marked partial.</li>
+      <li><b>Back out of the migration review/diff</b> → returns to classification without losing the generated plan.</li>
+      <li><b>Change screens (BNK → CNF → Discovery) and back</b> → each view re-orients; no leftover selection.</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> CNF write path (Blocked); AS3/CIS coverage edges; SSH Connection/Command (Blocked).</p>
+  </section>
+
+  <!-- PERSONA 3 -->
+  <section class="card c-ops">
+    <div class="num">03</div>
+    <div class="stage">Day‑2 · Operate (on-call)</div>
+    <h3>Sofia — SRE / Platform Operations</h3>
+    <p class="meta"><b>Profile.</b> Owns fleet health at 3am. Doesn't deploy new things; she watches, upgrades, recovers.
+      Judges the product by how fast it tells her what's wrong and what to do.</p>
+    <p class="meta"><b>Environment.</b> Several running projects/clusters across clouds.</p>
+    <div class="jtbd">"Tell me what's drifting or unhealthy, let me upgrade safely, and let me recover a failed module without nuking the cluster."</div>
+
+    <div class="section-label gp">✓ Golden path</div>
+    <ol class="steps">
+      <li><span class="surf">Dashboard</span>: scan fleet health, recent deploys, alerts.</li>
+      <li><span class="surf">Fleet</span> → cluster + <span class="surf">Operators</span> tab → health.</li>
+      <li><span class="surf">Alerts</span>: configure Slack/webhook → Test → confirm delivery + history.</li>
+      <li><span class="surf">Drift</span>: detect drift → review → reconcile.</li>
+      <li><span class="surf">BNK Upgrade</span>: plan (registry-driven GA) → run → handle supersede/cancel.</li>
+      <li><span class="surf">Tasks / Orchestration</span>: open failed task → logs → retry just that module.</li>
+      <li><span class="surf">Snapshots / Backup / QKView</span>: snapshot before upgrade; pull QKView for support.</li>
+    </ol>
+
+    <div class="section-label rp">⚡ Rough-edge probes</div>
+    <ul class="probes">
+      <li>Upgrade with undecodable FLO secret → graceful handling (#284), not a crash.</li>
+      <li>Two upgrades on same entity → supersede / 409 behaves.</li>
+      <li>Alembic schema drift at deploy (#161) → fails loud, doesn't silently corrupt.</li>
+      <li>Dead webhook URL → failure recorded + rate-limited, not retried into oblivion.</li>
+      <li>Notifications stay bell-only / zero-toast (D‑027).</li>
+      <li>Retry a mid-chain failure → event-chain resumes.</li>
+    </ul>
+    <div class="section-label ix">↺ Interaction (non-linear) — on-call, jumping between screens fast</div>
+    <ul class="probes">
+      <li><b>Cancel an upgrade in flight</b> → stops safely; supersede/cancel UX is honest about final state (#284).</li>
+      <li><b>Refresh during drift reconcile</b> → progress preserved, doesn't double-apply.</li>
+      <li><b>Navigate away from a running task and back</b> → live logs/status reconnect, not frozen.</li>
+      <li><b>Two tabs on the same project / alert channel</b> → edits don't clobber; conflict surfaces.</li>
+      <li><b>Bell notification deep-links</b> to the right entity even after refresh / on a fresh session.</li>
+      <li><b>Session idles out</b> while reading the dashboard → next action re-auths gracefully (no data loss, no white screen).</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> Licensing renew/switch (Blocked); QKView; drift reconcile.</p>
+  </section>
+
+  <!-- PERSONA 4 -->
+  <section class="card c-validate">
+    <div class="num">04</div>
+    <div class="stage">Validate</div>
+    <h3>Dev/QA — Performance &amp; Validation Engineer</h3>
+    <p class="meta"><b>Profile.</b> Runs load against deployed BNK to validate SLOs and compare releases. Cares about
+      reproducibility and clean comparisons.</p>
+    <p class="meta"><b>Environment.</b> Running BNK target + one or more benchmark agent hosts (built-in or remote).</p>
+    <div class="jtbd">"Register a target and an agent, run a scenario, and compare two runs to see if a release regressed."</div>
+
+    <div class="section-label gp">✓ Golden path</div>
+    <ol class="steps">
+      <li><span class="surf">Benchmarks → Targets</span>: register a BNK target.</li>
+      <li><span class="surf">Agents</span>: built-in agent, or register + SSH-provision a remote agent host.</li>
+      <li><span class="surf">Configs</span>: create/select a scenario config.</li>
+      <li><span class="surf">Runs</span>: launch → watch live progress → completes + persists.</li>
+      <li><span class="surf">Run Detail / Group View</span>: inspect results.</li>
+      <li><span class="surf">Compare</span>: diff two runs / a run group → spot regression.</li>
+    </ol>
+
+    <div class="section-label rp">⚡ Rough-edge probes</div>
+    <ul class="probes">
+      <li>Scenario override guard (#282) → injected override that should be rejected, is.</li>
+      <li>Remote agent auth flag (#286 Slice‑4) → unauthenticated agent call refused.</li>
+      <li>Agent host goes away mid-run → run marked failed cleanly, not stuck "running".</li>
+      <li>Compare runs with mismatched configs → warns, doesn't silently mislead.</li>
+    </ul>
+    <div class="section-label ix">↺ Interaction (non-linear)</div>
+    <ul class="probes">
+      <li><b>Stop/cancel a run in progress</b> → stops cleanly; partial results saved-or-discarded clearly (no zombie "running").</li>
+      <li><b>Refresh during a live run</b> → progress + live metrics resume, don't reset.</li>
+      <li><b>Navigate away and back</b> mid-run → reconnects to the same run, no duplicate.</li>
+      <li><b>Back out of the New-Run wizard</b> → entered config preserved or clearly discarded.</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> Performance Testing edge; remote agent provisioning over SSH (Blocked).</p>
+  </section>
+
+  <!-- PERSONA 5 -->
+  <section class="card c-govern">
+    <div class="num">05</div>
+    <div class="stage">Govern · Multi-env · Reporting</div>
+    <h3>Aisha — Platform Admin / Team Lead</h3>
+    <p class="meta"><b>Profile.</b> Owns who can do what and how config moves between environments. Manager-adjacent; wants
+      a clean read-only story for reporting up. Security- and audit-minded.</p>
+    <p class="meta"><b>Environment.</b> Team of operators/viewers, a dev and a prod Forge, shared module sources / private registry.</p>
+    <div class="jtbd">"Manage users and roles, govern where modules come from, promote config dev→prod, and prove who did what."</div>
+
+    <div class="section-label gp">✓ Golden path</div>
+    <ol class="steps">
+      <li><span class="surf">Users</span>: create operator + viewer (role validation, <code>must_change_password</code>); confirm RBAC scoping.</li>
+      <li><span class="surf">Credential Templates</span>: central provider creds; mark defaults; Test template.</li>
+      <li><span class="surf">Module Sources / Registry / Git VCS</span>: register a Git source → sync → modules appear in Catalog.</li>
+      <li><span class="surf">Config Export / Promotion</span>: export project config from dev → import/promote to prod.</li>
+      <li><span class="surf">Audit</span>: filter/search log (user/action/resource) → export stats.</li>
+      <li><span class="surf">MCP</span>: MCP service account exposes fleet state (non-human, survives admin rotation).</li>
+    </ol>
+
+    <div class="section-label rp">⚡ Rough-edge probes</div>
+    <ul class="probes">
+      <li>Viewer tries a write → forbidden, audited (RBAC enforcement).</li>
+      <li>Admin self-demotion / self-delete → blocked (FEAT‑0016/0018).</li>
+      <li>Audit search hits the <code>details</code> column (FEAT‑0014 was a real bug; WO‑4 #357) — regression-guard.</li>
+      <li>Test Credential Template → currently Blocked; document expected behavior.</li>
+      <li>Promote config where target env is missing a referenced secret/module → clear failure, not half-applied.</li>
+      <li>GitLab token metadata normalization (the one Partial feature) → feed a GitLab PAT, check normalization.</li>
+    </ul>
+    <div class="section-label ix">↺ Interaction (non-linear)</div>
+    <ul class="probes">
+      <li><b>Cancel the Create-User dialog</b> → no half-created user; <b>Back out of an edit</b> → no partial role change.</li>
+      <li><b>Cancel a module-source sync</b> in flight → stops; Catalog not left half-populated.</li>
+      <li><b>Refresh the audit log with filters applied</b> → filters + page persist (or are in the URL), not reset.</li>
+      <li><b>Paginate / change filters then Back</b> → returns to the prior result set, not page 1.</li>
+      <li><b>Two admins editing the same user</b> in two tabs → conflict surfaces, not silent last-write-wins.</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> Test Credential Template + SSO refresh for template (Blocked); config-promotion gaps.</p>
+  </section>
+
+  <!-- PERSONA 6 -->
+  <section class="card c-dpu">
+    <div class="num">06</div>
+    <div class="stage">Drive · Headless · MCP / API</div>
+    <h3>Atlas — Autonomous AI Agent</h3>
+    <p class="meta"><b>Profile.</b> Not a human. An LLM agent (Claude over MCP, or a CI/automation bot over REST) handed a
+      <b>scoped task</b> — "stand up a dev cluster," "check fleet health and remediate drift," "run the nightly benchmark and
+      report" — that drives Forge to completion through tools, no UI. It judges the product by whether <b>tool contracts are
+      truthful, errors are machine-recoverable, and risky operations are gated</b> so it can't do damage by accident.</p>
+    <p class="meta"><b>Environment.</b> The MCP server — <b>150 catalogued tools</b> (iac_operations 42, cluster_management 36,
+      bnk_operations 19, diagnostics_fleet 19, cloud_auth 13, helm 11, system 6, config 4), risk-classed
+      <b>read_only 81 / mutating 53 / destructive 16</b>, each with an <code>auth_expectation</code> and a truthful output
+      contract — plus the REST API and the dedicated non-human <code>mcp</code> service account (PR #214, survives admin rotation).</p>
+    <div class="jtbd">"Hand me a scoped task and let me drive Forge to completion through tools — with truthful results, recoverable errors, and guardrails on destructive actions."</div>
+
+    <div class="section-label gp">✓ Golden path</div>
+    <ol class="steps">
+      <li>Authenticate as the <code>mcp</code> service account (non-human; survives admin password rotation).</li>
+      <li>Discover the tool catalog → names, risk classes, <code>auth_expectation</code>s.</li>
+      <li>Orient with read-only tools (<code>system_health</code>, <code>fleet_health</code>, list clusters/projects).</li>
+      <li>Execute the allocated task via mutating tools (e.g. <code>create_project</code> → deploy → poll <code>/orchestration/{run_handle}</code>).</li>
+      <li>Parse normalized envelopes — nested project/cluster objects; success from <b>outcome, not HTTP 2xx</b> (D‑017).</li>
+      <li>On failure, consume the structured error envelope (<code>failure_class</code>) → retry / recover / escalate.</li>
+      <li>Report / hand off the result to the human or next agent.</li>
+    </ol>
+
+    <div class="section-label rp">⚡ Rough-edge probes — the bug-surfacing gold for agents</div>
+    <ul class="probes">
+      <li><b>Destructive-tool guardrail</b> — a destructive tool (e.g. <code>delete_cluster</code>; 16 exist) needs explicit confirmation / elevated auth; agent can't nuke by accident.</li>
+      <li><b><code>auth_expectation</code> enforced</b> — a <code>cluster_owner</code> tool called by a non-owner is refused, not silently executed.</li>
+      <li><b>Truthful output contract</b> — every envelope matches the catalog (the <code>test_tool_output_contracts</code> guarantee); no field drift.</li>
+      <li><b>Structured error envelope</b> — failures return a machine-parseable <code>failure_class</code>, not raw 500 / HTML.</li>
+      <li><b>Outcome-derived success</b> (D‑017) — never false-reports success on a 2xx that didn't actually license/deploy.</li>
+      <li><b>Admin rotation</b> doesn't break MCP auth (PR #214) — long-running agent survives.</li>
+      <li><b>Deprecated → <code>replacement_tool</code></b> pointer honored — agent isn't stranded on a dead tool.</li>
+      <li><b>Long-poll orchestration</b> — polls <code>/orchestration/{run_handle}</code> (real int id, not the dead D‑031 endpoint) to terminal state without hanging.</li>
+      <li><b>Idempotency</b> — a retried create yields 409 / supersede, not a duplicate (module locking Phase 1.6).</li>
+    </ul>
+    <div class="section-label ix">↺ Interaction (non-linear / programmatic) — the agent's "cancel / refresh / come back"</div>
+    <ul class="probes">
+      <li><b>Cancel a long operation via API/tool</b> mid-flight → stops, reports a clean terminal state.</li>
+      <li><b>Resume after disconnect</b> → agent reconnects, re-polls <code>/orchestration/{run_handle}</code>, picks up the same run.</li>
+      <li><b>Two agents (or agent + human in UI)</b> on the same project → locking arbitrates; loser gets a clear conflict, not corruption.</li>
+      <li><b>Token expires mid-task</b> → tool returns a structured auth error the agent can recover from, not an opaque hang.</li>
+    </ul>
+    <p class="weakspots"><span class="ws">Weak spots:</span> cloud_auth tools (13) lean on SSO/IAM (Blocked); destructive-tool confirmation semantics; envelope drift vs catalog; MCP write path overlapping Blocked CRD-write authz.</p>
+  </section>
+
+  <!-- CROSS-CUTTING -->
+  <h2 id="xcut">Cross-cutting: real-human interaction probes</h2>
+  <div class="ops">
+    <p class="meta">These apply to <b>every persona</b> (and, in programmatic form, to Atlas). Real users interrupt, back out,
+      refresh, and multitask — so each golden path should run with these layered on, not as a clean forward march. A reusable
+      checklist the per-persona tests inherit.</p>
+    <div class="tier">
+      <div>
+        <h4 style="color:var(--warn)">⛔ Interruption &amp; abort</h4>
+        <ul class="probes">
+          <li><b>Cancel</b> any long op (deploy, upgrade, discovery, benchmark, sync, upload) → actually stops, honest terminal state, <b>no orphans / no half-locked modules</b>.</li>
+          <li><b>Cancel a dialog/wizard</b> half-filled → <b>no partial writes</b>.</li>
+          <li><b>Double-click</b> a primary action → exactly <b>one</b> operation runs.</li>
+          <li><b>Abort then retry</b> → retry works, no collision with the aborted one.</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color:var(--day0)">↺ Navigation (never one-way)</h4>
+        <ul class="probes">
+          <li><b>Refresh (F5)</b> on any screen — incl. mid-op — recovers live state, no reset/stale.</li>
+          <li><b>Refresh on a deep route</b> (<code>/projects/:id/:section</code>, <code>/catalog?tab=…</code>) → loads directly, <b>no SPA 404</b>.</li>
+          <li><b>Back / Forward</b> through a flow → preserves data (or warns), never corrupts.</li>
+          <li><b>Navigate away mid-op and return</b> → progress/logs reconnect, accurate.</li>
+          <li><b>Change screens repeatedly</b> → each re-orients; no stale filter/selection bleed.</li>
+          <li><b>Bookmark / deep-link / share a URL</b> → opens to the right place.</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color:var(--govern)">⚷ Concurrency &amp; sessions</h4>
+        <ul class="probes">
+          <li><b>Two tabs / two users</b> on one entity → conflict surfaces, not silent last-write-wins.</li>
+          <li><b>Session idle / token expiry</b> mid-flow → graceful re-auth, <b>no data loss, no white screen</b>.</li>
+          <li><b>Admin credential rotation</b> while others active → live sessions / MCP agents survive or re-auth cleanly (PR #214).</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color:var(--good)">▦ State rendering (every screen owes you three)</h4>
+        <ul class="probes">
+          <li><b>Empty</b> state renders intentionally — not blank / spinner-forever.</li>
+          <li><b>Loading</b> state → skeleton/spinner, no flash of "nothing here".</li>
+          <li><b>Error</b> state → shared <code>ErrorState</code> + retry, not a raw 500 (D‑025/D‑027).</li>
+          <li><b>Stale-after-action</b> → list/detail reflects a mutation without a manual hard refresh.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="meta" style="margin-top:16px"><b>Test-design note.</b> Cheapest coverage = bake these in as <em>decorators</em> over each
+      persona's golden path (run-step → refresh → assert; run-step → cancel → assert clean), not longhand per persona. Many are pure Tier‑1 (no cloud spend).</p>
+  </div>
+
+  <!-- OPERATIONALIZE -->
+  <h2>How to operationalize this for e2e</h2>
+  <div class="ops">
+    <div class="section-label">Priority order for a fast regression gate (cheapest signal first)</div>
+    <ol class="steps">
+      <li><b>Atlas MCP contract tests</b> — tool-output contracts + risk/auth guardrails against a seeded Forge. Cheapest signal, no cloud, and they guard the agent path <em>and</em> the API every other persona rides on.</li>
+      <li><b>Priya golden path</b> (deploy → license → Active → teardown) — the keystone; harness exists in <code>scripts/e2e/</code>.</li>
+      <li><b>Sofia</b> alerts + drift + retry-resume — pure Day‑2, no cloud spend for the UI/API layer.</li>
+      <li><b>Aisha</b> RBAC + audit + module-source sync — fully mockable, no cloud; cheap governance guard.</li>
+      <li><b>Marcus</b> discovery/migrate — needs a target device or fixture.</li>
+      <li><b>Raj</b> on-prem/DPU build — needs an SSH-reachable host (dpu-server).</li>
+      <li><b>Dev/QA</b> benchmarks — needs a live target.</li>
+    </ol>
+    <div class="section-label" style="margin-top:18px">Two-tier design (so it stays a "quick check")</div>
+    <div class="tier">
+      <div>
+        <h4 style="color:var(--good)">Tier 1 — no real spend</h4>
+        Atlas MCP/API contract + guardrail tests, plus Sofia &amp; Aisha e2e, against a seeded Forge. Runs on <b>every PR</b>.
+      </div>
+      <div>
+        <h4 style="color:var(--warn)">Tier 2 — real cloud / real hardware</h4>
+        Priya (live AWS) + Raj (SSH host) + Marcus/Dev‑QA against real targets. <b>Nightly / pre-release.</b> Uses the existing <code>.github/workflows/e2e-tests.yml</code> chassis.
+      </div>
+    </div>
+    <p class="meta" style="margin-top:16px">Each <b>rough-edge probe is a negative-path test</b> — those surface bugs and rough edges more than the golden paths do.</p>
+  </div>
+
+  <footer>
+    Last updated 2026-06-28 · Maintained alongside <code>docs/bnk-forge-features.csv</code> and
+    <code>docs/features/E2E_PERSONAS.md</code>. Regenerate this HTML view after editing the markdown.
+  </footer>
+</div>
+</body>
+</html>

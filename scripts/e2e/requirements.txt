@@ -1,0 +1,8 @@
+# Pinned deps for the e2e harness. Install into any venv that runs
+# `python -m scripts.e2e`. Keep this list short — the harness has no
+# direct backend imports, so it doesn't need the full backend stack.
+pydantic>=2.10
+pyyaml>=6.0
+requests>=2.33
+urllib3>=2.0
+reportlab>=4.0

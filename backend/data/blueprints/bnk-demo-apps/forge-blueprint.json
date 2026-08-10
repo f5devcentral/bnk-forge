@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "bnk-demo-apps",
+    "version": "4.0.0",
+    "name": "GenAI Gateway Solution",
+    "description": "Deploys demo applications, gateway/routes, security policies, observability, and optional AI proxy/analyzer components on top of an existing BNK platform."
+  },
+  "category": "solution",
+  "cloud_provider": "aws",
+  "icon": "rocket",
+  "color": "emerald",
+  "estimated_time": "5-10 minutes",
+  "estimated_cost": "Minimal (lightweight containers + Bedrock pay-per-use)",
+  "difficulty": "beginner",
+  "maturity": "reference",
+  "bnk_version": "2.2",
+  "tags": [
+    "genai",
+    "bnk",
+    "f5",
+    "gateway-api",
+    "irules",
+    "smartllm",
+    "observability",
+    "bedrock",
+    "litellm",
+    "reference"
+  ],
+  "outcomes": [
+    "BNK Gateway with standard-http and smart-http listeners",
+    "LiteLLM OpenAI-compatible proxy to AWS Bedrock (multi-model)",
+    "SmartLLM iRule for prompt classification and weighted routing",
+    "Token counting HSL telemetry with Fluent Bit to Loki pipeline",
+    "Firewall policies with address/port lists attached to Gateway",
+    "AI Intelligent Load Balancer analyzing Prometheus metrics",
+    "Traffic generators for validation and benchmarking"
+  ],
+  "prerequisites": [
+    {
+      "type": "kubernetes_cluster",
+      "description": "Kubernetes cluster with BNK already deployed"
+    },
+    {
+      "type": "stack_deployed",
+      "description": "BNK platform stack must already be deployed \u2014 typically F5 BNK 2.2 Platform on Existing Kubernetes, and conceptually any equivalent BNK platform deployment that provides GatewayClass, FLO, CNEInstance, and VLANs",
+      "name": "bnk-on-k8s"
+    }
+  ],
+  "variable_templates": {},
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "app-demo-namespace",
+      "module": "app/demo-namespace",
+      "version": "1.0.0",
+      "name": "Demo Namespaces",
+      "inputs": {
+        "app_namespace": "demo-apps",
+        "gateway_namespace": "bnk-gw",
+        "observability_namespace": "observability"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Creates demo-apps, bnk-gw, observability namespaces with ReferenceGrants for cross-namespace routing"
+    },
+    {
+      "id": "app-demo-apps",
+      "module": "app/demo-apps",
+      "version": "1.0.0",
+      "name": "Demo Applications",
+      "inputs": {
+        "app_namespace": "demo-apps",
+        "web_replicas": 2,
+        "api_replicas": 2,
+        "backend_replicas": 1
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Deploys web frontend (nginx), echo API service, and backend service \u2014 lightweight containers for traffic routing demos"
+    },
+    {
+      "id": "app-demo-observability",
+      "module": "app/demo-observability",
+      "version": "1.0.0",
+      "name": "Observability Stack",
+      "inputs": {
+        "observability_namespace": "observability",
+        "loki_retention_days": 7,
+        "fluentbit_hsl_port": 5514
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Deploys Fluent Bit (HSL UDP :5514) and Loki \u2014 receives token usage telemetry from BNK iRules"
+    },
+    {
+      "id": "app-demo-gateway",
+      "module": "app/demo-gateway",
+      "version": "2.0.0",
+      "name": "Demo Gateway",
+      "inputs": {
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "gatewayclass_name": "bnk-gatewayclass",
+        "gateway_vip": "10.0.10.100",
+        "enable_smart_listener": true
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "BNK Gateway with static VIP (10.0.10.100), standard-http (:80) and smart-http (:8080) listeners"
+    },
+    {
+      "id": "app-demo-routes",
+      "module": "app/demo-routes",
+      "version": "2.0.0",
+      "name": "Demo Routes",
+      "inputs": {
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "app_namespace": "demo-apps",
+        "backend_service_name": "demo-web",
+        "backend_service_port": 80,
+        "smart_backend_service_name": "litellm-proxy",
+        "smart_backend_service_port": 4000,
+        "enable_smart_route": true
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "HTTPRoutes: standard-http (:80) \u2192 demo-web:80, smart-http (:8080) \u2192 litellm-proxy:4000"
+    },
+    {
+      "id": "app-demo-security",
+      "module": "app/demo-security",
+      "version": "1.0.0",
+      "name": "Demo Security Policies",
+      "inputs": {
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "allowed_source_ranges": [
+          "10.0.0.0/8"
+        ],
+        "blocked_source_ranges": [
+          "198.51.100.0/24"
+        ]
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "F5BigFwPolicy with allow/deny rules, address/port lists, and BNKSecPolicy attached to Gateway"
+    },
+    {
+      "id": "app-demo-irules",
+      "module": "app/demo-irules",
+      "version": "2.0.0",
+      "name": "Demo iRules & Network Policy",
+      "inputs": {
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "fluentbit_hsl_endpoint": "fluentbit-hsl-udp.observability.svc.cluster.local:5514",
+        "enable_smart_listener": true
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Token counting HSL iRule + SmartLLM routing iRule (prompt classification, weighted complexity, per-user quota). BNKNetPolicies bind iRules to Gateway listeners."
+    },
+    {
+      "id": "app-demo-traffic",
+      "module": "app/demo-traffic",
+      "version": "1.0.0",
+      "name": "Traffic Generators",
+      "inputs": {
+        "app_namespace": "demo-apps",
+        "backend_service_name": "demo-web",
+        "backend_service_port": 80,
+        "enable_web_traffic": true,
+        "enable_api_traffic": true,
+        "enable_canary_traffic": true,
+        "enable_blocked_traffic": true,
+        "traffic_interval_seconds": 30
+      },
+      "optional": true,
+      "depends_on": [],
+      "description": "CronJob-based internal health checks \u2014 curl loops to backend services directly (real traffic testing via jumphost)"
+    },
+    {
+      "id": "app-demo-ai-proxy",
+      "module": "app/demo-ai-proxy",
+      "version": "1.0.0",
+      "name": "AI LLM Proxy (Bedrock)",
+      "inputs": {
+        "app_namespace": "demo-apps",
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "aws_region": "ap-southeast-2",
+        "bedrock_smart_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock_fast_model_id": "amazon.nova-micro-v1:0",
+        "litellm_replicas": 2,
+        "enable_ai_route": true
+      },
+      "optional": true,
+      "depends_on": [],
+      "description": "LiteLLM OpenAI-compatible proxy to AWS Bedrock (Claude Sonnet smart-model + Nova Micro fast-model). Uses IRSA for auth. Includes Prometheus metrics + AI HTTPRoute on smart-http listener."
+    },
+    {
+      "id": "app-demo-ai-analyzer",
+      "module": "app/demo-ai-analyzer",
+      "version": "1.0.0",
+      "name": "AI Intelligent Load Balancer",
+      "inputs": {
+        "gateway_name": "demo-gw",
+        "gateway_namespace": "bnk-gw",
+        "observability_namespace": "observability",
+        "fluentbit_hsl_port": 5514,
+        "bedrock_smart_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock_fast_model_id": "amazon.nova-micro-v1:0",
+        "analyzer_schedule": "1m",
+        "enable_token_irule": true
+      },
+      "optional": true,
+      "depends_on": [],
+      "description": "F5BigAnalyzer CR with custom Bedrock script \u2014 reads LiteLLM Prometheus metrics to dynamically adjust model weights"
+    }
+  ],
+  "is_featured": true
+}

@@ -1,0 +1,1883 @@
+[
+  {
+    "name": "AWS EKS Cluster",
+    "slug": "aws-k8s-foundation",
+    "description": "Provisions AWS VPC, IAM, and an EKS cluster with optional high-performance nodes for BNK. Use this first, then deploy BNK Platform on top.",
+    "category": "infrastructure",
+    "cloud_provider": "aws",
+    "icon": "server-stack",
+    "color": "blue",
+    "estimated_time": "20-25 minutes",
+    "estimated_cost": "$50-100/month",
+    "difficulty": "intermediate",
+    "maturity": "beta",
+    "bnk_version": null,
+    "outcomes": [
+      "VPC with public and private subnets across two AZs",
+      "EKS cluster with configurable node count and instance type",
+      "IAM roles for EKS cluster and worker nodes",
+      "Optional EBS CSI driver for persistent storage",
+      "Optional high-performance nodes with SR-IOV for BNK"
+    ],
+    "modules": [
+      {
+        "path": "infra/aws/vpc",
+        "name": "VPC",
+        "required": true,
+        "variables": {
+          "vpc_cidr": "10.0.0.0/16",
+          "public_subnet_cidr": "10.0.1.0/24",
+          "private_external_subnet_a_cidr": "10.0.10.0/24",
+          "private_external_subnet_b_cidr": "10.0.11.0/24",
+          "private_internal_subnet_a_cidr": "10.0.20.0/24",
+          "private_internal_subnet_b_cidr": "10.0.21.0/24"
+        }
+      },
+      {
+        "path": "infra/aws/security",
+        "name": "Security",
+        "required": true,
+        "variables": {
+          "enable_eks_cluster_role": true,
+          "enable_eks_node_role": true
+        }
+      },
+      {
+        "path": "infra/aws/eks",
+        "name": "EKS Cluster",
+        "required": true,
+        "variables": {
+          "kubernetes_version": "1.31",
+          "node_count": 3,
+          "instance_type": "t3.large"
+        }
+      },
+      {
+        "path": "infra/aws/storage",
+        "name": "Storage (EBS CSI)",
+        "required": false,
+        "variables": {
+          "enable_ebs_csi": true
+        }
+      },
+      {
+        "path": "infra/aws/high-performance-nodes",
+        "name": "High-Performance Nodes",
+        "required": false,
+        "description": "DPDK/SR-IOV enabled nodes for BNK TMM and control plane workloads",
+        "variables": {
+          "node_count": 2,
+          "instance_type": "c5n.4xlarge",
+          "f5_bnk_enabled": true,
+          "tmm_node_count": 1
+        }
+      }
+    ],
+    "variable_templates": {},
+    "prerequisites": [],
+    "tags": [
+      "kubernetes",
+      "aws",
+      "production",
+      "foundation"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "1.0.1",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "AWS EKS Cluster - Demo",
+    "slug": "aws-eks-cluster-demo",
+    "description": "Streamlined AWS EKS cluster for fast demos — VPC + IAM + EKS only. Skips storage and high-performance nodes. One click and you have a working cluster in ~12-15 minutes.",
+    "category": "infrastructure",
+    "cloud_provider": "aws",
+    "icon": "server-stack",
+    "color": "green",
+    "estimated_time": "12-15 minutes",
+    "estimated_cost": "$30-60/month",
+    "difficulty": "beginner",
+    "maturity": "production-ready",
+    "bnk_version": null,
+    "outcomes": [
+      "VPC with public + private subnets across two AZs",
+      "Jumphost EC2 with SSH key + Elastic IP",
+      "EKS cluster with t3.large worker nodes",
+      "IAM roles + OIDC provider ready for service accounts"
+    ],
+    "modules": [
+      {
+        "path": "infra/aws/vpc",
+        "name": "VPC",
+        "required": true,
+        "variables": {
+          "vpc_cidr": "10.0.0.0/16",
+          "public_subnet_cidr": "10.0.1.0/24",
+          "private_external_subnet_a_cidr": "10.0.10.0/24",
+          "private_external_subnet_b_cidr": "10.0.11.0/24",
+          "private_internal_subnet_a_cidr": "10.0.20.0/24",
+          "private_internal_subnet_b_cidr": "10.0.21.0/24"
+        }
+      },
+      {
+        "path": "infra/aws/security",
+        "name": "Security",
+        "required": true,
+        "variables": {
+          "enable_eks_cluster_role": true,
+          "enable_eks_node_role": true
+        }
+      },
+      {
+        "path": "infra/aws/eks",
+        "name": "EKS Cluster",
+        "required": true,
+        "variables": {
+          "kubernetes_version": "1.28",
+          "node_count": 3,
+          "instance_type": "t3.large"
+        }
+      }
+    ],
+    "variable_templates": {
+      "user_ip": {
+        "label": "Your Public IP /32",
+        "type": "string",
+        "required": true,
+        "description": "Your public IP in CIDR /32 form, used to whitelist SSH (jumphost) + EKS API access. Find your IP at https://checkip.amazonaws.com then append /32.",
+        "placeholder": "203.123.45.67/32"
+      }
+    },
+    "prerequisites": [],
+    "tags": [
+      "kubernetes",
+      "aws",
+      "demo",
+      "production"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "GenAI Gateway Solution",
+    "slug": "bnk-demo-apps",
+    "description": "Deploys demo applications, gateway/routes, security policies, observability, and optional AI proxy/analyzer components on top of an existing BNK platform.",
+    "category": "solution",
+    "cloud_provider": "aws",
+    "icon": "rocket",
+    "color": "emerald",
+    "estimated_time": "5-10 minutes",
+    "estimated_cost": "Minimal (lightweight containers + Bedrock pay-per-use)",
+    "difficulty": "beginner",
+    "maturity": "reference",
+    "outcomes": [
+      "BNK Gateway with standard-http and smart-http listeners",
+      "LiteLLM OpenAI-compatible proxy to AWS Bedrock (multi-model)",
+      "SmartLLM iRule for prompt classification and weighted routing",
+      "Token counting HSL telemetry with Fluent Bit to Loki pipeline",
+      "Firewall policies with address/port lists attached to Gateway",
+      "AI Intelligent Load Balancer analyzing Prometheus metrics",
+      "Traffic generators for validation and benchmarking"
+    ],
+    "modules": [
+      {
+        "path": "app/demo-namespace",
+        "name": "Demo Namespaces",
+        "required": true,
+        "description": "Creates demo-apps, bnk-gw, observability namespaces with ReferenceGrants for cross-namespace routing",
+        "variables": {
+          "app_namespace": "demo-apps",
+          "gateway_namespace": "bnk-gw",
+          "observability_namespace": "observability"
+        }
+      },
+      {
+        "path": "app/demo-apps",
+        "name": "Demo Applications",
+        "required": true,
+        "description": "Deploys web frontend (nginx), echo API service, and backend service — lightweight containers for traffic routing demos",
+        "variables": {
+          "app_namespace": "demo-apps",
+          "web_replicas": 2,
+          "api_replicas": 2,
+          "backend_replicas": 1
+        }
+      },
+      {
+        "path": "app/demo-observability",
+        "name": "Observability Stack",
+        "required": true,
+        "description": "Deploys Fluent Bit (HSL UDP :5514) and Loki — receives token usage telemetry from BNK iRules",
+        "variables": {
+          "observability_namespace": "observability",
+          "loki_retention_days": 7,
+          "fluentbit_hsl_port": 5514
+        }
+      },
+      {
+        "path": "app/demo-gateway",
+        "name": "Demo Gateway",
+        "required": true,
+        "description": "BNK Gateway with static VIP (10.0.10.100), standard-http (:80) and smart-http (:8080) listeners",
+        "variables": {
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "gatewayclass_name": "bnk-gatewayclass",
+          "gateway_vip": "10.0.10.100",
+          "enable_smart_listener": true
+        }
+      },
+      {
+        "path": "app/demo-routes",
+        "name": "Demo Routes",
+        "required": true,
+        "description": "HTTPRoutes: standard-http (:80) → demo-web:80, smart-http (:8080) → litellm-proxy:4000",
+        "variables": {
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "app_namespace": "demo-apps",
+          "backend_service_name": "demo-web",
+          "backend_service_port": 80,
+          "smart_backend_service_name": "litellm-proxy",
+          "smart_backend_service_port": 4000,
+          "enable_smart_route": true
+        }
+      },
+      {
+        "path": "app/demo-security",
+        "name": "Demo Security Policies",
+        "required": true,
+        "description": "F5BigFwPolicy with allow/deny rules, address/port lists, and BNKSecPolicy attached to Gateway",
+        "variables": {
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "allowed_source_ranges": [
+            "10.0.0.0/8"
+          ],
+          "blocked_source_ranges": [
+            "198.51.100.0/24"
+          ]
+        }
+      },
+      {
+        "path": "app/demo-irules",
+        "name": "Demo iRules & Network Policy",
+        "required": true,
+        "description": "Token counting HSL iRule + SmartLLM routing iRule (prompt classification, weighted complexity, per-user quota). BNKNetPolicies bind iRules to Gateway listeners.",
+        "variables": {
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "fluentbit_hsl_endpoint": "fluentbit-hsl-udp.observability.svc.cluster.local:5514",
+          "enable_smart_listener": true
+        }
+      },
+      {
+        "path": "app/demo-traffic",
+        "name": "Traffic Generators",
+        "required": false,
+        "description": "CronJob-based internal health checks — curl loops to backend services directly (real traffic testing via jumphost)",
+        "variables": {
+          "app_namespace": "demo-apps",
+          "backend_service_name": "demo-web",
+          "backend_service_port": 80,
+          "enable_web_traffic": true,
+          "enable_api_traffic": true,
+          "enable_canary_traffic": true,
+          "enable_blocked_traffic": true,
+          "traffic_interval_seconds": 30
+        }
+      },
+      {
+        "path": "app/demo-ai-proxy",
+        "name": "AI LLM Proxy (Bedrock)",
+        "required": false,
+        "description": "LiteLLM OpenAI-compatible proxy to AWS Bedrock (Claude Sonnet smart-model + Nova Micro fast-model). Uses IRSA for auth. Includes Prometheus metrics + AI HTTPRoute on smart-http listener.",
+        "variables": {
+          "app_namespace": "demo-apps",
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "aws_region": "ap-southeast-2",
+          "bedrock_smart_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+          "bedrock_fast_model_id": "amazon.nova-micro-v1:0",
+          "litellm_replicas": 2,
+          "enable_ai_route": true
+        }
+      },
+      {
+        "path": "app/demo-ai-analyzer",
+        "name": "AI Intelligent Load Balancer",
+        "required": false,
+        "description": "F5BigAnalyzer CR with custom Bedrock script — reads LiteLLM Prometheus metrics to dynamically adjust model weights",
+        "variables": {
+          "gateway_name": "demo-gw",
+          "gateway_namespace": "bnk-gw",
+          "observability_namespace": "observability",
+          "fluentbit_hsl_port": 5514,
+          "bedrock_smart_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+          "bedrock_fast_model_id": "amazon.nova-micro-v1:0",
+          "analyzer_schedule": "1m",
+          "enable_token_irule": true
+        }
+      }
+    ],
+    "variable_templates": {},
+    "prerequisites": [
+      {
+        "type": "kubernetes_cluster",
+        "description": "Kubernetes cluster with BNK already deployed"
+      },
+      {
+        "type": "stack_deployed",
+        "name": "bnk-on-k8s",
+        "description": "BNK platform stack must already be deployed — typically F5 BNK 2.2 Platform on Existing Kubernetes, and conceptually any equivalent BNK platform deployment that provides GatewayClass, FLO, CNEInstance, and VLANs"
+      }
+    ],
+    "tags": [
+      "genai",
+      "bnk",
+      "f5",
+      "gateway-api",
+      "irules",
+      "smartllm",
+      "observability",
+      "bedrock",
+      "litellm",
+      "reference"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "4.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null,
+    "bnk_version": "2.2"
+  },
+  {
+    "name": "Intelligent AI Load Balancing Demo",
+    "slug": "eks-bnk-smartllm-demo",
+    "description": "3-model Bedrock backend behind a BNK Gateway with F5BigAnalyzer for live traffic-weighted routing. Includes a load generator so weight shifts are visible in real time. Requires BNK 2.2 platform deployed.",
+    "category": "solution",
+    "cloud_provider": "aws",
+    "icon": "brain-circuit",
+    "color": "#4285F4",
+    "estimated_time": "5-10 minutes",
+    "estimated_cost": "Pay-per-use Bedrock (~$0.035/M input tokens on Nova Micro)",
+    "difficulty": "intermediate",
+    "maturity": "beta",
+    "bnk_version": "2.2",
+    "outcomes": [
+      "3 single-model Bedrock shim pods (Nova Micro, Nova Lite, Claude 3 Haiku) behind a BNK Gateway",
+      "HTTPRoute with 3 weighted backendRefs — analyzer mutates weights live",
+      "F5BigAnalyzer CR (Path A builtin LLMLoadMonitor) reading Prometheus",
+      "vllm:* backend metrics + smartllm_client_* client metrics in Prometheus",
+      "Poisson-paced client sending varied prompts from a ConfigMap prompt bank",
+      "Dashboard Traffic Distribution tile shifts live as the analyzer weights"
+    ],
+    "modules": [
+      {
+        "path": "app/bedrock-smartllm-irsa",
+        "name": "Bedrock IAM Role (IRSA)",
+        "required": true,
+        "description": "Creates the IAM role the backend shim pods assume via IRSA to call Bedrock (Nova Micro, Nova Lite, Claude 3 Haiku). role_name auto-derives from project name to avoid shared-account collisions. Output role_arn auto-wires into the backend module.",
+        "variables": {
+          "aws_region": "ap-southeast-2",
+          "sa_namespace": "default",
+          "sa_name": "bedrock-smartllm"
+        }
+      },
+      {
+        "path": "app/bedrock-smartllm-backend",
+        "name": "Bedrock Smart-LLM Backend",
+        "required": true,
+        "description": "3 Bedrock shim pods + BNK Gateway + HTTPRoute + F5BigAnalyzer CR, deployed in default namespace by default. bedrock_role_arn auto-wires from the IRSA module output.",
+        "variables": {
+          "namespace": "default",
+          "aws_region": "ap-southeast-2",
+          "analyzer_schedule": "1m"
+        }
+      },
+      {
+        "path": "app/bedrock-smartllm-client",
+        "name": "Bedrock Smart-LLM Client",
+        "required": false,
+        "description": "Poisson-paced load generator sending varied prompts to the Gateway VIP from a separate namespace",
+        "variables": {
+          "namespace": "bnk-demo-client",
+          "create_namespace": true,
+          "replicas": 1,
+          "request_rate": 1.0,
+          "max_tokens": 128
+        }
+      }
+    ],
+    "variable_templates": {},
+    "prerequisites": [
+      {
+        "type": "kubernetes_cluster",
+        "description": "EKS cluster with the OIDC provider enabled (required for IRSA)"
+      },
+      {
+        "type": "stack_deployed",
+        "name": "bnk-on-k8s",
+        "description": "BNK platform deployed — must have bnk-gatewayclass + programmed external VLAN with a free VIP"
+      },
+      {
+        "type": "chart_installed",
+        "name": "kube-prometheus-stack",
+        "description": "Prometheus operator installed. ServiceMonitors use label release: kube-prometheus-stack by default — override prometheus_release_label on both modules if different."
+      },
+      {
+        "type": "cloud_credentials",
+        "description": "AWS account with Bedrock model access granted for Nova Micro, Nova Lite, and Claude 3 Haiku in the target region. Pre-check per region — Nova and Haiku availability varies."
+      }
+    ],
+    "tags": [
+      "eks",
+      "bnk",
+      "f5",
+      "gateway-api",
+      "bedrock",
+      "nova",
+      "claude",
+      "smartllm",
+      "intelligent-load-balancing",
+      "demo",
+      "reference"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "BNK 2.2 Platform (AWS)",
+    "slug": "bnk-on-k8s",
+    "description": "Deploys F5 BNK 2.2 on AWS EKS with optimized defaults — host-device CNI, gp3 storage, ENI secondary IP assignment. Battle-tested and production-ready. Requires jwt_token and cne_pull_secret.",
+    "category": "bnk",
+    "cloud_provider": "aws",
+    "icon": "shield-check",
+    "color": "purple",
+    "estimated_time": "10-15 minutes",
+    "estimated_cost": "License-dependent",
+    "difficulty": "intermediate",
+    "maturity": "production-ready",
+    "bnk_version": "2.2",
+    "outcomes": [
+      "F5 Lifecycle Operator (FLO) managing all BNK components",
+      "TMM data-plane with full BNK component suite",
+      "Jetstack cert-manager installed with BNK-compatible TLS prerequisites",
+      "Multus NADs configured for raw L2 data-plane attachment (no NAD IPAM)",
+      "F5SPKVlan CRs with custom self-IPs and subnets",
+      "GatewayClass ready for Gateway API routing"
+    ],
+    "platform_defaults": {
+      "eks": {
+        "container_platform": "AWS",
+        "storage_class_name": "gp3",
+        "cloud_provider": "aws",
+        "cni_type": "host-device"
+      },
+      "aks": {
+        "container_platform": "Azure",
+        "storage_class_name": "managed-csi",
+        "cloud_provider": "azure",
+        "cni_type": "sriov"
+      },
+      "gke": {
+        "container_platform": "Generic",
+        "storage_class_name": "standard-rwo",
+        "cloud_provider": "gcp",
+        "cni_type": "sriov"
+      },
+      "ocp": {
+        "container_platform": "Generic",
+        "storage_class_name": "ocs-storagecluster-ceph-rbd",
+        "cloud_provider": "",
+        "cni_type": "sriov"
+      },
+      "generic_onprem": {
+        "container_platform": "Generic",
+        "storage_class_name": "local-path",
+        "cloud_provider": "",
+        "cni_type": "sriov"
+      }
+    },
+    "modules": [
+      {
+        "path": "k8s/bnk-prerequisites",
+        "name": "BNK Prerequisites",
+        "required": true,
+        "description": "Creates namespaces (f5-operator, f5-utils, bnk-gw), FAR pull secrets",
+        "variables": {
+          "operator_namespace": "f5-operator",
+          "utils_namespace": "f5-utils",
+          "gateway_namespace": "bnk-gw",
+          "bnk_manifest_version": "2.2.1-3.2226.0-0.0.511"
+        }
+      },
+      {
+        "path": "k8s/network-setup",
+        "name": "Network Attachments",
+        "required": true,
+        "description": "Creates Multus NADs for TMM data-plane interfaces. Raw L2 NAD model only (no NAD IPAM). Set CNI type and SR-IOV resource names for your cluster.",
+        "variables": {
+          "namespace": "f5-operator",
+          "cni_type": "host-device",
+          "external_resource_name": "intel.com/external_netdevice",
+          "internal_resource_name": "intel.com/internal_netdevice",
+          "external_subnet_cidrs": [],
+          "internal_subnet_cidrs": []
+        }
+      },
+      {
+        "path": "k8s/cert-manager",
+        "name": "Cert Manager",
+        "required": true,
+        "description": "Installs Jetstack cert-manager for BNK TLS prerequisites only. Issuer/CA resources are managed by the dedicated Forge manifest module.",
+        "variables": {
+          "namespace": "cert-manager",
+          "cert_manager_version": "v1.16.1",
+          "release_name": "cert-manager",
+          "image_registry": "repo.f5.com/images"
+        }
+      },
+      {
+        "path": "k8s/bnk-cert-issuer",
+        "name": "BNK Cert Issuer",
+        "required": true,
+        "description": "Creates the Forge-managed cert-manager issuer chain (self-signed ClusterIssuer, BNK CA certificate/secret, and bnk-ca-cluster-issuer).",
+        "variables": {
+          "namespace": "cert-manager",
+          "self_signed_cluster_issuer_name": "bnk-selfsigned-cluster-issuer",
+          "ca_certificate_name": "bnk-ca",
+          "ca_secret_name": "bnk-ca-secret",
+          "cluster_issuer_name": "bnk-ca-cluster-issuer",
+          "ca_duration": "87600h",
+          "ca_renew_before": "720h"
+        }
+      },
+      {
+        "path": "bnk/flo",
+        "name": "F5 Lifecycle Operator",
+        "required": true,
+        "description": "Deploys FLO via Helm with CPCL key and license activation",
+        "variables": {
+          "license_mode": "connected",
+          "license_environment": "production"
+        }
+      },
+      {
+        "path": "bnk/cneinstance",
+        "name": "CNE Instance",
+        "required": true,
+        "description": "Creates CNEInstance CR — triggers FLO to deploy TMM and all BNK components",
+        "variables": {
+          "instance_name": "bnk-instance",
+          "namespace": "f5-operator",
+          "manifest_version": "2.2.1-3.2226.0-0.0.511",
+          "deployment_size": "Small",
+          "whole_cluster": true,
+          "dpu_enabled": false,
+          "dynamic_routing_enabled": true,
+          "firewall_acl_enabled": true,
+          "core_collection_enabled": false,
+          "pseudo_cni_enabled": true,
+          "intelligent_lb_enabled": true,
+          "metric_subsystem_enabled": true,
+          "logging_subsystem_enabled": true,
+          "env_discovery_enabled": false,
+          "env_discovery_stop_on_fail": false,
+          "tmm_default_mtu": 9000,
+          "tmm_ignore_gateways": true
+        }
+      },
+      {
+        "path": "bnk/bnk-vlans",
+        "name": "BNK VLANs",
+        "required": true,
+        "description": "Creates F5SPKVlan CRs — sets TMM self-IPs on data-plane interfaces. Prefix lengths are configured directly; NAD CIDR/IPAM is not used in this flow.",
+        "variables": {
+          "namespace": "f5-operator",
+          "external_selfip": "10.1.10.240",
+          "internal_selfip": "10.1.20.240",
+          "external_prefixlen": 24,
+          "internal_prefixlen": 24,
+          "mtu": 9000
+        }
+      },
+      {
+        "path": "bnk/bnk-gatewayclass",
+        "name": "BNK GatewayClass",
+        "required": true,
+        "description": "Creates GatewayClass for BNK (controllerName auto-constructed from FLO namespace)",
+        "variables": {
+          "gatewayclass_name": "bnk-gatewayclass",
+          "flo_namespace": "f5-cne-core"
+        }
+      }
+    ],
+    "variable_templates": {},
+    "prerequisites": [
+      {
+        "type": "kubernetes_cluster",
+        "description": "Kubernetes cluster with HugePages, SR-IOV, and Multus CNI configured. Existing-cluster differences (device plugin labels/resource names, CA issuer policy, storage classes) must be aligned for your environment."
+      },
+      {
+        "type": "project_secret",
+        "name": "jwt_token",
+        "description": "F5 license JWT token from MyF5 (injected into bnk/flo)"
+      },
+      {
+        "type": "project_secret",
+        "name": "cne_pull_secret",
+        "description": "Base64-encoded F5 FAR service account key JSON content (injected into k8s/bnk-prerequisites). Falls back to encrypted System Default if not set in project."
+      }
+    ],
+    "tags": [
+      "bnk",
+      "f5",
+      "gateway-api",
+      "2.2",
+      "aws",
+      "eks"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "requires_existing_cluster": true,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "BNK 2.2 Platform (Multi-Platform)",
+    "slug": "bnk-on-k8s-generic",
+    "description": "Deploys F5 BNK 2.2 on any Kubernetes cluster — on-prem, AKS, GKE, or OpenShift. Uses generic defaults (SR-IOV CNI, no cloud-specific ENI management). Requires manual network and storage configuration for your environment.",
+    "category": "bnk",
+    "cloud_provider": "any",
+    "icon": "shield-check",
+    "color": "purple",
+    "estimated_time": "15-20 minutes",
+    "estimated_cost": "License-dependent",
+    "difficulty": "advanced",
+    "maturity": "alpha",
+    "bnk_version": "2.2",
+    "outcomes": [
+      "F5 Lifecycle Operator (FLO) managing all BNK components",
+      "TMM data-plane with full BNK component suite",
+      "Jetstack cert-manager installed with BNK-compatible TLS prerequisites",
+      "Multus NADs configured for SR-IOV data-plane attachment",
+      "F5SPKVlan CRs with custom self-IPs and subnets",
+      "GatewayClass ready for Gateway API routing"
+    ],
+    "platform_defaults": null,
+    "modules": [
+      {
+        "path": "k8s/bnk-prerequisites",
+        "name": "BNK Prerequisites",
+        "required": true,
+        "description": "Creates namespaces (f5-operator, f5-utils, bnk-gw), FAR pull secrets",
+        "variables": {
+          "operator_namespace": "f5-operator",
+          "utils_namespace": "f5-utils",
+          "gateway_namespace": "bnk-gw",
+          "bnk_manifest_version": "2.2.1-3.2226.0-0.0.511"
+        }
+      },
+      {
+        "path": "k8s/network-setup",
+        "name": "Network Attachments",
+        "required": true,
+        "description": "Creates Multus NADs for TMM data-plane interfaces. Configure CNI type and SR-IOV resource names for your platform.",
+        "variables": {
+          "namespace": "f5-operator",
+          "cni_type": "sriov",
+          "external_resource_name": "",
+          "internal_resource_name": "",
+          "external_subnet_cidrs": [],
+          "internal_subnet_cidrs": []
+        }
+      },
+      {
+        "path": "k8s/cert-manager",
+        "name": "Cert Manager",
+        "required": true,
+        "description": "Installs Jetstack cert-manager for BNK TLS prerequisites.",
+        "variables": {
+          "namespace": "cert-manager",
+          "cert_manager_version": "v1.16.1",
+          "release_name": "cert-manager",
+          "image_registry": "repo.f5.com/images"
+        }
+      },
+      {
+        "path": "k8s/bnk-cert-issuer",
+        "name": "BNK Cert Issuer",
+        "required": true,
+        "description": "Creates the cert-manager issuer chain for BNK TLS.",
+        "variables": {
+          "namespace": "cert-manager",
+          "self_signed_cluster_issuer_name": "bnk-selfsigned-cluster-issuer",
+          "ca_certificate_name": "bnk-ca",
+          "ca_secret_name": "bnk-ca-secret",
+          "cluster_issuer_name": "bnk-ca-cluster-issuer",
+          "ca_duration": "87600h",
+          "ca_renew_before": "720h"
+        }
+      },
+      {
+        "path": "bnk/flo",
+        "name": "F5 Lifecycle Operator",
+        "required": true,
+        "description": "Deploys FLO via Helm with CPCL key and license activation",
+        "variables": {
+          "license_mode": "connected",
+          "license_environment": "production"
+        }
+      },
+      {
+        "path": "bnk/cneinstance",
+        "name": "CNE Instance",
+        "required": true,
+        "description": "Creates CNEInstance CR — triggers FLO to deploy TMM and all BNK components. Configure storage class and PCI device names for your platform.",
+        "variables": {
+          "instance_name": "bnk-instance",
+          "namespace": "f5-operator",
+          "manifest_version": "2.2.1-3.2226.0-0.0.511",
+          "deployment_size": "Small",
+          "whole_cluster": true,
+          "dpu_enabled": false,
+          "dynamic_routing_enabled": true,
+          "firewall_acl_enabled": true,
+          "core_collection_enabled": false,
+          "pseudo_cni_enabled": true,
+          "intelligent_lb_enabled": true,
+          "metric_subsystem_enabled": false,
+          "logging_subsystem_enabled": false,
+          "env_discovery_enabled": false,
+          "env_discovery_stop_on_fail": false,
+          "tmm_default_mtu": 9000,
+          "tmm_ignore_gateways": true
+        }
+      },
+      {
+        "path": "bnk/bnk-vlans",
+        "name": "BNK VLANs",
+        "required": true,
+        "description": "Creates F5SPKVlan CRs — sets TMM self-IPs on data-plane interfaces. No cloud-specific ENI management (aws_region left empty).",
+        "variables": {
+          "namespace": "f5-operator",
+          "external_selfip": "10.1.10.240",
+          "internal_selfip": "10.1.20.240",
+          "external_prefixlen": 24,
+          "internal_prefixlen": 24,
+          "mtu": 9000,
+          "aws_region": ""
+        }
+      },
+      {
+        "path": "bnk/bnk-gatewayclass",
+        "name": "BNK GatewayClass",
+        "required": true,
+        "description": "Creates GatewayClass for BNK",
+        "variables": {
+          "gatewayclass_name": "bnk-gatewayclass",
+          "flo_namespace": "f5-cne-core"
+        }
+      }
+    ],
+    "variable_templates": {},
+    "prerequisites": [
+      {
+        "type": "kubernetes_cluster",
+        "description": "Kubernetes cluster with HugePages, SR-IOV operator, and Multus CNI configured. You must configure SR-IOV resource names, storage class, and network CIDRs for your specific platform."
+      },
+      {
+        "type": "project_secret",
+        "name": "jwt_token",
+        "description": "F5 license JWT token from MyF5 (injected into bnk/flo)"
+      },
+      {
+        "type": "project_secret",
+        "name": "cne_pull_secret",
+        "description": "Base64-encoded F5 FAR service account key JSON content"
+      }
+    ],
+    "tags": [
+      "bnk",
+      "f5",
+      "gateway-api",
+      "2.2",
+      "multi-platform",
+      "on-prem",
+      "aks",
+      "gke",
+      "openshift"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "Kind Dev Cluster (Ubuntu)",
+    "slug": "ubuntu-kind-foundation",
+    "description": "Provisions a kind Kubernetes cluster on Ubuntu for BNK development and testing. Ideal for local dev, CI pipelines, and quick demos.",
+    "category": "infrastructure",
+    "cloud_provider": "any",
+    "icon": "server",
+    "color": "#E95420",
+    "estimated_time": "5-10 minutes",
+    "estimated_cost": "Free (local resources)",
+    "difficulty": "beginner",
+    "maturity": "beta",
+    "bnk_version": null,
+    "outcomes": [
+      "Kind Kubernetes cluster running on Ubuntu",
+      "Kubeconfig ready for BNK module deployment",
+      "Worker nodes configured for BNK data-plane"
+    ],
+    "modules": [
+      {
+        "path": "infra/ubuntu/kind",
+        "name": "Kind Cluster",
+        "required": true,
+        "description": "Provisions a kind cluster with configurable worker nodes",
+        "variables": {
+          "cluster_name": "bnk-dev",
+          "kubernetes_version": "1.29.2",
+          "worker_nodes": 2
+        }
+      }
+    ],
+    "variable_templates": {
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "default": "bnk-dev",
+        "required": true
+      },
+      "worker_nodes": {
+        "label": "Worker Nodes",
+        "type": "number",
+        "default": 2,
+        "required": false
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "host",
+        "description": "Ubuntu host with kind, kubectl, and Docker installed"
+      }
+    ],
+    "tags": [
+      "ubuntu",
+      "kind",
+      "development",
+      "on-prem",
+      "local"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "OpenShift Cluster Connection",
+    "slug": "ocp-connection",
+    "description": "Connects and validates an existing OpenShift/OKD cluster for BNK deployment. Detects platform capabilities automatically.",
+    "category": "infrastructure",
+    "cloud_provider": "openshift",
+    "icon": "shield-check",
+    "color": "#EE0000",
+    "estimated_time": "2-5 minutes",
+    "estimated_cost": "N/A (existing cluster)",
+    "difficulty": "intermediate",
+    "maturity": "beta",
+    "bnk_version": null,
+    "outcomes": [
+      "Validated connectivity to OpenShift cluster",
+      "Kubeconfig configured for BNK module deployment",
+      "Platform capabilities detected"
+    ],
+    "modules": [
+      {
+        "path": "infra/ocp/connect",
+        "name": "OCP Connection",
+        "required": true,
+        "description": "Validates connectivity to an existing OpenShift cluster",
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true
+      },
+      "api_server_url": {
+        "label": "API Server URL",
+        "type": "string",
+        "required": true,
+        "placeholder": "https://api.cluster.example.com:6443"
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "kubernetes_cluster",
+        "description": "Existing OpenShift/OKD cluster with admin access"
+      }
+    ],
+    "tags": [
+      "openshift",
+      "ocp",
+      "enterprise",
+      "on-prem"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "Azure AKS Cluster",
+    "slug": "azure-aks-foundation",
+    "description": "Provisions an Azure AKS cluster with managed node pools for BNK deployment. Creates resource group and cluster with configurable VM sizes.",
+    "category": "infrastructure",
+    "cloud_provider": "azure",
+    "icon": "cloud",
+    "color": "#0078D4",
+    "estimated_time": "10-15 minutes",
+    "estimated_cost": "Pay-as-you-go (Azure compute)",
+    "difficulty": "intermediate",
+    "maturity": "alpha",
+    "bnk_version": null,
+    "outcomes": [
+      "Azure AKS cluster with managed identity",
+      "Configurable node pool with Azure CNI networking",
+      "Kubeconfig ready for BNK module deployment"
+    ],
+    "modules": [
+      {
+        "path": "infra/azure/aks",
+        "name": "AKS Cluster",
+        "required": true,
+        "description": "Provisions Azure AKS cluster with managed node pools",
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "resource_group_name": {
+        "label": "Resource Group Name",
+        "type": "string",
+        "required": true
+      },
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true
+      },
+      "location": {
+        "label": "Azure Region",
+        "type": "string",
+        "required": true,
+        "placeholder": "australiaeast"
+      },
+      "node_count": {
+        "label": "Node Count",
+        "type": "number",
+        "default": 2,
+        "required": false
+      },
+      "vm_size": {
+        "label": "VM Size",
+        "type": "string",
+        "default": "Standard_D4s_v3",
+        "required": false
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "cloud_credentials",
+        "description": "Azure credentials with permissions to create AKS clusters"
+      }
+    ],
+    "tags": [
+      "azure",
+      "aks",
+      "cloud",
+      "infrastructure"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "GCP GKE Cluster",
+    "slug": "gcp-gke-foundation",
+    "description": "Provisions a GCP GKE cluster with VPC-native networking and a default node pool for BNK deployment. Configurable region, machine type, and node count.",
+    "category": "infrastructure",
+    "cloud_provider": "gcp",
+    "icon": "cloud",
+    "color": "#4285F4",
+    "estimated_time": "10-15 minutes",
+    "estimated_cost": "Pay-as-you-go (GCP compute)",
+    "difficulty": "intermediate",
+    "maturity": "alpha",
+    "bnk_version": null,
+    "outcomes": [
+      "GCP GKE cluster with VPC-native networking",
+      "Default node pool with configurable machine type",
+      "Kubeconfig ready for BNK module deployment"
+    ],
+    "modules": [
+      {
+        "path": "infra/gcp/gke",
+        "name": "GKE Cluster",
+        "required": true,
+        "description": "Provisions GCP GKE cluster with a default node pool",
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "project_id": {
+        "label": "GCP Project ID",
+        "type": "string",
+        "required": true,
+        "placeholder": "my-gcp-project"
+      },
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true
+      },
+      "region": {
+        "label": "GCP Region",
+        "type": "string",
+        "required": true,
+        "placeholder": "us-central1"
+      },
+      "node_count": {
+        "label": "Node Count",
+        "type": "number",
+        "default": 2,
+        "required": false
+      },
+      "machine_type": {
+        "label": "Machine Type",
+        "type": "string",
+        "default": "e2-standard-4",
+        "required": false
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "cloud_credentials",
+        "description": "GCP credentials with permissions to create GKE clusters"
+      }
+    ],
+    "tags": [
+      "gcp",
+      "gke",
+      "cloud",
+      "infrastructure"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "DPU Infrastructure (BlueField)",
+    "slug": "bnk-bare-metal-dpu-infra",
+    "description": "Flashes a BlueField DPU and bootstraps a single-node K8s cluster on a bare-metal host. Deploy BNK Platform separately as Step 2.",
+    "category": "bare-metal",
+    "cloud_provider": null,
+    "icon": "cpu",
+    "color": "orange",
+    "estimated_time": "20-30 minutes",
+    "estimated_cost": "N/A (bare-metal)",
+    "difficulty": "intermediate",
+    "maturity": "beta",
+    "bnk_version": null,
+    "outcomes": [
+      "BlueField DPU flashed with target DOCA/BFB image",
+      "Single-node K8s cluster bootstrapped on host",
+      "DPU joined as worker node with TMM labels and taints",
+      "Cluster auto-registered in BNK Forge for platform deployment"
+    ],
+    "modules": [
+      {
+        "path": "bare-metal/probe-dpu",
+        "name": "Probe DPU State",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/set-nic-mode",
+        "name": "Set NIC Mode (mlxconfig)",
+        "required": true,
+        "description": "Set BlueField to DPU mode via mlxconfig. Idempotent — safe to run even if already in DPU mode.",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/reboot-host",
+        "name": "Reboot Host (if needed)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/flash-dpu",
+        "name": "Flash DPU (BFB)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/wait-dpu-ready",
+        "name": "Wait DPU Ready",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/setup-dpu-networking",
+        "name": "Setup DPU Networking",
+        "required": true,
+        "description": "Configure NAT on host and routing/DNS on DPU for internet access",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-dpu-prereqs",
+        "name": "Install DPU Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-k8s-prereqs",
+        "name": "Install K8s Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-init",
+        "name": "Initialize K8s Cluster",
+        "required": true,
+        "variables": {
+          "cluster_name": "",
+          "pod_cidr": "10.244.0.0/16",
+          "service_cidr": "10.96.0.0/12"
+        }
+      },
+      {
+        "path": "bare-metal/install-cni",
+        "name": "Install Calico CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-multus",
+        "name": "Install Multus CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-gateway-api",
+        "name": "Install Gateway API",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-sriov",
+        "name": "Install SR-IOV Operator",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-storage",
+        "name": "Install Storage Provisioner",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-join",
+        "name": "Join DPU to Cluster",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/label-dpu-node",
+        "name": "Label DPU Node",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/taint-dpu-node",
+        "name": "Taint DPU Node",
+        "required": true,
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "bare_metal_host_id": {
+        "label": "Bare-Metal Host",
+        "type": "number",
+        "required": true,
+        "description": "Registered bare-metal host with SSH access and BlueField DPU"
+      },
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true,
+        "description": "Name for the K8s cluster (auto-registered in BNK Forge after kubeadm init)"
+      },
+      "runc_version": {
+        "label": "Runc Version",
+        "type": "string",
+        "default": "1.2.1",
+        "required": false,
+        "description": "Runc version to install on DPU"
+      },
+      "containerd_version": {
+        "label": "Containerd Version",
+        "type": "string",
+        "default": "1.7.23",
+        "required": false,
+        "description": "Containerd version to install on DPU"
+      },
+      "k8s_version": {
+        "label": "Kubernetes Version",
+        "type": "string",
+        "default": "1.29",
+        "required": false,
+        "description": "Kubernetes version (major.minor) for kubeadm/kubelet/kubectl"
+      },
+      "pause_image_tag": {
+        "label": "Pause Image Tag",
+        "type": "string",
+        "default": "3.10",
+        "required": false,
+        "description": "K8s pause container image tag"
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "bare_metal_host",
+        "description": "Registered bare-metal host with SSH access, BlueField DPU, and completed discovery"
+      }
+    ],
+    "tags": [
+      "bare-metal",
+      "dpu",
+      "bluefield",
+      "k8s",
+      "infrastructure"
+    ],
+    "is_active": true,
+    "is_featured": true,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "DPU + BNK 2.2 Full PoC (All-in-One)",
+    "slug": "bnk-bare-metal-full-poc",
+    "description": "End-to-end: DPU flash → K8s cluster → BNK 2.2 platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately.",
+    "category": "bare-metal",
+    "cloud_provider": null,
+    "icon": "cpu",
+    "color": "orange",
+    "estimated_time": "30-45 minutes",
+    "estimated_cost": "N/A (bare-metal)",
+    "difficulty": "advanced",
+    "maturity": "alpha",
+    "bnk_version": "2.2",
+    "outcomes": [
+      "BlueField DPU flashed with target DOCA version",
+      "Single-node K8s cluster on bare-metal host",
+      "DPU joined as worker node with TMM labels/taints",
+      "F5 BNK platform deployed (FLO + CNEInstance + networking)"
+    ],
+    "modules": [
+      {
+        "path": "bare-metal/probe-dpu",
+        "name": "Probe DPU State",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/set-nic-mode",
+        "name": "Set NIC Mode (mlxconfig)",
+        "required": true,
+        "description": "Set BlueField to DPU mode via mlxconfig. Idempotent — safe to run even if already in DPU mode.",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/reboot-host",
+        "name": "Reboot Host (if needed)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/flash-dpu",
+        "name": "Flash DPU (BFB)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/wait-dpu-ready",
+        "name": "Wait DPU Ready",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/setup-dpu-networking",
+        "name": "Setup DPU Networking",
+        "required": true,
+        "description": "Configure NAT on host and routing/DNS on DPU for internet access",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-dpu-prereqs",
+        "name": "Install DPU Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-k8s-prereqs",
+        "name": "Install K8s Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-init",
+        "name": "Initialize K8s Cluster",
+        "required": true,
+        "variables": {
+          "cluster_name": "",
+          "pod_cidr": "10.244.0.0/16",
+          "service_cidr": "10.96.0.0/12"
+        }
+      },
+      {
+        "path": "bare-metal/install-cni",
+        "name": "Install Calico CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-multus",
+        "name": "Install Multus CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-gateway-api",
+        "name": "Install Gateway API",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-sriov",
+        "name": "Install SR-IOV Operator",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-storage",
+        "name": "Install Storage Provisioner",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-join",
+        "name": "Join DPU to Cluster",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/label-dpu-node",
+        "name": "Label DPU Node",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/taint-dpu-node",
+        "name": "Taint DPU Node",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "k8s/bnk-prerequisites",
+        "name": "BNK Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "k8s/network-setup",
+        "name": "Network Setup (NADs)",
+        "required": true,
+        "description": "Creates Multus NADs for TMM data-plane interfaces (DPU SF mode)",
+        "variables": {
+          "cni_type": "sf",
+          "namespace": "f5-bnk",
+          "external_resource_name": "nvidia.com/bf3_p0_sf",
+          "internal_resource_name": "nvidia.com/bf3_p1_sf",
+          "external_nad_name": "sf-external",
+          "internal_nad_name": "sf-internal"
+        }
+      },
+      {
+        "path": "k8s/cert-manager",
+        "name": "cert-manager",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "k8s/bnk-cert-issuer",
+        "name": "BNK Cert Issuer",
+        "required": true,
+        "description": "Creates cert-manager issuer chain (self-signed ClusterIssuer, BNK CA, bnk-ca-cluster-issuer)",
+        "variables": {
+          "namespace": "cert-manager",
+          "self_signed_cluster_issuer_name": "bnk-selfsigned-cluster-issuer",
+          "ca_certificate_name": "bnk-ca",
+          "ca_secret_name": "bnk-ca-secret",
+          "cluster_issuer_name": "bnk-ca-cluster-issuer"
+        }
+      },
+      {
+        "path": "bnk/flo",
+        "name": "F5 Lifecycle Operator (FLO)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bnk/cneinstance",
+        "name": "BNK CNEInstance",
+        "required": true,
+        "variables": {
+          "dpu_enabled": true,
+          "external_nad_name": "sf-external",
+          "internal_nad_name": "sf-internal",
+          "deployment_size": "Large",
+          "instance_namespace": "f5-bnk"
+        }
+      },
+      {
+        "path": "bnk/bnk-vlans",
+        "name": "BNK VLANs",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bnk/bnk-gatewayclass",
+        "name": "BNK GatewayClass",
+        "required": true,
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "bare_metal_host_id": {
+        "label": "Bare-Metal Host",
+        "type": "number",
+        "required": true,
+        "description": "Registered bare-metal host ID"
+      },
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true,
+        "description": "Name for the K8s cluster"
+      },
+      "jwt_token": {
+        "label": "F5 License JWT",
+        "type": "string",
+        "required": false,
+        "sensitive": true,
+        "description": "F5 license JWT for connected licensing"
+      },
+      "external_selfip": {
+        "label": "TMM External Self-IP (CIDR)",
+        "type": "string",
+        "required": false,
+        "description": "Self-IP for TMM on the external (client-facing) network in CIDR notation (e.g., 10.0.10.240/24)",
+        "placeholder": "10.0.10.240/24"
+      },
+      "internal_selfip": {
+        "label": "TMM Internal Self-IP (CIDR)",
+        "type": "string",
+        "required": false,
+        "description": "Self-IP for TMM on the internal (server-facing) network in CIDR notation (e.g., 10.0.20.240/24)",
+        "placeholder": "10.0.20.240/24"
+      },
+      "runc_version": {
+        "label": "Runc Version",
+        "type": "string",
+        "default": "1.2.1",
+        "required": false,
+        "description": "Runc version to install on DPU"
+      },
+      "containerd_version": {
+        "label": "Containerd Version",
+        "type": "string",
+        "default": "1.7.23",
+        "required": false,
+        "description": "Containerd version to install on DPU"
+      },
+      "k8s_version": {
+        "label": "Kubernetes Version",
+        "type": "string",
+        "default": "1.29",
+        "required": false,
+        "description": "Kubernetes version (major.minor) for kubeadm/kubelet/kubectl"
+      },
+      "pause_image_tag": {
+        "label": "Pause Image Tag",
+        "type": "string",
+        "default": "3.10",
+        "required": false,
+        "description": "K8s pause container image tag"
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "bare_metal_host",
+        "description": "Registered bare-metal host with SSH access and BlueField DPU"
+      },
+      {
+        "type": "project_secret",
+        "name": "jwt_token",
+        "description": "F5 license JWT token from MyF5 (injected into bnk/flo for connected licensing)"
+      },
+      {
+        "type": "project_secret",
+        "name": "cne_pull_secret",
+        "description": "Base64-encoded F5 FAR service account key JSON content (injected into k8s/bnk-prerequisites). Falls back to encrypted System Default if not set in project."
+      }
+    ],
+    "tags": [
+      "bare-metal",
+      "dpu",
+      "bluefield",
+      "bnk",
+      "on-prem"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  },
+  {
+    "name": "DPU + BNK 2.2 Full PoC (SSH BNK layer)",
+    "slug": "bnk-bare-metal-full-poc-ssh",
+    "description": "End-to-end DPU + BNK 2.2 PoC where the BNK layer (modules 18-25) runs over SSH (on-host sudo kubectl/helm) instead of kubernetes-direct/operator/OpenTofu. For constrained bare-metal DPU servers with no routable cluster API. ADR-204.",
+    "category": "bare-metal",
+    "cloud_provider": null,
+    "icon": "cpu",
+    "color": "orange",
+    "estimated_time": "30-45 minutes",
+    "estimated_cost": "N/A (bare-metal)",
+    "difficulty": "advanced",
+    "maturity": "alpha",
+    "bnk_version": "2.2",
+    "outcomes": [
+      "BlueField DPU flashed with target DOCA version",
+      "Single-node K8s cluster on bare-metal host",
+      "DPU joined as worker node with TMM labels/taints",
+      "F5 BNK platform deployed (FLO + CNEInstance + networking)"
+    ],
+    "modules": [
+      {
+        "path": "bare-metal/probe-dpu",
+        "name": "Probe DPU State",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/set-nic-mode",
+        "name": "Set NIC Mode (mlxconfig)",
+        "required": true,
+        "description": "Set BlueField to DPU mode via mlxconfig. Idempotent — safe to run even if already in DPU mode.",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/reboot-host",
+        "name": "Reboot Host (if needed)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/flash-dpu",
+        "name": "Flash DPU (BFB)",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/wait-dpu-ready",
+        "name": "Wait DPU Ready",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/setup-dpu-networking",
+        "name": "Setup DPU Networking",
+        "required": true,
+        "description": "Configure NAT on host and routing/DNS on DPU for internet access",
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-dpu-prereqs",
+        "name": "Install DPU Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-k8s-prereqs",
+        "name": "Install K8s Prerequisites",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-init",
+        "name": "Initialize K8s Cluster",
+        "required": true,
+        "variables": {
+          "cluster_name": "",
+          "pod_cidr": "10.244.0.0/16",
+          "service_cidr": "10.96.0.0/12"
+        }
+      },
+      {
+        "path": "bare-metal/install-cni",
+        "name": "Install Calico CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-multus",
+        "name": "Install Multus CNI",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-gateway-api",
+        "name": "Install Gateway API",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-sriov",
+        "name": "Install SR-IOV Operator",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/install-storage",
+        "name": "Install Storage Provisioner",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/kubeadm-join",
+        "name": "Join DPU to Cluster",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/label-dpu-node",
+        "name": "Label DPU Node",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/taint-dpu-node",
+        "name": "Taint DPU Node",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/bnk-prerequisites",
+        "name": "BNK Prerequisites [SSH]",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/network-setup",
+        "name": "Network Setup (NADs) [SSH]",
+        "required": true,
+        "variables": {
+          "cni_type": "sf",
+          "namespace": "f5-bnk",
+          "external_resource_name": "nvidia.com/bf3_p0_sf",
+          "internal_resource_name": "nvidia.com/bf3_p1_sf",
+          "external_nad_name": "sf-external",
+          "internal_nad_name": "sf-internal"
+        },
+        "description": "Creates Multus NADs for TMM data-plane interfaces (DPU SF mode)"
+      },
+      {
+        "path": "bare-metal/cert-manager",
+        "name": "cert-manager [SSH]",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/bnk-cert-issuer",
+        "name": "BNK Cert Issuer [SSH]",
+        "required": true,
+        "variables": {
+          "namespace": "cert-manager",
+          "instance_namespace": "f5-bnk",
+          "self_signed_cluster_issuer_name": "bnk-selfsigned-cluster-issuer",
+          "ca_certificate_name": "bnk-ca",
+          "ca_secret_name": "bnk-ca-secret",
+          "cluster_issuer_name": "bnk-ca-cluster-issuer"
+        },
+        "description": "Creates cert-manager issuer chain (self-signed ClusterIssuer, BNK CA, bnk-ca-cluster-issuer)"
+      },
+      {
+        "path": "bare-metal/bnk-flo",
+        "name": "F5 Lifecycle Operator (FLO) [SSH]",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/bnk-cneinstance",
+        "name": "BNK CNEInstance [SSH]",
+        "required": true,
+        "variables": {
+          "dpu_enabled": true,
+          "external_nad_name": "sf-external",
+          "internal_nad_name": "sf-internal",
+          "deployment_size": "Large",
+          "instance_namespace": "f5-bnk"
+        }
+      },
+      {
+        "path": "bare-metal/bnk-vlans",
+        "name": "BNK VLANs [SSH]",
+        "required": true,
+        "variables": {}
+      },
+      {
+        "path": "bare-metal/bnk-gatewayclass",
+        "name": "BNK GatewayClass [SSH]",
+        "required": true,
+        "variables": {}
+      }
+    ],
+    "variable_templates": {
+      "bare_metal_host_id": {
+        "label": "Bare-Metal Host",
+        "type": "number",
+        "required": true,
+        "description": "Registered bare-metal host ID"
+      },
+      "cluster_name": {
+        "label": "Cluster Name",
+        "type": "string",
+        "required": true,
+        "description": "Name for the K8s cluster"
+      },
+      "jwt_token": {
+        "label": "F5 License JWT",
+        "type": "string",
+        "required": false,
+        "sensitive": true,
+        "description": "F5 license JWT for connected licensing"
+      },
+      "external_selfip": {
+        "label": "TMM External Self-IP (CIDR)",
+        "type": "string",
+        "required": false,
+        "description": "Self-IP for TMM on the external (client-facing) network in CIDR notation (e.g., 10.0.10.240/24)",
+        "placeholder": "10.0.10.240/24"
+      },
+      "internal_selfip": {
+        "label": "TMM Internal Self-IP (CIDR)",
+        "type": "string",
+        "required": false,
+        "description": "Self-IP for TMM on the internal (server-facing) network in CIDR notation (e.g., 10.0.20.240/24)",
+        "placeholder": "10.0.20.240/24"
+      },
+      "runc_version": {
+        "label": "Runc Version",
+        "type": "string",
+        "default": "1.2.1",
+        "required": false,
+        "description": "Runc version to install on DPU"
+      },
+      "containerd_version": {
+        "label": "Containerd Version",
+        "type": "string",
+        "default": "1.7.23",
+        "required": false,
+        "description": "Containerd version to install on DPU"
+      },
+      "k8s_version": {
+        "label": "Kubernetes Version",
+        "type": "string",
+        "default": "1.29",
+        "required": false,
+        "description": "Kubernetes version (major.minor) for kubeadm/kubelet/kubectl"
+      },
+      "pause_image_tag": {
+        "label": "Pause Image Tag",
+        "type": "string",
+        "default": "3.10",
+        "required": false,
+        "description": "K8s pause container image tag"
+      }
+    },
+    "prerequisites": [
+      {
+        "type": "bare_metal_host",
+        "description": "Registered bare-metal host with SSH access and BlueField DPU"
+      },
+      {
+        "type": "project_secret",
+        "name": "jwt_token",
+        "description": "F5 license JWT token from MyF5 (injected into bnk/flo for connected licensing)"
+      },
+      {
+        "type": "project_secret",
+        "name": "cne_pull_secret",
+        "description": "Base64-encoded F5 FAR service account key JSON content (injected into k8s/bnk-prerequisites). Falls back to encrypted System Default if not set in project."
+      }
+    ],
+    "tags": [
+      "bare-metal",
+      "dpu",
+      "bluefield",
+      "bnk",
+      "on-prem"
+    ],
+    "is_active": true,
+    "is_featured": false,
+    "version": "1.0.0",
+    "created_by": "system",
+    "is_public": true,
+    "forked_from": null
+  }
+]

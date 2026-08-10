@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "azure-aks-foundation",
+    "version": "1.0.0",
+    "name": "Azure AKS Cluster",
+    "description": "Provisions an Azure AKS cluster with managed node pools for BNK deployment. Creates resource group and cluster with configurable VM sizes."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "azure",
+  "icon": "cloud",
+  "color": "#0078D4",
+  "estimated_time": "10-15 minutes",
+  "estimated_cost": "Pay-as-you-go (Azure compute)",
+  "difficulty": "intermediate",
+  "maturity": "alpha",
+  "bnk_version": null,
+  "tags": [
+    "azure",
+    "aks",
+    "cloud",
+    "infrastructure"
+  ],
+  "outcomes": [
+    "Azure AKS cluster with managed identity",
+    "Configurable node pool with Azure CNI networking",
+    "Kubeconfig ready for BNK module deployment"
+  ],
+  "prerequisites": [
+    {
+      "type": "cloud_credentials",
+      "description": "Azure credentials with permissions to create AKS clusters"
+    }
+  ],
+  "variable_templates": {
+    "resource_group_name": {
+      "label": "Resource Group Name",
+      "type": "string",
+      "required": true
+    },
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "required": true
+    },
+    "location": {
+      "label": "Azure Region",
+      "type": "string",
+      "required": true,
+      "placeholder": "australiaeast"
+    },
+    "node_count": {
+      "label": "Node Count",
+      "type": "number",
+      "default": 2,
+      "required": false
+    },
+    "vm_size": {
+      "label": "VM Size",
+      "type": "string",
+      "default": "Standard_D4s_v3",
+      "required": false
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "infra-azure-aks",
+      "module": "infra/azure/aks",
+      "version": "1.0.0",
+      "name": "AKS Cluster",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Provisions Azure AKS cluster with managed node pools"
+    }
+  ],
+  "is_featured": false
+}

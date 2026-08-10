@@ -1,0 +1,873 @@
+# BNK-Forge Roadmap — single source of truth
+# =================================================================
+# Edit this file (or run `bin/roadmap-add.py`) then regenerate with
+#   backend/.venv/bin/python bin/roadmap-gen.py
+# which (re)writes BOTH docs/ROADMAP.md and docs/roadmap.html.
+#
+# SCHEMA
+# ------
+# meta:
+#   title:            H1 / page title
+#   updated:          date string (shown in header chrome)
+#   verified_against: free text (shown in intro)
+#   intro_md: |       multi-line markdown rendered verbatim under the MD H1
+#   human_view_note:  one-line sub shown under the HTML <h1>
+#   stats:            list of {n, label, red?} -> the 4 HTML stat tiles.
+#                     Tiles whose n is the literal "AUTO:in_progress" or
+#                     "AUTO:planned" are computed from item counts; any other
+#                     value (e.g. "25+") is a static meta number.
+# status_legend:      key -> { emoji, dot, label } used for BOTH md + html.
+#   keys: shipped | in_progress | blocked | deferred | planned
+# sections: ordered list of
+#   - id:       stable slug (used by roadmap-add.py --section)
+#     number:   section number for the md heading "## N. ..."
+#     heading:  section title
+#     intro:    optional markdown shown under the heading
+#     render:   table | cards | bullets
+#     html_group: optional HTML super-heading ("In progress" / "Planned" /
+#                 "Shipped") used to bucket sections into the 3 HTML grids.
+#                 Sections sharing an html_group render their cards together.
+#     columns:  (table only) md table header columns
+#     raw_md:   optional verbatim markdown body (for prose-only sections that
+#               don't map onto items, e.g. the issue index)
+#     items:
+#       - title:  item title
+#         status: a key in status_legend (optional for bullets/raw)
+#         refs:   list of strings; "#NNN" / "PR #NNN" become GitHub links
+#         note:   free text / "what remains" cell
+#         group:  optional; groups items into a named card (cards/table html)
+# =================================================================
+
+meta:
+  title: BNK-Forge Roadmap
+  updated: '2026-06-12'
+  verified_against: merged staging + open PRs as of 2026-06-12
+  intro_md: '> **Future agents:** this is the single "what''s next" view. When asked what to work on, read this top-to-bottom.
+
+    > Every actionable item links to a **GitHub issue** (the tracking system going forward), an **ADR** (`docs/adr/` or `.agent/DECISIONS.md`), and/or a **memory** memo. Status is verified against merged `staging` + open PRs as of 2026-06-12.
+
+    > Legend: ✅ shipped · 🟡 in-progress/partial (incl. PR open) · ⛔ blocked · 💤 deferred · ⚪ not-started/proposed
+
+
+    Source sweep: memories + ADRs (D-001…D-028) + GitHub issues + open PRs, 2026-06-12.
+
+    **Deep doc sweep 2026-06-03:** swept `docs/specs/`, sprint plans, and strategic docs; statuses **code-verified** before assignment (many specs that read as "proposed" are in fact already built — see §10). New gap issues from the sweep: #216/#217/#218.
+
+    **2026-06-09 sync:** D-021/D-022 fleet epics shipped (PRs #276/#277); D-027 zero-toast shipped (PRs #260/#261/#278); D-028 unified blueprint catalog shipped (PR #274); D-001 Phase 3 / D-019 E1/E3/E6 / Ops MCP+celery / AWS cred-expiry UX all shipped. D-023 (classic BIG-IP) + D-020 (F5 design-system) + benchmark experience remain in-flight.
+
+    **2026-06-12 sync:** cb-rebuild → staging de-stacking COMPLETE; new `customer-build` integration line live on localhost (staging + all open PRs + customer deltas); multi-arch images published `ghcr.io/jlcode-tech 3.1.6-cb.72b29dbb` + rolling `customer-build`. D-023 P1-P3 shipped (PR #280); alembic dedupe shipped (PR #283). 13 PRs in review: #282 (scenario override guard), #284 (BNK registry-driven GA/ReleaseRegistry), #285 (multiarch publish), #286 (benchmark remote agent-host + Slice-4 auth), #287 (AI-Analyzer rename + Migration tab fix), #288 (dist uninstall-purge fix), #290 (D-023 P4 CIS coverage), #291 (Dashboard Command Center fleet section), #292 (bfb-cache atime/LRU fix), #293 (runtime brand flag #289), #295 (CIS IngressClass kind-aware classify), #296 (top-level Infrastructure section), #297 (release automation — team decision pending). D-020 reskin branch fully rebuilt 2026-06-10/11 (complete reskin + anvil ForgeLogo general rebrand).
+
+    **Human view (clickable):** `docs/roadmap.html` · **Contribution flow:** `docs/ROADMAP_PROCESS.md` · (local per-clone agent queue: `.agent/backlog/BACKLOG.md`).
+
+    '
+  human_view_note: 'What''s next, what''s planned, and what we''ve shipped &nbsp;|&nbsp; updated 2026-06-12 &nbsp;|&nbsp; source of truth: docs/ROADMAP.md + GitHub issues'
+  stats:
+  - n: AUTO:in_progress
+    label: In progress (tracked)
+  - n: AUTO:planned
+    label: Planned (tracked)
+  - n: 50+
+    label: PRs merged to staging
+    red: true
+  - n: '34'
+    label: Issues closed
+    red: true
+status_legend:
+  shipped:
+    emoji: ✅
+    dot: d-ship
+    label: Shipped
+  in_progress:
+    emoji: 🟡
+    dot: d-prog
+    label: In progress
+  blocked:
+    emoji: ⛔
+    dot: d-block
+    label: Blocked
+  deferred:
+    emoji: 💤
+    dot: d-defer
+    label: Deferred
+  planned:
+    emoji: ⚪
+    dot: d-plan
+    label: Planned
+sections:
+- id: active
+  number: 1
+  heading: Active / next — issue-tracked, actionable now
+  render: table
+  html_group: In progress — actionable now
+  columns:
+  - Item
+  - Status
+  - Issues / PRs
+  - What remains
+  items:
+  - title: D-001 Phase 3 — event-chain destroy (replace `parallel_tasks`, retire `parallel_executions`)
+    status: shipped
+    refs:
+    - '#159'
+    - 'PR #188'
+    - ADR D-001
+    note: 'Shipped. PR #188 merged. Reverse-DAG event-chain destroy + `parallel_executions` retired (v2_118/v2_119) + `/orchestration/{run_handle}`. Unlocks D-005.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-019 dynamic-by-default — remaining epics
+    status: in_progress
+    refs:
+    - '#136'
+    - 'PR #189'
+    - '#137'
+    - '#138'
+    - 'PR #190'
+    - '#139'
+    - '#148'
+    - '#140'
+    - '#141'
+    - 'PR #192'
+    note: 'See §2. E1 (PR #189) / E3 (PR #190) / E6 (PR #192) shipped. E2 blocked on E1; E4 partial; E5 planned. Closed: #129→#146, #130→#147, #142→#145, #131-135→#143.'
+  - title: D-020 F5 design-system reskin + anvil ForgeLogo rebrand
+    status: in_progress
+    refs:
+    - '#193'
+    - '#194'
+    - '#202'
+    - 'PR #203'
+    - 'PR #287'
+    - 'PR #289'
+    - 'PR #291'
+    - 'PR #293'
+    - 'PR #296'
+    - ADR D-020
+    note: 'PR #203 branch fully rebuilt 2026-06-10/11 off staging: complete reskin + anvil ForgeLogo general rebrand incl. Login page (F5Logo retired), CI green, needs re-review. Stacked: #287 (AI-Analyzer rename + Migration tab fix — restores staging regression), #291 (Dashboard Command Center fleet section), #293 (runtime brand flag: BRAND=f5 internal / anvil default external, closes #289), #296 (top-level Infrastructure section, relocates DPU/DPF out of Fleet).'
+    group: Top of queue — PRs open (CI-green)
+  - title: DPU bare-metal — SSH-BNK module ports
+    status: in_progress
+    refs:
+    - '#204'
+    - '#205'
+    - '#210'
+    note: epic open. SSHEngine + Path B+ already built (`services/execution/ssh_engine.py`); these issues port the 18–25 BNK-layer modules from `bnk-poc-deployer` over SSH (scaffolding → manifest/helm ports → cneinstance → vlans/gatewayclass → destroy + e2e on dpu-server-2).
+    group: Top of queue — PRs open (CI-green)
+  - title: D-018 P3 — CR write path ("CRD Wizard")
+    status: blocked
+    refs:
+    - '#179'
+    - ADR D-018
+    - rfc_cnf_dashboard_dynamic_crd_llmtop
+    note: blocked (authz/audit). Needs RBAC + server-side-apply dry-run + audit + success-from-returned-object before shipping.
+  - title: D-017 — licensing success contract
+    status: shipped
+    refs:
+    - 'PR #119'
+    - '#160'
+    - ADR D-017
+    note: 'shipped. PR #119 merged · #160 closed. Success derived from outcome, not HTTP 2xx; curl parser hardened.'
+  - title: Alembic schema-drift gate
+    status: planned
+    refs:
+    - '#161'
+    note: (recurring user crash) Fail loud on ORM-vs-DB drift at deploy.
+    group: Top of queue — PRs open (CI-green)
+  - title: Integration-branch automation — activation
+    status: in_progress
+    refs:
+    - '#152'
+    - '#158'
+    - project_integration_branch_automation
+    note: '(merged #152/#158) Add repo secret `INTEGRATION_PUSH_TOKEN`; `schedule`/`check_suite` triggers activate once on `main` (via #117).'
+    group: Top of queue — PRs open (CI-green)
+  - title: '#117 staging→main release'
+    status: in_progress
+    refs:
+    - 'PR #117'
+    note: open (192 commits). Deliberate promotion of accumulated staging work to `main`.
+    group: Top of queue — PRs open (CI-green)
+  - title: 'Ops: MCP service account + celery-beat healthcheck'
+    status: shipped
+    refs:
+    - 'PR #214'
+    note: 'Shipped. PR #214 merged. Dedicated non-human `mcp` account (admin-rotation no longer breaks MCP auth) + mtime-freshness beat healthcheck.'
+    group: Top of queue — PRs open (CI-green)
+  - title: Benchmark experience / security hardening
+    status: in_progress
+    refs:
+    - 'PR #211'
+    - 'PR #251'
+    - 'PR #282'
+    - 'PR #286'
+    - '#294'
+    note: 'PR #282 (scenario override guard security fix) + PR #286 (remote agent-host provisioning + built-in agent + Slice-4 auth + ported tests) in review. PR #251 (authz/WS-auth/atomic-claim/TLS+SSRF) folds into #211; gated on a maintainer driving #211→staging. #294 (benchmarks page IA + New Run wizard port) deferred pending user decision.'
+    group: Top of queue — PRs open (CI-green)
+  - title: GHCR customer-build publish target + postgres-backup compose drift fix
+    status: shipped
+    refs:
+    - 'PR #242'
+    - 'PR #243'
+    note: 'Shipped. PR #242 (postgres-backup compose drift fix) + PR #243 (GHCR customer-build publish target) merged.'
+    group: Top of queue — PRs open (CI-green)
+  - title: Multi-arch image publish + dist uninstall-purge fix + install messaging
+    status: in_progress
+    refs:
+    - 'PR #285'
+    - 'PR #288'
+    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/jlcode-tech) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
+    group: Top of queue — PRs open (CI-green)
+  - title: Alembic migration deduplication (v2_131)
+    status: shipped
+    refs:
+    - 'PR #283'
+    note: 'Shipped. PR #283 merged. Deduped v2_130 collision (benchmark_run_groups renumbered → v2_131); broken staging migration head fixed.'
+    group: Top of queue — PRs open (CI-green)
+  - title: Release automation — RC-on-staging / final-on-main (conventional-commit bumps)
+    status: in_progress
+    refs:
+    - 'PR #297'
+    note: 'PR #297 open; team decision pending — may be closed in favor of manual release flow.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-021 — existing-proxy discovery & migration to BNK (P1+P2+P3)
+    status: shipped
+    refs:
+    - '#233'
+    - 'PR #276'
+    - ADR D-021
+    note: 'Shipped. PR #276 consolidated (closes epic #233). Proxy discovery, migration path to BNK, P1/P2/P3 complete.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-022 — fleet management (K8s + hardware + OS, P1–P6)
+    status: shipped
+    refs:
+    - '#234'
+    - 'PR #277'
+    - ADR D-022
+    note: 'Shipped. PR #277 consolidated (closes epic #234). Fleet inventory, labels, hardware/OS management, P1–P6 complete.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-023 — classic F5 BIG-IP (TMOS) — discover, manage (AS3), migrate to BNK (P1–P3)
+    status: shipped
+    refs:
+    - '#235'
+    - 'PR #280'
+    - ADR D-023
+    note: 'Shipped. PR #280 merged (P1+P2+P3: BIG-IP discovery/inventory, AS3 engine, CIS discover/migrate). P4 CIS coverage: PR #290 + #295 in review.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-023 P4 — CIS coverage (AS3 ConfigMap/Ingress/Route/IngressLink + authz hardening + IngressClass classify)
+    status: in_progress
+    refs:
+    - '#268'
+    - 'PR #290'
+    - 'PR #295'
+    - ADR D-023
+    note: 'PR #290 (AS3 ConfigMap/Ingress/OpenShift Route/IngressLink + authz hardening) + PR #295 (CIS IngressClass kind-aware classify — migratable not BNK) in review. #268 (CIS security-CRD mapper) intentionally open as follow-up.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-024 — eBPF end-of-branch validation (ADR only)
+    status: planned
+    refs:
+    - '#236'
+    - ADR D-024
+    - 'PR #232'
+    note: 'ADR landed (PR #232 merged). Fills topology observed-flow gap. No implementation issues open yet.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-027 — bell-only notifications / zero-toast (ADR + P1–P5)
+    status: shipped
+    refs:
+    - '#255'
+    - '#256'
+    - '#257'
+    - '#258'
+    - '#259'
+    - 'PR #260'
+    - 'PR #261'
+    - 'PR #278'
+    - ADR D-027
+    note: 'Shipped. PRs #260 (ADR), #261 (P1), #278 (P2–P5) merged. Issues #255–#259 closed. Zero-toast; all notifications via bell.'
+    group: Top of queue — PRs open (CI-green)
+  - title: D-028 — unified blueprint catalog (builtins as blueprints, visibility, External Charts removed)
+    status: shipped
+    refs:
+    - 'PR #274'
+    - ADR D-028
+    note: 'Shipped. PR #274 merged. 12 in-code stack_templates merged as builtin releases; visibility toggle; modules behind Advanced; External Charts removed. ADR docs/adr/D-028-...'
+    group: Top of queue — PRs open (CI-green)
+  - title: AWS cred-expiry UX — clear stale badge on SSO refresh + friendly 401
+    status: shipped
+    refs:
+    - 'PR #253'
+    - 'PR #254'
+    - 'PR #267'
+    note: 'Shipped. PR #253 (clear stale cred badge on SSO refresh) + PR #254 (friendly 401 for expired AWS + 6 k8s pages via shared ErrorState) + PR #267 (unified AWS cred status badge) all merged.'
+    group: Top of queue — PRs open (CI-green)
+  - title: ADRs landed to staging — D-020, D-021/022/023, D-024
+    status: shipped
+    refs:
+    - 'PR #230'
+    - 'PR #231'
+    - 'PR #232'
+    note: 'Shipped. PR #230 (D-020 F5 design ADR) + PR #231 (D-021/D-022/D-023 ADRs + F5 Insight folded into D-023) + PR #232 (D-024 eBPF EOB ADR) all merged to staging.'
+    group: Top of queue — PRs open (CI-green)
+  - title: BFB cache atime/LRU fix (epoch-float + flaky test stabilization)
+    status: in_progress
+    refs:
+    - 'PR #292'
+    note: 'PR #292 in review. Fixes epoch-float atime in _touch_atime; stabilizes LRU eviction + its flaky test.'
+    group: Top of queue — PRs open (CI-green)
+  - title: Observability export — Prometheus + dashboards
+    status: planned
+    refs:
+    - '#216'
+    - OBS-003 P2/P3
+    - OBS-005
+    note: '(gap, code-verified absent) OBS Phase 1 shipped (structured logs/correlation/error-taxonomy). Missing: `/metrics` endpoint + Grafana/CloudWatch dashboards + troubleshooting queries.'
+  - title: BNK release/version maintenance model + registry-driven GA + upgrade hardening
+    status: in_progress
+    refs:
+    - '#217'
+    - 'PR #284'
+    - PLATFORM-VERSION-001
+    note: 'PR #284 in review: registry-driven GA resolution + ReleaseRegistry + upgrade hardening (FLO secret decode, graceful undecodable-FLO, supersede/409, cancel UX). Closes #217 on merge.'
+  - title: Multi-platform parity — AKS/GKE token injection
+    status: in_progress
+    refs:
+    - '#218'
+    note: partial (EKS/ROKS done). Platform profiles cover EKS/AKS/GKE/OCP/ROKS; runtime bearer-token injection wired only for EKS + IBM/ROKS. Azure/GCP injection missing.
+  - title: Operational risk surfacing (PLAT-REL-004)
+    status: in_progress
+    refs:
+    - PLAT-REL-004 spec
+    note: partial. Health/version warnings + some dashboard attention shipped; full blocker-surfacing across all 4 UI surfaces (cluster-unreachable/cred-expiry badges, settings infra health) incomplete. No issue yet.
+  - title: awsbnkctl review follow-up
+    status: deferred
+    refs:
+    - '#155'
+    note: 'SimpleNamespace shim hardening + configured-shape contract test. (awsbnkctl side: SSO refresh-token bootstrap — sibling repo.)'
+  - title: Review follow-ups (deferred polish)
+    status: deferred
+    refs:
+    - '#153'
+    - '#154'
+    - '#156'
+    - '#157'
+    note: '#153 (#144 TTFT/ports) · #154 (#146 _kind_to_snake) · #156 (#151 MCP envelope sweep) · #157 (#148 BNK substring/prefix). Non-blocking; created 2026-05-27.'
+  - title: Module catalog auto-sync on boot + wire blueprint wizard 'Sync' CTA
+    status: planned
+    refs:
+    - '#419'
+    note: 'Fresh install / volume wipe leaves the git module catalog (bnk/app/infra packs) un-synced, so BNK/app blueprints are DOA until an operator runs Catalog→Advanced→Modules→''Sync all''. The wizard''s ''requires sync'' prompt is wired to no endpoint. Fix: (1) boot-time auto-sync step (non-fatal, ref-aware) after builtin seeders; (2) wire wizard CTA to POST /api/module-library/sync. Separate from the d019/adr-204 execution_engine seeder-guard fix.'
+  - title: CI container runner engine — security hardening follow-ups
+    status: planned
+    refs:
+    - '#408'
+    - 'PR #340'
+    note: 'Non-blocking follow-ups from the #340 review (all prior blockers verified fixed pre-merge). Priority: non-root Docker gate bypass via `USER 0:<gid>` (host-root primitive), `state.outputs_file` path traversal (arbitrary worker-file read), registry `/test` cross-operator credential exfil + SSRF, install-script PAT/password xtrace leak, K8s deny-all egress netpol breaks the artifact. Plus same-project cluster-name clobber + nits.'
+    group: Review follow-ups
+  - title: Multi-version module catalog — immutable module versions, exact pin resolution (ADR D-033)
+    status: in_progress
+    refs:
+    - '#433'
+    - 'PR #436'
+    note: 'Module identity becomes (source, path, version); hashed rows immutable; blueprints resolve pins exactly (BLUEPRINT_MODULE_VERSION_MISSING); ProjectModule FK becomes a true pin with explicit change-version action + UI/MCP. Combined PR #436 (supersedes stacked #434/#435). ADR: docs/adr/D-033-multi-version-module-catalog.md (PR #432).'
+    group: Catalog & blueprints
+  - title: Module test actions — vendor-CLI e2e/scenario/bench tests via pipeline (ADR D-034)
+    status: planned
+    refs:
+    - '#454'
+    - 'PR #453'
+    note: 'Container-artifact manifests gain a declarative actions block; container engine gains one generic action dispatcher; UI offers actions on post-apply modules (per-scenario + run-all-green, amber behind warning). v1 results = logs + pass/fail. Scaling = edit vars + re-apply, not an action. Tool-embedded tests → pipeline; external load (aiperf agents) stays in Benchmarks. Slices: PR-1 backend, PR-2 UI, PR-3 packs/docs. ADR: docs/adr/D-034-module-test-actions.md (PR #453). Sibling: #452 cluster auto-registration.'
+    group: Catalog & blueprints
+  - title: Container-runner contract hardening — min_forge_version + declared capabilities
+    status: planned
+    refs:
+    - '#465'
+    note: 'Phase 3 of the ctl-runner review. min_forge_version + capability requirements (e.g. wide docker-socket proxy) become machine-checkable artifact-manifest fields enforced at sync/import; Forge injects the proxy endpoint instead of external manifests hardcoding DOCKER_HOST; schema_version evolution policy lands in EXT-003.'
+    group: Catalog & blueprints
+  - title: Runner-image supply chain — default-on allowlist + cosign verification
+    status: planned
+    refs:
+    - '#466'
+    note: 'verify_signature() is a no-op and the runtime host allowlist fails open when unset; trust today = index PR review + digest immutability + sandbox. Default the runtime allowlist, add cosign warn-only → enforce. Gate for promoting content-index registration beyond first-party authors.'
+    group: Catalog & blueprints
+  - title: Retire cli-bnkctl subprocess engine; de-terraform generic pack sync
+    status: planned
+    refs:
+    - '#467'
+    note: 'Phase 4 of the ctl-runner review. awsbnkctl becomes a tools-runner image in bnkctl-index (proves the generic model on a cloud-credential tool), then BnkctlEngine + cli_bnkctl_module_seeder are deleted. Sync stops running terraform-config-inspect on container packs, stops defaulting unknown engines to opentofu, and takes category/provider from the manifest.'
+    group: Catalog & blueprints
+  - title: Container-runner #468 review — deferred hardening nits
+    status: planned
+    refs:
+    - '#469'
+    - '#470'
+    - '#471'
+    - '#472'
+    note: 'Low-priority follow-ups from the PR #468 review (F1/F2/amber/hardlink/allowlist-drift already fixed in-PR). #469 boot-sync: advisory lock held for whole clone (idle-in-txn), boot-vs-force-sync uncovered, skip-branch untested. #470 report readback: mirror `..` rejection on rendered dir, reject non-UTF8 instead of mojibake. #471 action dialog: handleSubmit double-click re-guard, invalidate reports on action, escaping-regression test. #472 validator: test main() CLI paths, align path-equality with the sync stripped value.'
+    group: Catalog & blueprints
+- id: d019_d018_detail
+  number: 2
+  heading: D-019 / D-018 dynamic-by-default — epic detail
+  render: cards
+  html_group: In progress — actionable now
+  items:
+  - title: E1 — registry→discovery on write/describe/fetch paths
+    status: shipped
+    refs:
+    - '#136'
+    - 'PR #189'
+    note: 'Shipped. PR #189 merged. Discovery-backed resolver on write/describe/fetch; read path fallback (#125); registered-kind 500 fixes (#129/#146).'
+    group: Dynamic-by-default epics (D-019)
+  - title: E2 — discovery-driven export/snapshot/promotion/finalizer + DPF
+    status: blocked
+    refs:
+    - '#137'
+    note: blocked on E1.
+    group: Dynamic-by-default epics (D-019)
+  - title: E3 — EngineRegistry (collapse 5 hardcoded engine sets into one source of truth)
+    status: shipped
+    refs:
+    - '#138'
+    - 'PR #190'
+    - ADR D-010
+    note: 'Shipped. PR #190 merged. EngineRegistry built; #130/#147 added engine inference (precursor).'
+    group: Dynamic-by-default epics (D-019)
+  - title: E4 — BNK discovery by label
+    status: in_progress
+    refs:
+    - '#139'
+    - '#148'
+    note: 'Slice 1 shipped (#148). Slices 2-4: namespace persistence on cluster record · operator chart `BNK_NAMESPACE` env · delete prefix tuples after live-label validation.'
+    group: Dynamic-by-default epics (D-019)
+  - title: E5 — FE consumes /crds
+    status: planned
+    refs:
+    - '#140'
+    note: CNF page uses /crds (#126); BNK + k8s sidebars still on static `resource-registry`.
+    group: Dynamic-by-default epics (D-019)
+  - title: E6 — MCP `_meta` governance
+    status: shipped
+    refs:
+    - '#141'
+    - 'PR #192'
+    note: 'Shipped. PR #192 merged. risk/auth in tool `_meta` at registration + governs `diagnostics_fleet`; /mcp/status from tools/list (#128).'
+    group: Dynamic-by-default epics (D-019)
+  - title: A2 — full static-registry removal migration
+    status: planned
+    refs:
+    - '#178'
+    note: its own ADR; superset of E1/E2; demote-now/delete-later.
+    group: Dynamic-by-default epics (D-019)
+  - title: D-018 P5.2 llmtop binary/GPU · P6 cross-context diff/live-events
+    status: deferred
+    refs: []
+    note: P5.2 deferred (needs JSON schema) · P6 cross-context diff/live-events ⚪ optional.
+    group: Dynamic-by-default epics (D-019)
+- id: decided_not_built
+  number: 3
+  heading: Decided ADRs, NOT built (create issues when scheduled)
+  render: cards
+  html_group: Planned — decided, tracked in issues
+  items:
+  - title: Architecture-deepening (2026-05-13 walk) — all Proposed, backlog-id tracked
+    status: planned
+    refs:
+    - '#162'
+    - '#163'
+    - '#164'
+    - '#165'
+    - '#166'
+    - '#167'
+    - '#168'
+    - '#169'
+    - '#170'
+    - '#171'
+    - '#172'
+    note: 'D-005 TaskOrchestrator (💤 behind D-001 Phase 3; Slice A spec preserved) · D-006 engine-specific ModuleContext · D-007 K8sPayloadBuilder (mechanism for D-019 #129; supersedes pack-strategy4 footgun) · D-008 VariableContext · D-009 useProbeState hook · D-010 EngineRegistry (= #138) · D-011 ConnectivityProbeRegistry (behind D-002 2B) · D-012 BlueprintCategoryResolver · D-013 BlueprintCatalogFilterModel · D-014 DeployDialogOrchestrator · D-015 FormCascadeModel.'
+    group: Architecture deepening (proposed ADRs)
+  - title: D-016 Helm→Celery port
+    status: shipped
+    refs:
+    - '#172'
+    note: 'Shipped — helm ops fully ported to Celery (11 @celery_app.task in helm_tasks.py, PR #120). #172 closed 2026-06-03 (verified in code).'
+    group: Architecture deepening (proposed ADRs)
+  - title: D-002 connectivity — remaining phases
+    status: planned
+    refs:
+    - '#173'
+    - '#174'
+    - '#175'
+    - '#176'
+    note: 'Phase 2B (operator active-reconnect) ⚪ · Phase 2C (~49 FE hook migrations) ⚪ · Phase 3 (metrics/persistence/dashboard) ⚪. Also: unified connectivity-indicator FE widget (`followup_unified_connectivity_indicators`).'
+    group: Connectivity & deploy reliability
+  - title: D-003 deploy reliability — remaining
+    status: in_progress
+    refs:
+    - '#177'
+    note: 'several quick fixes shipped; remaining: single config source-of-truth, full failure-classification + autoretry/backoff/idempotency, Deploy E2E smoke in CI, merge two sync paths, Canvas (= #159). `rfc_deploy_reliability_workplan`.'
+    group: Connectivity & deploy reliability
+  - title: E1 catalog-ize SSH/bare-metal modules → E2 canonical-input SDK
+    status: planned
+    refs:
+    - '#180'
+    note: E1 catalog-ize SSH/bare-metal modules ⚪ (`followup_catalogize_ssh_modules`) → E2 canonical-input SDK ⚪ (`followup_canonical_input_sdk_rfc`, gated on E1).
+    group: Catalog & infrastructure follow-ups
+- id: deferred
+  number: 4
+  heading: Deferred (decided, parked)
+  render: bullets
+  html_group: Planned — decided, tracked in issues
+  items:
+  - title: D-004 state-ownership redesign
+    status: deferred
+    refs: []
+    note: patches-first; revisit only if patches stop working.
+    group: Review follow-ups & deferred
+  - title: D-005 TaskOrchestrator
+    status: planned
+    refs:
+    - '#162'
+    note: 'D-001 Phase 3 shipped (PR #188) — blocker cleared. Slice A spec preserved in `.agent/tasks/active/task-orchestrator-slice-a/`. Ready to schedule.'
+    group: Review follow-ups & deferred
+- id: infra_followups
+  number: 5
+  heading: Infra / platform reliability follow-ups (no issues yet)
+  render: bullets
+  html_group: Planned — decided, tracked in issues
+  items:
+  - title: Project-delete blocked by stale workspace-locks
+    status: planned
+    refs:
+    - '#181'
+    note: '`followup_project_delete_workspace_lock_block`.'
+    group: Catalog & infrastructure follow-ups
+  - title: Forge-destroy leaves OpenTofu AWS/IAM resources → EntityAlreadyExists
+    status: planned
+    refs:
+    - '#182'
+    note: '`followup_forge_destroy_leaves_iam_resources`.'
+    group: Catalog & infrastructure follow-ups
+  - title: 'MCP import tools gap after #108'
+    status: planned
+    refs:
+    - '#183'
+    note: '`import_project_module_from_git`/`_from_tfc` + credential-template tfc fields (`followup_mcp_tools_pr108_gaps`).'
+    group: Catalog & infrastructure follow-ups
+  - title: Helm async-write FE polling
+    status: planned
+    refs:
+    - '#184'
+    note: '`useHelmTaskStatus` to replace the "refresh in ~30s" toast (`followup_helm_fe_polling`, PR #120 shipped toast-only).'
+    group: Catalog & infrastructure follow-ups
+  - title: Benchmarks page IA + New Run wizard port (from cb-rebuild)
+    status: deferred
+    refs:
+    - '#294'
+    note: 'Deferred pending user decision after testing staging benchmark UX post #286 merge. cb-rebuild carried Agents+Runs pillar IA + NewRunDialog; deliberately not ported during de-stacking. Port as one unit if staging UX falls short.'
+    group: Catalog & infrastructure follow-ups
+  - title: Issue auto-close GH Action
+    status: shipped
+    refs:
+    - '#185'
+    - 'PR #229'
+    note: 'Shipped. PR #229 merged; staging-merge → parse body → auto-close.'
+    group: Catalog & infrastructure follow-ups
+- id: f5_demo_engine
+  number: 6
+  heading: F5 BNK / demo / engine (mostly `bnk-forge-modules` repo or F5-dev-blocked)
+  render: bullets
+  intro: cne-irsa module · tmm-init routes ConfigMap · kernel-mode e2e VIP validation · proxy_deploy values templates broken · routing-breakdown productization · F5BigAnalyzer weight-change history · BNK severity taxonomy (overlaps D-019) · IRSA auto-provisioning · GHCR shim/client images · real TTFT histogram in shim · llmtop K8s scrape (⛔ dev meeting) · F5BigAnalyzer "Pending" (⛔ F5 build bug) · HP-nodes EKS join (💤 root cause unknown). See `followup_*` / `project_*` memos.
+  items: []
+- id: security_cadence
+  number: 7
+  heading: Security cadence (tracking, not build)
+  render: bullets
+  intro: '`.trivyignore` suppressions to revisit monthly / escalate: CVE-2026-33845 (by 2026-08-06), CVE-2026-7598 (by 2026-08-12), CVE-2026-42010 (by 2026-08-14), **CVE-2026-42496 + CVE-2026-8376** (perl/Archive::Tar — suppressed via PR #212, 2026-06-02; drop once Debian trixie ships patched perl). Quarterly audit to remove stale suppressions. Note: stale feature branches cut before a suppression lands go Trivy-red until rebased onto current `staging` (#189/#190 hit this 2026-06-03).'
+  items: []
+- id: older_open
+  number: 8
+  heading: Older / pre-existing issues — triage & unplanned bugs
+  render: table
+  columns:
+  - Item
+  - Status
+  - Issue
+  - Note
+  intro: 'Pre-date the D-018/D-019 work. **Closed 2026-06-03 as already-resolved (code-verified):** #7, #8, #12, #27, #115 (older infra) and #23, #24, #25, #26 (PR #32), #40 (PR #41) — all done-but-open from the staging auto-close gap (#185). The rows below are the **genuinely unplanned** remainder: no ADR/spec/memo addresses them yet (adopted into the roadmap 2026-06-03 so they stop floating). Several community-raised.'
+  items:
+  - title: CI/CD broken; Makefile as single source of truth
+    status: planned
+    refs:
+    - '#15'
+    note: Orphaned — no ADR/plan. Raised by bonnyr-f5. Re-confirm against current CI before scoping.
+  - title: Operations-log delete/archive/cleanup UI controls
+    status: planned
+    refs:
+    - '#21'
+    note: Orphaned — DELETE /api/tasks/cleanup route exists, no UI affordance.
+  - title: K8s provider x509 cert mismatch over SSH tunnel (TLS-SNI)
+    status: planned
+    refs:
+    - '#22'
+    note: 'Orphaned — couples with tunnel transport #18. Issue notes a local workaround; needs a tracked fix.'
+  - title: l4route missing from Gateway API menu (miscategorized as F5_BNK)
+    status: planned
+    refs:
+    - '#36'
+    note: Orphaned — small fix; l4route is in k8s_resource_registry under F5_BNK, should surface under Gateway API. Raised by tkam8.
+  - title: Gateway topology weights display wrong values
+    status: planned
+    refs:
+    - '#37'
+    note: Orphaned — data-accuracy bug. Raised by tkam8. Loosely related to weight-change-history follow-up memo.
+  - title: Memory usage grows over time
+    status: planned
+    refs:
+    - '#42'
+    note: Orphaned — needs an investigation pass (diagnose). Raised by mwiget.
+  - title: /api/module-sources 500 PendingRollbackError on blueprint auto-sync fail
+    status: planned
+    refs:
+    - '#107'
+    note: Orphaned — session left in failed state (no savepoint); masks real error. Concrete fix path in issue body.
+  - title: JIT SG + SSH tunnel transport for OpenTofu K8s (rotating-IP)
+    status: planned
+    refs:
+    - '#18'
+    note: 'Partial — overlaps D-002 connectivity but no explicit ADR/RFC for this transport. Pairs with #22.'
+  - title: AWS SSM tunnel transport for EKS
+    status: planned
+    refs:
+    - '#19'
+    note: Partial — overlaps D-002 connectivity; not explicitly planned.
+  - title: Module status stuck on 'applying' after task failure (no auto-reset)
+    status: planned
+    refs:
+    - '#20'
+    note: Partial — overlaps D-003 deploy-reliability (#177) janitor work; specific apply-state reset not explicitly covered.
+- id: audit_gaps_2026_06_03
+  number: 9
+  heading: Code-grounded audit gaps (2026-06-03)
+  render: table
+  html_group: Planned — decided, tracked in issues
+  intro: From the 2026-06-03 code-grounded deep scan — verified against code, not doc language. Each has a tracking issue.
+  columns:
+  - Item
+  - Status
+  - Issues / PRs
+  - What remains
+  items:
+  - title: Git auth UI — expose GitHub App + SSH-key in module-sources
+    status: in_progress
+    refs:
+    - '#219'
+    note: Backend done (git_auth_service / github_app_auth_service); UI shows token-only + 'SSH Key (Coming Soon)'. Pure FE wiring.
+  - title: Multi-platform awareness — completion epic (~39%)
+    status: in_progress
+    refs:
+    - '#220'
+    - '#218'
+    note: 'kubeconfig injection done; missing infra templates (Ubuntu/OCP/Azure), AKS/GKE/OCP cluster registration, 8 FE platform features, platform blueprints. #218 = AKS/GKE token-injection slice.'
+  - title: External-blueprint onboarding UI + content migration
+    status: in_progress
+    refs:
+    - '#221'
+    note: Backend catalog/manifest/promotion built; missing import wizard, transformation helper, built-in→external content migration, source sync. (ARCH-EXT-002c/d/e)
+  - title: REPO-AUTH remaining — GitLab client + audit/rotation + PAT sunset
+    status: in_progress
+    refs:
+    - '#222'
+    note: Credential model + GitHub App + SSH done (~50%); GitLab API client, audit/expiry/rotation UX, legacy-PAT sunset remain.
+  - title: Observability export — Prometheus /metrics + dashboards
+    status: planned
+    refs:
+    - '#216'
+    note: OBS Ph1 (logs/correlation/errors) shipped; /metrics endpoint + Grafana/CloudWatch dashboards + troubleshooting queries absent. (OBS-003 P2/P3, OBS-005)
+  - title: PLAT-REL-004 — operational risk surfacing
+    status: in_progress
+    refs:
+    - '#223'
+    note: '~20%: health-endpoint warnings[] array, dashboard cluster-unreachable/cred-expiry cards, canonical cluster badges, system-settings infra-health panel.'
+  - title: Mixed-engine capability gating (DEPLOY-ENGINE-EXT-006)
+    status: in_progress
+    refs:
+    - '#224'
+    note: engine presentation exists in FE (lib/module-engine.ts); API doesn't serialize lifecycle_capabilities and UI doesn't reliably gate destroy/plan by capability. Confirm vs existing logic.
+  - title: Helm entity-lock race
+    status: planned
+    refs:
+    - '#225'
+    note: helm_tasks.py lacks per-(cluster,release) lock; concurrent install/rollback can corrupt a release. D-016 follow-up; same fence pattern as D-001.
+  - title: Bare-metal orchestrator phase dispatch + SSH-module Python impls
+    status: in_progress
+    refs:
+    - '#226'
+    - '#180'
+    - '#204'
+    note: orchestrator returns placeholder for some phases; 9 bare_metal modules fall back to shell (base raises NotImplementedError). Execution-completeness slice of the SSH-BNK epic.
+  - title: Frontend debt — re-enable skipped suites + wire state-recover/module-sync + regen api types
+    status: planned
+    refs:
+    - '#227'
+    - '#187'
+    note: Skipped Fleet/k8s-explorer/K8sClusterList suites; unwired StateInfoPopover recover + ModuleLibraryVersion sync; stale api-generated.ts (target_platform_profile).
+- id: shipped_platform
+  number: 10
+  heading: Shipped — platform & strategic workstreams (code-verified 2026-06-03)
+  render: cards
+  html_group: Shipped — merged to staging
+  intro: 'Large bodies of work that were spec''d in `docs/specs/` + sprint plans and **have since been built** — recorded here because they were invisible to this roadmap (the tactical view had only tracked the ADR-driven slices). Each was confirmed present in code during the 2026-06-03 deep sweep.
+
+
+    **Platform capabilities (verified in `backend/`):**
+
+    '
+  items:
+  - title: Multi-engine deployment framework — Ansible + SSH engines + pack manifest
+    status: shipped
+    refs:
+    - DEPLOY-ENGINE-EXT
+    note: '`engine_type` + `pack_manifest` on ModuleLibrary; `bnkforge.pack.json` pack manifest; Ansible engine (`services/execution/ansible_engine.py`) + SSHEngine (`ssh_engine.py`) alongside OpenTofu/K8s. (Specs DEPLOY-ENGINE-EXT-003…006, ARCH-EXT-001.)'
+    group: Platform capabilities (spec→built, code-verified)
+  - title: DPU bare-metal foundation (SSH/BMC/Redfish/IPMI discovery + Path B+)
+    status: shipped
+    refs:
+    - DPU_DEPLOY_*
+    note: SSH execution layer, hardware/BMC/Redfish/IPMI discovery, Path B+ SSHEngine. Remaining work = BNK-layer SSH module ports (#204–#210). (Specs DPU_DEPLOY_*, BM-*.)
+    group: Platform capabilities (spec→built, code-verified)
+  - title: Backup / restore + cross-instance migration
+    status: shipped
+    refs:
+    - BACKUP_RESTORE
+    note: '`services/backup_service.py`, `/backup` `/restore` routes, encryption-key wrapping, `BackupErrorCode`. (Spec BACKUP_RESTORE_DESIGN.)'
+    group: Platform capabilities (spec→built, code-verified)
+  - title: Benchmark targets + proxy deployment
+    status: shipped
+    refs:
+    - BENCHMARK_TARGETS
+    note: '`models/benchmark.py` (BenchmarkTarget, ProxyDeployment), `proxy_deploy_service`/`tasks`. (Spec BENCHMARK_TARGETS_DESIGN; live UX work continues in PR #211.)'
+    group: Platform capabilities (spec→built, code-verified)
+  - title: Secure git source auth (GitHub App tokens / SSH deploy keys)
+    status: shipped
+    refs:
+    - REPO-AUTH-001
+    note: '`git_auth_service.py` + `github_app_auth_service.py`: GitHub App tokens, SSH deploy keys, typed credential model (PAT-in-URL now legacy/deprecated). (Spec REPO-AUTH-001.)'
+    group: Platform capabilities (spec→built, code-verified)
+  - title: Multi-platform awareness (EKS/AKS/GKE/OCP/ROKS profiles)
+    status: shipped
+    refs:
+    - '#218'
+    note: '`core/platform_context.py` PlatformProfile (EKS/AKS/GKE/OCP/ROKS) + scanner distribution detection + EKS/IBM token injection. Remaining = AKS/GKE injection (#218). (Plan: multi-platform-awareness.)'
+    group: Platform capabilities (spec→built, code-verified)
+  - title: MCP productization (catalog/eligibility/workflows/scorecard)
+    status: shipped
+    refs:
+    - MCP-PROD
+    note: 'tool catalog with risk classes (`mcp-server/tools/mcp_tool_catalog.json`), `/mcp/status`, autonomous-eligibility, curated AI workflows, readiness scorecard, operator guide, `make smoke-mcp-live`/`mcp-readiness`. (E6 #141/PR #192 is the latest `_meta` slice.)'
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  - title: Security & governance (risk matrix / audit / secret scrub)
+    status: shipped
+    refs:
+    - SEC-GOV
+    note: operation risk matrix, audit events (`core/audit_middleware.py` + AuditLog), secret boundary scrubbing (`scrub_secrets` in `core/errors.py`).
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  - title: Observability foundation (logs / correlation / errors)
+    status: shipped
+    refs:
+    - OBS Ph1
+    - '#216'
+    note: 'structured logging (`core/logging_config.py`), correlation IDs (`core/correlation.py`), error taxonomy (`core/errors.py`). Export layer (metrics/dashboards) = gap #216.'
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  - title: API contract rigor + golden contract tests
+    status: shipped
+    refs:
+    - API-CONTRACT
+    note: pydantic response models + golden contract tests (`tests/contract/`).
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  - title: Operational UX (async-state components)
+    status: shipped
+    refs:
+    - UX-OPS
+    note: shared async-state components (skeleton/empty-state/error-state/connectivity banner). DiagnosticPanel component + info-hierarchy/a11y polish are minor remainders.
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  - title: Release/deploy hardening + critical-path E2E
+    status: shipped
+    refs:
+    - DEPLOY
+    - E2E-CRITICAL
+    note: runbooks under `docs/DEPLOY-00x_*` + MCP E2E sanity coverage.
+    group: Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)
+  outro: '> ⚠️ Statuses above are "present in code" — coverage/completeness was not re-audited line-by-line. Treat as "shipped, may have residual polish" not "100% closed."
+
+    '
+- id: legacy_docs_reconcile
+  number: 11
+  heading: Strategic / legacy roadmap docs — reconcile to this file
+  render: bullets
+  intro: 'These older planning docs predate this roadmap and now overlap it. **`docs/ROADMAP.md` is the single source of truth**; the docs below are historical context and should carry an archival pointer here (and most of their content is shipped per §10):
+
+    '
+  items:
+  - title: docs/STRATEGIC_ROADMAP.md + docs/STRATEGIC_BACKLOG.md
+    status: shipped
+    refs: []
+    note: (≈2026-03 — epic families, mostly DONE)
+  - title: docs/UX_ROADMAP.md
+    status: shipped
+    refs: []
+    note: (4 phases, marked complete)
+  - title: docs/PRODUCT_VISION.md + docs/architecture/CUSTOMER_PRODUCT_VISION.md
+    status: shipped
+    refs: []
+    note: (vision + "remaining gaps")
+  - title: docs/ENGINEERING_IMPROVEMENTS.md
+    status: shipped
+    refs: []
+    note: (14/15 done)
+  - title: docs/archive/NEXT_30_DAYS.md
+    status: deferred
+    refs: []
+    note: (stale, ~2026-03; references Gateway Topology Phase 3 / TOPO-004)
+  outro: '**Follow-up (not yet done):** add a one-line "superseded by docs/ROADMAP.md" banner to each of the above, or move the fully-shipped ones under `docs/archive/`.
+
+    '
+- id: issue_index
+  number: 12
+  heading: Issue index (every roadmap item → GitHub issue)
+  render: raw
+  raw_md: '- **Active (13 PRs in review as of 2026-06-12):** D-020 F5 design (PR #203, rebuilt+CI-green) + stacked #287/#291/#293/#296 · D-023 P4 CIS (PRs #290/#295) · benchmark remote agent (PR #286) + override guard (PR #282) · BNK registry-driven GA (PR #284, closes #217) · multiarch publish (PR #285) · dist fix (PR #288) · bfb-cache (PR #292) · release automation (PR #297, team decision pending)
+
+    - **Active (open issues):** D-020 brand flag #289 (impl PR #293) · benchmarks IA deferred #294 · alembic gate #161 · D-018 P3 #179 · D-024 implementation #236 (planned, ADR only) · integration activation (PRs #152/#158) · release #117 · benchmark/security hardening PRs #211/#251 (gated on a maintainer)
+
+    - **Shipped (2026-06-12):** D-023 P1-P3 #235 (PR #280) · alembic dedupe (PR #283)
+
+    - **Shipped (2026-06-09):** D-001 Phase 3 #159 (PR #188) · D-021 epic #233 (PR #276) · D-022 epic #234 (PR #277) · D-027 #255–#259 (PRs #260/#261/#278) · D-028 (PR #274) · Ops MCP+celery (PR #214) · AWS cred UX (PRs #253/#254/#267) · ADRs D-020/021/022/023/024 (PRs #230/#231/#232) · GHCR publish #243 · postgres-backup #242 · issue-autoclose #185 (PR #229) — *(D-017 #160 CLOSED via PR #119)*
+
+    - **D-019 epics:** E1 #136 (PR #189 SHIPPED) · E2 #137 (blocked on E1) · E3/D-010 #138 (PR #190 SHIPPED) · E4 #139 (partial) · E5 #140 (planned) · E6 #141 (PR #192 SHIPPED) · static-registry-removal #178 — *(closed: #129/#130/#131-135/#142)*
+
+    - **Deepening ADRs:** D-005 #162 · D-006 #163 · D-007 #164 · D-008 #165 · D-009 #166 · D-011 #167 · D-012 #168 · D-013 #169 · D-014 #170 · D-015 #171 — *(D-016 #172 CLOSED via PR #120)*
+
+    - **Connectivity/deploy:** D-002 2B #173 · 2C #174 · P3 #175 · widget #176 · D-003 remaining #177
+
+    - **Catalog/infra:** catalog→SDK #180 · project-delete-lock #181 · forge-destroy-IAM #182 · MCP-tools #183 · helm-FE-poll #184 · benchmarks IA #294 (deferred) · catalog-autosync-on-boot #419
+
+    - **Design system (D-020):** epic #193 · phases #194–#202 · PR #203 (rebuilt) · brand flag #289 (PR #293) · stacked #287/#291/#293/#296
+
+    - **DPU SSH-BNK module ports:** epic #204 · slices #205–#210
+
+    - **D-021/D-022/D-023/D-024 epics:** D-021 epic #233 (CLOSED, PR #276) · D-022 epic #234 (CLOSED, PR #277) · D-023 epic #235 (SHIPPED PR #280, P4 in-review #290/#295, CIS security-CRD mapper #268 open) · D-024 epic #236 (ADR only, planned)
+
+    - **D-027 notifications:** #255–#259 all CLOSED (PRs #260/#261/#278)
+
+    - **D-028 blueprint catalog:** no epic issue — see ADR docs/adr/D-028-... (PR #274 SHIPPED)
+
+    - **Deep-sweep gaps (2026-06-03):** observability export #216 · BNK release/version model #217 (PR #284 in review) · AKS/GKE token injection #218
+
+    - **Code-grounded audit gaps (2026-06-03):** git-auth UI #219 · multi-platform epic #220 · external-blueprint onboarding #221 · REPO-AUTH remaining #222 · PLAT-REL-004 #223 · mixed-engine gating #224 · helm entity-lock #225 · bare-metal phase dispatch #226 (#180/#204) · frontend debt #227 (#187)
+
+    - **Review follow-ups:** #153 #154 #155 #156 #157 · container-runner security hardening #408 (PR #340)
+
+    - **Multi-version module catalog (D-033):** #433 (PR #436, ADR PR #432)
+
+    - **Module test actions (D-034):** #454 (ADR PR #453) · sibling #452 (cluster auto-registration)
+
+    - *(D-004 state-ownership, demo/K-series, trivy cadence = memo/ADR-tracked, no issue by design)*
+
+    - **Closed (2026-06-09):** #233 · #234 · #241 · #255 · #256 · #257 · #258 · #259
+
+    '

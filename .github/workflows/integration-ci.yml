@@ -1,0 +1,79 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  BNK-Forge v2 — Integration Branch CI (STANDALONE)                        ║
+# ║                                                                            ║
+# ║  This is a SEPARATE workflow for the bleeding-edge `integration` branch.  ║
+# ║  It does NOT affect PR CI, staging CI, or main CI — those are handled     ║
+# ║  exclusively by ci.yml, which is completely unchanged by this file.       ║
+# ║                                                                            ║
+# ║  Triggers: push to `integration` only + workflow_dispatch.                ║
+# ║                                                                            ║
+# ║  NOTE ON TRIGGERING: GitHub intentionally prevents pushes made with the   ║
+# ║  default GITHUB_TOKEN from triggering downstream workflow runs. This       ║
+# ║  workflow only fires automatically when the integration-rebuild.yml uses  ║
+# ║  INTEGRATION_PUSH_TOKEN (a PAT with repo scope) for the force-push.       ║
+# ║  Without that secret the rebuild still works; trigger CI manually via     ║
+# ║  workflow_dispatch. See docs/INTEGRATION_BRANCH.md for full details.      ║
+# ║                                                                            ║
+# ║  Design: mirrors ci.yml's toolchain setup + `make pre-push`, which is     ║
+# ║  the canonical "running CI locally" target per the Makefile header.       ║
+# ║  `make pre-push` = quick-check (lint+typecheck+openapi) + all test suites ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: Integration CI
+
+on:
+  push:
+    branches: [integration]
+  workflow_dispatch: {}
+
+concurrency:
+  group: integration-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  DATABASE_URL: "sqlite:///./test.db"
+  SECRET_KEY: "ci-test-secret-key"
+  # REDIS_URL is declared for parity with ci.yml but no Redis service container is needed:
+  # unit/component/legacy tests mock Redis via unittest.mock — they never open a live connection.
+  # ci.yml follows the same pattern (no `services: redis` block anywhere). If integration tests
+  # that require a live Redis are added in future, add a `services: redis` block to this job
+  # and mirror the health-check options from a reference workflow.
+  REDIS_URL: "redis://localhost:6379/0"
+
+jobs:
+
+  pre-push:
+    name: "Integration · make pre-push"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # ── Python toolchain (backend + operator) ────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Install operator dependencies
+        run: pip install -r bnk-operator/requirements-dev.txt
+
+      # ── Node toolchain (frontend) ─────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend-v2
+
+      # ── Full pre-push check (mirrors CI) ─────────────────────────────────
+      - name: Run make pre-push
+        run: make pre-push

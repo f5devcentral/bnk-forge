@@ -1,0 +1,198 @@
+{
+  "@Redfish.Settings": {
+    "@odata.type": "#Settings.v1_3_5.Settings",
+    "SettingsObject": {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/Settings"
+    }
+  },
+  "@odata.id": "/redfish/v1/Systems/Bluefield",
+  "@odata.type": "#ComputerSystem.v1_22_0.ComputerSystem",
+  "Actions": {
+    "#ComputerSystem.Reset": {
+      "@Redfish.ActionInfo": "/redfish/v1/Systems/Bluefield/ResetActionInfo",
+      "target": "/redfish/v1/Systems/Bluefield/Actions/ComputerSystem.Reset"
+    },
+    "Oem": {
+      "#NvidiaComputerSystem.PushSmbiosTable": {
+        "target": "/redfish/v1/Systems/Bluefield/Actions/Oem/NvidiaComputerSystem.PushSmbiosTable"
+      }
+    }
+  },
+  "AssetTag": "N/A",
+  "Bios": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Bios"
+  },
+  "BiosVersion": "",
+  "Boot": {
+    "AutomaticRetryAttempts": 3,
+    "AutomaticRetryConfig": "Disabled",
+    "AutomaticRetryConfig@Redfish.AllowableValues": [
+      "Disabled",
+      "RetryAttempts"
+    ],
+    "BootNext": "",
+    "BootOptions": {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/BootOptions"
+    },
+    "BootOrder": [
+      "Boot0009",
+      "Boot0000",
+      "Boot0001",
+      "Boot0002",
+      "Boot0003",
+      "Boot0004",
+      "Boot0005",
+      "Boot0006",
+      "Boot0007",
+      "Boot0008",
+      "Boot000A",
+      "Boot000B",
+      "Boot000C",
+      "Boot000D",
+      "Boot000E",
+      "Boot000F",
+      "Boot0010",
+      "Boot0011",
+      "Boot0012",
+      "Boot0013",
+      "Boot0014",
+      "Boot0015",
+      "Boot0016",
+      "Boot0017",
+      "Boot0018",
+      "Boot0019",
+      "Boot001A",
+      "Boot001B",
+      "Boot001C",
+      "Boot001D",
+      "Boot001E",
+      "Boot001F",
+      "Boot0020",
+      "Boot0021",
+      "Boot0022"
+    ],
+    "BootOrderPropertySelection": "BootOrder",
+    "BootSourceOverrideEnabled": "Disabled",
+    "BootSourceOverrideEnabled@Redfish.AllowableValues": [
+      "Once",
+      "Continuous",
+      "Disabled"
+    ],
+    "BootSourceOverrideMode": "UEFI",
+    "BootSourceOverrideMode@Redfish.AllowableValues": [
+      "Legacy",
+      "UEFI"
+    ],
+    "BootSourceOverrideTarget": "None",
+    "BootSourceOverrideTarget@Redfish.AllowableValues": [
+      "None",
+      "Pxe",
+      "Hdd",
+      "UefiHttp",
+      "UefiShell",
+      "None",
+      "UefiTarget",
+      "UefiBootNext"
+    ],
+    "HttpBootUri": "",
+    "RemainingAutomaticRetryAttempts": 2,
+    "StopBootOnFault": "Never",
+    "TrustedModuleRequiredToBoot": "Disabled",
+    "UefiTargetBootSourceOverride": "None"
+  },
+  "BootProgress": {
+    "LastState": "OEM",
+    "LastStateTime": "1970-01-21T12:33:50.929940+00:00",
+    "OemLastState": "OsIsRunning"
+  },
+  "Description": "This ComputerSystem resource represents the SoC that is part of the DPU found in Card1",
+  "EthernetInterfaces": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/EthernetInterfaces"
+  },
+  "GraphicalConsole": {
+    "ConnectTypesSupported": [
+      "KVMIP"
+    ],
+    "MaxConcurrentSessions": 4,
+    "ServiceEnabled": true
+  },
+  "Id": "Bluefield",
+  "LastResetTime": "1970-01-01T00:00:00+00:00",
+  "Links": {
+    "Chassis": [
+      {
+        "@odata.id": "/redfish/v1/Chassis/Bluefield_BMC"
+      }
+    ],
+    "ManagedBy": [
+      {
+        "@odata.id": "/redfish/v1/Managers/Bluefield_BMC"
+      }
+    ]
+  },
+  "LogServices": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/LogServices"
+  },
+  "Manufacturer": "Nvidia",
+  "Memory": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Memory"
+  },
+  "MemorySummary": {
+    "TotalSystemMemoryGiB": 32
+  },
+  "Model": "BlueField-3 DPU",
+  "Name": "Bluefield",
+  "Oem": {
+    "Nvidia": {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia",
+      "@odata.type": "#NvidiaComputerSystem.v1_3_0.NvidiaComputerSystem",
+      "SystemConfigProfile": {
+        "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile",
+        "@odata.type": "#SystemConfigProfile.v1_0_0.SystemConfigProfile"
+      }
+    }
+  },
+  "PartNumber": "900-9D3B6-00CV-AA0",
+  "PowerMode": "Static",
+  "PowerMode@Redfish.AllowableValues": [
+    "Static",
+    "MaximumPerformance",
+    "PowerSaving"
+  ],
+  "PowerOnDelaySeconds": 0,
+  "PowerRestorePolicy": "AlwaysOn",
+  "PowerState": "On",
+  "ProcessorSummary": {
+    "CoreCount": 16,
+    "Count": 1,
+    "Model": "ARMv8"
+  },
+  "Processors": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Processors"
+  },
+  "SecureBoot": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/SecureBoot"
+  },
+  "SerialConsole": {
+    "IPMI": {
+      "ServiceEnabled": true
+    },
+    "MaxConcurrentSessions": 15,
+    "SSH": {
+      "HotKeySequenceDisplay": "Press ~. to exit console",
+      "Port": 2200,
+      "ServiceEnabled": true
+    }
+  },
+  "SerialNumber": "MT2428XZ0N1D",
+  "Status": {
+    "Conditions": [],
+    "Health": "OK",
+    "State": "Enabled"
+  },
+  "Storage": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Storage"
+  },
+  "SystemType": "Physical",
+  "UUID": "1638d454-3044-ef11-8000-5c2573e63844"
+}

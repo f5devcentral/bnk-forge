@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${operator_namespace}
+  labels:
+    app.kubernetes.io/name: f5-operator
+    app.kubernetes.io/component: bnk-operators
+    app.kubernetes.io/managed-by: bnk-forge
+    f5.com/product: bnk
+  annotations:
+    description: F5 BNK operators and controllers (FLO, CNE, CWC)

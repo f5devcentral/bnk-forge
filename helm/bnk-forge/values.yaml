@@ -1,0 +1,244 @@
+# BNK-Forge Helm values
+# Defaults assume the images published by the release workflow. Point
+# global.imageRegistry at your own registry when building from a fork or an
+# internal mirror.
+
+global:
+  imageRegistry: ghcr.io/f5devcentral
+  imagePullSecrets: []
+  # Storage class for shared (RWX) state. Set to a class that supports
+  # ReadWriteMany (NFS, CephFS, EFS, etc.). If empty, cluster default is used
+  # but most default storage classes are RWO and workers/api will not be able
+  # to share state. Set replicaCount=1 on api/worker if forced to RWO.
+  sharedStorageClass: ""
+  # Storage class for stateful databases (RWO is fine).
+  databaseStorageClass: ""
+
+image:
+  pullPolicy: IfNotPresent
+  tag: "3.0.1"
+
+# Generated/explicit secrets. If left empty, helm generates random values on
+# first install and reuses them on upgrade (lookup-based).
+secrets:
+  postgresPassword: ""
+  redisPassword: ""
+  jwtSecretKey: ""
+  encryptionKey: ""
+  mcpUsername: admin
+  mcpPassword: changeme
+
+# Common pod settings
+# fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).
+podSecurityContext:
+  fsGroup: 1000
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ─── PostgreSQL ────────────────────────────────────────────────────────────
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  service:
+    port: 5432
+  persistence:
+    size: 20Gi
+    storageClass: ""   # falls back to global.databaseStorageClass
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# ─── Redis ─────────────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  service:
+    port: 6379
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ─── Backend (API) ─────────────────────────────────────────────────────────
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: bnk-forge-api
+    # tag falls back to image.tag
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8000
+  env:
+    BNK_FORGE_DEPLOY_MODE: server
+    ENVIRONMENT: production
+    # Override per-env. Wildcards rejected in production. Comma-separated origins.
+    ALLOWED_ORIGINS: "https://localhost"
+    # If running on a non-localhost cluster, set e.g.:
+    # ALLOWED_ORIGINS: "https://hgx2:30443,http://hgx2:30080"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# ─── Celery Workers ────────────────────────────────────────────────────────
+worker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: bnk-forge-worker
+    tag: ""
+  concurrency: 4
+  queues: "default,opentofu,orchestrator,cli"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+# ─── Celery Beat ───────────────────────────────────────────────────────────
+beat:
+  enabled: true
+  image:
+    repository: bnk-forge-beat
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ─── Frontend ──────────────────────────────────────────────────────────────
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: bnk-forge-frontend
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# ─── Proxy (Nginx) ─────────────────────────────────────────────────────────
+proxy:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: bnk-forge-proxy
+    tag: ""
+  service:
+    # ClusterIP (front with Ingress), LoadBalancer, or NodePort to expose the
+    # UI + API externally without an ingress controller.
+    type: ClusterIP
+    httpPort: 80
+    httpsPort: 443
+    # Fixed NodePorts when type=NodePort. Leave null for an auto-assigned port.
+    # 30443/30080 match the ALLOWED_ORIGINS examples above. Must be in the
+    # cluster's node-port range (default 30000-32767).
+    httpNodePort: null
+    httpsNodePort: null
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ─── MCP server ────────────────────────────────────────────────────────────
+mcp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: bnk-forge-mcp
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8081
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ─── Shared state PVCs (RWX) ───────────────────────────────────────────────
+# Mounted by api + workers + beat. Each gets a single PVC.
+sharedVolumes:
+  moduleCatalog:
+    size: 1Gi
+    mountPath: /tmp/bnk-forge-modules
+  data:
+    size: 5Gi
+    mountPath: /app/projects
+  keys:
+    size: 100Mi
+    mountPath: /app/keys
+  state:
+    size: 5Gi
+    mountPath: /app/state
+  helmCache:
+    size: 1Gi
+    mountPath: /home/bnkforge/.cache/helm
+  helmConfig:
+    size: 100Mi
+    mountPath: /home/bnkforge/.config/helm
+  helmCharts:
+    size: 5Gi
+    mountPath: /app/helm_charts
+  workspaces:
+    size: 5Gi
+    mountPath: /app/workspaces
+  providerCache:
+    size: 5Gi
+    mountPath: /app/provider-cache
+  bfbCache:
+    size: 10Gi
+    mountPath: /app/bfb-cache
+
+# Optional Ingress fronting the proxy service
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: bnk-forge.local
+  tls:
+    enabled: false
+    secretName: ""
+
+# Optional secrets directory (FAR credentials, etc.) — provide as a k8s Secret
+# that this chart mounts read-only at /app/secrets on api/workers.
+externalSecretsRef:
+  name: ""    # name of an existing Secret in the release namespace; "" disables

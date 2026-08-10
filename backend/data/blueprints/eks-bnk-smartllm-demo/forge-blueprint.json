@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "eks-bnk-smartllm-demo",
+    "version": "1.0.0",
+    "name": "Intelligent AI Load Balancing Demo",
+    "description": "3-model Bedrock backend behind a BNK Gateway with F5BigAnalyzer for live traffic-weighted routing. Includes a load generator so weight shifts are visible in real time. Requires BNK 2.2 platform deployed."
+  },
+  "category": "solution",
+  "cloud_provider": "aws",
+  "icon": "brain-circuit",
+  "color": "#4285F4",
+  "estimated_time": "5-10 minutes",
+  "estimated_cost": "Pay-per-use Bedrock (~$0.035/M input tokens on Nova Micro)",
+  "difficulty": "intermediate",
+  "maturity": "beta",
+  "bnk_version": "2.2",
+  "tags": [
+    "eks",
+    "bnk",
+    "f5",
+    "gateway-api",
+    "bedrock",
+    "nova",
+    "claude",
+    "smartllm",
+    "intelligent-load-balancing",
+    "demo",
+    "reference"
+  ],
+  "outcomes": [
+    "3 single-model Bedrock shim pods (Nova Micro, Nova Lite, Claude 3 Haiku) behind a BNK Gateway",
+    "HTTPRoute with 3 weighted backendRefs \u2014 analyzer mutates weights live",
+    "F5BigAnalyzer CR (Path A builtin LLMLoadMonitor) reading Prometheus",
+    "vllm:* backend metrics + smartllm_client_* client metrics in Prometheus",
+    "Poisson-paced client sending varied prompts from a ConfigMap prompt bank",
+    "Dashboard Traffic Distribution tile shifts live as the analyzer weights"
+  ],
+  "prerequisites": [
+    {
+      "type": "kubernetes_cluster",
+      "description": "EKS cluster with the OIDC provider enabled (required for IRSA)"
+    },
+    {
+      "type": "stack_deployed",
+      "description": "BNK platform deployed \u2014 must have bnk-gatewayclass + programmed external VLAN with a free VIP",
+      "name": "bnk-on-k8s"
+    },
+    {
+      "type": "chart_installed",
+      "description": "Prometheus operator installed. ServiceMonitors use label release: kube-prometheus-stack by default \u2014 override prometheus_release_label on both modules if different.",
+      "name": "kube-prometheus-stack"
+    },
+    {
+      "type": "cloud_credentials",
+      "description": "AWS account with Bedrock model access granted for Nova Micro, Nova Lite, and Claude 3 Haiku in the target region. Pre-check per region \u2014 Nova and Haiku availability varies."
+    }
+  ],
+  "variable_templates": {},
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "app-bedrock-smartllm-irsa",
+      "module": "app/bedrock-smartllm-irsa",
+      "version": "1.0.0",
+      "name": "Bedrock IAM Role (IRSA)",
+      "inputs": {
+        "aws_region": "ap-southeast-2",
+        "sa_namespace": "default",
+        "sa_name": "bedrock-smartllm"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Creates the IAM role the backend shim pods assume via IRSA to call Bedrock (Nova Micro, Nova Lite, Claude 3 Haiku). role_name auto-derives from project name to avoid shared-account collisions. Output role_arn auto-wires into the backend module."
+    },
+    {
+      "id": "app-bedrock-smartllm-backend",
+      "module": "app/bedrock-smartllm-backend",
+      "version": "1.0.0",
+      "name": "Bedrock Smart-LLM Backend",
+      "inputs": {
+        "namespace": "default",
+        "aws_region": "ap-southeast-2",
+        "analyzer_schedule": "1m"
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "3 Bedrock shim pods + BNK Gateway + HTTPRoute + F5BigAnalyzer CR, deployed in default namespace by default. bedrock_role_arn auto-wires from the IRSA module output."
+    },
+    {
+      "id": "app-bedrock-smartllm-client",
+      "module": "app/bedrock-smartllm-client",
+      "version": "1.0.0",
+      "name": "Bedrock Smart-LLM Client",
+      "inputs": {
+        "namespace": "bnk-demo-client",
+        "create_namespace": true,
+        "replicas": 1,
+        "request_rate": 1.0,
+        "max_tokens": 128
+      },
+      "optional": true,
+      "depends_on": [],
+      "description": "Poisson-paced load generator sending varied prompts to the Gateway VIP from a separate namespace"
+    }
+  ],
+  "is_featured": true
+}

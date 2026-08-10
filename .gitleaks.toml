@@ -1,0 +1,49 @@
+# gitleaks configuration for the public BNK Forge repository.
+#
+# Every entry below is a reviewed false positive with a stated reason. Do NOT
+# add blanket directory allowlists — that is how a real credential hides. Scope
+# each entry to a rule + a specific path.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(?:key|api|token|secret|client|passwd|password|auth|access)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:{1,3}=|\|\|:|<=|=>|:|\?=)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;|\\]|$)'''
+keywords = ["key", "api", "token", "secret", "client", "passwd", "password", "auth", "access"]
+
+[rules.allowlist]
+paths = [
+  # Fixture credentials asserted on by name; values are literals like "fake",
+  # "test-token", "changeme". Verified 2026-08: no production credential.
+  '''backend/tests/.*\.py''',
+  '''bnk-operator/tests/.*\.py''',
+  '''frontend-v2/src/.*__tests__/.*\.tsx?''',
+  # Documentation examples using obviously-illustrative token shapes.
+  '''cli/README\.md''',
+  '''docs/archive/OPERATOR_ARCHITECTURE\.md''',
+]
+
+[allowlist]
+description = "Reviewed non-secrets"
+regexes = [
+  # AWS's own published documentation example key.
+  '''AKIAIOSFODNN7EXAMPLE''',
+  # Structural JWT test vector — the signature segment is the literal
+  # "signature_here"; used to test _looks_like_jwt().
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ0ZXN0In0\.signature_here''',
+]
+paths = [
+  # Throwaway RSA/Ed25519 keypairs generated solely to exercise paramiko key
+  # parsing. They authenticate nothing — no corresponding public key is
+  # deployed anywhere. See the note in the file header.
+  '''backend/tests/unit/test_paramiko_utils\.py''',
+  # PEM headers wrapped around placeholder bodies, not key material:
+  #   test_agent_host_candidates.py        -> "MIIEowIBAAKCAQEA000000..."
+  #   test_routes_project_secrets.py       -> "fake"
+  #   test_infrastructure_access_service.py-> "MIIEowIBAAKCAQEAuTestKeyMaterial"
+  '''backend/tests/component/test_agent_host_candidates\.py''',
+  '''backend/tests/integration/test_routes_project_secrets\.py''',
+  '''backend/tests/unit/test_infrastructure_access_service\.py''',
+]

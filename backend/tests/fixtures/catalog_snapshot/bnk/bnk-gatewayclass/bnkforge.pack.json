@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "BNK GatewayClass",
+    "path": "bnk/bnk-gatewayclass",
+    "version": "2.1.0",
+    "category": "bnk",
+    "description": "Creates standard Kubernetes GatewayClass for BNK with configurable controllerName wiring."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "manifest_path": "manifests/"
+    }
+  },
+  "dependencies": {
+    "required": [
+      {
+        "module": "bnk/cneinstance",
+        "reason": "CNEInstance must be Available before GatewayClass can be accepted"
+      }
+    ],
+    "optional": []
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "flo_namespace",
+        "type": "string",
+        "description": "Namespace where FLO is deployed (used for controllerName)",
+        "source": "module",
+        "from_module": "bnk/flo",
+        "from_output": "flo_namespace",
+        "default": "f5-operator"
+      },
+      {
+        "name": "instance_ready",
+        "type": "boolean",
+        "description": "Gate from CNEInstance module",
+        "source": "module",
+        "from_module": "bnk/cneinstance",
+        "from_output": "instance_ready",
+        "default": true
+      }
+    ],
+    "optional": [
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Name of the Kubernetes cluster",
+        "default": "",
+        "source": "auto"
+      },
+      {
+        "name": "gatewayclass_name",
+        "type": "string",
+        "description": "Name for the GatewayClass resource",
+        "default": "bnk-gatewayclass",
+        "source": "user"
+      },
+      {
+        "name": "controller_name",
+        "type": "string",
+        "description": "Controller name override",
+        "default": "f5.com/f5-operator-f5-cne-controller",
+        "source": "user"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "description": "Description of the GatewayClass",
+        "default": "F5 BIG-IP Kubernetes Gateway",
+        "source": "user"
+      },
+      {
+        "name": "flo_ready",
+        "type": "boolean",
+        "description": "Gate from FLO module",
+        "source": "module",
+        "from_module": "bnk/flo",
+        "from_output": "flo_ready",
+        "default": true
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "gatewayclass_name",
+        "type": "string",
+        "description": "Name of the created GatewayClass",
+        "used_by": [
+          "bnk/gateway"
+        ],
+        "sensitive": false
+      },
+      {
+        "name": "gatewayclass_ready",
+        "type": "boolean",
+        "description": "Flag indicating GatewayClass is accepted",
+        "used_by": [
+          "bnk/gateway"
+        ],
+        "sensitive": false
+      }
+    ]
+  }
+}

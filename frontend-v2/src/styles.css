@@ -1,0 +1,304 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Surfaces ──
+       Page bg is slightly off-white (slate-50) so SectionCard `bg-card`
+       (pure white) gets a soft layered feel without dark chrome. */
+    --background: 210 40% 98%;           /* #f8fafc */
+    --foreground: 222 47% 11%;           /* #0f172a */
+    --card: 0 0% 100%;                   /* #ffffff */
+    --card-foreground: 222 47% 11%;      /* #0f172a */
+    --popover: 0 0% 100%;               /* #ffffff */
+    --popover-foreground: 222 47% 11%;   /* #0f172a */
+    /* ── Accent ── */
+    --primary: 221 83% 53%;              /* #2563eb */
+    --primary-foreground: 0 0% 100%;     /* #ffffff */
+    /* ── Neutral fills ── */
+    --secondary: 210 40% 96%;            /* #f1f5f9 */
+    --secondary-foreground: 222 47% 11%; /* #0f172a */
+    --muted: 210 40% 96%;               /* #f1f5f9 */
+    --muted-foreground: 215 16% 47%;     /* #64748b */
+    --accent: 210 40% 96%;              /* #f1f5f9 */
+    --accent-foreground: 222 47% 11%;   /* #0f172a */
+    /* ── Destructive ── */
+    --destructive: 0 84% 60%;            /* #ef4444 */
+    --destructive-foreground: 0 0% 100%; /* #ffffff */
+    /* ── Borders / inputs ── */
+    --border: 214 32% 91%;              /* #e2e8f0 */
+    --input: 214 32% 91%;               /* #e2e8f0 */
+    --ring: 221 83% 53%;                 /* #2563eb */
+    --radius: 0.5rem;
+
+    /* ── Status tokens ── */
+    --success: 160 84% 39%;              /* #10b981 */
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;               /* #f59e0b */
+    --warning-foreground: 0 0% 100%;
+    --info: 221 83% 53%;                 /* #2563eb */
+    --info-foreground: 0 0% 100%;
+
+    /* ── Spacing scale ── */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+    --spacing-2xl: 3rem;
+
+    /* ── Scrollbar — light mode (slate-300 / slate-400 hover) ── */
+    --scrollbar-thumb: 213 27% 80%;
+    --scrollbar-thumb-hover: 215 16% 65%;
+  }
+
+  .dark {
+    /* ── Surfaces ── */
+    --background: 222 16% 8%;            /* #111217 */
+    --foreground: 240 20% 84%;           /* #ccccdc */
+    --card: 213 16% 10%;                 /* #161a1f */
+    --card-foreground: 240 20% 84%;      /* #ccccdc */
+    --popover: 213 16% 10%;             /* #161a1f */
+    --popover-foreground: 240 20% 84%;   /* #ccccdc */
+    /* ── Accent ── */
+    --primary: 221 83% 53%;              /* #2563eb */
+    --primary-foreground: 0 0% 100%;     /* #ffffff */
+    /* ── Neutral fills ── */
+    --secondary: 222 14% 14%;            /* #1e2028 */
+    --secondary-foreground: 240 20% 84%; /* #ccccdc */
+    --muted: 222 13% 15%;               /* #22252b */
+    --muted-foreground: 240 14% 55%;     /* #ccccdc at ~0.65 opacity equivalent */
+    --accent: 222 13% 15%;              /* #22252b */
+    --accent-foreground: 240 20% 84%;   /* #ccccdc */
+    /* ── Destructive ── */
+    --destructive: 0 84% 60%;            /* #ef4444 — same value, dark shows it brighter */
+    --destructive-foreground: 0 0% 100%;
+    /* ── Borders / inputs (bnkhealth rgba(204,204,220,0.15) ≈ low-contrast slate) ── */
+    --border: 216 14% 22%;              /* approx rgba(204,204,220,0.15) on #111217 */
+    --input: 216 14% 22%;
+    --ring: 221 83% 53%;                 /* #2563eb */
+
+    /* ── Status tokens ── */
+    --success: 160 84% 39%;              /* #10b981 */
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;               /* #f59e0b */
+    --warning-foreground: 0 0% 100%;
+    --info: 221 83% 53%;                 /* #2563eb */
+    --info-foreground: 0 0% 100%;
+
+    /* ── Scrollbar — dark mode ── */
+    --scrollbar-thumb: 222 10% 22%;
+    --scrollbar-thumb-hover: 222 10% 33%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    line-height: 1.6;
+  }
+  
+  /* Typography scale */
+  h1 {
+    @apply text-3xl font-bold tracking-tight;
+    line-height: 1.2;
+  }
+  
+  h2 {
+    @apply text-2xl font-semibold tracking-tight;
+    line-height: 1.3;
+  }
+  
+  h3 {
+    @apply text-xl font-semibold;
+    line-height: 1.4;
+  }
+  
+  h4 {
+    @apply text-lg font-medium;
+    line-height: 1.5;
+  }
+  
+  /* Smooth transitions for interactive elements */
+  button, a, [role="button"] {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  /* Micro-interactions */
+  .animate-press {
+    @apply active:scale-95 transition-transform duration-100;
+  }
+  
+  .animate-success {
+    animation: success-pulse 0.6s ease-out;
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+  
+  .animate-slide-up {
+    animation: slide-up 0.3s ease-out;
+  }
+  
+  /* Hover effects */
+  .hover-lift {
+    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5;
+  }
+  
+  .hover-glow {
+    @apply transition-shadow duration-200 hover:shadow-[0_0_15px_rgba(37,99,235,0.3)];
+  }
+}
+
+@layer utilities {
+  /* Custom animations */
+  @keyframes success-pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.8;
+      transform: scale(1.05);
+    }
+  }
+  
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Loading shimmer effect */
+  @keyframes shimmer {
+    0% {
+      background-position: -1000px 0;
+    }
+    100% {
+      background-position: 1000px 0;
+    }
+  }
+  
+  .shimmer {
+    animation: shimmer 2s infinite linear;
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      rgba(255, 255, 255, 0.3) 50%,
+      transparent 100%
+    );
+    background-size: 1000px 100%;
+  }
+}
+
+/* ==========================================================================
+   Scrollbars — themed for light/dark via CSS variables in :root / .dark
+   Standard `scrollbar-color` covers Firefox + modern Chromium; WebKit
+   pseudo-elements cover older Chromium / Safari with extra control.
+   ========================================================================== */
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--scrollbar-thumb));
+  border-radius: 9999px;
+  /* 2px transparent border + content-box clip = small inset around the thumb */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--scrollbar-thumb-hover));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ==========================================================================
+   Focus Visible Ring — consistent focus-visible styling for keyboard nav
+   ========================================================================== */
+
+*:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* Remove native outline for mouse users — only show for keyboard */
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Skip-link is handled via sr-only in AppShell, but ensure visibility when focused */
+a[href="#main-content"]:focus {
+  clip: auto !important;
+  clip-path: none !important;
+  height: auto !important;
+  width: auto !important;
+  overflow: visible !important;
+}
+
+/* ==========================================================================
+   Reduced Motion — respect user preferences
+   Disables animations and transitions for users who have requested it.
+   Individual overrides use Tailwind's motion-safe: / motion-reduce: prefixes.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Keep essential loading spinners visible but static */
+  .animate-spin {
+    animation: none !important;
+  }
+
+  /* Collapse page-enter so content doesn't flash */
+  .motion-safe\:animate-page-enter {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

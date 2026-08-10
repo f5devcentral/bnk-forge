@@ -1,0 +1,21 @@
+# Slice E / #300: reduce build context, keep secrets out of image.
+# proxy/Dockerfile only COPYs nginx.conf and nginx.local.conf — keep those.
+
+# Git
+.git/
+.gitignore
+
+# Secrets
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+
+# Docker files (avoid recursive context)
+Dockerfile
+
+# macOS
+.DS_Store

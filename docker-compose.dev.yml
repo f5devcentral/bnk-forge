@@ -1,0 +1,118 @@
+# =============================================================================
+# Development Overrides — Hot Reload for Backend & Frontend
+# =============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# What this does:
+#   - Builds with dev dependencies (pytest, factory-boy) via BUILD_DEV=true
+#   - Mounts backend code as a volume (no rebuild on code changes)
+#   - Runs uvicorn with --reload for automatic restart on file changes
+#   - Mounts frontend source for Vite HMR (if using dev server)
+#   - Disables resource limits for dev comfort
+#
+# NOTE: You still need to rebuild if you change:
+#   - requirements.txt / requirements-dev.txt (Python deps)
+#   - Dockerfile (system tools)
+#   - alembic migrations (run: docker exec bnk-forge-backend alembic upgrade head)
+#
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: api
+      args:
+        BUILD_DEV: "true"
+    volumes:
+      # Mount backend code read-write for hot reload
+      - ./backend/core:/app/core
+      - ./backend/models:/app/models
+      - ./backend/modules:/app/modules
+      - ./backend/services:/app/services
+      - ./backend/routes:/app/routes
+      - ./backend/tasks:/app/tasks
+      - ./backend/utils:/app/utils
+      - ./backend/schemas:/app/schemas
+      - ./backend/data:/app/data
+      # Tests, operator source, proxy config, and pytest config (for cross-module tests)
+      - ./backend/tests:/app/tests
+      - ./backend/pyproject.toml:/app/pyproject.toml:ro
+      - ./bnk-operator:/app/bnk-operator:ro
+      - ./proxy:/app/proxy:ro
+      # Entry point files
+      - ./backend/main.py:/app/main.py
+      - ./backend/celery_app.py:/app/celery_app.py
+      - ./backend/database.py:/app/database.py
+      - ./backend/init_db.py:/app/init_db.py
+      # Alembic (for running migrations during dev)
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+    # Override CMD to enable hot reload
+    command: >
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/core
+      --reload-dir /app/models
+      --reload-dir /app/modules
+      --reload-dir /app/services
+      --reload-dir /app/routes
+      --reload-dir /app/tasks
+      --reload-dir /app/utils
+      --reload-dir /app/schemas
+      --proxy-headers
+      --forwarded-allow-ips=*
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+
+  celery-worker:
+    build:
+      context: ./backend
+      target: worker
+      args:
+        BUILD_DEV: "true"
+    volumes:
+      # Mount same code for workers (requires manual restart after changes)
+      - ./backend/core:/app/core
+      - ./backend/models:/app/models
+      - ./backend/modules:/app/modules
+      - ./backend/services:/app/services
+      - ./backend/routes:/app/routes
+      - ./backend/tasks:/app/tasks
+      - ./backend/utils:/app/utils
+      - ./backend/schemas:/app/schemas
+      - ./backend/data:/app/data
+      - ./backend/main.py:/app/main.py
+      - ./backend/celery_app.py:/app/celery_app.py
+      - ./backend/database.py:/app/database.py
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+
+  celery-worker-2:
+    volumes:
+      - ./backend/core:/app/core
+      - ./backend/models:/app/models
+      - ./backend/modules:/app/modules
+      - ./backend/services:/app/services
+      - ./backend/routes:/app/routes
+      - ./backend/tasks:/app/tasks
+      - ./backend/utils:/app/utils
+      - ./backend/schemas:/app/schemas
+      - ./backend/data:/app/data
+      - ./backend/main.py:/app/main.py
+      - ./backend/celery_app.py:/app/celery_app.py
+      - ./backend/database.py:/app/database.py
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G

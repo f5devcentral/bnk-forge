@@ -1,0 +1,51 @@
+# Slice E / #300: reduce build context, keep secrets out of image.
+# mcp-server/Dockerfile COPYs: pyproject.toml, README.md, src/ — keep those.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# Documentation — README.md is needed by Dockerfile COPY; exclude other docs only.
+docs/
+
+# Tests (not needed in production image)
+tests/
+tools/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Docker files (avoid recursive context)
+Dockerfile

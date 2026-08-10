@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${utils_namespace}
+  labels:
+    app.kubernetes.io/name: f5-utils
+    app.kubernetes.io/component: bnk-utilities
+    app.kubernetes.io/managed-by: bnk-forge
+    f5.com/product: bnk
+  annotations:
+    description: F5 BIG-IP Next for Kubernetes utility components

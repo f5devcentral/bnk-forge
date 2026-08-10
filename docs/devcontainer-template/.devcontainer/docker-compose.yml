@@ -1,0 +1,88 @@
+# =============================================================================
+# Generic Dev Container Compose — bridge networking, Postgres + Redis sidecars
+# =============================================================================
+# Standalone compose file for the devcontainer. Does NOT layer on top of a
+# production docker-compose.yml — bridge networking is required for VS Code
+# port forwarding and would collide with network_mode: host setups.
+#
+# Services:
+#   devcontainer — the dev environment (Python + Node) that VS Code attaches to
+#   postgres     — PostgreSQL 16, reachable from devcontainer as `postgres:5432`
+#   redis        — Redis 7,     reachable from devcontainer as `redis:6379`
+#
+# Remove the postgres/redis services if your project doesn't need them.
+
+services:
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Bump these if your project needs newer language versions.
+        PYTHON_VERSION: "3.11"
+        NODE_MAJOR: "20"
+    volumes:
+      # Bind-mount the project root into /workspace. `:cached` is a macOS
+      # performance hint; ignored on Linux.
+      - ..:/workspace:cached
+    ports:
+      # Bind to 0.0.0.0 so forwarded ports are reachable from a host browser
+      # (including from a Mac when the devcontainer runs inside a Linux VM).
+      # Adjust or add entries to match your app's ports.
+      - "0.0.0.0:8000:8000"   # e.g. backend / API
+      - "0.0.0.0:8080:8080"   # e.g. frontend dev server
+      # - "0.0.0.0:5173:5173" # Vite default
+      # - "0.0.0.0:3000:3000" # Next.js / CRA default
+    environment:
+      # ── Sidecar wiring ──────────────────────────────────────────────────
+      DATABASE_URL: postgresql://devuser:devpassword@postgres:5432/devdb
+      REDIS_URL: redis://:devredispassword@redis:6379/0
+      # ── Add your own app config here ───────────────────────────────────
+      # APP_ENV: development
+      # LOG_LEVEL: debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devnet
+    # Keep alive for VS Code to attach
+    command: sleep infinity
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: devdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - devnet
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass devredispassword
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a devredispassword ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - devnet
+
+networks:
+  devnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,97 @@
+# =============================================================================
+# Test Stack Overrides
+# =============================================================================
+#
+# Self-contained test stack for running backend integration tests.
+# Uses ephemeral volumes, reduced resources, and test-specific config.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+#   make test-integration-full
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
+#
+# What this changes vs production:
+#   - Ephemeral PostgreSQL (tmpfs — no persistent data)
+#   - Test-specific SECRET_KEY
+#   - Single Celery worker (reduced concurrency)
+#   - No celery-beat (no scheduled tasks during tests)
+#   - No postgres-backup (not needed for tests)
+#   - No frontend build (tests hit API directly)
+#   - Backend mounts test directory
+#   - Reduced resource limits
+#
+
+services:
+  postgres:
+    # Use tmpfs for ephemeral test database (fast, no disk writes)
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: bnk_forge_test
+      POSTGRES_USER: bnk
+      POSTGRES_PASSWORD: bnk_test
+
+  redis:
+    # Use default config, no persistence needed
+    command: redis-server --save "" --appendonly no
+
+  backend:
+    environment:
+      DATABASE_URL: "postgresql://bnk:bnk_test@postgres:5432/bnk_forge_test"
+      SECRET_KEY: "test-secret-key-do-not-use-in-production"
+      REDIS_URL: "redis://redis:6379/0"
+      # Seed admin user on startup
+      SEED_ADMIN: "true"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin"
+      # Test mode flags
+      TESTING: "true"
+      LOG_LEVEL: "WARNING"
+    volumes:
+      # Mount tests for in-container test execution
+      - ./backend/tests:/app/tests:ro
+      - ./backend/pyproject.toml:/app/pyproject.toml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  celery-worker:
+    environment:
+      DATABASE_URL: "postgresql://bnk:bnk_test@postgres:5432/bnk_forge_test"
+      SECRET_KEY: "test-secret-key-do-not-use-in-production"
+      REDIS_URL: "redis://redis:6379/0"
+      LOG_LEVEL: "WARNING"
+    # Single worker with reduced concurrency
+    command: >
+      celery -A celery_app worker
+      --loglevel=warning
+      --concurrency=2
+      --queues=default,k8s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # Disable services not needed for testing
+  celery-worker-2:
+    profiles:
+      - disabled
+
+  celery-beat:
+    profiles:
+      - disabled
+
+  postgres-backup:
+    profiles:
+      - disabled
+
+  frontend:
+    profiles:
+      - disabled
+
+  proxy:
+    profiles:
+      - disabled

@@ -1,0 +1,34 @@
+{{- if .Values.beat.enabled -}}
+{{- $name := printf "%s-beat" (include "bnk-forge.fullname" .) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "beat") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bnk-forge.componentLabels" (list . "beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-forge.componentLabels" (list . "beat") | nindent 8 }}
+    spec:
+      {{- include "bnk-forge.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: beat
+          image: {{ include "bnk-forge.image" (list . .Values.beat.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "bnk-forge.backendEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "bnk-forge.sharedVolumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "bnk-forge.sharedVolumes" . | nindent 8 }}
+{{- end }}

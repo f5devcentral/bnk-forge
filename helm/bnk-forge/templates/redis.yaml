@@ -1,0 +1,82 @@
+{{- if .Values.redis.enabled -}}
+{{- $name := printf "%s-redis" (include "bnk-forge.fullname" .) -}}
+{{- $sc := default .Values.global.databaseStorageClass .Values.redis.persistence.storageClass -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "redis") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "bnk-forge.componentLabels" (list . "redis") | nindent 4 }}
+  ports:
+    - port: {{ .Values.redis.service.port }}
+      targetPort: 6379
+      name: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "redis") | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bnk-forge.componentLabels" (list . "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-forge.componentLabels" (list . "redis") | nindent 8 }}
+    spec:
+      {{- include "bnk-forge.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["redis-server"]
+          args:
+            - "--appendonly"
+            - "yes"
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bnk-forge.fullname" . }}-secrets
+                  key: redis-password
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size }}
+        {{- if $sc }}
+        storageClassName: {{ $sc | quote }}
+        {{- end }}
+{{- end }}

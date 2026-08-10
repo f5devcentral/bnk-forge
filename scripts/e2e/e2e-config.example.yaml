@@ -1,0 +1,114 @@
+# bnk-forge end-to-end hardware test config.
+#
+# Copy to `e2e-config.yaml` (gitignored — the default name `scripts/e2e.sh`
+# and `python -m scripts.e2e` look for) and fill in the values for your
+# test rig. Every field is documented in scripts/e2e/config.py.
+
+# Worker nodes hosting the DPUs (proxmox VMs with PCIe-passthrough
+# DPUs in this setup). Accept individual IPs, ranges
+# ('192.168.68.66-71'), or CIDRs ('192.168.68.0/29').
+worker_node_ips:
+  - 192.168.68.66
+  - 192.168.68.71
+worker_ssh_user: ubuntu
+worker_ssh_key_path: ~/.ssh/id_ed25519       # passwordless key
+
+# DPU BMC IP range to discover after the worker-node discovery
+# learns the BMCs (used for the Redfish-side DPU probe).
+bmc_ips:
+  - 192.168.68.97
+  - 192.168.68.100
+
+# Credentials the project will store as DPU defaults.
+bmc_password: hb9rwm4hb9fx
+dpu_os_password: hb9rwm4hb9fx
+
+# `lag` or `no-lag` — picks the matching bf.conf template by uplink_mode.
+bf_template: lag
+
+# BFB image filename. Must already exist in the bluefield_software_images
+# catalog on the bnk-forge instance under test.
+bfb_image: bf-bundle-3.1.0-76_25.07_ubuntu-22.04_prod.bfb
+
+# Optional jumphost. Comment out / remove the whole block to skip.
+# jumphost:
+#   host: jumphost.lab
+#   user: ops
+#   ssh_key_path: ~/.ssh/id_ed25519_jumphost
+#   port: 22
+
+bnk_forge_url: https://localhost
+bnk_forge_admin_user: admin
+# bnk_forge_admin_password: changeme   # leave default and override:
+#                                      # `BNK_FORGE_PASSWORD=... scripts/e2e.sh`
+
+# When true (default), the harness `make install`s a fresh local
+# bnk-forge before running the smoke flow. Refuses if a bnk-forge
+# container is already running — stop it explicitly first.
+local_deploy: true
+# bnk_forge_repo_dir: /path/to/bnk-forge  # only set when running this
+#                                         # script from outside the repo
+
+project_name_prefix: e2e-
+
+timeouts:
+  local_deploy: 720       # `make install` + first API-ready
+  discovery: 120          # per discovery wait (seconds)
+  flash_per_dpu: 1500     # per-DPU flash budget (Phase 2)
+  matrix: 120             # connectivity matrix run wait
+  poll_interval: 3
+  total: 3600             # overall guard
+  # Cloud-blueprint timeouts (seconds).
+  cloud_deploy: 3600      # EKS+BNK deploy can take 20–40 min
+  cloud_bnk_ready: 600    # BNK readiness gate after deploy
+  cloud_license: 300      # License activation gate
+  cloud_destroy: 1800     # Destroy run
+  cloud_traffic: 600      # Traffic probe step (all patterns)
+
+# ── Cloud-blueprint section ─────────────────────────────────────────────────
+# Remove the whole `cloud:` block (or don't set cloud credentials) to skip
+# all cloud steps. The harness reports every cloud step as `skipped` (green).
+#
+# cloud:
+#   # Identify the blueprint release.  Use `release_id` to pin an exact row,
+#   # or `release_name` + `release_version` for a fuzzy search.
+#   release_id: 42
+#   # release_name: "eks-bnk"
+#   # release_version: "1.2.0"
+#
+#   cloud_provider: aws           # aws | gcp | azure (gcp/azure skip until S3)
+#   region: us-west-2
+#   credential_template_id: 7    # forge CloudCredentialTemplate id
+#
+#   # Blueprint-level variables — use `GET /api/stacks/releases/{id}/required-inputs`
+#   # to discover what a release needs; pass them here.
+#   variables:
+#     eks_cluster_name: my-eks-cluster
+#     vpc_cidr: "10.0.0.0/16"
+#
+#   # forge cluster id for BNK readiness + license gates.
+#   # Leave unset to skip both gates (useful when the blueprint doesn't include BNK).
+#   cluster_id: 3
+#
+#   # Raw JWT string for license activation.  Set here or via CLOUD_LICENSE_JWT env.
+#   # license_jwt: "eyJhbGciOiJSUzI1NiIsIn..."
+#
+#   teardown_always: true      # destroy even on failure/timeout/Ctrl-C
+#   teardown_on_success: true  # run destroy_all + delete_project on success
+#
+#   # ── SSH+EICE traffic probes ───────────────────────────────────────────
+#   # Runs after license is active, before destroy.  Requires `aws` + `ssh`
+#   # on PATH and AWS credentials in the environment.
+#   # traffic:
+#   #   enabled: true
+#   #   patterns:
+#   #     - http-routing-e2e      # basic routing (all 200s)
+#   #     - http-traffic-split    # 70/30 weighted split (both backends seen)
+#   #     - multi-vip             # two VIPs from one pool (each VIP serves its backend)
+#   #   jumphost_instance_id: i-0abc123def456789  # or set JUMPHOST_INSTANCE_ID env
+#   #   source_interface_ip: 10.0.1.50            # or set JUMPHOST_BNK_EXT_ENI_IP env
+#   #   vip: 10.0.1.100           # base VIP; patterns pin their own last octet
+#   #   region: us-west-2         # defaults to cloud.region
+#   #   iterations: 5             # probes per pattern (split enforces ≥10)
+#   #   timeout_seconds: 10       # per-curl --max-time
+#   #   instance_os_user: ec2-user

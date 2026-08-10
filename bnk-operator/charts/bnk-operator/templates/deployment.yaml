@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bnk-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bnk-operator.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bnk-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-operator.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "bnk-operator.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "bnk-operator.fullname" . }}-config
+          env:
+            - name: CLUSTER_NAME
+              value: {{ .Values.clusterName | default .Release.Namespace | quote }}
+            - name: CONNECTIVITY_MODE
+              value: {{ .Values.connectivityMode | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ .Values.pollIntervalSeconds | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.logFormat | default "text" | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.healthPort | quote }}
+            - name: HEALTH_CHECK_INTERVAL
+              value: {{ .Values.healthCheckInterval | default 30 | quote }}
+            - name: HEALTH_FULL_REPORT_INTERVAL
+              value: {{ .Values.healthFullReportInterval | default 300 | quote }}
+            {{- if .Values.cwc.enabled }}
+            - name: CWC_CERT_DIR
+              value: {{ .Values.cwc.mountPath | default "/certs/cwc" | quote }}
+            {{- end }}
+            - name: LLM_METRICS_ENABLED
+              value: {{ .Values.llmMetrics.enabled | quote }}
+            - name: LLM_METRICS_INTERVAL
+              value: {{ .Values.llmMetrics.intervalSeconds | default 30 | quote }}
+            {{- if .Values.tls.insecure }}
+            - name: TLS_INSECURE
+              value: "true"
+            {{- end }}
+            {{- if or .Values.tls.caCert .Values.tls.existingCaSecret }}
+            - name: TLS_CA_CERT
+              value: "/etc/ssl/certs/bnk-forge-ca.pem"
+            {{- end }}
+            {{- range .Values.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.tls.caCert }}
+            - name: tls-ca-cert
+              mountPath: /etc/ssl/certs/bnk-forge-ca.pem
+              subPath: ca.crt
+              readOnly: true
+            {{- else if .Values.tls.existingCaSecret }}
+            - name: tls-ca-cert
+              mountPath: /etc/ssl/certs/bnk-forge-ca.pem
+              subPath: {{ .Values.tls.existingCaSecretKey }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.cwc.enabled }}
+            - name: cwc-certs
+              mountPath: {{ .Values.cwc.mountPath | default "/certs/cwc" }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.tls.caCert }}
+        - name: tls-ca-cert
+          secret:
+            secretName: {{ include "bnk-operator.fullname" . }}-tls-ca
+        {{- else if .Values.tls.existingCaSecret }}
+        - name: tls-ca-cert
+          secret:
+            secretName: {{ .Values.tls.existingCaSecret }}
+        {{- end }}
+        {{- if .Values.cwc.enabled }}
+        - name: cwc-certs
+          secret:
+            secretName: {{ .Values.cwc.certSecret | default "bnk-forge-cwc-client-tls" }}
+            optional: true
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,165 @@
+# =============================================================================
+# Local Laptop Overrides — macOS / Windows (Docker Desktop)
+# =============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#   (or simply: make local-up / make local-deploy)
+#
+# Why this exists:
+#   The main docker-compose.yml uses network_mode: host for Linux servers.
+#   Docker Desktop (macOS/Windows) runs containers in a Linux VM, so host
+#   networking doesn't expose ports to the host machine. This overlay uses
+#   !reset to clear network_mode and switches to a shared bridge network
+#   with explicit port mappings.
+#
+# What changes:
+#   - Clears network_mode: host (via !reset) and adds a shared bridge network
+#   - Adds port mappings so services are reachable from localhost
+#   - Overrides DATABASE_URL / REDIS_URL to use Docker DNS (service names)
+#   - Mounts local nginx configs that use Docker DNS instead of localhost
+#
+# Ports exposed on your laptop:
+#   443  → Nginx proxy (HTTPS — accept the self-signed cert warning; maps to container 8443)
+#   80   → Nginx proxy (HTTP → redirects to HTTPS; maps to container 8080)
+#   8080 → Frontend direct (no proxy, no HTTPS)
+#   8000 → Backend API direct
+#
+# NOTE: The GUI "Upgrade Now" feature (System > Upgrade) is not available in
+# local mode — it requires Docker socket access and a host repo path.
+#
+# Requires: Docker Compose v2.24.0+ (for !reset support)
+#
+
+x-local-backend-env: &local-backend-env
+  BNK_FORGE_DEPLOY_MODE: local
+  DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@postgres:5432/bnkforge
+  REDIS_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  TF_PLUGIN_CACHE_DIR: /app/provider-cache
+
+# Shared bridge network — all services can resolve each other by service name
+networks:
+  bnk-local:
+    driver: bridge
+
+services:
+  postgres:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "5432:5432"
+
+  redis:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "6379:6379"
+
+  backend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *local-backend-env
+    # Override volumes to remove Docker socket and HOST_REPO_PATH (not needed on laptop)
+    volumes:
+      - module_catalog:/tmp/bnk-forge-modules
+      - bnk-forge-data:/app/projects
+      - bnk-forge-keys:/app/keys
+      - state_data:/app/state
+      - helm_cache:/home/bnkforge/.cache/helm
+      - helm_config:/home/bnkforge/.config/helm
+      - helm_charts:/app/helm_charts
+      - workspace_data:/app/workspaces
+      - provider_cache:/app/provider-cache
+      - ./secrets:/app/secrets:ro
+      - ./VERSION:/app/VERSION:ro
+
+  celery-worker:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+      # Artifact engine reaches the daemon via the scoped socket proxy (bridge DNS).
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+
+  celery-worker-2:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+
+  docker-socket-proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+
+  celery-beat:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  frontend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./frontend-v2/nginx.local.conf:/etc/nginx/conf.d/default.conf:ro
+
+  proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "443:8443"
+      - "80:8080"
+    volumes:
+      - ./proxy/nginx.local.conf:/etc/nginx/conf.d/nginx.conf:ro
+
+  mcp:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8081:8081"
+    environment:
+      BNK_FORGE_API_URL: http://backend:8000
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      # MCP authenticates as the dedicated service account seeded by the backend.
+      # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
+      # every startup so backend and MCP always stay in sync.
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      MCP_PORT: "8081"
+
+  postgres-backup:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      PGHOST: postgres
+
+  forge-agent:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      # On laptop use Docker compose DNS (backend service name)
+      FORGE_URL: http://backend:8000
+      AGENT_NAME: ${FORGE_AGENT_NAME:-forge-local}
+      AGENT_TOKEN: ${FORGE_AGENT_TOKEN:-}
+      # On macOS host IP is typically 192.168.65.1 (Docker Desktop gateway) or
+      # leave blank to let the agent resolve its hostname via container DNS.
+      AGENT_ADVERTISE_IP: ${FORGE_AGENT_ADVERTISE_IP:-}

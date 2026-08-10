@@ -1,0 +1,329 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  BNK-Forge v2 — Integration Branch Auto-Rebuild                            ║
+# ║                                                                            ║
+# ║  Model: `integration` is a DISPOSABLE, FORCE-PUSHED branch.               ║
+# ║  It equals: staging + every open PR targeting staging that has             ║
+# ║    (a) the label `integrate` AND (b) all CI checks green.                  ║
+# ║  It is NOT a merge source. Never commit to it directly.                    ║
+# ║  When a PR merges to staging the rebuild drops it automatically.           ║
+# ║                                                                            ║
+# ║  PAT NOTE — IMPORTANT:                                                     ║
+# ║  Pushing with the default GITHUB_TOKEN will NOT trigger downstream         ║
+# ║  workflows (ci.yml) on the integration branch, because GitHub              ║
+# ║  intentionally prevents token-triggered pushes from spawning new runs.     ║
+# ║  To get CI to run automatically after each rebuild, create a Personal      ║
+# ║  Access Token (classic, repo scope) or a GitHub App installation token     ║
+# ║  and store it as the repository secret `INTEGRATION_PUSH_TOKEN`.           ║
+# ║  Without the secret the rebuild still succeeds — integration is updated    ║
+# ║  but its own CI pipeline will not auto-run until triggered manually.       ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: Integration Branch Rebuild
+
+on:
+  # Reseat when staging advances (new merge lands)
+  push:
+    branches: [staging]
+    # NOTE: do NOT add `integration` here — that would create a self-loop.
+
+  # Opt in / out of a PR, or PR opened/re-synced / reopened / closed
+  # Scoped to staging-base PRs only — prevents spurious runs on the staging→main release PR.
+  pull_request:
+    types: [opened, labeled, unlabeled, synchronize, reopened, closed]
+    branches: [staging]
+
+  # A feature PR's CI suite completed — check whether it just went green
+  check_suite:
+    types: [completed]
+
+  # Safety-net: rebuild every 30 min to catch any drift
+  schedule:
+    - cron: '*/30 * * * *'
+
+  # Manual trigger
+  workflow_dispatch: {}
+
+# Only one rebuild at a time; queue rather than cancel so rapid staging pushes (merge sprees)
+# don't produce cancelled-as-red checks on the release PR. The group still serializes runs,
+# and the rebuild is idempotent + skip-if-unchanged, so queued runs are cheap no-ops.
+concurrency:
+  group: integration-rebuild
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+# ── Loop guard ────────────────────────────────────────────────────────────────
+# Skip when we are reacting to integration's own CI suite completing.
+# Without this guard: integration push → CI runs → check_suite completed →
+# this workflow fires → rebuild → push → repeat forever.
+jobs:
+  rebuild:
+    name: "Rebuild integration branch"
+    runs-on: ubuntu-latest
+    if: |
+      github.event.check_suite.head_branch != 'integration'
+
+    steps:
+      # ── 1. Checkout with full history ────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # Use PAT when available so the subsequent push triggers CI.
+          # Falls back to GITHUB_TOKEN (rebuilds but won't auto-run CI).
+          token: ${{ secrets.INTEGRATION_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # ── 2. Git identity ──────────────────────────────────────────────────
+      - name: Configure git user
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # ── 3. Fetch all remote refs ─────────────────────────────────────────
+      - name: Fetch origin
+        run: git fetch origin --prune
+
+      # ── 4. Enumerate candidate PRs ───────────────────────────────────────
+      # Find every open PR that:
+      #   • targets `staging`
+      #   • carries the label `integrate`
+      # Then filter to those whose checks are all green (no failures).
+      # Advisory/skipped checks are non-blocking; only `failure` excludes.
+      - name: Enumerate integrate-labeled PRs and check CI status
+        id: candidates
+        env:
+          GH_TOKEN: ${{ secrets.INTEGRATION_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "## Candidate PRs" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PR | Title | Head Ref | CI | Decision |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----|-------|----------|----|----------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Fetch open, integrate-labeled PRs targeting staging.
+          # Use the REST pulls API (not `gh pr list --label`) for read-after-write
+          # consistency — the search index used by gh pr list can lag by minutes,
+          # causing the just-labeled PR to be missed on the `pull_request: labeled`
+          # trigger. gh api --paginate emits one array per page; jq -s merges them.
+          CANDIDATE_JSON=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=staging&per_page=100" \
+            --jq '[.[] | select(any(.labels[]?; .name=="integrate")) | {number, title, headRefName: .head.ref, headRefOid: .head.sha}]' \
+            | jq -s 'add // []')
+
+          echo "Raw candidate count: $(echo "$CANDIDATE_JSON" | jq 'length')"
+
+          # Build two env files: one for include, one for skip
+          INCLUDE_REFS=""   # space-separated "ref:sha" pairs
+          INCLUDE_NRS=""    # space-separated PR numbers (for label cleanup)
+          SKIP_RED=""       # PR numbers with failing CI
+
+          while IFS= read -r pr_json; do
+            PR_NUM=$(echo "$pr_json" | jq -r '.number')
+            PR_TITLE=$(echo "$pr_json" | jq -r '.title')
+            HEAD_REF=$(echo "$pr_json" | jq -r '.headRefName')
+            HEAD_SHA=$(echo "$pr_json" | jq -r '.headRefOid')
+
+            echo "  Checking PR #${PR_NUM}: ${HEAD_REF} (${HEAD_SHA:0:8})"
+
+            # Determine CI status for this PR's head commit.
+            # Uses the stable REST check-runs API instead of `gh pr checks --json`
+            # because the supported --json fields vary across gh versions (e.g.
+            # `conclusion` and `bucket` both error on some runner versions).
+            #
+            # Two REST sources are combined:
+            #   1. check-runs  — modern GitHub Actions / Apps checks
+            #   2. combined status — legacy commit statuses
+            #
+            # GOTCHA — false "pending" from combined status:
+            #   When a repo uses only check-runs (no legacy statuses), the combined
+            #   status endpoint returns {state:"pending", statuses:[]} — i.e. n=0.
+            #   We MUST ignore this: a pending combined status with zero statuses is
+            #   not a real pending; it means "no legacy statuses exist".
+            #   Only trust combined status when it carries ≥1 actual status entries.
+            #
+            # Classification:
+            #   any check-run with failure/cancelled/timed_out/action_required → red
+            #   any check-run not yet completed (OR legacy status pending, n≥1)   → pending
+            #   zero check-runs AND zero legacy statuses                          → no-checks
+            #   otherwise (all completed, no bad outcomes)                        → green
+
+            # Stable REST classification (gh pr checks --json field support varies by version).
+            CR=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {status, conclusion}]' 2>/dev/null || echo '[]')
+            ST=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/status" \
+              --jq '{state: .state, n: (.statuses | length)}' 2>/dev/null || echo '{"state":"","n":0}')
+
+            CR_TOTAL=$(echo "$CR" | jq 'length')
+            CR_BAD=$(echo "$CR" | jq '[.[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="action_required")] | length')
+            CR_RUNNING=$(echo "$CR" | jq '[.[] | select(.status != "completed")] | length')
+            ST_STATE=$(echo "$ST" | jq -r '.state')
+            ST_N=$(echo "$ST" | jq -r '.n')
+
+            if [ "$CR_BAD" -gt 0 ] || { [ "$ST_N" -gt 0 ] && [ "$ST_STATE" = "failure" ]; }; then
+              CI_STATUS="red"
+            elif [ "$CR_RUNNING" -gt 0 ] || { [ "$ST_N" -gt 0 ] && [ "$ST_STATE" = "pending" ]; }; then
+              CI_STATUS="pending"
+            elif [ "$CR_TOTAL" -eq 0 ] && [ "$ST_N" -eq 0 ]; then
+              CI_STATUS="no-checks"
+            else
+              CI_STATUS="green"
+            fi
+
+            # Debuggable stdout (no longer hide everything behind 2>/dev/null at the decision level)
+            echo "    status=${CI_STATUS} (check-runs total=${CR_TOTAL} bad=${CR_BAD} running=${CR_RUNNING}; statuses n=${ST_N} state=${ST_STATE})"
+
+            if [ "$CI_STATUS" = "green" ]; then
+              INCLUDE_REFS="${INCLUDE_REFS} ${HEAD_REF}:${HEAD_SHA}"
+              INCLUDE_NRS="${INCLUDE_NRS} ${PR_NUM}"
+              echo "| #${PR_NUM} | ${PR_TITLE} | \`${HEAD_REF}\` | green | **INCLUDE** |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              SKIP_RED="${SKIP_RED} ${PR_NUM}"
+              echo "| #${PR_NUM} | ${PR_TITLE} | \`${HEAD_REF}\` | ${CI_STATUS} | skipped (${CI_STATUS}) |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < <(echo "$CANDIDATE_JSON" | jq -c '.[]')
+
+          # Export for later steps
+          # Use \n-delimited files to avoid ARG_MAX issues on large repos
+          echo "$INCLUDE_REFS"   > /tmp/include_refs.txt
+          echo "$INCLUDE_NRS"    > /tmp/include_nrs.txt
+          echo "$SKIP_RED"       > /tmp/skip_red.txt
+          # Persist CANDIDATE_JSON so the build step can resolve headRef→PR number
+          # without a second gh pr list call (whose search index can lag by minutes).
+          echo "$CANDIDATE_JSON" > /tmp/candidate_json.txt
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 5. Build integration branch ──────────────────────────────────────
+      - name: Ensure integration-conflict label exists
+        env:
+          GH_TOKEN: ${{ secrets.INTEGRATION_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          # Create the label if absent — ensures conflict labeling is always visible.
+          gh label create integration-conflict --color D93F0B --force 2>/dev/null || true
+
+      - name: Build integration branch
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.INTEGRATION_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          INCLUDE_REFS=$(cat /tmp/include_refs.txt)
+          INCLUDE_NRS=$(cat /tmp/include_nrs.txt)
+
+          # Build a headRef→PR-number map from CANDIDATE_JSON (already fetched by step 4).
+          # Avoids a second `gh pr list` call whose search index can lag by minutes.
+          CANDIDATE_JSON=$(cat /tmp/candidate_json.txt 2>/dev/null || echo '[]')
+
+          # Start from a clean staging base
+          git checkout -B integration origin/staging
+          echo "Base: $(git rev-parse HEAD) (staging)"
+
+          MERGED_PRS=""
+          CONFLICT_SKIP_NRS=""
+
+          for REF_SHA in $INCLUDE_REFS; do
+            HEAD_REF="${REF_SHA%%:*}"
+            HEAD_SHA="${REF_SHA##*:}"
+
+            echo "Merging origin/${HEAD_REF} (${HEAD_SHA:0:8})..."
+
+            if git merge --no-ff --no-edit "origin/${HEAD_REF}" 2>&1; then
+              echo "  Merged cleanly."
+              MERGED_PRS="${MERGED_PRS} ${HEAD_REF}"
+            else
+              echo "  Merge conflict — aborting and skipping."
+              git merge --abort 2>/dev/null || true
+
+              # Look up the PR number directly from the already-fetched CANDIDATE_JSON
+              # using the conflicting HEAD_REF — no second gh pr list call needed.
+              PR_FOR_REF=$(echo "$CANDIDATE_JSON" | jq -r \
+                ".[] | select(.headRefName == \"${HEAD_REF}\") | .number" 2>/dev/null || true)
+              if [ -n "$PR_FOR_REF" ]; then
+                CONFLICT_SKIP_NRS="${CONFLICT_SKIP_NRS} ${PR_FOR_REF}"
+                gh pr edit "$PR_FOR_REF" --add-label "integration-conflict" 2>/dev/null || true
+                echo "  Labelled PR #${PR_FOR_REF} with integration-conflict"
+              fi
+            fi
+          done
+
+          # Remove integration-conflict label from PRs that merged cleanly this run.
+          # Reuse CANDIDATE_JSON — no second gh pr list call.
+          for REF_SHA in $INCLUDE_REFS; do
+            HEAD_REF="${REF_SHA%%:*}"
+            # Skip if this ref ended up in the conflict list
+            if echo "$CONFLICT_SKIP_NRS" | grep -qw "$HEAD_REF" 2>/dev/null; then
+              continue
+            fi
+            PR_FOR_REF=$(echo "$CANDIDATE_JSON" | jq -r \
+              ".[] | select(.headRefName == \"${HEAD_REF}\") | .number" 2>/dev/null || true)
+            if [ -n "$PR_FOR_REF" ]; then
+              gh pr edit "$PR_FOR_REF" --remove-label "integration-conflict" 2>/dev/null || true
+            fi
+          done
+
+          # Persist conflict list for summary
+          echo "$CONFLICT_SKIP_NRS" > /tmp/conflict_skip.txt
+
+          FINAL_SHA=$(git rev-parse HEAD)
+          echo "final_sha=${FINAL_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Build complete. integration HEAD = ${FINAL_SHA}"
+
+      # ── 6. Skip-if-unchanged check ───────────────────────────────────────
+      - name: Check whether push is needed
+        id: diff_check
+        run: |
+          FINAL_SHA="${{ steps.build.outputs.final_sha }}"
+          NEW_TREE=$(git rev-parse "${FINAL_SHA}^{tree}")
+
+          # Check if origin/integration already exists
+          if git rev-parse --verify origin/integration > /dev/null 2>&1; then
+            OLD_TREE=$(git rev-parse "origin/integration^{tree}")
+            if [ "$NEW_TREE" = "$OLD_TREE" ]; then
+              echo "Tree is identical to origin/integration — skipping push."
+              echo "needs_push=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "Tree differs — push required."
+              echo "needs_push=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "origin/integration does not exist yet — push required."
+            echo "needs_push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 7. Force-push integration ─────────────────────────────────────────
+      - name: Push integration branch
+        if: steps.diff_check.outputs.needs_push == 'true'
+        run: |
+          git push --force-with-lease origin integration
+          echo "Pushed integration → ${{ steps.build.outputs.final_sha }}"
+
+      # ── 8. Step summary ───────────────────────────────────────────────────
+      - name: Write final summary
+        if: always()
+        run: |
+          FINAL_SHA="${{ steps.build.outputs.final_sha }}"
+          PUSHED="${{ steps.diff_check.outputs.needs_push }}"
+          CONFLICTS=$(cat /tmp/conflict_skip.txt 2>/dev/null || echo "")
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Final integration SHA | \`${FINAL_SHA:-n/a}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Push needed | ${PUSHED:-n/a} |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$CONFLICTS" ] && [ "$CONFLICTS" != " " ]; then
+            echo "| Conflict-skipped PRs | ${CONFLICTS} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${PUSHED}" = "false" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> **No-op:** integration tree is unchanged — push skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi

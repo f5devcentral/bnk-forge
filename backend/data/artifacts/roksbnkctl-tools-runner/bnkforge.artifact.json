@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "name": "roksbnkctl-tools-runner",
+  "version": "1.11.4",
+  "kind": "container_image",
+  "description": "F5 roksbnkctl tools runner — provisions a ROKS/IKS cluster and brings up the BNK stack from a single self-contained image. Procedural steps invoke the artifact's own image via argv only (no shell, no command-string, no image override).",
+  "container_image": {
+    "registry_host": "ghcr.io",
+    "repository": "jgruberf5/roksbnkctl-tools-runner",
+    "digest": "sha256:a9b858b4c3c5afbd124625226451eaa66cdff3d2840b3a76c4f24c1e0fad259d"
+  },
+  "lifecycle": {
+    "supports_apply": true,
+    "supports_destroy": false
+  },
+  "credentials": {
+    "cloud": "ibmcloud"
+  },
+  "state": {
+    "mount_path": "/state",
+    "outputs_file": "outputs.json",
+    "home_env": {
+      "ROKSBNKCTL_HOME": "/state"
+    }
+  },
+  "execution": {
+    "engine": "container",
+    "limits": {
+      "cpus": "2",
+      "memory": "2g"
+    }
+  },
+  "steps": {
+    "init": [
+      {
+        "name": "init",
+        "args": ["roksbnkctl", "init", "--home", "/state"],
+        "timeout_seconds": 600,
+        "run_once": true
+      }
+    ],
+    "apply": [
+      {
+        "name": "cluster-up",
+        "when": "{{inputs.provision_cluster}}",
+        "args": [
+          "roksbnkctl",
+          "cluster",
+          "up",
+          "--home",
+          "/state",
+          "--region",
+          "{{inputs.region}}",
+          "--cluster-name",
+          "{{inputs.cluster_name}}"
+        ],
+        "timeout_seconds": 3600,
+        "retry": { "max_attempts": 3, "backoff_seconds": 300 }
+      },
+      {
+        "name": "bnk-up",
+        "when": "{{inputs.deploy_bnk}}",
+        "args": [
+          "roksbnkctl",
+          "bnk",
+          "up",
+          "--home",
+          "/state",
+          "--outputs",
+          "/state/outputs.json"
+        ],
+        "timeout_seconds": 3600,
+        "retry": { "max_attempts": 2, "backoff_seconds": 300 }
+      }
+    ]
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "region",
+        "type": "string",
+        "source": "user",
+        "description": "IBM Cloud region for the ROKS/IKS cluster (e.g. us-south)."
+      },
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "source": "user",
+        "description": "Name of the ROKS/IKS cluster to create or target."
+      }
+    ],
+    "optional": [
+      {
+        "name": "provision_cluster",
+        "type": "boolean",
+        "source": "user",
+        "default": true,
+        "description": "Gate for the 'cluster up' step. When false, an existing cluster is reused."
+      },
+      {
+        "name": "deploy_bnk",
+        "type": "boolean",
+        "source": "user",
+        "default": true,
+        "description": "Gate for the 'bnk up' step. When false, only the cluster is provisioned."
+      }
+    ]
+  },
+  "references": []
+}

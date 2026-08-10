@@ -1,0 +1,269 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+# dist/
+downloads/
+eggs/
+.eggs/
+# Python lib directories (not frontend)
+/lib/
+/lib64/
+backend/lib/
+backend/lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+bnk_forge.db
+file::memory:
+
+# Logs
+*.log
+logs/
+/tmp/bnk-forge-logs/
+
+# Docker volumes and data
+.docker/
+docker-compose.override.yml
+# OPT-001: Smart build script stores last-build commit hash
+.build-hash
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Project data (but not frontend components)
+/projects/
+/app/projects/
+examples/
+
+# Terraform / Terragrunt
+*.tfstate
+*.tfstate.*
+.terraform/
+.terragrunt-cache/
+*.tfvars
+*.tfplan
+
+# Secrets and credentials
+secrets/*
+!secrets/README.md
+*.key
+*.pem
+*.crt
+credentials.json
+service-account.json
+far-credentials.json
+# Git credential files - NEVER commit these!
+.git-credentials
+**/credentials.hcl
+credentials.hcl
+*.tfvars.secret
+# GitHub Personal Access Tokens
+.github_token
+.github_pat
+
+# OS files
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+configs/.module_catalog/
+
+*.db
+*.backup
+backend/venv/
+
+frontend-v2/node_modules/
+**/node_modules/
+frontend-v2/dist/
+frontend-v2/.vite/
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+
+# Encryption keys
+encryption.key
+*.enc
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Coverage reports
+coverage/
+*.cover
+.coverage.*
+
+# Ruff cache
+.ruff_cache/
+
+# Screenshots
+screenshots/
+**/screenshots/
+# Agent/AI tool local settings (developer-specific, not project code)
+.agent
+.agent/
+.opencode
+.opencode/
+.claude/
+.cursor/
+.aider*
+# CLAUDE.md go ahead and share
+SESSION_STATE.md
+
+# Per-developer devcontainer state (keys, session handoff notes, local overrides).
+# Anchored to the repo root so the shareable template at
+# docs/devcontainer-template/.devcontainer/ is NOT caught by this rule.
+/.devcontainer/
+
+# nohup / background-process output files (generated at runtime)
+nohup.out
+**/nohup.out
+
+# Binary documents (store in Google Drive/SharePoint, not git)
+*.pptx
+*.docx
+
+# --- Added by multi-agent-framework installer ---
+# OS
+# Editor
+# Node
+node_modules/
+package-lock.json
+*.pyc
+# Environment
+# OpenCode
+.opencode/state/
+# Multi-agent runtime/session artifacts (keep scaffold dirs only)
+.agent/tasks/active/**
+!.agent/tasks/active/.gitkeep
+.agent/tasks/done/**
+!.agent/tasks/done/.gitkeep
+.agent/memory/archive/**
+!.agent/memory/archive/.gitkeep
+.agent/memory/sessions/**
+!.agent/memory/sessions/.gitkeep
+.agent/work/**
+!.agent/work/.gitkeep
+
+# Makefile build stamps for containerized test images
+.stamp/
+
+# Per-worktree agent state (not for merge)
+.agent-local/
+
+# Local multi-agent helper scripts at repo root (framework-managed; not committed)
+/bin/maf-*.sh
+/bin/lib/
+
+opencode.json
+
+# Per-developer scratch directory; not for shared code.
+/locals/
+
+# Local-only license/credential material — never commit
+bnk-license/
+
+# E2E harness runtime output (per-run timestamped reports, demo PDFs)
+e2e-reports/
+
+# E2E harness config — contains BMC/SSH credentials, never commit
+e2e-config.yaml
+
+# Generated documentation artifacts (built by book_to_pdf.sh).
+# The Markdown sources are tracked; rendered PDFs are not.
+*.pdf
+
+# --- Added by multi-agent-framework installer ---
+# --- MAF downstream runtime artifacts (installer-managed) ---
+# Keep framework-managed tooling/scaffolding versioned (for example `bin/maf-*`,
+# `.agent/rules/*`, `.agent/templates/*`). Ignore only operational/runtime artifacts.
+# OpenCode runtime state
+# Local provider override notes (per-machine, never committed)
+.opencode/PROVIDER-LOCAL.md
+.opencode/*.local.*
+# Framework operational artifacts
+.agent/tmp/
+.agent/cache/
+.agent/**/*.maf.new
+.agent/install-state.yaml
+# --- End MAF downstream runtime artifacts ---
+
+# Experimental Go CLI — build artifacts, never commit the compiled binary
+cli/go/
+
+# --- Public release protection ---
+.env
+.env.*
+!.env.example
+*.tar.gz
+*.bnk
+.ssh/
+secrets/
+.agent/
+.agent-prev/
+.agent-local/
+.opencode/
+.claude/
+.gemini/
+CLAUDE*.md
+CONTEXT.md
+AUDIT.md
+session-*.md
+next-session-prompt
+agent-selection
+handoffs/
+*.code-workspace

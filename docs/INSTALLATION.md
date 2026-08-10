@@ -1,0 +1,421 @@
+# Installation Guide
+
+This guide covers installing BNK Forge on various environments.
+
+**Versioning note:** Refer to the repo `VERSION` file and release tags for the current shipped version.
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [System Requirements](#system-requirements)
+- [Local Development](#local-development)
+- [Production Deployment](#production-deployment)
+- [Configuration Options](#configuration-options)
+- [Verify Installation](#verify-installation)
+- [First Steps After Installation](#first-steps-after-installation)
+
+---
+
+## Quick Start
+
+### Laptop (macOS / Windows — Docker Desktop)
+
+```bash
+git clone https://github.com/f5devcentral/bnk-forge.git
+cd bnk-forge
+make local-deploy
+```
+
+Open **https://localhost** and accept the self-signed certificate warning. Log in with **admin** / **changeme**.
+
+### Linux Server
+
+```bash
+git clone https://github.com/f5devcentral/bnk-forge.git
+cd bnk-forge
+make deploy
+```
+
+For first-time clean-slate bootstrap only (destructive), run `make install`.
+
+Log in with **admin** / **changeme** (you'll be prompted to change the password).
+
+---
+
+## System Requirements
+
+### Minimum Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 2 cores | 4+ cores |
+| RAM | 4 GB | 8+ GB |
+| Disk | 10 GB | 20+ GB |
+| Docker | 20.10+ | Latest |
+| Docker Compose | v2.0+ | Latest |
+
+### Software Requirements
+
+- **Docker** with Docker Compose v2
+- **Git** for cloning the repository
+
+**Note:** All other tools (OpenTofu, Helm, AWS CLI) are pre-installed in the container.
+
+### Network Requirements
+
+| Port | Service | Description |
+|------|---------|-------------|
+| 443 | Nginx Proxy | Main application entry (HTTPS) |
+| 80 | Nginx Proxy | HTTP redirect to HTTPS |
+| 8080 | Frontend | Direct frontend access (no HTTPS) |
+| 8000 | Backend API | Direct API access (optional) |
+| 5432 | PostgreSQL | Database (internal on server, exposed on laptop) |
+| 6379 | Redis | Queue (internal on server, exposed on laptop) |
+
+---
+
+## Local Development (Laptop)
+
+### Step 1: Clone Repository
+
+```bash
+git clone https://github.com/f5devcentral/bnk-forge.git
+cd bnk-forge
+```
+
+### Step 2: Deploy Locally
+
+```bash
+make local-deploy
+```
+
+This builds and starts all services using **bridge networking** (compatible with Docker Desktop on macOS and Windows):
+- PostgreSQL database
+- Redis queue
+- FastAPI backend (port 8000)
+- Celery workers (task execution)
+- Celery beat (scheduled tasks)
+- React frontend (port 8080)
+- Nginx proxy (ports 80/443)
+
+### Step 3: Verify Services
+
+```bash
+make local-status
+
+# Or check containers directly:
+docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+```
+
+### Step 4: Access Application
+
+Open **https://localhost** in your browser. Accept the self-signed certificate warning.
+
+You can also access services directly:
+- **https://localhost** — main UI via proxy (HTTPS)
+- **http://localhost:8080** — frontend direct (no HTTPS)
+- **http://localhost:8000/api/system/health** — backend API
+
+### Step 5: Log In
+
+A default admin account is created automatically on first startup:
+
+| Field | Value |
+|-------|-------|
+| **Username** | `admin` |
+| **Password** | `changeme` |
+
+You will be prompted to change the password on first login.
+
+### Managing Your Local Deployment
+
+```bash
+make local-up         # Start (already built)
+make local-down       # Stop and remove
+make local-restart    # Restart all
+make local-status     # Health check
+make local-logs       # Tail logs
+```
+
+### Networking: Laptop vs Server
+
+| | Laptop (`local-*`) | Server (`server-*`) |
+|---|---|---|
+| **Docker networking** | Bridge (port mappings) | Host (bind directly) |
+| **Compose files** | `docker-compose.yml` + `docker-compose.local.yml` | `docker-compose.yml` |
+| **Inter-container DNS** | Service names (`backend`, `redis`) | `localhost` |
+| **OS support** | macOS, Windows, Linux | Linux only |
+| **GUI Upgrade button** | Not available | Available (with override) |
+
+> **Why two modes?** Docker Desktop (macOS/Windows) runs containers in a Linux VM. `network_mode: host` binds to the VM's network, not your laptop's — so ports aren't accessible from your browser. The local overlay switches to bridge networking with explicit port mappings.
+
+### Optional: Configure Module Library
+
+If you have a private module library, create a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+```bash
+MODULE_LIBRARY_GIT_URL=https://github.com/your-org/your-modules.git
+MODULE_LIBRARY_PAT=ghp_xxxxxxxxxxxx
+```
+
+Then restart: `make local-restart`
+
+---
+
+## Production Deployment
+
+### Step 1: Prepare Server
+
+Ensure Docker and Docker Compose are installed on your server.
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+
+# Verify installation
+docker --version
+docker compose version
+```
+
+### Step 2: Clone Repository
+
+```bash
+git clone https://github.com/f5devcentral/bnk-forge.git
+cd bnk-forge
+```
+
+### Step 3: Deploy on Server
+
+```bash
+make deploy
+```
+
+This is the standard non-destructive server deploy entry point.
+
+> **Clean-slate bootstrap only:** Use `make install` when you intentionally want to wipe existing BNK Forge data/volumes and rebuild from scratch.
+
+> **Optional:** If you need custom CORS origins or a private module library, create a `.env` file before running the script:
+> ```bash
+> cp .env.example .env
+> # Edit ALLOWED_ORIGINS, MODULE_LIBRARY_GIT_URL, MODULE_LIBRARY_PAT as needed
+> ```
+
+### Step 4: Configure Firewall
+
+Allow access to ports 80 and 443:
+
+```bash
+# UFW (Ubuntu)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# firewalld (CentOS/RHEL)
+sudo firewall-cmd --permanent --add-port=80/tcp --add-port=443/tcp
+sudo firewall-cmd --reload
+```
+
+### Step 5: Access Application
+
+Access from any browser: `https://your-server-ip`
+
+Log in with **admin** / **changeme** (you'll be prompted to change the password).
+
+Accept the self-signed certificate warning, or replace the certs with your own (see proxy/Dockerfile).
+
+### Step 6: Managing Your Server Deployment
+
+```bash
+make deploy           # Build + restart all
+make up               # Start (already built)
+make down             # Stop and remove
+make status           # Health check
+make server-logs      # Tail logs
+```
+
+---
+
+## Configuration Options
+
+Most configuration is done in the GUI after startup at **Settings → Environment Config**.
+
+### Environment Variables (`.env` file)
+
+Only needed for specific use cases:
+
+| Variable | When Needed | Example |
+|----------|-------------|---------|
+| `ALLOWED_ORIGINS` | Restrict CORS access | `https://192.168.1.100` |
+| `MODULE_LIBRARY_GIT_URL` | Private module repo | `https://github.com/org/modules.git` |
+| `MODULE_LIBRARY_PAT` | Private module repo | `ghp_xxxxxxxxxxxx` |
+| `MODULE_LIBRARY_GIT_REF` | Specific branch/tag | `main` |
+
+### AWS Configuration
+
+AWS credentials can be configured:
+1. **In the GUI** - Per-project at Project Settings → Cloud Authentication
+2. **In `.env`** - As defaults for all projects
+3. **Via volume mount** - Mount `~/.aws:/root/.aws:ro` in docker-compose.yml
+
+### What's Pre-configured
+
+These are already set in `docker-compose.yml` and don't need configuration:
+- `DATABASE_URL` - PostgreSQL connection
+- `REDIS_URL` - Redis connection
+- `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` - Task queue
+- `ALLOWED_ORIGINS=*` - CORS (permissive default)
+
+---
+
+## Verify Installation
+
+### Check Services
+
+```bash
+# Laptop
+make local-status
+
+# Server
+make status
+
+# Or check directly:
+curl http://localhost:8000/api/system/health
+curl -Ik https://localhost
+```
+
+### Check Logs
+
+```bash
+# All logs
+docker compose logs -f
+
+# Specific service
+docker compose logs -f backend
+docker compose logs -f celery-worker
+```
+
+### Test CLI Tools
+
+```bash
+# Verify Helm and kubectl (available in API container)
+docker exec bnk-forge-backend helm version --short
+docker exec bnk-forge-backend kubectl version --client --short
+
+# Verify OpenTofu (available in worker container only)
+docker exec bnk-forge-celery-worker tofu version
+```
+
+---
+
+## First Steps After Installation
+
+After starting BNK Forge for the first time:
+
+### 1. Log In
+
+Open the application URL and log in with the default credentials:
+- **Username:** `admin`
+- **Password:** `changeme`
+
+You will be prompted to set a new password on first login.
+
+### 2. Connect a Kubernetes Cluster
+
+If you have an existing K8s cluster with F5 BNK:
+
+1. Navigate to **Kubernetes > Clusters**
+2. Click **Add Cluster**
+3. Select a project (or create one)
+4. Upload or paste your kubeconfig
+5. Explore **F5 BNK** in the sidebar for Traffic Flow, Health Dashboard, Topology, and more
+
+### 3. Configure Module Library (Optional — for OpenTofu deployments)
+
+If you want to deploy infrastructure modules via OpenTofu:
+
+1. Navigate to **Settings > System > Defaults**
+2. Set **Module Library Git URL** to: `https://github.com/JLCode-tech/bnk-forge-modules.git`
+3. Set **Module Library Git Ref** to: `release/2.2`
+4. Go to **Settings > Environment Config** and click **Sync Modules**
+
+### 4. Create a Project and Deploy
+
+Navigate to **Build > Projects**:
+- Click **New Project**
+- Enter a name and select your region
+- Add modules from the catalog, or use **Build > Blueprints** for pre-configured stacks
+
+### Test Database
+
+```bash
+# Check database connection
+docker exec bnk-forge-backend python -c "
+from database import engine
+from sqlalchemy import text
+with engine.connect() as conn:
+    result = conn.execute(text('SELECT 1'))
+    print('Database connection: OK')
+"
+```
+
+### Test Module Library Sync
+
+1. Open https://localhost (or your server URL)
+2. Navigate to **Settings**
+3. Click **Environment Config** tab
+4. Configure module library URL (if not in `.env`)
+5. Click **Sync Modules** in Module Library section
+6. Verify modules appear in **Build → Modules**
+
+---
+
+## Updating
+
+To update to the latest version:
+
+```bash
+cd bnk-forge
+
+# Laptop path
+git pull --ff-only
+make local-deploy
+
+# Linux server path (preferred)
+make upgrade-safe
+
+# Compatibility wrapper
+make update
+```
+
+---
+
+## Uninstalling
+
+To completely remove BNK Forge:
+
+```bash
+cd bnk-forge
+
+# Stop and remove containers
+docker compose down
+
+# Remove volumes (CAUTION: deletes all data)
+docker compose down -v
+
+# Remove the directory
+cd ..
+rm -rf bnk-forge
+```
+
+---
+
+## Next Steps
+
+- [User Guide](USER_GUIDE.md) - Learn how to use BNK Forge
+- [AWS SSO Setup](AWS_SSO_SETUP.md) - Configure AWS SSO authentication
+- [Troubleshooting](TROUBLESHOOTING.md) - Common issues and solutions

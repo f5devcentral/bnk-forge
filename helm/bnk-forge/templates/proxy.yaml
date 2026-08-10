@@ -1,0 +1,184 @@
+{{- if .Values.proxy.enabled -}}
+{{- $name := printf "%s-proxy" (include "bnk-forge.fullname" .) -}}
+{{- $apiSvc := printf "%s-api" (include "bnk-forge.fullname" .) -}}
+{{- $feSvc := printf "%s-frontend" (include "bnk-forge.fullname" .) -}}
+{{- $mcpSvc := printf "%s-mcp" (include "bnk-forge.fullname" .) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-conf
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 4 }}
+data:
+  nginx.conf: |
+    limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+
+    server {
+        listen 8080;
+        server_name _;
+        location / { return 301 https://$host$request_uri; }
+    }
+
+    server {
+        listen 8443 ssl;
+        server_name _;
+        ssl_certificate     /etc/nginx/ssl/server.crt;
+        ssl_certificate_key /etc/nginx/ssl/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+        ssl_prefer_server_ciphers on;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        server_tokens off;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss: ws:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 4;
+        gzip_min_length 256;
+        gzip_types text/plain text/css text/javascript application/json application/javascript application/xml image/svg+xml;
+        client_max_body_size 100M;
+
+        location = /mcp {
+            proxy_pass http://{{ $mcpSvc }}:{{ .Values.mcp.service.port }}/mcp;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 120s;
+            proxy_send_timeout 120s;
+            proxy_read_timeout 120s;
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_pass_header Mcp-Session-Id;
+            proxy_pass_header MCP-Protocol-Version;
+        }
+
+        location / {
+            proxy_pass http://{{ $feSvc }}:{{ .Values.frontend.service.port }};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location = /api/auth/login {
+            limit_req zone=login burst=3 nodelay;
+            limit_req_status 429;
+            proxy_pass http://{{ $apiSvc }}:{{ .Values.api.service.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/ {
+            limit_req zone=api burst=50 nodelay;
+            limit_req_status 429;
+            proxy_pass http://{{ $apiSvc }}:{{ .Values.api.service.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 300s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
+            proxy_buffering off;
+        }
+
+        location /ws/ {
+            proxy_pass http://{{ $apiSvc }}:{{ .Values.api.service.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_read_timeout 600s;
+            proxy_buffering off;
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 4 }}
+spec:
+  type: {{ .Values.proxy.service.type }}
+  selector:
+    {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 4 }}
+  ports:
+    - port: {{ .Values.proxy.service.httpPort }}
+      targetPort: 8080
+      name: http
+      {{- if and (eq .Values.proxy.service.type "NodePort") .Values.proxy.service.httpNodePort }}
+      nodePort: {{ .Values.proxy.service.httpNodePort }}
+      {{- end }}
+    - port: {{ .Values.proxy.service.httpsPort }}
+      targetPort: 8443
+      name: https
+      {{- if and (eq .Values.proxy.service.type "NodePort") .Values.proxy.service.httpsNodePort }}
+      nodePort: {{ .Values.proxy.service.httpsNodePort }}
+      {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 4 }}
+spec:
+  replicas: {{ .Values.proxy.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-forge.componentLabels" (list . "proxy") | nindent 8 }}
+    spec:
+      {{- include "bnk-forge.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: proxy
+          image: {{ include "bnk-forge.image" (list . .Values.proxy.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8443
+              name: https
+          readinessProbe:
+            tcpSocket:
+              port: 8443
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8443
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ $name }}-conf
+{{- end }}

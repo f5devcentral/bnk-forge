@@ -1,0 +1,1080 @@
+#!/usr/bin/env python3
+"""
+BNK-Forge CLI — command-line interface for the BNK-Forge API.
+
+Stdlib only (argparse, urllib, json). Works with Python 3.9+.
+No pip dependencies required.
+
+Usage:
+  bnk-forge login --url https://forge.example.com --username admin --password <pass>
+  bnk-forge status
+  bnk-forge projects list
+  bnk-forge projects get <id>
+  bnk-forge fleet health
+  bnk-forge version
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import ssl
+import sys
+import textwrap
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+CLI_VERSION = "0.1.0"
+CONFIG_DIR = Path.home() / ".bnk-forge"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# ---------------------------------------------------------------------------
+# Color helpers (graceful fallback)
+# ---------------------------------------------------------------------------
+
+def _supports_color() -> bool:
+    """Check if the terminal supports ANSI color."""
+    if os.getenv("NO_COLOR"):
+        return False
+    if os.getenv("FORCE_COLOR"):
+        return True
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+    return True
+
+_COLOR = _supports_color()
+
+def _c(code: str, text: str) -> str:
+    if not _COLOR:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+def green(t: str) -> str:   return _c("32", t)
+def red(t: str) -> str:     return _c("31", t)
+def yellow(t: str) -> str:  return _c("33", t)
+def cyan(t: str) -> str:    return _c("36", t)
+def bold(t: str) -> str:    return _c("1", t)
+def dim(t: str) -> str:     return _c("2", t)
+
+# ---------------------------------------------------------------------------
+# Config persistence (~/.bnk-forge/config.json)
+# ---------------------------------------------------------------------------
+
+def load_config() -> dict:
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    return {}
+
+def save_config(cfg: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+    # Restrict permissions (token inside)
+    os.chmod(CONFIG_FILE, 0o600)
+
+# ---------------------------------------------------------------------------
+# HTTP client (stdlib only)
+# ---------------------------------------------------------------------------
+
+def _make_request(
+    url: str,
+    method: str = "GET",
+    data: dict | None = None,
+    token: str | None = None,
+    insecure: bool = False,
+) -> tuple:
+    """
+    Make an HTTP request. Returns (status_code, headers, body_dict_or_str).
+    """
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    body_bytes = None
+    if data is not None:
+        body_bytes = json.dumps(data).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
+
+    ctx = None
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        resp = urllib.request.urlopen(req, context=ctx, timeout=30)
+        resp_body = resp.read().decode("utf-8")
+        try:
+            resp_json = json.loads(resp_body)
+        except json.JSONDecodeError:
+            resp_json = resp_body
+        return resp.status, dict(resp.headers), resp_json
+    except urllib.error.HTTPError as e:
+        resp_body = e.read().decode("utf-8") if e.fp else ""
+        try:
+            resp_json = json.loads(resp_body)
+        except (json.JSONDecodeError, ValueError):
+            resp_json = resp_body
+        return e.code, dict(e.headers) if hasattr(e, "headers") else {}, resp_json
+    except urllib.error.URLError as e:
+        return 0, {}, str(e.reason)
+
+def api_call(path: str, method: str = "GET", data: dict | None = None, insecure: bool = False) -> tuple:
+    """Make an authenticated API call.
+
+    Resolution order: env vars first, then ~/.bnk-forge/config.json. This makes
+    the CLI usable in CI/CD without ever writing a config file:
+
+        BNK_FORGE_URL=https://forge.example.com
+        BNK_FORGE_TOKEN=bnk_<token>
+
+    Returns (status_code, headers, body).
+    """
+    cfg = load_config()
+    base_url = os.environ.get("BNK_FORGE_URL") or cfg.get("url")
+    token = os.environ.get("BNK_FORGE_TOKEN") or cfg.get("token")
+    if os.environ.get("BNK_FORGE_INSECURE", "").lower() in ("1", "true", "yes"):
+        insecure = True
+
+    if not base_url:
+        print(red("✗ No server URL set. Use BNK_FORGE_URL or `bnk-forge login`."))
+        sys.exit(EXIT_AUTH)
+    if not token:
+        print(red("✗ No auth token set. Use BNK_FORGE_TOKEN or `bnk-forge login`."))
+        sys.exit(EXIT_AUTH)
+
+    url = f"{base_url.rstrip('/')}{path}"
+    status, headers, body = _make_request(url, method=method, data=data, token=token, insecure=insecure)
+    _abort_if_unreachable(status, base_url, body)
+    return status, headers, body
+
+
+def _abort_if_unreachable(status: int, base_url: str, body) -> None:
+    """Exit non-zero when the server could not be reached at all.
+
+    _make_request reports a transport failure (DNS, refused, TLS, timeout) as
+    status 0. Every caller guards with `status >= 400`, so without this an
+    unreachable Forge would sail through as success — the worst possible
+    outcome in a CI pipeline.
+    """
+    if status == 0:
+        print(red(f"✗ Cannot reach BNK Forge at {base_url}: {body}"))
+        sys.exit(EXIT_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# Exit codes (documented; callers should use these constants)
+# ---------------------------------------------------------------------------
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_PLAN_HAS_CHANGES = 2  # `plan` exit code when changes pending (Terraform-style)
+EXIT_AUTH = 3              # 401/403 or missing config
+EXIT_NOT_FOUND = 4         # 404
+EXIT_TIMEOUT = 5           # --wait timed out
+
+def _exit_for_status(status: int) -> int:
+    if status == 401 or status == 403:
+        return EXIT_AUTH
+    if status == 404:
+        return EXIT_NOT_FOUND
+    return EXIT_ERROR
+
+
+def _emit(args, payload, *, table_headers=None, table_rows=None, text_lines=None) -> None:
+    """Render `payload` according to args.format.
+
+    - json: dump payload as JSON
+    - table: render the provided headers/rows (fall back to JSON if not given)
+    - text (or default): print text_lines if given, else fall back to JSON
+    """
+    fmt = getattr(args, "format", "table")
+    if fmt == "json":
+        print(json.dumps(payload, default=str, indent=2))
+        return
+    if fmt == "table" and table_headers is not None and table_rows is not None:
+        print_table(table_headers, table_rows)
+        return
+    if text_lines is not None:
+        for line in text_lines:
+            print(line)
+        return
+    print(json.dumps(payload, default=str, indent=2))
+
+# ---------------------------------------------------------------------------
+# Table formatter
+# ---------------------------------------------------------------------------
+
+def print_table(headers: list[str], rows: list[list[str]]) -> None:
+    """Print a simple ASCII table."""
+    if not rows:
+        print(dim("  (no data)"))
+        return
+
+    # Calculate column widths
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(str(cell)))
+
+    # Header
+    header_line = "  ".join(bold(h.ljust(w)) for h, w in zip(headers, widths))
+    sep_line = "  ".join("─" * w for w in widths)
+    print(header_line)
+    print(dim(sep_line))
+
+    # Rows
+    for row in rows:
+        cells = []
+        for i, cell in enumerate(row):
+            w = widths[i] if i < len(widths) else 0
+            cells.append(str(cell).ljust(w))
+        print("  ".join(cells))
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_login(args) -> None:
+    """Authenticate and save token."""
+    url = args.url.rstrip("/")
+    login_url = f"{url}/api/auth/login"
+
+    status, headers, body = _make_request(
+        login_url,
+        method="POST",
+        data={"username": args.username, "password": args.password},
+        insecure=args.insecure,
+    )
+
+    if status == 200 and isinstance(body, dict) and "token" in body:
+        cfg = {
+            "url": url,
+            "token": body["token"],
+            "username": args.username,
+            "logged_in_at": datetime.now().isoformat(),
+        }
+        if body.get("user"):
+            cfg["role"] = body["user"].get("role", "unknown")
+        save_config(cfg)
+        user_info = body.get("user", {})
+        role = user_info.get("role", "unknown")
+        print(green(f"✓ Logged in as {bold(args.username)} (role: {role})"))
+        print(dim(f"  Token saved to {CONFIG_FILE}"))
+
+        if body.get("must_change_password"):
+            print(yellow("⚠ You must change your password. Use the web UI."))
+    elif status == 0:
+        print(red(f"✗ Cannot connect to {url}"))
+        print(dim(f"  {body}"))
+        sys.exit(1)
+    else:
+        detail = body.get("detail", body) if isinstance(body, dict) else body
+        print(red(f"✗ Login failed (HTTP {status}): {detail}"))
+        sys.exit(1)
+
+
+def cmd_status(args) -> None:
+    """Show system health status."""
+    status, headers, body = api_call("/api/system/health", insecure=args.insecure)
+
+    if args.format == "json":
+        print(json.dumps(body, indent=2))
+        return
+
+    if status != 200:
+        print(red(f"✗ Health check failed (HTTP {status})"))
+        sys.exit(1)
+
+    # Read version from response header
+    server_version = headers.get("X-BNK-Forge-Version", headers.get("x-bnk-forge-version", ""))
+
+    print(bold("BNK-Forge System Status"))
+    print()
+
+    # Derive overall status from services (if no top-level status field)
+    overall = body.get("status", "")
+    if not overall:
+        services = body.get("services", {})
+        if services:
+            statuses = []
+            for svc_info in services.values():
+                if isinstance(svc_info, dict):
+                    statuses.append(svc_info.get("status", "unknown"))
+            if all(s in ("healthy", "connected", "ok") for s in statuses):
+                overall = "healthy"
+            elif any(s in ("unhealthy", "error", "down") for s in statuses):
+                overall = "unhealthy"
+            else:
+                overall = "degraded"
+        else:
+            overall = "unknown"
+    color_fn = green if overall == "healthy" else (yellow if overall == "degraded" else red)
+    print(f"  Status:  {color_fn(bold(overall.upper()))}")
+    if server_version:
+        print(f"  Version: {server_version}")
+    print()
+
+    # Services
+    services = body.get("services", {})
+    if services:
+        print(bold("  Services:"))
+        for svc_name, svc_info in services.items():
+            if isinstance(svc_info, dict):
+                svc_status = svc_info.get("status", "unknown")
+            else:
+                svc_status = str(svc_info)
+            icon = green("●") if svc_status in ("healthy", "connected", "ok") else red("●")
+            print(f"    {icon} {svc_name}: {svc_status}")
+        print()
+
+    # Counts
+    counts = body.get("counts", {})
+    if counts:
+        print(bold("  Resources:"))
+        for key, val in counts.items():
+            print(f"    {key}: {val}")
+
+
+def cmd_projects_list(args) -> None:
+    """List all projects."""
+    status, headers, body = api_call("/api/projects", insecure=args.insecure)
+
+    if args.format == "json":
+        print(json.dumps(body, indent=2))
+        return
+
+    if status != 200:
+        detail = body.get("detail", body) if isinstance(body, dict) else body
+        print(red(f"✗ Failed to list projects (HTTP {status}): {detail}"))
+        sys.exit(1)
+
+    # body could be a list or dict with a "projects" key
+    projects = body if isinstance(body, list) else body.get("projects", [])
+
+    print(bold(f"Projects ({len(projects)})"))
+    print()
+
+    rows = []
+    for p in projects:
+        pid = str(p.get("id", ""))[:8]
+        name = p.get("name", "unnamed")
+        status_val = p.get("status", "")
+        engine = p.get("execution_engine", p.get("engine", ""))
+        module_count = str(p.get("module_count", ""))
+        rows.append([pid, name, status_val, engine, module_count])
+
+    print_table(["ID", "NAME", "STATUS", "ENGINE", "MODULES"], rows)
+
+
+def cmd_projects_get(args) -> None:
+    """Get project details."""
+    status, headers, body = api_call(f"/api/projects/{args.id}", insecure=args.insecure)
+
+    if args.format == "json":
+        print(json.dumps(body, indent=2))
+        return
+
+    if status == 404:
+        print(red(f"✗ Project not found: {args.id}"))
+        sys.exit(1)
+    if status != 200:
+        detail = body.get("detail", body) if isinstance(body, dict) else body
+        print(red(f"✗ Failed to get project (HTTP {status}): {detail}"))
+        sys.exit(1)
+
+    p = body if isinstance(body, dict) else {}
+    print(bold(f"Project: {p.get('name', 'unknown')}"))
+    print()
+    print(f"  ID:          {p.get('id', '')}")
+    print(f"  Status:      {p.get('status', '')}")
+    print(f"  Engine:      {p.get('execution_engine', p.get('engine', ''))}")
+    print(f"  Description: {p.get('description', '')}")
+    print(f"  Created:     {p.get('created_at', '')}")
+    print(f"  Updated:     {p.get('updated_at', '')}")
+
+    # Modules. The project detail response carries summary counts, not the module
+    # list (its response_model strips anything it doesn't declare), so they have
+    # to be fetched from the project-modules route — reading p["modules"] here
+    # printed nothing, always.
+    modules = _list_project_modules(int(p.get("id") or args.id), args.insecure)
+    if modules:
+        print()
+        print(bold(f"  Modules ({len(modules)}):"))
+        for m in modules:
+            mname = m.get("module_name") or m.get("path_in_project") or "unnamed"
+            mstatus = m.get("status", "")
+            print(f"    • {mname} ({mstatus})")
+
+
+def cmd_fleet_health(args) -> None:
+    """Show fleet health for all operators."""
+    status, headers, body = api_call("/api/operators/fleet-health", insecure=args.insecure)
+
+    if args.format == "json":
+        print(json.dumps(body, indent=2))
+        return
+
+    if status != 200:
+        detail = body.get("detail", body) if isinstance(body, dict) else body
+        print(red(f"✗ Failed to get fleet health (HTTP {status}): {detail}"))
+        sys.exit(1)
+
+    print(bold("Fleet Health"))
+    print()
+
+    # Summary
+    summary = body.get("summary", {})
+    if summary:
+        total = summary.get("total_operators", 0)
+        online = summary.get("online", 0)
+        offline = summary.get("offline", 0)
+        print(f"  Operators: {bold(str(total))} total, {green(str(online))} online, {red(str(offline))} offline")
+        print()
+
+    # Per-operator table
+    operators = body.get("operators", [])
+    if operators:
+        rows = []
+        for op in operators:
+            name = op.get("name", op.get("hostname", "unknown"))
+            op_status = op.get("status", "unknown")
+            cluster = op.get("cluster_name", op.get("cluster", ""))
+            version = op.get("version", "")
+            last_seen = op.get("last_seen", op.get("last_heartbeat", ""))
+            if last_seen and len(last_seen) > 19:
+                last_seen = last_seen[:19]  # Trim to readable length
+            rows.append([name, op_status, cluster, version, last_seen])
+        print_table(["OPERATOR", "STATUS", "CLUSTER", "VERSION", "LAST SEEN"], rows)
+    elif not summary:
+        print(dim("  No operators registered."))
+
+
+def cmd_version(args) -> None:
+    """Print CLI version and server version."""
+    print(f"  CLI version:    {bold(CLI_VERSION)}")
+
+    cfg = load_config()
+    base_url = cfg.get("url")
+    if not base_url:
+        print(dim("  Server version: (not logged in)"))
+        return
+
+    # Hit a lightweight endpoint to read version header
+    url = f"{base_url.rstrip('/')}/api/system/health"
+    status, headers, body = _make_request(url, token=cfg.get("token"), insecure=args.insecure)
+
+    if status == 200:
+        server_version = headers.get("X-BNK-Forge-Version", headers.get("x-bnk-forge-version", "unknown"))
+        api_version = headers.get("X-BNK-Forge-API", headers.get("x-bnk-forge-api", "unknown"))
+        server_url = cfg.get("url", "unknown")
+        print(f"  Server version: {bold(server_version)}")
+        print(f"  API version:    {bold(api_version)}")
+        print(f"  Server URL:     {dim(server_url)}")
+    else:
+        print(red(f"  Server version: (unreachable — HTTP {status})"))
+
+
+# ---------------------------------------------------------------------------
+# auth token commands
+# ---------------------------------------------------------------------------
+
+def cmd_auth_token_create(args) -> None:
+    body = {"name": args.name}
+    if args.role:
+        body["role"] = args.role
+    if args.expires_days:
+        body["expires_in_days"] = int(args.expires_days)
+    status, _, resp = api_call("/api/auth/tokens", method="POST", data=body, insecure=args.insecure)
+    if status >= 400:
+        msg = _extract_error(resp)
+        print(red(f"✗ Failed to create token: {msg}"))
+        sys.exit(_exit_for_status(status))
+    if args.format == "json":
+        _emit(args, resp)
+        return
+    print(green(f"✓ Token created: {resp.get('name')}  (id={resp.get('id')}, role={resp.get('role')})"))
+    print(yellow("   Save this token now — it will not be shown again:"))
+    print(f"   {resp.get('token')}")
+    if resp.get("expires_at"):
+        print(dim(f"   Expires: {resp['expires_at']}"))
+
+
+def cmd_auth_token_list(args) -> None:
+    status, _, resp = api_call("/api/auth/tokens", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Failed to list tokens: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    tokens = resp.get("tokens", []) if isinstance(resp, dict) else []
+    if args.format == "json":
+        _emit(args, {"tokens": tokens})
+        return
+    if not tokens:
+        print(dim("(no tokens)"))
+        return
+    rows = [
+        [str(t.get("id", "")), t.get("name", ""), t.get("role", ""),
+         t.get("token_prefix", ""), t.get("expires_at") or "-",
+         t.get("last_used_at") or "-"]
+        for t in tokens
+    ]
+    print_table(["ID", "Name", "Role", "Prefix", "Expires", "Last used"], rows)
+
+
+def cmd_auth_token_delete(args) -> None:
+    status, _, resp = api_call(f"/api/auth/tokens/{args.id}", method="DELETE", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Failed to revoke token: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    print(green(f"✓ Token {args.id} revoked"))
+
+
+# ---------------------------------------------------------------------------
+# project deploy / plan / destroy / show
+# ---------------------------------------------------------------------------
+
+def _resolve_project_id(args) -> int:
+    """Accept either a numeric id or an exact project name.
+
+    Projects have no slug — the API keys them by id, and GET /api/projects is
+    the only listing. Names are not unique, so an ambiguous name is an error
+    rather than a coin flip.
+    """
+    raw = args.project
+    if raw.isdigit():
+        return int(raw)
+    status, _, resp = api_call("/api/projects", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Failed to resolve project '{raw}': {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    projects = resp.get("projects", []) if isinstance(resp, dict) else []
+    matches = [p for p in projects if p.get("name") == raw]
+    if not matches:
+        print(red(f"✗ Project '{raw}' not found"))
+        sys.exit(EXIT_NOT_FOUND)
+    if len(matches) > 1:
+        print(red(f"✗ Project name '{raw}' is ambiguous ({len(matches)} matches) — use the numeric ID"))
+        sys.exit(EXIT_ERROR)
+    return int(matches[0]["id"])
+
+
+def _list_project_modules(project_id: int, insecure: bool) -> list:
+    """The project's modules. Lives under /api/project-modules, not /api/projects."""
+    status, _, resp = api_call(f"/api/project-modules/project/{project_id}", insecure=insecure)
+    if status >= 400:
+        print(red(f"✗ Failed to list project modules: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    return resp.get("modules", []) if isinstance(resp, dict) else []
+
+
+def _resolve_module_id(project_id: int, module_arg: str, insecure: bool) -> int:
+    """Accept either a numeric id or a path_in_project."""
+    if module_arg.isdigit():
+        return int(module_arg)
+    modules = _list_project_modules(project_id, insecure)
+    matches = [m for m in modules if m.get("path_in_project") == module_arg]
+    if not matches:
+        print(red(f"✗ Module '{module_arg}' not found in project {project_id}"))
+        sys.exit(EXIT_NOT_FOUND)
+    return int(matches[0]["id"])
+
+
+def cmd_project_show(args) -> None:
+    project_id = _resolve_project_id(args)
+    status, _, resp = api_call(f"/api/projects/{project_id}", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Failed to get project: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    # The project response carries summary counts, not the modules themselves —
+    # they come from the project-modules listing.
+    modules = _list_project_modules(project_id, args.insecure)
+    if args.format == "json":
+        _emit(args, {**resp, "modules": modules})
+        return
+    print(bold(f"Project: {resp.get('name')} (id={resp.get('id')})"))
+    print(dim(f"  cloud_provider: {resp.get('cloud_provider')}  region: {resp.get('region')}"))
+    print(dim(f"  modules: {resp.get('module_count', 0)}  deployed: {resp.get('deployed_count', 0)}"
+              f"  failed: {resp.get('failed_count', 0)}"))
+    if modules:
+        rows = [
+            [str(m.get("id", "")), m.get("path_in_project", ""),
+             m.get("status", "-"), m.get("module_name") or ""]
+            for m in modules
+        ]
+        print_table(["ID", "Path", "Status", "Module"], rows)
+    else:
+        print(dim("  (no modules attached)"))
+
+
+def _run_started(args, project_id: int, resp, verb: str) -> None:
+    """Report a started run and, with --wait, block until it is terminal.
+
+    A module-level run returns an int ``task_id`` pollable at /api/tasks/{id}.
+    A whole-project run is orchestrated: it returns ``orchestrator_task_id`` (a
+    run handle), which is NOT an int task id and is pollable only at
+    /api/projects/{id}/orchestration/{handle}. Reading `task_id` for both is why
+    `--wait` used to be a silent no-op on whole-project runs — it exited 0
+    immediately, reporting success for a deploy that had barely started.
+    """
+    body = resp if isinstance(resp, dict) else {}
+    task_id = body.get("task_id")
+    run_handle = body.get("orchestrator_task_id")
+
+    if args.format == "json":
+        _emit(args, resp)
+    else:
+        handle = task_id or run_handle
+        print(green(f"✓ {verb} started" + (f" ({handle})" if handle else "")))
+
+    if not args.wait:
+        return
+
+    if task_id:
+        sys.exit(_wait_for_task(task_id, timeout=args.timeout, insecure=args.insecure, fmt=args.format))
+    if run_handle:
+        sys.exit(_wait_for_run(project_id, run_handle, timeout=args.timeout,
+                               insecure=args.insecure, fmt=args.format))
+    # --wait was asked for and we have nothing to wait on: that is an error, not
+    # a success. Never exit 0 on a run whose outcome we cannot observe.
+    print(red(f"✗ {verb} started but returned no task id or run handle — cannot --wait"))
+    sys.exit(EXIT_ERROR)
+
+
+def _wait_for_run(project_id: int, run_handle: str, *, timeout, insecure: bool, fmt: str) -> int:
+    """Poll a whole-project orchestration run until terminal. Returns the exit code."""
+    import time
+
+    deadline = time.time() + _parse_timeout(timeout)
+    last_state = None
+    while True:
+        status, _, resp = api_call(
+            f"/api/projects/{project_id}/orchestration/{run_handle}", insecure=insecure
+        )
+        if status >= 400:
+            print(red(f"✗ Run lookup failed: {_extract_error(resp)}"))
+            return _exit_for_status(status)
+        body = resp if isinstance(resp, dict) else {}
+        state = (body.get("status") or "").lower()
+
+        if state != last_state and fmt != "json":
+            pct = body.get("progress_percent")
+            layer = f"layer {body.get('current_layer')}/{body.get('total_layers')}"
+            print(dim(f"  run {run_handle}: {state} ({layer}"
+                      + (f", {pct:.0f}%" if isinstance(pct, (int, float)) else "") + ")"))
+        last_state = state
+
+        if state == "completed":
+            if fmt == "json":
+                print(json.dumps(body, default=str, indent=2))
+            else:
+                print(green(f"✓ run {run_handle}: completed"))
+            return EXIT_OK
+        if state == "failed":
+            if fmt == "json":
+                print(json.dumps(body, default=str, indent=2))
+            else:
+                failed = body.get("failed_modules") or []
+                err = body.get("error_message") or ""
+                print(red(f"✗ run {run_handle}: failed"
+                          + (f" (modules {failed})" if failed else "")
+                          + (f" — {err}" if err else "")))
+            return EXIT_ERROR
+        if time.time() > deadline:
+            print(red(f"✗ run {run_handle}: timed out waiting for completion"))
+            return EXIT_TIMEOUT
+        time.sleep(3)
+
+
+def cmd_project_deploy(args) -> None:
+    project_id = _resolve_project_id(args)
+    if args.module:
+        module_id = _resolve_module_id(project_id, args.module, args.insecure)
+        path = f"/api/project-modules/{module_id}/deploy"
+    else:
+        path = f"/api/projects/{project_id}/deploy-all"
+    status, _, resp = api_call(path, method="POST", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Deploy failed: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    _run_started(args, project_id, resp, "Deploy")
+
+
+def cmd_project_plan(args) -> None:
+    project_id = _resolve_project_id(args)
+    if not args.module:
+        print(red("✗ --module is required for plan (whole-project plan is not yet supported)"))
+        sys.exit(EXIT_ERROR)
+    module_id = _resolve_module_id(project_id, args.module, args.insecure)
+    status, _, resp = api_call(f"/api/project-modules/{module_id}/plan", method="POST", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Plan failed: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    task_id = (resp or {}).get("task_id") if isinstance(resp, dict) else None
+    if not task_id:
+        print(red("✗ Plan response had no task_id"))
+        sys.exit(EXIT_ERROR)
+    # Plan is async: wait for completion, then read the resource delta the plan
+    # recorded. `has_changes` is None when the module has never been planned —
+    # that is an error, not "no changes" (exiting 0 there would let a pipeline
+    # gate on a plan that never produced a result).
+    rc = _wait_for_task(task_id, timeout=args.timeout, insecure=args.insecure, fmt=args.format)
+    if rc != EXIT_OK:
+        sys.exit(rc)
+    s2, _, mod_resp = api_call(f"/api/project-modules/{module_id}/plan-status", insecure=args.insecure)
+    if s2 >= 400 or not isinstance(mod_resp, dict):
+        print(red(f"✗ Could not read plan status: {_extract_error(mod_resp)}"))
+        sys.exit(_exit_for_status(s2))
+
+    has_changes = mod_resp.get("has_changes")
+    if has_changes is None:
+        print(red("✗ Plan completed but recorded no result — cannot determine changes"))
+        sys.exit(EXIT_ERROR)
+
+    if args.format == "json":
+        _emit(args, mod_resp)
+    else:
+        changes = mod_resp.get("resource_changes") or {}
+        if has_changes:
+            print(yellow(
+                f"⚠ Changes pending: {changes.get('add', 0)} to add, "
+                f"{changes.get('change', 0)} to change, {changes.get('destroy', 0)} to destroy"
+            ))
+        else:
+            print(green("✓ No changes"))
+    sys.exit(EXIT_PLAN_HAS_CHANGES if has_changes else EXIT_OK)
+
+
+def cmd_project_destroy(args) -> None:
+    if not args.yes:
+        print(red("✗ Refusing to destroy without --yes"))
+        sys.exit(EXIT_ERROR)
+    project_id = _resolve_project_id(args)
+    body: dict | None = None
+    if args.module:
+        module_id = _resolve_module_id(project_id, args.module, args.insecure)
+        path = f"/api/project-modules/{module_id}/destroy"
+        # This route takes a required OpenTofuActionRequest body — omitting it is a 422.
+        body = {"auto_approve": True}
+    else:
+        # Whole-project destroy — use orchestration endpoint.
+        path = f"/api/projects/{project_id}/destroy-all"
+    status, _, resp = api_call(path, method="POST", data=body, insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Destroy failed: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    _run_started(args, project_id, resp, "Destroy")
+
+
+# ---------------------------------------------------------------------------
+# task status
+# ---------------------------------------------------------------------------
+
+def _parse_timeout(spec: str | None) -> int:
+    """Parse '30m', '1h', '90s' or bare integer seconds. Defaults to 1800s."""
+    if not spec:
+        return 1800
+    s = spec.strip().lower()
+    if s.endswith("s"):
+        return int(s[:-1])
+    if s.endswith("m"):
+        return int(s[:-1]) * 60
+    if s.endswith("h"):
+        return int(s[:-1]) * 3600
+    return int(s)
+
+
+_TASK_TERMINAL_OK = {"success", "completed", "succeeded", "done"}
+_TASK_TERMINAL_FAIL = {"failed", "error", "errored", "cancelled", "canceled", "timeout"}
+
+
+def _wait_for_task(task_id: str, *, timeout: str | int | None, insecure: bool, fmt: str) -> int:
+    """Poll /api/tasks/{id} until terminal. Returns the exit code to use."""
+    import time
+    deadline = time.time() + (_parse_timeout(timeout) if isinstance(timeout, str) or timeout is None else int(timeout))
+    last_state = None
+    while True:
+        status, _, resp = api_call(f"/api/tasks/{task_id}", insecure=insecure)
+        if status >= 400:
+            print(red(f"✗ Task lookup failed: {_extract_error(resp)}"))
+            return _exit_for_status(status)
+        state = ((resp or {}).get("status") or (resp or {}).get("state") or "").lower() if isinstance(resp, dict) else ""
+        if state and state != last_state:
+            if fmt != "json":
+                print(dim(f"  task {task_id}: {state}"))
+            last_state = state
+        if state in _TASK_TERMINAL_OK:
+            if fmt == "json":
+                print(json.dumps(resp, default=str, indent=2))
+            else:
+                print(green(f"✓ task {task_id}: {state}"))
+            return EXIT_OK
+        if state in _TASK_TERMINAL_FAIL:
+            if fmt == "json":
+                print(json.dumps(resp, default=str, indent=2))
+            else:
+                err = (resp or {}).get("error") or (resp or {}).get("error_message") or ""
+                print(red(f"✗ task {task_id}: {state}{(' — ' + err) if err else ''}"))
+            return EXIT_ERROR
+        if time.time() > deadline:
+            print(red(f"✗ task {task_id}: timed out waiting for completion"))
+            return EXIT_TIMEOUT
+        time.sleep(3)
+
+
+def cmd_task_status(args) -> None:
+    if args.wait:
+        sys.exit(_wait_for_task(args.id, timeout=args.timeout, insecure=args.insecure, fmt=args.format))
+    status, _, resp = api_call(f"/api/tasks/{args.id}", insecure=args.insecure)
+    if status >= 400:
+        print(red(f"✗ Task lookup failed: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    if args.format == "json":
+        _emit(args, resp)
+        return
+    state = ((resp or {}).get("status") or "").lower()
+    print(f"task {args.id}: {state or '(unknown)'}")
+    if isinstance(resp, dict) and resp.get("error"):
+        print(dim(f"  error: {resp['error']}"))
+
+
+# ---------------------------------------------------------------------------
+# project secret set
+# ---------------------------------------------------------------------------
+
+def cmd_project_secret_set(args) -> None:
+    project_id = _resolve_project_id(args)
+    if args.from_stdin:
+        value = sys.stdin.read().rstrip("\n")
+    elif args.value is not None:
+        value = args.value
+    elif args.from_file:
+        with open(args.from_file) as fh:
+            value = fh.read().rstrip("\n")
+    else:
+        print(red("✗ Provide --value, --from-stdin, or --from-file"))
+        sys.exit(EXIT_ERROR)
+    body = {"name": args.key, "value": value}
+    status, _, resp = api_call(
+        f"/api/projects/{project_id}/secrets/value",
+        method="POST",
+        data=body,
+        insecure=args.insecure,
+    )
+    if status >= 400:
+        print(red(f"✗ Failed to set secret: {_extract_error(resp)}"))
+        sys.exit(_exit_for_status(status))
+    if args.format == "json":
+        _emit(args, resp)
+    else:
+        print(green(f"✓ Secret '{args.key}' set on project {project_id}"))
+
+
+# ---------------------------------------------------------------------------
+# error helpers
+# ---------------------------------------------------------------------------
+
+def _extract_error(resp) -> str:
+    if isinstance(resp, dict):
+        err = resp.get("error") or {}
+        if isinstance(err, dict):
+            return err.get("message") or err.get("code") or json.dumps(err)
+        return resp.get("detail") or resp.get("message") or json.dumps(resp)
+    return str(resp)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="bnk-forge",
+        description="BNK-Forge CLI — deploy, operate, and monitor F5 BIG-IP Next for Kubernetes",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            examples:
+              bnk-forge login --url https://localhost --username admin --password admin
+              bnk-forge status
+              bnk-forge projects list
+              bnk-forge projects get abc123
+              bnk-forge fleet health
+              bnk-forge version
+        """),
+    )
+    parser.add_argument("--format", choices=["table", "json"], default="table",
+                        help="Output format (default: table)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Skip TLS certificate verification")
+
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # --- login ---
+    login_parser = subparsers.add_parser("login", help="Authenticate with BNK-Forge")
+    login_parser.add_argument("--url", required=True, help="BNK-Forge server URL (e.g. https://localhost)")
+    login_parser.add_argument("--username", required=True, help="Username")
+    login_parser.add_argument("--password", required=True, help="Password")
+
+    # --- status ---
+    subparsers.add_parser("status", help="Show system health status")
+
+    # --- version ---
+    subparsers.add_parser("version", help="Show CLI and server version")
+
+    # --- projects ---
+    projects_parser = subparsers.add_parser("projects", help="Manage projects")
+    projects_sub = projects_parser.add_subparsers(dest="projects_command")
+
+    projects_sub.add_parser("list", help="List all projects")
+
+    get_parser = projects_sub.add_parser("get", help="Get project details")
+    get_parser.add_argument("id", help="Project ID")
+
+    # --- fleet ---
+    fleet_parser = subparsers.add_parser("fleet", help="Fleet management")
+    fleet_sub = fleet_parser.add_subparsers(dest="fleet_command")
+    fleet_sub.add_parser("health", help="Show fleet health")
+
+    # --- auth (token sub-commands) ---
+    auth_parser = subparsers.add_parser("auth", help="Authentication and API tokens")
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+
+    token_parser = auth_sub.add_parser("token", help="Manage API tokens")
+    token_sub = token_parser.add_subparsers(dest="token_command")
+
+    tc_create = token_sub.add_parser("create", help="Issue a new API token (plaintext shown once)")
+    tc_create.add_argument("--name", required=True, help="Human-readable name (e.g. 'ci-pipeline')")
+    tc_create.add_argument("--role", choices=["viewer", "operator", "admin"], help="Token role (defaults to caller's role)")
+    tc_create.add_argument("--expires-days", type=int, dest="expires_days", help="Lifetime in days (1-3650; default: never expires)")
+
+    token_sub.add_parser("list", help="List your API tokens (plaintext is never shown)")
+
+    tc_delete = token_sub.add_parser("delete", help="Revoke an API token by ID")
+    tc_delete.add_argument("id", type=int, help="Token ID")
+
+    # --- project (deploy / plan / destroy / show / secret) ---
+    project_parser = subparsers.add_parser("project", help="Operate on a single project (CI-friendly)")
+    project_sub = project_parser.add_subparsers(dest="project_command")
+
+    pp_show = project_sub.add_parser("show", help="Show project + module state")
+    pp_show.add_argument("project", help="Project ID or exact project name")
+
+    pp_deploy = project_sub.add_parser("deploy", help="Deploy a module (or whole project)")
+    pp_deploy.add_argument("project", help="Project ID or exact project name")
+    pp_deploy.add_argument("--module", help="Module ID or path-in-project; omit to deploy entire project")
+    pp_deploy.add_argument("--wait", action="store_true", help="Block until the task completes")
+    pp_deploy.add_argument("--timeout", default="30m", help="Wait timeout (e.g. 30m, 2h, 600s) — default 30m")
+
+    pp_plan = project_sub.add_parser("plan", help="Plan a module (exit 2 if changes pending)")
+    pp_plan.add_argument("project", help="Project ID or exact project name")
+    pp_plan.add_argument("--module", required=True, help="Module ID or path-in-project")
+    pp_plan.add_argument("--timeout", default="30m", help="Wait timeout (default 30m)")
+
+    pp_destroy = project_sub.add_parser("destroy", help="Destroy a module (or whole project)")
+    pp_destroy.add_argument("project", help="Project ID or exact project name")
+    pp_destroy.add_argument("--module", help="Module ID or path-in-project")
+    pp_destroy.add_argument("--yes", action="store_true", help="Required confirmation flag")
+    pp_destroy.add_argument("--wait", action="store_true", help="Block until task completes")
+    pp_destroy.add_argument("--timeout", default="30m", help="Wait timeout (default 30m)")
+
+    pp_secret = project_sub.add_parser("secret", help="Manage project secrets")
+    pp_secret_sub = pp_secret.add_subparsers(dest="secret_command")
+    ps_set = pp_secret_sub.add_parser("set", help="Set a project secret value")
+    ps_set.add_argument("project", help="Project ID or exact project name")
+    ps_set.add_argument("key", help="Secret key (variable name)")
+    ps_set.add_argument("--value", help="Inline value (visible in shell history — prefer --from-stdin)")
+    ps_set.add_argument("--from-stdin", action="store_true", dest="from_stdin", help="Read value from stdin")
+    ps_set.add_argument("--from-file", dest="from_file", help="Read value from a file path")
+
+    # --- task status ---
+    task_parser = subparsers.add_parser("task", help="Inspect Celery / orchestrator tasks")
+    task_sub = task_parser.add_subparsers(dest="task_command")
+    ts = task_sub.add_parser("status", help="Show task status (use --wait to poll until terminal)")
+    ts.add_argument("id", help="Task ID (UUID)")
+    ts.add_argument("--wait", action="store_true", help="Poll until terminal")
+    ts.add_argument("--timeout", default="30m", help="Wait timeout (default 30m)")
+
+    # Parse
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+
+    # Dispatch
+    if args.command == "login":
+        cmd_login(args)
+    elif args.command == "status":
+        cmd_status(args)
+    elif args.command == "version":
+        cmd_version(args)
+    elif args.command == "projects":
+        if not args.projects_command:
+            print(red("✗ Specify a subcommand: list, get"))
+            sys.exit(1)
+        if args.projects_command == "list":
+            cmd_projects_list(args)
+        elif args.projects_command == "get":
+            cmd_projects_get(args)
+    elif args.command == "fleet":
+        if not args.fleet_command:
+            print(red("✗ Specify a subcommand: health"))
+            sys.exit(1)
+        if args.fleet_command == "health":
+            cmd_fleet_health(args)
+    elif args.command == "auth":
+        if args.auth_command == "token":
+            if args.token_command == "create":
+                cmd_auth_token_create(args)
+            elif args.token_command == "list":
+                cmd_auth_token_list(args)
+            elif args.token_command == "delete":
+                cmd_auth_token_delete(args)
+            else:
+                print(red("✗ Specify a token subcommand: create, list, delete"))
+                sys.exit(EXIT_ERROR)
+        else:
+            print(red("✗ Specify an auth subcommand: token"))
+            sys.exit(EXIT_ERROR)
+    elif args.command == "project":
+        if args.project_command == "show":
+            cmd_project_show(args)
+        elif args.project_command == "deploy":
+            cmd_project_deploy(args)
+        elif args.project_command == "plan":
+            cmd_project_plan(args)
+        elif args.project_command == "destroy":
+            cmd_project_destroy(args)
+        elif args.project_command == "secret":
+            if args.secret_command == "set":
+                cmd_project_secret_set(args)
+            else:
+                print(red("✗ Specify a secret subcommand: set"))
+                sys.exit(EXIT_ERROR)
+        else:
+            print(red("✗ Specify a project subcommand: show, deploy, plan, destroy, secret"))
+            sys.exit(EXIT_ERROR)
+    elif args.command == "task":
+        if args.task_command == "status":
+            cmd_task_status(args)
+        else:
+            print(red("✗ Specify a task subcommand: status"))
+            sys.exit(EXIT_ERROR)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

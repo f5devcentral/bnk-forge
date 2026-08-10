@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNK-Forge Roadmap</title>
+<style>
+  :root{
+    --f5red:#E4002B; --f5red-d:#b80023; --ink:#1b1f24; --ink2:#3a424b; --mut:#69727c;
+    --bg:#f4f5f7; --card:#ffffff; --bd:#e2e5e9; --link:#0a6ed1;
+    --ship:#1a8a4b; --ship-bg:#e8f5ed; --prog:#b5730a; --prog-bg:#fcf2e2;
+    --block:#c5221f; --block-bg:#fde9e8; --plan:#1a56c4; --plan-bg:#eaf1fc; --defer:#697079; --defer-bg:#eef0f2;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 "Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;}
+  a{color:var(--link);text-decoration:none;} a:hover{text-decoration:underline;}
+  header{background:var(--ink);border-bottom:3px solid var(--f5red);color:#fff;padding:22px 40px 20px;}
+  .brand{display:flex;align-items:center;gap:14px;}
+  .f5mark{background:var(--f5red);color:#fff;font-weight:800;font-size:18px;letter-spacing:.5px;
+          padding:6px 10px;border-radius:3px;line-height:1;}
+  h1{margin:0;font-size:21px;font-weight:600;letter-spacing:.2px;}
+  .sub{color:#aeb6bf;font-size:12.5px;margin-top:3px;}
+  .nav{margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;}
+  .btn{background:#2a2f36;border:1px solid #3a414a;color:#dfe4ea;padding:7px 14px;border-radius:4px;font-size:12.5px;}
+  .btn:hover{border-color:var(--f5red);color:#fff;text-decoration:none;}
+  .btn.primary{background:var(--f5red);border-color:var(--f5red);color:#fff;}
+  .btn.primary:hover{background:var(--f5red-d);}
+  .stats{display:flex;gap:16px;flex-wrap:wrap;max-width:1180px;margin:24px auto 0;padding:0 40px;}
+  .stat{flex:1 1 160px;background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:16px 18px;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  .stat .n{font-size:30px;font-weight:700;line-height:1;color:var(--ink);}
+  .stat .l{color:var(--mut);font-size:11.5px;margin-top:7px;text-transform:uppercase;letter-spacing:.6px;font-weight:600;}
+  .stat .n.red{color:var(--f5red);}
+  main{max-width:1180px;margin:0 auto;padding:10px 40px 70px;}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:1.1px;color:var(--ink2);font-weight:700;
+     margin:34px 0 14px;padding-left:11px;border-left:4px solid var(--f5red);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:16px 18px;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  .card h3{margin:0 0 11px;font-size:14px;font-weight:700;color:var(--ink);}
+  ul{margin:0;padding:0;list-style:none;}
+  li{padding:7px 0;border-top:1px solid #eef0f2;font-size:13.5px;color:var(--ink2);display:flex;align-items:baseline;gap:8px;}
+  li:first-child{border-top:none;}
+  .dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-top:5px;}
+  .d-ship{background:var(--ship);} .d-prog{background:var(--prog);} .d-block{background:var(--block);}
+  .d-plan{background:var(--plan);} .d-defer{background:var(--defer);}
+  .it{flex:1 1 auto;} .ref{font-size:11.5px;color:var(--mut);white-space:nowrap;} .ref a{font-weight:600;}
+  code{background:#eef0f2;border:1px solid var(--bd);border-radius:3px;padding:1px 5px;font-size:12.5px;color:var(--ink2);}
+  .legend{max-width:1180px;margin:14px auto 0;padding:0 40px;color:var(--mut);font-size:12px;display:flex;gap:18px;flex-wrap:wrap;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  footer{max-width:1180px;margin:0 auto;color:var(--mut);font-size:12px;padding:18px 40px 40px;border-top:1px solid var(--bd);}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="f5mark">F5</span>
+    <div><h1>BNK-Forge Roadmap</h1>
+      <div class="sub">What's next, what's planned, and what we've shipped &nbsp;|&nbsp; updated 2026-06-12 &nbsp;|&nbsp; source of truth: docs/ROADMAP.md + GitHub issues</div>
+    </div>
+  </div>
+  <div class="nav">
+    <a class="btn primary" href="https://github.com/f5devcentral/bnk-forge/issues">Issues</a>
+    <a class="btn" href="https://github.com/f5devcentral/bnk-forge/pulls?q=is%3Apr+is%3Amerged">Merged PRs</a>
+    <a class="btn" href="https://github.com/f5devcentral/bnk-forge/issues?q=is%3Aopen+label%3Adynamic-by-default">dynamic-by-default</a>
+    <a class="btn" href="./ROADMAP.md">ROADMAP.md</a>
+    <a class="btn" href="./roadmap-process.html">How tracking works</a>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="n">23</div><div class="l">In progress (tracked)</div></div>
+  <div class="stat"><div class="n">33</div><div class="l">Planned (tracked)</div></div>
+  <div class="stat"><div class="n red">50+</div><div class="l">PRs merged to staging</div></div>
+  <div class="stat"><div class="n red">34</div><div class="l">Issues closed</div></div>
+</div>
+<div class="legend">
+  <span><i class="dot d-prog"></i>In progress</span>
+  <span><i class="dot d-plan"></i>Planned</span>
+  <span><i class="dot d-block"></i>Blocked</span>
+  <span><i class="dot d-defer"></i>Deferred</span>
+  <span><i class="dot d-ship"></i>Shipped</span>
+</div>
+
+<main>
+
+  <h2>In progress — actionable now</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Top of queue — PRs open (CI-green)</h3>
+      <ul>
+        <li><i class="dot d-ship"></i><span class="it">D-001 Phase 3 — event-chain destroy (replace `parallel_tasks`, retire `parallel_executions`)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/159">#159</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/188">PR #188</a> &middot; ADR D-001</span></li>
+        <li><i class="dot d-prog"></i><span class="it">D-020 F5 design-system reskin + anvil ForgeLogo rebrand</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/193">#193</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/194">#194</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/202">#202</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/203">PR #203</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/287">PR #287</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/289">PR #289</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/291">PR #291</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/293">PR #293</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/296">PR #296</a> &middot; ADR D-020</span></li>
+        <li><i class="dot d-prog"></i><span class="it">DPU bare-metal — SSH-BNK module ports</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/204">#204</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/205">#205</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/210">#210</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Alembic schema-drift gate</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/161">#161</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Integration-branch automation — activation</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/152">#152</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/158">#158</a> &middot; project_integration_branch_automation</span></li>
+        <li><i class="dot d-prog"></i><span class="it">#117 staging→main release</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/117">PR #117</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">Ops: MCP service account + celery-beat healthcheck</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/214">PR #214</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Benchmark experience / security hardening</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/211">PR #211</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/251">PR #251</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/282">PR #282</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/286">PR #286</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/294">#294</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">GHCR customer-build publish target + postgres-backup compose drift fix</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/242">PR #242</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/243">PR #243</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Multi-arch image publish + dist uninstall-purge fix + install messaging</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/285">PR #285</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/288">PR #288</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">Alembic migration deduplication (v2_131)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/283">PR #283</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Release automation — RC-on-staging / final-on-main (conventional-commit bumps)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/297">PR #297</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-021 — existing-proxy discovery &amp; migration to BNK (P1+P2+P3)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/233">#233</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/276">PR #276</a> &middot; ADR D-021</span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-022 — fleet management (K8s + hardware + OS, P1–P6)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/234">#234</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/277">PR #277</a> &middot; ADR D-022</span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-023 — classic F5 BIG-IP (TMOS) — discover, manage (AS3), migrate to BNK (P1–P3)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/235">#235</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/280">PR #280</a> &middot; ADR D-023</span></li>
+        <li><i class="dot d-prog"></i><span class="it">D-023 P4 — CIS coverage (AS3 ConfigMap/Ingress/Route/IngressLink + authz hardening + IngressClass classify)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/268">#268</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/290">PR #290</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/295">PR #295</a> &middot; ADR D-023</span></li>
+        <li><i class="dot d-plan"></i><span class="it">D-024 — eBPF end-of-branch validation (ADR only)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/236">#236</a> &middot; ADR D-024 &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/232">PR #232</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-027 — bell-only notifications / zero-toast (ADR + P1–P5)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/255">#255</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/256">#256</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/257">#257</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/258">#258</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/259">#259</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/260">PR #260</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/261">PR #261</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/278">PR #278</a> &middot; ADR D-027</span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-028 — unified blueprint catalog (builtins as blueprints, visibility, External Charts removed)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/274">PR #274</a> &middot; ADR D-028</span></li>
+        <li><i class="dot d-ship"></i><span class="it">AWS cred-expiry UX — clear stale badge on SSO refresh + friendly 401</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/253">PR #253</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/254">PR #254</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/267">PR #267</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">ADRs landed to staging — D-020, D-021/022/023, D-024</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/230">PR #230</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/231">PR #231</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/232">PR #232</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">BFB cache atime/LRU fix (epoch-float + flaky test stabilization)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/292">PR #292</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Active / next — issue-tracked, actionable now</h3>
+      <ul>
+        <li><i class="dot d-prog"></i><span class="it">D-019 dynamic-by-default — remaining epics</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/136">#136</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/189">PR #189</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/137">#137</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/138">#138</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/190">PR #190</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/139">#139</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/148">#148</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/140">#140</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/141">#141</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/192">PR #192</a></span></li>
+        <li><i class="dot d-block"></i><span class="it">D-018 P3 — CR write path ("CRD Wizard")</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/179">#179</a> &middot; ADR D-018 &middot; rfc_cnf_dashboard_dynamic_crd_llmtop</span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-017 — licensing success contract</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/119">PR #119</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/160">#160</a> &middot; ADR D-017</span></li>
+        <li><i class="dot d-plan"></i><span class="it">Observability export — Prometheus + dashboards</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/216">#216</a> &middot; OBS-003 P2/P3 &middot; OBS-005</span></li>
+        <li><i class="dot d-prog"></i><span class="it">BNK release/version maintenance model + registry-driven GA + upgrade hardening</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/217">#217</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/284">PR #284</a> &middot; PLATFORM-VERSION-001</span></li>
+        <li><i class="dot d-prog"></i><span class="it">Multi-platform parity — AKS/GKE token injection</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/218">#218</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Operational risk surfacing (PLAT-REL-004)</span><span class="ref">PLAT-REL-004 spec</span></li>
+        <li><i class="dot d-defer"></i><span class="it">awsbnkctl review follow-up</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/155">#155</a></span></li>
+        <li><i class="dot d-defer"></i><span class="it">Review follow-ups (deferred polish)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/153">#153</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/154">#154</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/156">#156</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/157">#157</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Module catalog auto-sync on boot + wire blueprint wizard 'Sync' CTA</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/419">#419</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Review follow-ups</h3>
+      <ul>
+        <li><i class="dot d-plan"></i><span class="it">CI container runner engine — security hardening follow-ups</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/408">#408</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/340">PR #340</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Catalog &amp; blueprints</h3>
+      <ul>
+        <li><i class="dot d-prog"></i><span class="it">Multi-version module catalog — immutable module versions, exact pin resolution (ADR D-033)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/433">#433</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/436">PR #436</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Module test actions — vendor-CLI e2e/scenario/bench tests via pipeline (ADR D-034)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/454">#454</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/453">PR #453</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Container-runner contract hardening — min_forge_version + declared capabilities</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/465">#465</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Runner-image supply chain — default-on allowlist + cosign verification</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/466">#466</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Retire cli-bnkctl subprocess engine; de-terraform generic pack sync</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/467">#467</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Container-runner</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/469">#469</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/470">#470</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/471">#471</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/472">#472</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Dynamic-by-default epics (D-019)</h3>
+      <ul>
+        <li><i class="dot d-ship"></i><span class="it">E1 — registry→discovery on write/describe/fetch paths</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/136">#136</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/189">PR #189</a></span></li>
+        <li><i class="dot d-block"></i><span class="it">E2 — discovery-driven export/snapshot/promotion/finalizer + DPF</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/137">#137</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">E3 — EngineRegistry (collapse 5 hardcoded engine sets into one source of truth)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/138">#138</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/190">PR #190</a> &middot; ADR D-010</span></li>
+        <li><i class="dot d-prog"></i><span class="it">E4 — BNK discovery by label</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/139">#139</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/148">#148</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">E5 — FE consumes /crds</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/140">#140</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">E6 — MCP `_meta` governance</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/141">#141</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/192">PR #192</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">A2 — full static-registry removal migration</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/178">#178</a></span></li>
+        <li><i class="dot d-defer"></i><span class="it">D-018 P5.2 llmtop binary/GPU · P6 cross-context diff/live-events</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Planned — decided, tracked in issues</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Architecture deepening (proposed ADRs)</h3>
+      <ul>
+        <li><i class="dot d-plan"></i><span class="it">Architecture-deepening (2026-05-13 walk) — all Proposed, backlog-id tracked</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/162">#162</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/163">#163</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/164">#164</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/165">#165</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/166">#166</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/167">#167</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/168">#168</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/169">#169</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/170">#170</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/171">#171</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/172">#172</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">D-016 Helm→Celery port</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/172">#172</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Connectivity &amp; deploy reliability</h3>
+      <ul>
+        <li><i class="dot d-plan"></i><span class="it">D-002 connectivity — remaining phases</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/173">#173</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/174">#174</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/175">#175</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/176">#176</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">D-003 deploy reliability — remaining</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/177">#177</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Catalog &amp; infrastructure follow-ups</h3>
+      <ul>
+        <li><i class="dot d-plan"></i><span class="it">E1 catalog-ize SSH/bare-metal modules → E2 canonical-input SDK</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/180">#180</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Review follow-ups &amp; deferred</h3>
+      <ul>
+        <li><i class="dot d-defer"></i><span class="it">D-004 state-ownership redesign</span></li>
+        <li><i class="dot d-plan"></i><span class="it">D-005 TaskOrchestrator</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/162">#162</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Catalog &amp; infrastructure follow-ups</h3>
+      <ul>
+        <li><i class="dot d-plan"></i><span class="it">Project-delete blocked by stale workspace-locks</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/181">#181</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Forge-destroy leaves OpenTofu AWS/IAM resources → EntityAlreadyExists</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/182">#182</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">MCP import tools gap after #108</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/183">#183</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Helm async-write FE polling</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/184">#184</a></span></li>
+        <li><i class="dot d-defer"></i><span class="it">Benchmarks page IA + New Run wizard port (from cb-rebuild)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/294">#294</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">Issue auto-close GH Action</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/185">#185</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/229">PR #229</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Code-grounded audit gaps (2026-06-03)</h3>
+      <ul>
+        <li><i class="dot d-prog"></i><span class="it">Git auth UI — expose GitHub App + SSH-key in module-sources</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/219">#219</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Multi-platform awareness — completion epic (~39%)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/220">#220</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/218">#218</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">External-blueprint onboarding UI + content migration</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/221">#221</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">REPO-AUTH remaining — GitLab client + audit/rotation + PAT sunset</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/222">#222</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Observability export — Prometheus /metrics + dashboards</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/216">#216</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">PLAT-REL-004 — operational risk surfacing</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/223">#223</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Mixed-engine capability gating (DEPLOY-ENGINE-EXT-006)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/224">#224</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Helm entity-lock race</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/225">#225</a></span></li>
+        <li><i class="dot d-prog"></i><span class="it">Bare-metal orchestrator phase dispatch + SSH-module Python impls</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/226">#226</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/180">#180</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/204">#204</a></span></li>
+        <li><i class="dot d-plan"></i><span class="it">Frontend debt — re-enable skipped suites + wire state-recover/module-sync + regen api types</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/227">#227</a> &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/187">#187</a></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Shipped — merged to staging</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Platform capabilities (spec→built, code-verified)</h3>
+      <ul>
+        <li><i class="dot d-ship"></i><span class="it">Multi-engine deployment framework — Ansible + SSH engines + pack manifest</span><span class="ref">DEPLOY-ENGINE-EXT</span></li>
+        <li><i class="dot d-ship"></i><span class="it">DPU bare-metal foundation (SSH/BMC/Redfish/IPMI discovery + Path B+)</span><span class="ref">DPU_DEPLOY_*</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Backup / restore + cross-instance migration</span><span class="ref">BACKUP_RESTORE</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Benchmark targets + proxy deployment</span><span class="ref">BENCHMARK_TARGETS</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Secure git source auth (GitHub App tokens / SSH deploy keys)</span><span class="ref">REPO-AUTH-001</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Multi-platform awareness (EKS/AKS/GKE/OCP/ROKS profiles)</span><span class="ref"><a href="https://github.com/f5devcentral/bnk-forge/issues/218">#218</a></span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Strategic sprint epics (per STRATEGIC_BACKLOG, code-verified)</h3>
+      <ul>
+        <li><i class="dot d-ship"></i><span class="it">MCP productization (catalog/eligibility/workflows/scorecard)</span><span class="ref">MCP-PROD</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Security &amp; governance (risk matrix / audit / secret scrub)</span><span class="ref">SEC-GOV</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Observability foundation (logs / correlation / errors)</span><span class="ref">OBS Ph1 &middot; <a href="https://github.com/f5devcentral/bnk-forge/issues/216">#216</a></span></li>
+        <li><i class="dot d-ship"></i><span class="it">API contract rigor + golden contract tests</span><span class="ref">API-CONTRACT</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Operational UX (async-state components)</span><span class="ref">UX-OPS</span></li>
+        <li><i class="dot d-ship"></i><span class="it">Release/deploy hardening + critical-path E2E</span><span class="ref">DEPLOY &middot; E2E-CRITICAL</span></li>
+      </ul>
+    </div>
+  </div>
+
+<p class="sub" style="margin-top:18px">Strategic/legacy roadmap docs (STRATEGIC_ROADMAP, UX_ROADMAP, PRODUCT_VISION, ENGINEERING_IMPROVEMENTS) predate this file and are mostly shipped &mdash; <code>docs/ROADMAP.md</code> is the single source of truth; see ROADMAP.md &sect;10&ndash;&sect;11.</p>
+
+</main>
+<footer>Source of truth: <code>docs/roadmap.yaml</code> &rarr; <code>docs/ROADMAP.md</code> + this page (both generated by <code>bin/roadmap-gen.py</code>) &middot; process: <code>docs/roadmap-process.html</code> &middot; status verified against merged <code>staging</code> + open PRs 2026-06-03. GitHub issues are authoritative for completion.</footer>
+</body>
+</html>

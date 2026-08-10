@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "aws-eks-cluster-demo",
+    "version": "1.1.0",
+    "name": "AWS EKS Cluster - Demo",
+    "description": "Streamlined AWS EKS cluster for fast demos — VPC + IAM + EKS only. Skips storage and high-performance nodes. Provide a project name, pick your AWS credentials + region, and click Deploy. Every other setting is pre-defaulted and adjustable later under Advanced."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "aws",
+  "icon": "server-stack",
+  "color": "green",
+  "estimated_time": "12-15 minutes",
+  "estimated_cost": "$30-60/month",
+  "difficulty": "beginner",
+  "maturity": "production-ready",
+  "bnk_version": null,
+  "tags": [
+    "kubernetes",
+    "aws",
+    "demo",
+    "production"
+  ],
+  "outcomes": [
+    "VPC with public + private subnets across two AZs",
+    "Jumphost EC2 with SSH key + Elastic IP",
+    "EKS cluster with m5.xlarge worker nodes",
+    "IAM roles + OIDC provider ready for service accounts"
+  ],
+  "prerequisites": [
+    {
+      "type": "credential_template",
+      "name": "aws_credentials",
+      "description": "AWS credential template (any of Forge's three auth methods). Principal needs VPC + EKS + IAM create privileges."
+    }
+  ],
+  "variable_templates": {},
+  "inputs": {
+    "required": [
+      {
+        "name": "aws_access_key_id",
+        "type": "string",
+        "description": "Auto-filled from the AWS credential template.",
+        "sensitive": true,
+        "source": "credential_template",
+        "source_field": "aws_access_key_id",
+        "order": 10
+      },
+      {
+        "name": "aws_secret_access_key",
+        "type": "string",
+        "description": "Auto-filled from the AWS credential template.",
+        "sensitive": true,
+        "source": "credential_template",
+        "source_field": "aws_secret_access_key",
+        "order": 11
+      },
+      {
+        "name": "aws_region",
+        "type": "string",
+        "description": "AWS region to deploy into (taken from the project).",
+        "source": "project",
+        "source_field": "region",
+        "order": 12
+      }
+    ],
+    "optional": [
+      {
+        "name": "aws_session_token",
+        "type": "string",
+        "description": "Auto-filled from the AWS credential template (STS/SSO only).",
+        "default": "",
+        "sensitive": true,
+        "source": "credential_template",
+        "source_field": "aws_session_token",
+        "order": 13
+      },
+      {
+        "name": "project_name",
+        "type": "string",
+        "description": "Derived from the Forge project name.",
+        "source": "project",
+        "source_field": "name",
+        "order": 14
+      },
+      {
+        "name": "environment",
+        "type": "string",
+        "description": "Derived from the Forge project environment.",
+        "source": "project",
+        "source_field": "environment",
+        "order": 15
+      },
+      {
+        "name": "vpc_id",
+        "type": "string",
+        "description": "Resolved from the VPC module output at deploy time.",
+        "source": "module",
+        "order": 90
+      },
+      {
+        "name": "vpc_cidr_block",
+        "type": "string",
+        "description": "Resolved from the VPC module output at deploy time.",
+        "source": "module",
+        "order": 91
+      },
+      {
+        "name": "public_subnet_id",
+        "type": "string",
+        "description": "Resolved from the VPC module output at deploy time.",
+        "source": "module",
+        "order": 92
+      },
+      {
+        "name": "private_external_subnet_ids",
+        "type": "string",
+        "description": "Resolved from the VPC module output at deploy time.",
+        "source": "module",
+        "order": 93
+      },
+      {
+        "name": "private_internal_subnet_ids",
+        "type": "string",
+        "description": "Resolved from the VPC module output at deploy time.",
+        "source": "module",
+        "order": 94
+      },
+      {
+        "name": "eks_cluster_role_arn",
+        "type": "string",
+        "description": "Resolved from the Security module output at deploy time.",
+        "source": "module",
+        "order": 95
+      },
+      {
+        "name": "nodegroup_role_arn",
+        "type": "string",
+        "description": "Resolved from the Security module output at deploy time.",
+        "source": "module",
+        "order": 96
+      },
+      {
+        "name": "vpc_security_group_id",
+        "type": "string",
+        "description": "Resolved from the Security module output at deploy time.",
+        "source": "module",
+        "order": 97
+      },
+      {
+        "name": "infrastructure_key_name",
+        "type": "string",
+        "description": "Resolved from the Security module output at deploy time.",
+        "source": "module",
+        "order": 98
+      }
+    ]
+  },
+  "modules": [
+    {
+      "id": "infra-aws-vpc",
+      "module": "infra/aws/vpc",
+      "version": "1.0.0",
+      "name": "VPC",
+      "optional": false,
+      "depends_on": [],
+      "inputs": {
+        "project_name": "${project_name}",
+        "environment": "${environment}",
+        "aws_region": "${aws_region}",
+        "aws_profile": "default",
+        "vpc_cidr": "10.0.0.0/16",
+        "public_subnet_cidr": "10.0.1.0/24",
+        "private_external_subnet_a_cidr": "10.0.10.0/24",
+        "private_external_subnet_b_cidr": "10.0.11.0/24",
+        "private_internal_subnet_a_cidr": "10.0.20.0/24",
+        "private_internal_subnet_b_cidr": "10.0.21.0/24"
+      }
+    },
+    {
+      "id": "infra-aws-security",
+      "module": "infra/aws/security",
+      "version": "1.0.0",
+      "name": "Security",
+      "optional": false,
+      "depends_on": [
+        "infra-aws-vpc"
+      ],
+      "inputs": {
+        "project_name": "${project_name}",
+        "environment": "${environment}",
+        "aws_region": "${aws_region}",
+        "aws_profile": "default",
+        "user_ip": "0.0.0.0/0",
+        "enable_eks_cluster_role": true,
+        "enable_eks_node_role": true
+      }
+    },
+    {
+      "id": "infra-aws-eks",
+      "module": "infra/aws/eks",
+      "version": "1.0.0",
+      "name": "EKS Cluster",
+      "optional": false,
+      "depends_on": [
+        "infra-aws-vpc",
+        "infra-aws-security"
+      ],
+      "inputs": {
+        "project_name": "${project_name}",
+        "environment": "${environment}",
+        "aws_region": "${aws_region}",
+        "aws_profile": "default",
+        "user_ip": "0.0.0.0/0",
+        "kubernetes_version": "1.30",
+        "node_count": 2,
+        "instance_type": "m5.xlarge"
+      }
+    }
+  ],
+  "is_featured": true
+}

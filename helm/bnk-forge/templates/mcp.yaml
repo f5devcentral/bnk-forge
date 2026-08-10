@@ -1,0 +1,72 @@
+{{- if .Values.mcp.enabled -}}
+{{- $name := printf "%s-mcp" (include "bnk-forge.fullname" .) -}}
+{{- $apiSvc := printf "%s-api" (include "bnk-forge.fullname" .) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 4 }}
+spec:
+  type: {{ .Values.mcp.service.type }}
+  selector:
+    {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 4 }}
+  ports:
+    - port: {{ .Values.mcp.service.port }}
+      targetPort: 8081
+      name: mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 4 }}
+spec:
+  replicas: {{ .Values.mcp.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 8 }}
+    spec:
+      {{- include "bnk-forge.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: mcp
+          image: {{ include "bnk-forge.image" (list . .Values.mcp.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: BNK_FORGE_API_URL
+              value: "http://{{ $apiSvc }}:{{ .Values.api.service.port }}"
+            - name: BNK_FORGE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bnk-forge.fullname" . }}-secrets
+                  key: mcp-username
+            - name: BNK_FORGE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bnk-forge.fullname" . }}-secrets
+                  key: mcp-password
+            - name: MCP_PORT
+              value: "8081"
+            - name: MCP_LOG_LEVEL
+              value: INFO
+          ports:
+            - containerPort: 8081
+              name: mcp
+          readinessProbe:
+            tcpSocket:
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+{{- end }}

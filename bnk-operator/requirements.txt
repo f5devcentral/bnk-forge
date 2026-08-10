@@ -1,0 +1,17 @@
+# BNK Operator — lightweight agent for customer K8s clusters
+# Target image size: ~100-150 MB
+
+# WebSocket client
+websockets>=12.0,<14.0
+
+# Kubernetes client (async-first, lightweight)
+kr8s>=0.17,<1.0
+
+# HTTP health endpoint + polling client
+aiohttp>=3.9,<4.0
+
+# YAML parsing (for manifests)
+pyyaml>=6.0,<7.0
+
+# Structured JSON logging (optional, used when LOG_FORMAT=json)
+python-json-logger>=2.0,<3.0

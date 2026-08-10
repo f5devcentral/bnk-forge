@@ -1,0 +1,149 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = [".", "backend"]
+
+[tool.ruff.lint]
+# E = pycodestyle errors, F = pyflakes, I = isort, N = pep8-naming, W = pycodestyle warnings, UP = pyupgrade
+select = ["E", "F", "I", "N", "W", "UP"]
+# Ignore rules that conflict with existing codebase style
+ignore = [
+    "E501",   # line too long (handled by line-length, but many existing long lines)
+    "N802",   # function name should be lowercase (some existing camelCase in models)
+    "N806",   # variable in function should be lowercase (e.g. FATAL_STEPS)
+    "N815",   # mixedCase variable in class scope (existing patterns)
+    "N999",   # invalid module name (existing module names)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can have more relaxed rules (unused vars common in fixtures/side-effect assertions)
+"tests/*" = ["E402", "F401", "F811", "F841"]
+"backend/tests/*" = ["E402", "F401", "F811", "F841"]
+# Alembic migrations have their own style (bare excepts in constraint drops are intentional)
+"alembic/*" = ["E402", "F401", "E722"]
+"backend/alembic/*" = ["E402", "F401", "E722"]
+# __init__.py files commonly have unused imports for re-export
+"__init__.py" = ["F401", "E402"]
+# Entry points with sys.path manipulation need imports after path setup
+"main.py" = ["E402"]
+"celery_app.py" = ["E402"]
+"backend/main.py" = ["E402"]
+"backend/celery_app.py" = ["E402"]
+# Route files with deferred imports for circular dependency avoidance
+"routes/*" = ["E402"]
+"backend/routes/*" = ["E402"]
+# Service files with conditional imports
+"services/*" = ["E402"]
+"backend/services/*" = ["E402"]
+# Task files with deferred imports
+"tasks/*" = ["E402"]
+"backend/tasks/*" = ["E402"]
+# Module files with dynamic imports
+"modules/*" = ["E402"]
+"backend/modules/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "database", "models", "routes", "services", "tasks", "modules", "utils", "schemas"]
+
+[tool.mypy]
+python_version = "3.11"
+# Gradual adoption: start with core/schemas, expand module-by-module.
+# Phase 1: core.* and schemas.* (well-typed, few deps)
+# Phase 2: models.* (after SQLAlchemy plugin stabilizes)
+# Phase 3: services.* (largest surface area)
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+plugins = [
+    "pydantic.mypy",
+    "sqlalchemy.ext.mypy.plugin",
+]
+
+# Pydantic plugin settings
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# Strict checks on core modules — enforced in CI
+[[tool.mypy.overrides]]
+module = "core.*"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "schemas.*"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+# services.* is Phase 3 — not yet type-clean (legacy Column[...] attribute
+# annotations throughout). core.auth_middleware imports ApiTokenService to
+# verify CLI/CI API tokens, and mypy follows that import; ignore_errors keeps
+# the service's own internals out of scope while still type-checking how core/
+# calls into it. Drop this when Phase 3 lands.
+[[tool.mypy.overrides]]
+module = "services.*"
+ignore_errors = true
+
+# Third-party libraries without inline types or installed stubs
+[[tool.mypy.overrides]]
+module = "requests.*"
+ignore_missing_imports = true
+
+# Relax checks on tests (many intentional type violations for testing)
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "backend/tests"]
+pythonpath = ["backend"]
+asyncio_mode = "auto"
+# Markers for test categorization
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests that need DB/services",
+    "unit: marks pure unit tests (no DB, no services)",
+    "component: marks component tests (service + DB, no HTTP)",
+    "security: marks security-focused tests",
+    "fast: marks fast tests suitable for pre-commit hooks",
+    "full: marks full-mode tests that require running Docker Compose app",
+]
+# Default options: verbose output, show local variables on failure
+# Exclude full-mode tests by default (they require running Docker Compose stack)
+# Run full-mode: pytest -m full
+addopts = "-v --tb=short -m 'not full'"
+# Ignore operator/proxy dirs mounted in dev mode (they have their own test suites)
+collect_ignore_glob = ["bnk-operator/*", "proxy/*"]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "alembic/*",
+    "*/migrations/*",
+    "celery_app.py",
+    "init_db.py",
+]
+
+[tool.coverage.report]
+# Coverage threshold — raised incrementally:
+#   Phase 1: 40% (baseline)
+#   Phase 2: 50% (current — 3,162 tests)
+#   Phase 3: 60% (after service tests)
+#   Phase 4: 70% (after route tests)
+fail_under = 50
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+]

@@ -1,0 +1,58 @@
+# Root .dockerignore — reduces build context for frontend Dockerfile
+# (which uses context: . to access VERSION file from repo root)
+#
+# The backend/ and bnk-operator/ have their own .dockerignore files.
+
+# Version control
+.git/
+.gitignore
+.gitmodules
+
+# Agent/docs (not needed in any image)
+.agent/
+docs/
+*.md
+!frontend-v2/README.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+backend/.venv/
+backend/tests/
+bnk-operator/tests/
+
+# Node artifacts (frontend has its own context via COPY)
+frontend-v2/node_modules/
+frontend-v2/dist/
+
+# Environment files (secrets!)
+.env
+.env.*
+secrets/
+
+# Test artifacts
+tests/
+coverage*.xml
+junit*.xml
+
+# Docker files (avoid recursive context)
+docker-compose*.yml
+Dockerfile
+
+# Worktrees and backups
+*.bak
+*.log
+*.tmp

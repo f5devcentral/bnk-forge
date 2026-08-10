@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "CNEInstance",
+    "path": "bnk/cneinstance",
+    "version": "2.0.0",
+    "category": "bnk",
+    "description": "Creates the CNEInstance custom resource which tells FLO to deploy all BNK components."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "template_engine": "jinja2",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "manifest_path": "manifests/cneinstance.yaml",
+      "namespace": "${instance_namespace}",
+      "wait_conditions": [
+        {
+          "kind": "CNEInstance",
+          "name": "${instance_name}",
+          "condition_type": "Accepted",
+          "timeout": 120
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "required": [
+      {
+        "module": "bnk/flo",
+        "reason": "FLO must be running to process CNEInstance CRs"
+      }
+    ],
+    "optional": []
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "instance_namespace",
+        "type": "string",
+        "description": "Namespace for the CNEInstance",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "operator_namespace",
+        "default": "f5-operator"
+      },
+      {
+        "name": "instance_name",
+        "type": "string",
+        "description": "Name of the CNEInstance CR",
+        "default": "bnk-instance",
+        "source": "user"
+      },
+      {
+        "name": "manifest_version",
+        "type": "string",
+        "description": "BNK manifest version",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "manifest_version"
+      },
+      {
+        "name": "far_secret_name",
+        "type": "string",
+        "description": "FAR image pull secret name",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "far_secret_name",
+        "default": "far-secret"
+      },
+      {
+        "name": "cluster_issuer_name",
+        "type": "string",
+        "description": "ClusterIssuer name for certificate management",
+        "source": "module",
+        "from_module": "k8s/bnk-cert-issuer",
+        "from_output": "cluster_issuer_name",
+        "default": "bnk-ca-cluster-issuer"
+      }
+    ],
+    "optional": [
+      {
+        "name": "deployment_size",
+        "type": "string",
+        "description": "BNK deployment size (Small, Medium, Large)",
+        "default": "Small",
+        "source": "user"
+      },
+      {
+        "name": "whole_cluster",
+        "type": "boolean",
+        "description": "Deploy TMM on all labeled nodes",
+        "default": true,
+        "source": "user"
+      },
+      {
+        "name": "dpu_enabled",
+        "type": "boolean",
+        "description": "Enable DPU mode",
+        "default": false,
+        "source": "user"
+      },
+      {
+        "name": "dynamic_routing_enabled",
+        "type": "boolean",
+        "description": "Enable dynamic routing",
+        "default": true,
+        "source": "user"
+      },
+      {
+        "name": "firewall_acl_enabled",
+        "type": "boolean",
+        "description": "Enable firewall ACL",
+        "default": true,
+        "source": "user"
+      },
+      {
+        "name": "pseudo_cni_enabled",
+        "type": "boolean",
+        "description": "Enable pseudo CNI",
+        "default": true,
+        "source": "user"
+      },
+      {
+        "name": "intelligent_lb_enabled",
+        "type": "boolean",
+        "description": "Enable AI intelligent load balancing",
+        "default": true,
+        "source": "user"
+      },
+      {
+        "name": "storage_class_name",
+        "type": "string",
+        "description": "Storage class for persistent volumes",
+        "default": "gp3",
+        "source": "user"
+      },
+      {
+        "name": "tmm_default_mtu",
+        "type": "number",
+        "description": "Default MTU for TMM",
+        "default": 9000,
+        "source": "user"
+      },
+      {
+        "name": "external_nad_name",
+        "type": "string",
+        "description": "External network attachment definition name",
+        "default": "external-netdevice",
+        "source": "module",
+        "from_module": "k8s/network-setup",
+        "from_output": "external_nad_name"
+      },
+      {
+        "name": "internal_nad_name",
+        "type": "string",
+        "description": "Internal network attachment definition name",
+        "default": "internal-netdevice",
+        "source": "module",
+        "from_module": "k8s/network-setup",
+        "from_output": "internal_nad_name"
+      },
+      {
+        "name": "tmm_data_plane_mode",
+        "type": "string",
+        "description": "TMM data-plane mode (kernel|sriov). When 'kernel' (default), the module auto-injects the 8 kernel-mode TMM env vars (Doc 3 + extended for second interface), the Multus annotation override naming interfaces eth1/eth2, and a 6Gi memory override. Must match k8s/network-setup and infra/aws/high-performance-nodes.",
+        "default": "kernel",
+        "source": "module",
+        "from_module": "k8s/network-setup",
+        "from_output": "tmm_data_plane_mode"
+      },
+      {
+        "name": "external_pci_bus_id",
+        "type": "string",
+        "description": "(kernel mode) PCI bus ID of the external ENI, used to populate PCIDEVICE_INTEL_COM_ETH1 in TMM env.",
+        "default": "0000:00:07.0",
+        "source": "module",
+        "from_module": "k8s/network-setup",
+        "from_output": "external_pci_bus_id"
+      },
+      {
+        "name": "internal_pci_bus_id",
+        "type": "string",
+        "description": "(kernel mode) PCI bus ID of the internal ENI, used to populate PCIDEVICE_INTEL_COM_ETH2 in TMM env.",
+        "default": "0000:00:08.0",
+        "source": "module",
+        "from_module": "k8s/network-setup",
+        "from_output": "internal_pci_bus_id"
+      },
+      {
+        "name": "cloud_provider",
+        "type": "string",
+        "description": "Cloud provider (aws, azure, gcp, or empty for on-prem)",
+        "default": "",
+        "source": "auto"
+      },
+      {
+        "name": "tmm_init_enabled",
+        "type": "boolean",
+        "description": "Create the tmm-init ConfigMap (Doc 3 page 28-29). Required for kernel-mode TMM to route response traffic back to clients on subnets other than the data-plane subnets. Set true on AWS kernel-mode deployments.",
+        "default": false,
+        "source": "user"
+      },
+      {
+        "name": "tmm_init_routes",
+        "type": "list(object({destination=string,gateway=string,description=string}))",
+        "description": "Static routes added to TMM via tmm-init/user_conf.tcl. Reloaded every 1s without TMM restart.",
+        "default": [],
+        "source": "user"
+      },
+      {
+        "name": "tmm_init_user_conf_tcl_raw",
+        "type": "string",
+        "description": "Optional raw TCL for user_conf.tcl. Wins over tmm_init_routes (use for multi-AZ TGW per-node switch + GRE endpoints).",
+        "default": "",
+        "source": "user"
+      },
+      {
+        "name": "tmm_init_extra_tcl",
+        "type": "string",
+        "description": "Optional extra TCL appended to tmm_init.tcl after the default boilerplate (profiles, pools, snatpools, bigdb tweaks).",
+        "default": "",
+        "source": "user"
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "instance_name",
+        "type": "string",
+        "description": "Name of the CNEInstance CR"
+      },
+      {
+        "name": "instance_namespace",
+        "type": "string",
+        "description": "Namespace of the CNEInstance"
+      },
+      {
+        "name": "instance_ready",
+        "type": "boolean",
+        "description": "Whether the CNEInstance was applied"
+      }
+    ]
+  }
+}

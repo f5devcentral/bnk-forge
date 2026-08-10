@@ -1,0 +1,25 @@
+{
+  "f5-bnk-2.2": [
+    {"path": "k8s/bnk-prerequisites", "name": "BNK Prerequisites", "required": true, "order": 1},
+    {"path": "k8s/network-setup", "name": "Network Attachments", "required": true, "order": 2},
+    {"path": "k8s/cert-manager", "name": "Cert Manager", "required": true, "order": 3},
+    {"path": "bnk/flo", "name": "F5 Lifecycle Operator", "required": true, "order": 4},
+    {"path": "bnk/cneinstance", "name": "CNE Instance", "required": true, "order": 5},
+    {"path": "bnk/bnk-vlans", "name": "BNK VLANs", "required": true, "order": 6},
+    {"path": "bnk/bnk-gatewayclass", "name": "BNK GatewayClass", "required": true, "order": 7}
+  ],
+  "f5-bnk-2.3": [
+    {"path": "k8s/bnk-prerequisites", "name": "BNK Prerequisites", "required": true, "order": 1},
+    {"path": "k8s/network-setup", "name": "Network Attachments", "required": true, "order": 2},
+    {"path": "k8s/cert-manager", "name": "Cert Manager", "required": true, "order": 3},
+    {"path": "bnk/flo", "name": "F5 Lifecycle Operator", "required": true, "order": 4},
+    {"path": "bnk/cneinstance", "name": "CNE Instance", "required": true, "order": 5},
+    {"path": "bnk/bnk-vlans", "name": "BNK VLANs", "required": true, "order": 6},
+    {"path": "bnk/bnk-gatewayclass", "name": "BNK GatewayClass", "required": true, "order": 7}
+  ],
+  "eks-bnk-smartllm-demo": [
+    {"path": "app/bedrock-smartllm-irsa", "name": "Bedrock IAM Role (IRSA)", "required": true, "order": 1},
+    {"path": "app/bedrock-smartllm-backend", "name": "Bedrock Smart-LLM Backend", "required": true, "order": 2},
+    {"path": "app/bedrock-smartllm-client", "name": "Bedrock Smart-LLM Client", "required": false, "order": 3}
+  ]
+}

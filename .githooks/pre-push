@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# BNK-Forge v2 — Pre-push hook
+# Runs local checks before allowing push (~2-3m)
+# Also validates alembic migration chain (catches commits made without pre-commit hook)
+# Install: git config core.hooksPath .githooks   (or: make setup-hooks)
+# Skip:    git push --no-verify (emergency only!)
+set -e
+
+# ─── Migration chain check ────────────────────────────────────────────────────
+echo "=== Migration chain check (pre-push) ==="
+python3 scripts/check-migrations.py
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "PUSH BLOCKED: Fix migration chain errors above before pushing."
+    echo "Run 'python3 scripts/check-migrations.py' for details."
+    exit 1
+fi
+
+echo ""
+echo "========================================="
+echo "  Pre-push: Running local checks"
+echo "========================================="
+echo ""
+
+# Use the Makefile target — keeps logic in one place
+make pre-push
+
+echo ""
+echo "========================================="
+echo "  Local checks passed — pushing"
+echo "========================================="

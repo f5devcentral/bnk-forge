@@ -1,0 +1,4 @@
+# Anything the devcontainer writes at runtime that shouldn't end up in git.
+# Extend this for your project (secrets, generated files, local overrides).
+.keys/
+*.local.env

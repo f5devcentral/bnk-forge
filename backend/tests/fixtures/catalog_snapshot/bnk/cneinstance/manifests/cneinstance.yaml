@@ -1,0 +1,108 @@
+{% set _is_kernel_mode = (tmm_data_plane_mode | default("kernel")) == "kernel" %}
+apiVersion: k8s.f5.com/v1
+kind: CNEInstance
+metadata:
+  name: ${instance_name}
+  namespace: ${instance_namespace}
+  labels:
+    app.kubernetes.io/name: ${instance_name}
+    app.kubernetes.io/component: cne-instance
+    app.kubernetes.io/managed-by: bnk-forge
+    app.kubernetes.io/version: "${manifest_version}"
+spec:
+  product:
+    gatewayAPI: true
+    type: BNK
+  manifestVersion: "${manifest_version}"
+  wholeCluster: ${whole_cluster | default(true) | lower}
+  dpu:
+    enabled: ${dpu_enabled | default(false) | lower}
+{% if not _is_kernel_mode %}
+  dataPlane:
+    mode: sriov
+{% endif %}
+  telemetry:
+    loggingSubsystem:
+      enabled: true
+    metricSubsystem:
+      enabled: true
+  certificate:
+    clusterIssuer: ${cluster_issuer_name}
+  deploymentSize: ${deployment_size | default("Small")}
+{% if storage_class_name is defined and storage_class_name %}
+  storageClassName: ${storage_class_name}
+{% endif %}
+  registry:
+    uri: repo.f5.com
+    imagePullSecrets:
+      - name: ${far_secret_name}
+    imagePullPolicy: IfNotPresent
+  networkAttachments:
+    - ${external_nad_name | default("external-netdevice")}
+    - ${internal_nad_name | default("internal-netdevice")}
+  dynamicRouting:
+    enabled: ${dynamic_routing_enabled | default(true) | lower}
+  firewallACL:
+    enabled: ${firewall_acl_enabled | default(true) | lower}
+  pseudoCNI:
+    enabled: ${pseudo_cni_enabled | default(true) | lower}
+  intelligentLB:
+    enabled: ${intelligent_lb_enabled | default(true) | lower}
+  coreCollection:
+    enabled: false
+  advanced:
+    envDiscovery:
+      enabled: false
+      stopOnFail: false
+    cneController:
+      env:
+        - name: TMM_DEFAULT_MTU
+          value: "${tmm_default_mtu | default(9000)}"
+{% if cloud_provider is defined and cloud_provider %}
+        - name: CLOUD_ENV
+          value: "true"
+        - name: CLOUD_PROVIDER
+          value: "${cloud_provider}"
+        - name: CLOUD_NETWORK_CONFIGMAP
+          value: cloud-network-mapping
+{% endif %}
+    tmm:
+{% if _is_kernel_mode %}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: '[{"name":"${external_nad_name | default("external-netdevice")}","namespace":"${instance_namespace}","interface":"eth1"},{"name":"${internal_nad_name | default("internal-netdevice")}","namespace":"${instance_namespace}","interface":"eth2"}]'
+      resources:
+        requests:
+          memory: "${tmm_memory | default("6Gi")}"
+        limits:
+          memory: "${tmm_memory | default("6Gi")}"
+{% else %}
+      resources:
+        requests:
+          memory: "${tmm_memory | default("4Gi")}"
+        limits:
+          memory: "${tmm_memory | default("4Gi")}"
+{% endif %}
+      env:
+        - name: TMM_DEFAULT_MTU
+          value: "${tmm_default_mtu | default(9000)}"
+        - name: TMM_IGNORE_GATEWAYS
+          value: "TRUE"
+{% if _is_kernel_mode %}
+        # Kernel-mode TMM env vars (Doc 3 Multi-AZ Network Architecture)
+        - name: TMM_GENERIC_SOCKET_DRIVER
+          value: "true"
+        - name: TMM_CALICO_ROUTER
+          value: "default"
+        - name: PAL_CPU_SET
+          value: "0,2"
+        - name: TMM_MAPRES_ADDL_VETHS_ON_DP
+          value: "TRUE"
+        - name: ROBIN_VFIO_RESOURCE_1
+          value: "eth1"
+        - name: PCIDEVICE_INTEL_COM_ETH1
+          value: "${external_pci_bus_id | default("0000:00:07.0")}"
+        - name: ROBIN_VFIO_RESOURCE_2
+          value: "eth2"
+        - name: PCIDEVICE_INTEL_COM_ETH2
+          value: "${internal_pci_bus_id | default("0000:00:08.0")}"
+{% endif %}

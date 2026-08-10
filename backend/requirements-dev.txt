@@ -1,0 +1,26 @@
+# Development/testing dependencies — not needed in production
+-r requirements.txt
+
+# Linting — pinned to match .github/workflows/ci.yml
+ruff==0.15.2
+
+# Testing framework
+pytest==8.3.4
+pytest-cov==6.0.0
+pytest-asyncio==0.25.0
+pytest-xdist==3.5.0       # Parallel test execution (pytest -n auto)
+
+# Test data factories
+factory-boy==3.3.1         # SQLAlchemy model factories for consistent test data
+
+# Type checking — gradual adoption, see pyproject.toml [tool.mypy]
+mypy==1.14.1
+# Plugins for correct type narrowing on core dependencies
+pydantic[mypy]>=2.0        # pydantic.mypy plugin
+sqlalchemy[mypy]>=2.0      # sqlalchemy.ext.mypy.plugin
+# Type stubs for third-party packages
+types-PyYAML>=6.0
+types-paramiko>=3.0
+types-redis>=4.0
+types-requests>=2.31
+boto3-stubs[essential]>=1.35

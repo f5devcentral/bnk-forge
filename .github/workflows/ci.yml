@@ -1,0 +1,892 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  BNK-Forge v2 — CI Pipeline                                               ║
+# ║                                                                            ║
+# ║  Design: Makefile is the canonical source of truth.                       ║
+# ║  All lint/test/build commands live in Makefile targets.                   ║
+# ║  CI YAML handles only: checkout, runtime setup, and make <target>.        ║
+# ║  Running `make pre-push` locally ≡ running CI.                            ║
+# ║                                                                            ║
+# ║  Triggers: PRs to main/staging/develop, pushes to main/staging            ║
+# ║  Path filters: backend, frontend, operator, mcp, docker, ci+Makefile      ║
+# ║                                                                            ║
+# ║  Phases (cheap → expensive, with path filtering):                          ║
+# ║    Phase 1: Lint + Unit + Contract    (~60s)                               ║
+# ║    Phase 2: Component + Legacy + Build (~90s, needs P1)                    ║
+# ║    Phase 3: Integration Tests          (~2m,  needs P2)                    ║
+# ║    Phase 4: Security + Docker Build    (~3m,  needs P3)                    ║
+# ║                                                                            ║
+# ║  Advisory: MCP tests run on mcp/** changes but do not block merge.        ║
+# ║  Merge gate: "CI Gate" job — configure branch protection to require it.    ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.agent/**'
+      - '.opencode/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.trivyignore'
+      - 'USER_GUIDE.md'
+  push:
+    # main (deploy trigger) + staging (release-automation preflight needs a
+    # push-triggered CI run to match by SHA — see release.yml preflight);
+    # develop skipped.
+    branches: [main, staging]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.agent/**'
+      - '.opencode/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.trivyignore'
+      - 'USER_GUIDE.md'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  DATABASE_URL: "sqlite:///./test.db"
+  SECRET_KEY: "ci-test-secret-key"
+  REDIS_URL: "redis://localhost:6379/0"
+
+jobs:
+
+  # ── Change Detection ──────────────────────────────────────────────────────
+  # Single cheap job that determines which paths changed.
+  # All other jobs use its outputs to skip irrelevant work.
+  changes:
+    name: "Detect Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      operator: ${{ steps.filter.outputs.operator }}
+      mcp: ${{ steps.filter.outputs.mcp }}
+      docker: ${{ steps.filter.outputs.docker }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'requirements*.txt'
+              - 'openapi.json'
+            frontend:
+              - 'frontend-v2/**'
+            operator:
+              - 'bnk-operator/**'
+            mcp:
+              - 'mcp-server/**'
+            docker:
+              - 'backend/Dockerfile'
+              - 'frontend-v2/Dockerfile'
+              - 'docker-compose*.yml'
+            scripts:
+              - 'scripts/**'
+            ci:
+              - '.github/workflows/**'
+              - 'Makefile'
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PHASE 1: Cheap & Fast (~60s) — Lint + Unit Tests
+  # ══════════════════════════════════════════════════════════════════════════
+
+  lint-backend:
+    name: "P1 · Lint Backend"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run lint
+        run: make lint-backend
+
+  lint-frontend:
+    name: "P1 · Lint Frontend"
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend-v2
+      - name: Run lint
+        run: make lint-frontend
+
+  typecheck-backend:
+    name: "P1 · TypeCheck Backend (mypy)"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run typecheck
+        run: make typecheck-backend
+
+  openapi-check:
+    name: "P1 · OpenAPI Spec Freshness"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Check OpenAPI spec is up to date
+        run: make openapi-check
+
+  typecheck-frontend:
+    name: "P1 · TypeCheck Frontend (tsc)"
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend-v2
+      - name: Check generated types are up to date
+        run: |
+          npx openapi-typescript ../backend/openapi.json -o src/types/api-generated-check.ts
+          if ! diff -q src/types/api-generated.ts src/types/api-generated-check.ts > /dev/null 2>&1; then
+            echo "::error::Generated TypeScript types are stale. Run: make openapi-types"
+            diff src/types/api-generated.ts src/types/api-generated-check.ts | head -50
+            rm src/types/api-generated-check.ts
+            exit 1
+          fi
+          rm src/types/api-generated-check.ts
+          echo "Generated types are up to date"
+        working-directory: frontend-v2
+      - name: TypeScript type check
+        run: make typecheck-frontend
+
+  unit-tests-backend:
+    name: "P1 · Unit Tests · Backend"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run unit tests
+        run: make test-backend-unit
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-unit-backend
+          path: |
+            backend/coverage-unit.xml
+            backend/junit-unit.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  unit-tests-frontend:
+    name: "P1 · Unit Tests · Frontend"
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend-v2
+      - name: Run frontend tests
+        run: make test-frontend
+
+  unit-tests-operator:
+    name: "P1 · Unit Tests · Operator"
+    needs: changes
+    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: bnk-operator/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r bnk-operator/requirements-dev.txt
+      - name: Run operator tests
+        run: make test-operator
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-operator
+          path: |
+            bnk-operator/coverage-operator.xml
+            bnk-operator/junit-operator.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  contract-tests:
+    name: "P1 · Contract Tests"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run contract tests
+        run: make test-contracts
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-contract
+          path: |
+            backend/coverage-contract.xml
+            backend/junit-contract.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  # ── MCP Tests (advisory — does not block ci-gate) ─────────────────────────
+  mcp-tests:
+    name: "P1 · MCP Server Tests (advisory)"
+    needs: changes
+    if: needs.changes.outputs.mcp == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install MCP dependencies
+        run: cd mcp-server && pip install -e ".[dev]"
+      - name: Run MCP tests
+        run: make test-mcp
+
+  # ── Artifact Network Resolver (issue #422) — pure-logic unit tests only ────
+  artifact-network-self-test:
+    name: "P1 · Artifact Network Self-Test"
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run artifact_network.sh pure-logic self-test
+        run: bash scripts/artifact_network.sh --self-test
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PHASE 2: Component + Legacy Tests (~90s) — needs Phase 1
+  # ══════════════════════════════════════════════════════════════════════════
+
+  component-tests-backend:
+    name: "P2 · Component Tests · Backend"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend, contract-tests]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run component tests
+        run: make test-backend-component
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-component-backend
+          path: |
+            backend/coverage-component.xml
+            backend/junit-component.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  legacy-tests-backend:
+    name: "P2 · Legacy Tests · Backend"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend, contract-tests]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run legacy tests (flat directory, contract tests excluded)
+        run: make test-backend-legacy
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-legacy-backend
+          path: |
+            backend/coverage-legacy.xml
+            backend/junit-legacy.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  proxy-validation:
+    name: "P2 · Proxy Config"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Validate nginx proxy config
+        run: make test-proxy
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-proxy
+          path: |
+            backend/coverage-proxy.xml
+            backend/junit-proxy.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  db-migration-check:
+    name: "P2 · DB Migrations"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Validate migrations
+        run: make test-db
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-db-migration
+          path: |
+            backend/coverage-db-migration.xml
+            backend/junit-db-migration.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  migration-roundtrip:
+    name: "P2 · Migration Round-Trip (Postgres)"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    # Real Postgres service — SQLite does not exercise real migration DDL, and
+    # Postgres is the production dialect. The drift gate runs against the real
+    # target so dialect-specific schema mismatches surface here.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bnkforge
+          POSTGRES_PASSWORD: bnkforge
+          POSTGRES_DB: bnkforge_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bnkforge"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Override the workflow-level SQLite DATABASE_URL with the Postgres service.
+      DATABASE_URL: "postgresql+psycopg2://bnkforge:bnkforge@localhost:5432/bnkforge_ci"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      # NOTE on the round-trip shape: BNK-Forge v2's migration chain is NOT
+      # self-contained from empty — the base revision v2_001 is an `ALTER TABLE
+      # project_modules ...`, i.e. it presupposes a pre-existing v1 schema. So
+      # `alembic upgrade head` from an empty DB fails by design. Fresh installs
+      # provision via init_db.py (create_all from the ORM + stamp head), and only
+      # *existing* DBs run `alembic upgrade head` (entrypoint.sh). We therefore
+      # exercise the migration machinery the production-faithful way:
+      #   1. init_db.py  → create_all + stamp head (the fresh-install path)
+      #   2. alembic upgrade head (no-op at head, but proves the chain resolves)
+      #   3. drift gate  → assert the real-Postgres schema matches the ORM
+      # A full `downgrade base → upgrade head` is intentionally NOT attempted: the
+      # migration downgrade() bodies reference constraint names that differ from
+      # ORM create_all's naming, so downgrade against a create_all schema cannot
+      # work on any dialect. Catching MISSING-from-DB drift post-provision is the
+      # reliability guarantee that matters for #161.
+      - name: "Provision fresh Postgres the production way (init_db.py)"
+        working-directory: backend
+        run: python init_db.py
+      - name: "alembic upgrade head (chain resolves to head against real Postgres)"
+        working-directory: backend
+        run: alembic upgrade head
+      - name: "Assert zero ORM-vs-DB drift on real Postgres"
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          # Same drift gate the runtime uses — fails non-zero if the DB is
+          # missing any table/column the ORM declares.
+          python -c "
+          import sys
+          from sqlalchemy import create_engine
+          from core.config import settings
+          from startup_steps import _detect_missing_schema
+          engine = create_engine(settings.DATABASE_URL)
+          with engine.connect() as conn:
+              missing = _detect_missing_schema(conn)
+          if missing:
+              print('Schema drift on real Postgres — DB missing what the ORM expects:')
+              for m in missing:
+                  print('  - ' + m)
+              sys.exit(1)
+          print('No ORM-vs-DB drift on real Postgres')
+          "
+
+  frontend-build:
+    name: "P2 · Build · Frontend"
+    needs: [changes, lint-frontend, typecheck-frontend, unit-tests-frontend]
+    if: |
+      always() &&
+      (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend-v2
+      - name: Build frontend
+        run: make build-frontend-check
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PHASE 3: Integration Tests (~2m) — needs Phase 2
+  # ══════════════════════════════════════════════════════════════════════════
+
+  integration-tests-backend:
+    name: "P3 · Integration Tests · Backend"
+    needs: [changes, component-tests-backend, legacy-tests-backend, proxy-validation, db-migration-check, migration-roundtrip]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run integration tests
+        run: |
+          if [ -n "$(find backend/tests/integration -name 'test_*.py' 2>/dev/null)" ]; then
+            make test-integration-full
+          else
+            echo "No integration tests found yet — skipping"
+          fi
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-integration-backend
+          path: |
+            backend/coverage-integration.xml
+            backend/junit-integration.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PHASE 4: Security + Docker (~3m) — needs Phase 3
+  # Docker scan is merged into docker-build to avoid rebuilding the image.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  security-audit:
+    name: "P4 · Security Audit"
+    needs: [changes, integration-tests-backend, frontend-build]
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            bnk-operator/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Install frontend dependencies
+        if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true'
+        run: npm ci
+        working-directory: frontend-v2
+      - name: Run security audit
+        run: make security-audit
+
+  docker-build:
+    name: "P4 · Docker Build + Scan"
+    needs: [changes, integration-tests-backend, frontend-build]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image (slim)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          tags: bnk-forge-api:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build Worker image (full tooling)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: worker
+          tags: bnk-forge-worker:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build Beat image (slim)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: beat
+          tags: bnk-forge-beat:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend-v2/Dockerfile
+          tags: bnk-forge-frontend:latest
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      # Slice D / #300: build proxy, mcp, operator for Trivy coverage.
+      # Adds ~2-3m to CI; expected and acceptable (see issue #300).
+      - name: Build Proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./proxy
+          tags: bnk-forge-proxy:latest
+          load: true
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,mode=max,scope=proxy
+      - name: Build MCP image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp-server
+          tags: bnk-forge-mcp:latest
+          load: true
+          cache-from: type=gha,scope=mcp
+          cache-to: type=gha,mode=max,scope=mcp
+      - name: Build Operator image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./bnk-operator
+          target: runtime
+          tags: bnk-forge-operator:latest
+          load: true
+          cache-from: type=gha,scope=operator
+          cache-to: type=gha,mode=max,scope=operator
+      - name: Check image sizes
+        run: |
+          echo "## Docker Image Sizes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Size | Threshold | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|------|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          check_size() {
+            local image=$1 max_mb=$2
+            local size_bytes=$(docker image inspect "$image" --format='{{.Size}}')
+            local size_mb=$((size_bytes / 1048576))
+            if [ "$size_mb" -gt "$max_mb" ]; then
+              echo "| $image | ${size_mb}MB | ${max_mb}MB | OVER |" >> $GITHUB_STEP_SUMMARY
+              echo "::error::$image is ${size_mb}MB (max: ${max_mb}MB)"
+              return 1
+            else
+              echo "| $image | ${size_mb}MB | ${max_mb}MB | OK |" >> $GITHUB_STEP_SUMMARY
+              return 0
+            fi
+          }
+
+          failed=0
+          check_size "bnk-forge-api:latest" 600 || failed=1
+          check_size "bnk-forge-worker:latest" 1200 || failed=1
+          check_size "bnk-forge-beat:latest" 600 || failed=1
+          check_size "bnk-forge-frontend:latest" 100 || failed=1
+
+          if [ "$failed" = "1" ]; then
+            echo ""
+            echo "::error::One or more images exceed size thresholds"
+            exit 1
+          fi
+          echo ""
+          echo "All images within size thresholds" >> $GITHUB_STEP_SUMMARY
+      # Slice D / #300: scan all 7 images with the pinned Trivy container (aquasec/trivy:0.62.1).
+      # No CLI install step — the container scans the loaded images via the docker socket, which
+      # avoids the fragile `curl | sh` installer and pins Trivy by image tag.
+      # CRITICAL hard-gates (merge-blocking); HIGH is reported non-blocking — the ~246 HIGH are
+      # almost all unfixable Go-stdlib/base CVEs bundled in helm/kubectl/opentofu (see #300).
+      - name: "Trivy scan — CRITICAL gate + HIGH report"
+        run: |
+          docker volume create trivy-cache >/dev/null
+          run_trivy() {
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-cache:/root/.cache/trivy \
+              -v "$PWD/.trivyignore:/.trivyignore:ro" \
+              aquasec/trivy:0.62.1 image \
+              --ignorefile /.trivyignore --scanners vuln --quiet "$@"
+          }
+          {
+            echo "## Trivy findings"
+            echo ""
+            echo "CRITICAL hard-gates the merge; HIGH is reported, not gated — mostly unfixable"
+            echo "Go-stdlib/base CVEs in helm/kubectl/opentofu (see #300)."
+            echo ""
+            echo "| Image | HIGH |"
+            echo "|-------|------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for image in \
+            bnk-forge-api:latest \
+            bnk-forge-worker:latest \
+            bnk-forge-beat:latest \
+            bnk-forge-frontend:latest \
+            bnk-forge-proxy:latest \
+            bnk-forge-mcp:latest \
+            bnk-forge-operator:latest; do
+            echo "::group::Trivy $image"
+            # GATE: rely on Trivy's own exit code for CRITICAL — no JSON parsing (Trivy's JSON
+            # embeds unescaped control chars in CVE text that break strict parsers).
+            if ! run_trivy --severity CRITICAL --exit-code 1 "$image"; then
+              echo "::error::Trivy found CRITICAL CVE(s) in $image"
+              failed=1
+            fi
+            # REPORT (non-blocking): dump the HIGH table to the log and count for the summary.
+            run_trivy --severity HIGH --exit-code 0 --format table "$image" || true
+            high=$(run_trivy --severity HIGH --exit-code 0 --format json "$image" 2>/dev/null \
+              | python3 -c "import json,sys; d=json.loads(sys.stdin.read(), strict=False); print(sum(1 for r in (d.get('Results') or []) for v in (r.get('Vulnerabilities') or []) if v.get('Severity')=='HIGH'))" 2>/dev/null \
+              || echo "see log")
+            echo "| \`$image\` | $high |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+          done
+          if [ "$failed" = "1" ]; then
+            echo "::error::One or more images have CRITICAL CVEs — blocking merge"
+            exit 1
+          fi
+          echo "CRITICAL gate PASSED — no CRITICAL CVEs across all 7 images"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CI GATE — The single merge-blocking status check.
+  # Configure branch protection to require "CI Gate" to pass.
+  # No separate gate jobs — this one job checks all upstream results.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  ci-gate:
+    name: "CI Gate"
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - changes
+      # Phase 1
+      - lint-backend
+      - lint-frontend
+      - typecheck-backend
+      - openapi-check
+      - typecheck-frontend
+      - unit-tests-backend
+      - unit-tests-frontend
+      - unit-tests-operator
+      - contract-tests
+      - artifact-network-self-test
+      # Phase 2
+      - component-tests-backend
+      - legacy-tests-backend
+      - proxy-validation
+      - db-migration-check
+      - migration-roundtrip
+      - frontend-build
+      # Phase 3
+      - integration-tests-backend
+      # Phase 4
+      - security-audit
+      - docker-build
+    steps:
+      - name: CI Gate Decision
+        run: |
+          echo "CI Gate Evaluation"
+          echo "==================="
+
+          # Collect all job results (skipped jobs are OK — they were filtered by path)
+          failed=false
+          for job in \
+            "lint-backend:${{ needs.lint-backend.result }}" \
+            "lint-frontend:${{ needs.lint-frontend.result }}" \
+            "typecheck-backend:${{ needs.typecheck-backend.result }}" \
+            "openapi-check:${{ needs.openapi-check.result }}" \
+            "typecheck-frontend:${{ needs.typecheck-frontend.result }}" \
+            "unit-tests-backend:${{ needs.unit-tests-backend.result }}" \
+            "unit-tests-frontend:${{ needs.unit-tests-frontend.result }}" \
+            "unit-tests-operator:${{ needs.unit-tests-operator.result }}" \
+            "contract-tests:${{ needs.contract-tests.result }}" \
+            "artifact-network-self-test:${{ needs.artifact-network-self-test.result }}" \
+            "component-tests:${{ needs.component-tests-backend.result }}" \
+            "legacy-tests:${{ needs.legacy-tests-backend.result }}" \
+            "proxy-validation:${{ needs.proxy-validation.result }}" \
+            "db-migration:${{ needs.db-migration-check.result }}" \
+            "migration-roundtrip:${{ needs.migration-roundtrip.result }}" \
+            "frontend-build:${{ needs.frontend-build.result }}" \
+            "integration-tests:${{ needs.integration-tests-backend.result }}" \
+            "security-audit:${{ needs.security-audit.result }}" \
+            "docker-build:${{ needs.docker-build.result }}" \
+          ; do
+            name="${job%%:*}"
+            result="${job##*:}"
+            # 'success' and 'skipped' are both acceptable
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::$name: $result"
+              failed=true
+            else
+              echo "$name: $result"
+            fi
+          done
+
+          if [ "$failed" = "true" ]; then
+            echo ""
+            echo "::error::CI Gate FAILED — one or more jobs did not pass"
+            exit 1
+          fi
+
+          echo ""
+          echo "CI Gate PASSED — all jobs green (or skipped by path filter)"

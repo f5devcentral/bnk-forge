@@ -1,0 +1,28 @@
+{
+  "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile",
+  "@odata.type": "#NvidiaSystemConfigProfile.v1_0_0.NvidiaSystemConfigProfile",
+  "Actions": {
+    "#NvidiaSystemConfigProfile.FactoryReset": {
+      "target": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Actions/SystemConfigProfile.FactoryReset"
+    },
+    "#NvidiaSystemConfigProfile.Update": {
+      "target": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Actions/SystemConfigProfile.Update"
+    }
+  },
+  "Id": "SystemConfigProfile",
+  "Name": "Nvidia System configuration Profile",
+  "Profiles": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Profiles"
+  },
+  "Status": {
+    "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Status"
+  },
+  "Truststore": {
+    "NvidiaCertificates": {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Truststore/NvidiaCertificates"
+    },
+    "OemCertificates": {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/Oem/Nvidia/SystemConfigProfile/Truststore/OemCertificates"
+    }
+  }
+}

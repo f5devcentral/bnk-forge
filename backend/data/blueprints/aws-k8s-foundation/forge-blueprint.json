@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "aws-k8s-foundation",
+    "version": "1.0.1",
+    "name": "AWS EKS Cluster",
+    "description": "Provisions AWS VPC, IAM, and an EKS cluster with optional high-performance nodes for BNK. Use this first, then deploy BNK Platform on top."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "aws",
+  "icon": "server-stack",
+  "color": "blue",
+  "estimated_time": "20-25 minutes",
+  "estimated_cost": "$50-100/month",
+  "difficulty": "intermediate",
+  "maturity": "beta",
+  "bnk_version": null,
+  "tags": [
+    "kubernetes",
+    "aws",
+    "production",
+    "foundation"
+  ],
+  "outcomes": [
+    "VPC with public and private subnets across two AZs",
+    "EKS cluster with configurable node count and instance type",
+    "IAM roles for EKS cluster and worker nodes",
+    "Optional EBS CSI driver for persistent storage",
+    "Optional high-performance nodes with SR-IOV for BNK"
+  ],
+  "prerequisites": [],
+  "variable_templates": {},
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "infra-aws-vpc",
+      "module": "infra/aws/vpc",
+      "version": "1.0.0",
+      "name": "VPC",
+      "inputs": {
+        "vpc_cidr": "10.0.0.0/16",
+        "public_subnet_cidr": "10.0.1.0/24",
+        "private_external_subnet_a_cidr": "10.0.10.0/24",
+        "private_external_subnet_b_cidr": "10.0.11.0/24",
+        "private_internal_subnet_a_cidr": "10.0.20.0/24",
+        "private_internal_subnet_b_cidr": "10.0.21.0/24"
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "infra-aws-security",
+      "module": "infra/aws/security",
+      "version": "1.0.0",
+      "name": "Security",
+      "inputs": {
+        "enable_eks_cluster_role": true,
+        "enable_eks_node_role": true
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "infra-aws-eks",
+      "module": "infra/aws/eks",
+      "version": "1.0.0",
+      "name": "EKS Cluster",
+      "inputs": {
+        "kubernetes_version": "1.31",
+        "node_count": 3,
+        "instance_type": "t3.large"
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "infra-aws-storage",
+      "module": "infra/aws/storage",
+      "version": "1.0.0",
+      "name": "Storage (EBS CSI)",
+      "inputs": {
+        "enable_ebs_csi": true
+      },
+      "optional": true,
+      "depends_on": []
+    },
+    {
+      "id": "infra-aws-high-performance-nodes",
+      "module": "infra/aws/high-performance-nodes",
+      "version": "2.1.0",
+      "name": "High-Performance Nodes",
+      "inputs": {
+        "node_count": 2,
+        "instance_type": "c5n.4xlarge",
+        "f5_bnk_enabled": true,
+        "tmm_node_count": 1
+      },
+      "optional": true,
+      "depends_on": [],
+      "description": "DPDK/SR-IOV enabled nodes for BNK TMM and control plane workloads"
+    }
+  ],
+  "is_featured": true
+}

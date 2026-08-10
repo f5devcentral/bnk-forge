@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "bnk-bare-metal-dpu-infra",
+    "version": "1.0.0",
+    "name": "DPU Infrastructure (BlueField)",
+    "description": "Flashes a BlueField DPU and bootstraps a single-node K8s cluster on a bare-metal host. Deploy BNK Platform separately as Step 2."
+  },
+  "category": "bare-metal",
+  "cloud_provider": null,
+  "icon": "cpu",
+  "color": "orange",
+  "estimated_time": "20-30 minutes",
+  "estimated_cost": "N/A (bare-metal)",
+  "difficulty": "intermediate",
+  "maturity": "beta",
+  "bnk_version": null,
+  "tags": [
+    "bare-metal",
+    "dpu",
+    "bluefield",
+    "k8s",
+    "infrastructure"
+  ],
+  "outcomes": [
+    "BlueField DPU flashed with target DOCA/BFB image",
+    "Single-node K8s cluster bootstrapped on host",
+    "DPU joined as worker node with TMM labels and taints",
+    "Cluster auto-registered in BNK Forge for platform deployment"
+  ],
+  "prerequisites": [
+    {
+      "type": "bare_metal_host",
+      "description": "Registered bare-metal host with SSH access, BlueField DPU, and completed discovery"
+    }
+  ],
+  "variable_templates": {
+    "bare_metal_host_id": {
+      "label": "Bare-Metal Host",
+      "type": "number",
+      "required": true,
+      "description": "Registered bare-metal host with SSH access and BlueField DPU"
+    },
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "required": true,
+      "description": "Name for the K8s cluster (auto-registered in BNK Forge after kubeadm init)"
+    },
+    "runc_version": {
+      "label": "Runc Version",
+      "type": "string",
+      "default": "1.2.1",
+      "required": false,
+      "description": "Runc version to install on DPU"
+    },
+    "containerd_version": {
+      "label": "Containerd Version",
+      "type": "string",
+      "default": "1.7.23",
+      "required": false,
+      "description": "Containerd version to install on DPU"
+    },
+    "k8s_version": {
+      "label": "Kubernetes Version",
+      "type": "string",
+      "default": "1.29",
+      "required": false,
+      "description": "Kubernetes version (major.minor) for kubeadm/kubelet/kubectl"
+    },
+    "pause_image_tag": {
+      "label": "Pause Image Tag",
+      "type": "string",
+      "default": "3.10",
+      "required": false,
+      "description": "K8s pause container image tag"
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "bare-metal-probe-dpu",
+      "module": "bare-metal/probe-dpu",
+      "version": "2.0.0",
+      "name": "Probe DPU State",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-set-nic-mode",
+      "module": "bare-metal/set-nic-mode",
+      "version": "1.0.0",
+      "name": "Set NIC Mode (mlxconfig)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Set BlueField to DPU mode via mlxconfig. Idempotent \u2014 safe to run even if already in DPU mode."
+    },
+    {
+      "id": "bare-metal-reboot-host",
+      "module": "bare-metal/reboot-host",
+      "version": "1.0.0",
+      "name": "Reboot Host (if needed)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-flash-dpu",
+      "module": "bare-metal/flash-dpu",
+      "version": "1.0.0",
+      "name": "Flash DPU (BFB)",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-wait-dpu-ready",
+      "module": "bare-metal/wait-dpu-ready",
+      "version": "1.0.0",
+      "name": "Wait DPU Ready",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-setup-dpu-networking",
+      "module": "bare-metal/setup-dpu-networking",
+      "version": "1.0.0",
+      "name": "Setup DPU Networking",
+      "inputs": {},
+      "optional": false,
+      "depends_on": [],
+      "description": "Configure NAT on host and routing/DNS on DPU for internet access"
+    },
+    {
+      "id": "bare-metal-install-dpu-prereqs",
+      "module": "bare-metal/install-dpu-prereqs",
+      "version": "1.0.0",
+      "name": "Install DPU Prerequisites",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-k8s-prereqs",
+      "module": "bare-metal/install-k8s-prereqs",
+      "version": "1.0.0",
+      "name": "Install K8s Prerequisites",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-kubeadm-init",
+      "module": "bare-metal/kubeadm-init",
+      "version": "1.0.0",
+      "name": "Initialize K8s Cluster",
+      "inputs": {
+        "cluster_name": "",
+        "pod_cidr": "10.244.0.0/16",
+        "service_cidr": "10.96.0.0/12"
+      },
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-cni",
+      "module": "bare-metal/install-cni",
+      "version": "1.0.0",
+      "name": "Install Calico CNI",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-multus",
+      "module": "bare-metal/install-multus",
+      "version": "1.0.0",
+      "name": "Install Multus CNI",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-gateway-api",
+      "module": "bare-metal/install-gateway-api",
+      "version": "1.0.0",
+      "name": "Install Gateway API",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-sriov",
+      "module": "bare-metal/install-sriov",
+      "version": "2.0.0",
+      "name": "Install SR-IOV Operator",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-install-storage",
+      "module": "bare-metal/install-storage",
+      "version": "1.0.0",
+      "name": "Install Storage Provisioner",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-kubeadm-join",
+      "module": "bare-metal/kubeadm-join",
+      "version": "1.0.0",
+      "name": "Join DPU to Cluster",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-label-dpu-node",
+      "module": "bare-metal/label-dpu-node",
+      "version": "1.0.0",
+      "name": "Label DPU Node",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    },
+    {
+      "id": "bare-metal-taint-dpu-node",
+      "module": "bare-metal/taint-dpu-node",
+      "version": "1.0.0",
+      "name": "Taint DPU Node",
+      "inputs": {},
+      "optional": false,
+      "depends_on": []
+    }
+  ],
+  "is_featured": true
+}

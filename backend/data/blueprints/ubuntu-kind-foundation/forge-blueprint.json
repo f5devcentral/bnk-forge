@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "blueprint": {
+    "id": "ubuntu-kind-foundation",
+    "version": "1.0.0",
+    "name": "Kind Dev Cluster (Ubuntu)",
+    "description": "Provisions a kind Kubernetes cluster on Ubuntu for BNK development and testing. Ideal for local dev, CI pipelines, and quick demos."
+  },
+  "category": "infrastructure",
+  "cloud_provider": "any",
+  "icon": "server",
+  "color": "#E95420",
+  "estimated_time": "5-10 minutes",
+  "estimated_cost": "Free (local resources)",
+  "difficulty": "beginner",
+  "maturity": "beta",
+  "bnk_version": null,
+  "tags": [
+    "ubuntu",
+    "kind",
+    "development",
+    "on-prem",
+    "local"
+  ],
+  "outcomes": [
+    "Kind Kubernetes cluster running on Ubuntu",
+    "Kubeconfig ready for BNK module deployment",
+    "Worker nodes configured for BNK data-plane"
+  ],
+  "prerequisites": [
+    {
+      "type": "host",
+      "description": "Ubuntu host with kind, kubectl, and Docker installed"
+    }
+  ],
+  "variable_templates": {
+    "cluster_name": {
+      "label": "Cluster Name",
+      "type": "string",
+      "default": "bnk-dev",
+      "required": true
+    },
+    "worker_nodes": {
+      "label": "Worker Nodes",
+      "type": "number",
+      "default": 2,
+      "required": false
+    }
+  },
+  "inputs": {
+    "required": [],
+    "optional": []
+  },
+  "modules": [
+    {
+      "id": "infra-ubuntu-kind",
+      "module": "infra/ubuntu/kind",
+      "version": "1.0.0",
+      "name": "Kind Cluster",
+      "inputs": {
+        "cluster_name": "bnk-dev",
+        "kubernetes_version": "1.29.2",
+        "worker_nodes": 2
+      },
+      "optional": false,
+      "depends_on": [],
+      "description": "Provisions a kind cluster with configurable worker nodes"
+    }
+  ],
+  "is_featured": false
+}

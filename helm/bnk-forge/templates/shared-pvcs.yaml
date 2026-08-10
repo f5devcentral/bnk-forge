@@ -1,0 +1,21 @@
+{{- $fullname := include "bnk-forge.fullname" . -}}
+{{- $sc := include "bnk-forge.sharedStorageClass" . -}}
+{{- range $k, $v := .Values.sharedVolumes }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-{{ kebabcase $k }}
+  labels:
+    {{- include "bnk-forge.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: shared-state
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ $v.size }}
+  {{- if $sc }}
+  storageClassName: {{ $sc | quote }}
+  {{- end }}
+{{- end }}

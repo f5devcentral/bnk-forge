@@ -1,0 +1,28 @@
+{
+  "@odata.id": "/redfish/v1/UpdateService/FirmwareInventory/DPU_ATF",
+  "@odata.type": "#SoftwareInventory.v1_4_0.SoftwareInventory",
+  "Description": "FW inventory software of DPU",
+  "Id": "DPU_ATF",
+  "Members@odata.count": 1,
+  "Name": "ATF image",
+  "Oem": {
+    "Nvidia": {
+      "@odata.type": "#NvidiaSoftwareInventory.v1_2_0.NvidiaSoftwareInventory",
+      "StageOnlyUpdateOptionSupported": false
+    }
+  },
+  "RelatedItem": [
+    {
+      "@odata.id": "/redfish/v1/Systems/Bluefield/Bios"
+    }
+  ],
+  "SoftwareId": "0",
+  "Status": {
+    "Conditions": [],
+    "Health": "OK",
+    "HealthRollup": "OK",
+    "State": "Enabled"
+  },
+  "Updateable": false,
+  "Version": "v2.2(release):4.13.1-0-g5fcb148df"
+}

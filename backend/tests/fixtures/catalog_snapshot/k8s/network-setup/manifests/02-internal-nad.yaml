@@ -1,0 +1,11 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: ${internal_nad_name}
+  namespace: ${namespace}
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: ${internal_resource_name}
+  labels:
+    app.kubernetes.io/managed-by: bnk-forge
+spec:
+  config: '{"type":"${cni_type}","cniVersion":"0.3.1","name":"internal-network"}'

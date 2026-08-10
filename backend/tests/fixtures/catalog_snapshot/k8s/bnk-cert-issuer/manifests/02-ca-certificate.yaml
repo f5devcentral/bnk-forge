@@ -1,0 +1,21 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${ca_certificate_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/managed-by: bnk-forge
+    app.kubernetes.io/part-of: bnk
+spec:
+  isCA: true
+  commonName: bnk-ca
+  secretName: ${ca_secret_name}
+  duration: ${ca_duration}
+  renewBefore: ${ca_renew_before}
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: ${self_signed_cluster_issuer_name}
+    kind: ClusterIssuer
+    group: cert-manager.io

@@ -1,0 +1,11 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ${gatewayclass_name}
+  labels:
+    app.kubernetes.io/name: bnk-gatewayclass
+    app.kubernetes.io/component: gateway-api
+    app.kubernetes.io/managed-by: bnk-forge
+spec:
+  controllerName: ${controller_name}
+  description: ${description}

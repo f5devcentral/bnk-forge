@@ -1,0 +1,142 @@
+# BNK Operator Helm Values
+# Required: controlPlane.url and controlPlane.token
+
+# Control plane connection
+controlPlane:
+  # BNK-Forge URL (required)
+  # WebSocket mode: wss://bnk-forge.example.com/ws/operator
+  # Polling mode: https://bnk-forge.example.com
+  url: ""
+  # Registration token from BNK-Forge (required)
+  # Generate via: Operators → Connect Cluster in BNK-Forge UI
+  token: ""
+
+# Connectivity mode: "websocket" (default) or "polling"
+# websocket: Persistent outbound WebSocket — lowest latency, requires WS-capable firewall
+# polling:   HTTP polling every N seconds — works through any proxy/firewall
+connectivityMode: websocket
+
+# Polling interval in seconds (only used in polling mode)
+pollIntervalSeconds: 5
+
+# Cluster identification
+clusterName: ""  # Auto-detected if empty
+
+# TLS configuration
+tls:
+  # Skip TLS certificate verification (dev/testing only — DO NOT use in production)
+  insecure: false
+  # Custom CA certificate for self-signed BNK-Forge TLS
+  # If set, creates a volume mount with the CA cert at /etc/ssl/certs/bnk-forge-ca.pem
+  caCert: ""
+  # Alternatively, reference an existing Secret containing the CA cert
+  existingCaSecret: ""
+  existingCaSecretKey: "ca.crt"
+
+# CWC mTLS client certs (K8S-UX-010)
+# After running cwc_setup_certs, enable this to mount the client cert
+# so the operator can communicate with the CWC REST API for QKView + licensing.
+cwc:
+  enabled: false
+  # Name of the cert-manager-managed secret containing the client cert
+  certSecret: bnk-forge-cwc-client-tls
+  # Mount path inside the operator container
+  mountPath: /certs/cwc
+
+# Operator image
+image:
+  repository: f5/bnk-operator
+  tag: "1.2.0"
+  pullPolicy: IfNotPresent
+
+# Image pull secrets (if using private registry)
+imagePullSecrets: []
+
+# Resource limits
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Pod configuration
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Service account
+serviceAccount:
+  create: true
+  name: bnk-operator
+  annotations: {}
+
+# RBAC
+rbac:
+  create: true
+
+# Health server
+healthPort: 8080
+
+# Logging
+logLevel: INFO
+# Log format: "text" (default) or "json" for structured logging
+logFormat: text
+
+# Health check intervals (seconds)
+healthCheckInterval: 30
+healthFullReportInterval: 300
+
+# Prometheus monitoring
+metrics:
+  # Enable Service + ServiceMonitor for Prometheus scraping
+  enabled: false
+  # ServiceMonitor interval
+  interval: 30s
+  # Additional ServiceMonitor labels (for Prometheus operator selector)
+  serviceMonitorLabels: {}
+
+# PodDisruptionBudget — ensures operator stays available during node maintenance
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1  # Not applicable for single-replica
+  maxUnavailable: 0  # Prevent voluntary disruption
+
+# NetworkPolicy — restrict egress to BNK-Forge + K8s API only
+networkPolicy:
+  enabled: false
+  # Additional egress rules (e.g., for DNS, registries)
+  additionalEgress: []
+
+# In-cluster LLM metrics collection (D-018 P5)
+# When enabled, the operator periodically scrapes vLLM /metrics from backend
+# pods directly (in-cluster pod IP, not via API-server proxy) and pushes the
+# result to BNK-Forge over the existing WebSocket/polling channel.
+# When networkPolicy.enabled is also true, ports 8080 and 9100 are opened in
+# the egress rules automatically.  Use networkPolicy.additionalEgress for
+# non-standard metrics ports.
+llmMetrics:
+  enabled: false
+  # Scrape interval in seconds (minimum 15).
+  intervalSeconds: 30
+
+# Additional environment variables
+extraEnv: []
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

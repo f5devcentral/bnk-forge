@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNK Forge &mdash; Install Guide</title>
+<style>
+  :root{--f5red:#E4002B;--f5red-d:#b80023;--ink:#1b1f24;--ink2:#3a424b;--mut:#69727c;
+        --bg:#f4f5f7;--card:#fff;--bd:#e2e5e9;--link:#0a6ed1;
+        --ship:#1a8a4b;--block:#c5221f;--warn:#7a4f00;--warn-bg:#fff8e6;--warn-bd:#e8a800;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.62 "Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;}
+  a{color:var(--link);text-decoration:none;} a:hover{text-decoration:underline;}
+
+  /* ── Header ── */
+  header{background:var(--ink);border-bottom:3px solid var(--f5red);color:#fff;padding:22px 40px 20px;}
+  .brand{display:flex;align-items:center;gap:14px;}
+  .f5mark{background:var(--f5red);color:#fff;font-weight:800;font-size:18px;padding:6px 10px;border-radius:3px;line-height:1;}
+  h1{margin:0;font-size:21px;font-weight:600;}
+  .sub{color:#aeb6bf;font-size:12.5px;margin-top:3px;}
+
+  /* ── Main layout ── */
+  main{max-width:960px;margin:0 auto;padding:24px 40px 70px;}
+
+  /* ── Section headings ── */
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:1.1px;color:var(--ink2);font-weight:700;
+     margin:40px 0 14px;padding-left:11px;border-left:4px solid var(--f5red);}
+  h3{font-size:14px;font-weight:600;color:var(--ink);margin:20px 0 8px;}
+
+  /* ── Intro card ── */
+  .intro{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:18px 22px;
+         margin-bottom:24px;box-shadow:0 1px 2px rgba(20,30,40,.04);font-size:14.5px;line-height:1.7;}
+
+  /* ── Step cards (numbered list) ── */
+  ol.steps{padding-left:0;list-style:none;counter-reset:s;}
+  ol.steps li{position:relative;margin:14px 0;padding:14px 18px 14px 56px;
+              background:var(--card);border:1px solid var(--bd);border-radius:6px;
+              box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  ol.steps li::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
+                      background:var(--f5red);color:#fff;font-weight:700;width:26px;height:26px;
+                      border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:13px;}
+  ol.steps li p{margin:4px 0;}
+  ol.steps li p:first-child{margin-top:0;}
+  ol.steps li p:last-child{margin-bottom:0;}
+
+  /* ── Prerequisites list ── */
+  ul.prereqs{list-style:none;padding:0;margin:0;}
+  ul.prereqs li{padding:8px 12px 8px 30px;margin:6px 0;background:var(--card);border:1px solid var(--bd);
+                border-radius:5px;position:relative;font-size:13.5px;}
+  ul.prereqs li::before{content:"✓";position:absolute;left:10px;color:var(--ship);font-weight:700;}
+
+  /* ── Troubleshooting list ── */
+  ul.trouble{list-style:none;padding:0;margin:0;}
+  ul.trouble li{padding:10px 14px 10px 14px;margin:8px 0;background:var(--card);border:1px solid var(--bd);
+                border-left:4px solid var(--f5red);border-radius:0 6px 6px 0;font-size:13.5px;}
+  ul.trouble li b{display:block;margin-bottom:3px;}
+
+  /* ── Code blocks ── */
+  pre{background:#1b1f24;color:#e8ecf0;border-radius:6px;padding:14px 18px;margin:10px 0;
+      font-size:13px;line-height:1.55;overflow-x:auto;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;}
+  pre .comment{color:#6a737d;}
+  pre .prompt{color:#6a9fb5;user-select:none;}
+  code{background:#eef0f2;border:1px solid var(--bd);border-radius:3px;padding:1px 5px;
+       font-size:12.5px;color:var(--ink2);font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;}
+
+  /* ── Callout: credentials (red left border) ── */
+  .callout-cred{background:#fff5f5;border-left:4px solid var(--f5red);border-radius:0 6px 6px 0;
+                padding:14px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(20,30,40,.04);}
+  .callout-cred .callout-title{font-weight:700;color:var(--f5red);font-size:13px;
+                                text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
+
+  /* ── Callout: warning (amber) ── */
+  .callout-warn{background:var(--warn-bg);border-left:4px solid var(--warn-bd);border-radius:0 6px 6px 0;
+                padding:14px 18px;margin:14px 0;color:var(--warn);}
+  .callout-warn .callout-title{font-weight:700;font-size:13px;text-transform:uppercase;
+                                letter-spacing:.6px;margin-bottom:6px;}
+
+  /* ── Callout: info (blue accent) ── */
+  .callout-info{background:#f0f6ff;border-left:4px solid var(--link);border-radius:0 6px 6px 0;
+                padding:14px 18px;margin:14px 0;}
+  .callout-info .callout-title{font-weight:700;color:var(--link);font-size:13px;
+                                text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
+
+  /* ── Table ── */
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--bd);padding:9px 13px;text-align:left;vertical-align:top;}
+  th{background:#f0f2f4;color:var(--mut);text-transform:uppercase;font-size:11px;letter-spacing:.5px;}
+  td code{font-size:12px;}
+
+  /* ── Expected output (lighter box) ── */
+  .expected{background:#f0f6f0;border:1px solid #bce1c4;border-radius:5px;padding:9px 14px;
+            margin:8px 0;font-size:12.5px;color:var(--ship);
+            font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;}
+
+  /* ── Footer ── */
+  footer{max-width:960px;margin:0 auto;color:var(--mut);font-size:12px;
+         padding:18px 40px 40px;border-top:1px solid var(--bd);}
+
+  /* ── Print ── */
+  @media print{
+    header{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    pre{white-space:pre-wrap;word-break:break-all;}
+    .callout-cred,.callout-warn,.callout-info{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    body{font-size:13px;}
+    main{padding:10px 20px 30px;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="f5mark">F5</span>
+    <div>
+      <h1>BNK Forge &mdash; Install Guide</h1>
+      <div class="sub">Private registry edition &nbsp;|&nbsp; customer-build distribution &nbsp;|&nbsp; registry: ghcr.io/jlcode-tech</div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Intro ── -->
+  <div class="intro">
+    This guide walks you through installing BNK Forge from the private GitHub Container Registry.
+    You will authenticate to the registry using the read-only bot credential you were provided,
+    download the install package, make a small configuration change, and run a single script.
+    The entire process takes under ten minutes on a fast connection; the first image pull may
+    take a few minutes depending on bandwidth.
+  </div>
+
+  <!-- ── Prerequisites ── -->
+  <h2>Prerequisites</h2>
+  <ul class="prereqs">
+    <li><b>Docker Engine 24+</b> — on macOS or Windows, Docker Desktop satisfies both this and the Compose requirement.</li>
+    <li><b>Docker Compose v2 (≥ 2.24)</b> — verify with <code>docker compose version</code>.</li>
+    <li><b>Read-access token</b> — the <code>&lt;READ_TOKEN&gt;</code> provided to you separately (see Step 1).</li>
+    <li><b>~5–10 GB free disk space</b> — for images and persistent data volumes.</li>
+    <li><b>Network access to <code>ghcr.io</code></b> — outbound HTTPS (port 443) must be allowed.</li>
+  </ul>
+
+  <!-- ── Step 1 ── -->
+  <h2>Step 1 &mdash; Authenticate to the registry</h2>
+
+  <div class="callout-cred">
+    <div class="callout-title">Credentials — handle with care</div>
+    Your read-access token is provided separately (out-of-band). It is a GitHub PAT scoped to
+    <code>read:packages</code> for the <code>ghcr.io/jlcode-tech</code> registry.
+    <b>Do not share it, commit it to version control, or embed it in scripts.</b>
+    If you believe the token has been exposed, contact the person who gave it to you immediately.
+  </div>
+
+  <p>Run the following command, replacing <code>&lt;READ_TOKEN&gt;</code> with the token you received.
+     The bot username is fixed — use it exactly as shown:</p>
+
+  <pre><span class="prompt">$ </span>echo '<span style="color:#f97316">&lt;READ_TOKEN&gt;</span>' | docker login ghcr.io -u jlcode-forgebot --password-stdin</pre>
+
+  <p>Expected output:</p>
+  <div class="expected">Login Succeeded</div>
+
+  <div class="callout-info">
+    <div class="callout-title">Token stays cached</div>
+    Docker stores the credential in your OS keychain (or <code>~/.docker/config.json</code>).
+    You only need to log in once per machine. If you later see a <code>denied</code> or
+    <code>unauthorized</code> error during a pull, re-run the command above — the token may have been
+    rotated. See the Troubleshooting section for details.
+  </div>
+
+  <!-- ── Step 2 ── -->
+  <h2>Step 2 &mdash; Download &amp; extract the package</h2>
+
+  <p>You should have received a <code>bnk-forge-&lt;version&gt;.tar.gz</code> archive alongside this
+     guide. Save it to a convenient location, then extract it:</p>
+
+  <pre><span class="prompt">$ </span>tar xzf bnk-forge-&lt;version&gt;.tar.gz
+<span class="prompt">$ </span>cd bnk-forge-&lt;version&gt;</pre>
+
+  <p>All subsequent commands are run from inside this directory.</p>
+
+  <!-- ── Step 3 ── -->
+  <h2>Step 3 &mdash; Configure</h2>
+
+  <p>Copy the example environment file and open it in your editor:</p>
+
+  <pre><span class="prompt">$ </span>cp .env.example .env
+<span class="prompt">$ </span>nano .env   <span class="comment"># or: vim .env / code .env</span></pre>
+
+  <p>Set (or confirm) the following values:</p>
+
+  <table>
+    <tr>
+      <th>Variable</th>
+      <th>Value to set</th>
+      <th>Notes</th>
+    </tr>
+    <tr>
+      <td><code>BNK_FORGE_REGISTRY</code></td>
+      <td><code>ghcr.io/jlcode-tech</code></td>
+      <td>Points to the private registry.</td>
+    </tr>
+    <tr>
+      <td><code>BNK_FORGE_VERSION</code></td>
+      <td><code>customer-build</code></td>
+      <td>Rolling latest build. To pin a specific build, use a tag like <code>3.0.1-cb.&lt;sha&gt;</code>.</td>
+    </tr>
+    <tr>
+      <td><code>POSTGRES_PASSWORD</code></td>
+      <td><em>your choice</em></td>
+      <td><b>Change from the default.</b> Used for the internal database.</td>
+    </tr>
+    <tr>
+      <td><code>REDIS_PASSWORD</code></td>
+      <td><em>your choice</em></td>
+      <td><b>Change from the default.</b> Used for the internal cache/queue.</td>
+    </tr>
+    <tr>
+      <td><code>MCP_PASSWORD</code></td>
+      <td><em>your choice</em></td>
+      <td><b>Change from the default.</b> Used by the MCP integration layer.</td>
+    </tr>
+  </table>
+
+  <div class="callout-warn">
+    <div class="callout-title">Change all three passwords</div>
+    The defaults in <code>.env.example</code> are well-known placeholders.
+    Replace <code>POSTGRES_PASSWORD</code>, <code>REDIS_PASSWORD</code>, and <code>MCP_PASSWORD</code>
+    before running the installer — they cannot be changed easily after the stack first starts.
+  </div>
+
+  <!-- ── Step 4 ── -->
+  <h2>Step 4 &mdash; Install</h2>
+
+  <p>Run the installer for your platform. It will pull the images and bring the full stack up.
+     The first run may take a few minutes while images download.</p>
+
+  <table>
+    <tr>
+      <th>Platform</th>
+      <th>Command</th>
+    </tr>
+    <tr>
+      <td><b>macOS / Windows</b><br><small>(Docker Desktop)</small></td>
+      <td><pre style="margin:4px 0;"><span class="prompt">$ </span>./install.sh --local</pre></td>
+    </tr>
+    <tr>
+      <td><b>Linux server</b></td>
+      <td><pre style="margin:4px 0;"><span class="prompt">$ </span>./install.sh</pre></td>
+    </tr>
+  </table>
+
+  <p>When the installer finishes you will see:</p>
+  <div class="expected">✅ Installation complete!</div>
+
+  <!-- ── Step 5 ── -->
+  <h2>Step 5 &mdash; First login</h2>
+
+  <ol class="steps">
+    <li>
+      <p><b>Open the UI.</b><br>
+         Local install: <code>https://localhost</code><br>
+         Server install: <code>https://&lt;server-ip&gt;</code></p>
+    </li>
+    <li>
+      <p><b>Accept the self-signed certificate warning.</b><br>
+         BNK Forge ships with a self-signed TLS certificate for initial setup. Your browser will
+         show a security warning — click "Advanced" → "Proceed" (Chrome/Edge) or "Accept the Risk and Continue"
+         (Firefox). This is expected.</p>
+    </li>
+    <li>
+      <p><b>Log in with the default credentials:</b><br>
+         Username: <code>admin</code> &nbsp;/&nbsp; Password: <code>changeme</code></p>
+      <div class="callout-warn">
+        <div class="callout-title">Change the admin password immediately</div>
+        The default password is well-known. Go to <b>User menu → Change Password</b> as your
+        very first action after login.
+      </div>
+    </li>
+    <li>
+      <p><b>Sync the Module Library.</b><br>
+         Navigate to <b>System → Module Library → Sync Modules</b> to pull the current module
+         catalogue from the registry.</p>
+    </li>
+    <li>
+      <p><b>Create your first project.</b><br>
+         Navigate to <b>Build → Projects → New Project</b> to get started.</p>
+    </li>
+  </ol>
+
+  <!-- ── Verify ── -->
+  <h2>Verify the stack is healthy</h2>
+
+  <p>All services should show <code>healthy</code> in the Compose status output.</p>
+
+  <p><b>Linux / server install:</b></p>
+  <pre><span class="prompt">$ </span>docker compose ps</pre>
+
+  <p><b>macOS / Windows (local mode):</b></p>
+  <pre><span class="prompt">$ </span>docker compose -f docker-compose.yml -f docker-compose.local.yml ps</pre>
+
+  <p>Every row in the <code>STATUS</code> column should read <code>healthy</code>.
+     If any service is <code>starting</code>, wait 30 seconds and re-run — the backend performs a
+     database migration on first start that takes a moment.</p>
+
+  <div class="callout-info">
+    <div class="callout-title">Logs shortcut</div>
+    To follow all service logs in real time: <code>docker compose logs -f</code>
+  </div>
+
+  <!-- ── Updating ── -->
+  <h2>Updating to a newer build</h2>
+
+  <p>Because <code>BNK_FORGE_VERSION=customer-build</code> is a rolling tag, updating is simple.
+     From the install directory:</p>
+
+  <pre><span class="comment"># Recommended — uses the installer for any migration steps:</span>
+<span class="prompt">$ </span>./install.sh          <span class="comment"># Linux</span>
+<span class="prompt">$ </span>./install.sh --local  <span class="comment"># macOS / Windows</span>
+
+<span class="comment"># Alternative — manual pull and restart:</span>
+<span class="prompt">$ </span>docker compose pull &amp;&amp; docker compose up -d</pre>
+
+  <p>If you pinned a specific build tag in <code>.env</code>, update <code>BNK_FORGE_VERSION</code>
+     to the new tag before running the command above.</p>
+
+  <!-- ── Uninstall ── -->
+  <h2>Uninstall</h2>
+
+  <pre><span class="prompt">$ </span>./uninstall.sh</pre>
+
+  <p>This stops and removes all containers and networks. Persistent volumes (database, etc.)
+     are retained unless you pass <code>--volumes</code> — see <code>./uninstall.sh --help</code>.</p>
+
+  <!-- ── Troubleshooting ── -->
+  <h2>Troubleshooting</h2>
+
+  <ul class="trouble">
+    <li>
+      <b><code>denied: denied</code> or <code>unauthorized: unauthenticated</code> during pull</b>
+      Your <code>docker login</code> session has lapsed, or the token does not have the
+      <code>read:packages</code> scope. Re-run Step 1 with your current token.
+      If the problem persists, contact the person who issued the token.
+    </li>
+    <li>
+      <b>Backend service not <code>healthy</code></b>
+      Inspect the backend logs:
+      <pre style="margin:8px 0;"><span class="prompt">$ </span>docker logs bnk-forge-backend --tail 80</pre>
+      Common causes: wrong <code>POSTGRES_PASSWORD</code> in <code>.env</code> (must match what the
+      database was initialised with), or a database migration that needs a moment to complete.
+    </li>
+    <li>
+      <b>Port already in use (<code>443</code>, <code>8000</code>, <code>8080</code>, <code>5432</code>, <code>6379</code>)</b>
+      Stop the conflicting service, or adjust the port mappings in your <code>.env</code> file
+      before running the installer. Common conflicts: a local PostgreSQL (<code>5432</code>),
+      a local Redis (<code>6379</code>), or another reverse proxy on <code>443</code>/<code>8080</code>.
+    </li>
+  </ul>
+
+</main>
+
+<footer>
+  BNK Forge install guide &mdash; generated for customer-build distribution &nbsp;&middot;&nbsp;
+  Registry: <code>ghcr.io/jlcode-tech</code> &nbsp;&middot;&nbsp; Tag: <code>customer-build</code>
+</footer>
+
+</body>
+</html>

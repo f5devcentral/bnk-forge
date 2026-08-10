@@ -1,0 +1,24 @@
+{
+  "name": "bnk-forge-v2-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for BNK-Forge v2",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report",
+    "test:single": "playwright test --grep",
+    "test:no-cleanup": "SKIP_CLEANUP=true playwright test",
+    "test:no-aws": "VERIFY_AWS=false playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.490.0",
+    "@aws-sdk/client-eks": "^3.490.0"
+  }
+}

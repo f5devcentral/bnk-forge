@@ -1,0 +1,195 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  BNK-Forge v2 — E2E Tests (Phase 5)                                        ║
+# ║                                                                             ║
+# ║  These are EXPENSIVE tests that spin up the full Docker Compose stack        ║
+# ║  and run Playwright against the live application.                            ║
+# ║                                                                             ║
+# ║  Triggers:                                                                  ║
+# ║    - Manual (workflow_dispatch) with configurable options                    ║
+# ║    - Nightly at 02:00 UTC                                                   ║
+# ║    - On release tags                                                        ║
+# ║                                                                             ║
+# ║  NOT required for merge — but required for release.                         ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: E2E Tests
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: false
+        default: "local"
+        type: string
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "local"
+        type: choice
+        options:
+          - local       # Docker Compose on runner
+          - staging     # External staging URL
+      base_url:
+        description: "Base URL (only for staging)"
+        required: false
+        default: ""
+        type: string
+      spec_filter:
+        description: "Test filter (glob pattern, e.g. '01-*' or 'smoke')"
+        required: false
+        default: ""
+        type: string
+      headed:
+        description: "Run in headed mode (debug)"
+        required: false
+        default: false
+        type: boolean
+
+  schedule:
+    - cron: "0 2 * * *"  # Nightly at 02:00 UTC
+
+  push:
+    tags:
+      - "v*"  # Run on release tags
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # ── Check if nightly run is needed (skip if no commits in last 24h) ───────
+  check-changes:
+    name: "Check for recent changes"
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || true  # always run; schedule check is below
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check for commits in last 24 hours
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          RECENT=$(git log --since="24 hours ago" --oneline | head -1)
+          if [ -z "$RECENT" ]; then
+            echo "No commits in last 24h — skipping nightly E2E"
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          else
+            echo "Recent commits found — running nightly E2E"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
+  # ── Start Application (only for local mode) ────────────────────────────────
+  e2e-tests:
+    name: "P5 · E2E Tests"
+    needs: check-changes
+    if: needs.check-changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ── Start app (local mode) ──────────────────────────────────────────
+      - name: Start application stack
+        if: inputs.environment != 'staging'
+        run: |
+          docker compose up -d
+          echo "Waiting for application to be healthy..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:8000/api/system/health > /dev/null 2>&1; then
+              echo "✅ Application healthy after ${i}s"
+              exit 0
+            fi
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "  Still waiting... (${i}/90s)"
+            fi
+            sleep 1
+          done
+          echo "::error::Application failed to start within 90s"
+          docker compose logs --tail=50
+          exit 1
+
+      # ── Determine base URL ──────────────────────────────────────────────
+      - name: Set base URL
+        id: url
+        run: |
+          if [ "${{ inputs.environment }}" = "staging" ] && [ -n "${{ inputs.base_url }}" ]; then
+            echo "base_url=${{ inputs.base_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "base_url=https://localhost" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Install Playwright ──────────────────────────────────────────────
+      - name: Install E2E dependencies
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      # ── Run E2E Tests ───────────────────────────────────────────────────
+      - name: Run E2E tests
+        working-directory: tests/e2e
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.spec_filter }}" ]; then
+            ARGS="--grep '${{ inputs.spec_filter }}'"
+          fi
+          if [ "${{ inputs.headed }}" = "true" ]; then
+            ARGS="$ARGS --headed"
+          fi
+          npx playwright test $ARGS
+        env:
+          BASE_URL: ${{ steps.url.outputs.base_url }}
+          CI: true
+
+      # ── Upload Results ──────────────────────────────────────────────────
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: tests/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload test traces (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-${{ github.run_id }}
+          path: tests/e2e/test-results/
+          retention-days: 7
+
+      # ── Cleanup ─────────────────────────────────────────────────────────
+      - name: Stop application
+        if: always() && inputs.environment != 'staging'
+        run: docker compose down -v
+
+      # ── Summary ─────────────────────────────────────────────────────────
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## 🎭 E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment || 'local' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base URL | ${{ steps.url.outputs.base_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY

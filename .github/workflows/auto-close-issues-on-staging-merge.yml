@@ -1,0 +1,135 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  BNK-Forge v2 — Auto-close issues on staging merge                          ║
+# ║                                                                            ║
+# ║  WHY: Feature PRs in this repo merge to `staging` (the NON-default branch). ║
+# ║  GitHub's native `Closes #N` / `Fixes #N` auto-close ONLY fires when a PR   ║
+# ║  merges to the DEFAULT branch (`main`). So issues referenced with closing   ║
+# ║  keywords in PRs that merge to `staging` would stay open forever (we have   ║
+# ║  had to close them by hand). This Action replicates the native behaviour    ║
+# ║  for the `staging` base branch.                                            ║
+# ║                                                                            ║
+# ║  SECURITY: Uses `pull_request` (NOT `pull_request_target`) and never        ║
+# ║  checks out or executes PR head code — it only reads the event payload and  ║
+# ║  calls the GitHub API. The default same-repo GITHUB_TOKEN is therefore      ║
+# ║  sufficient and safe (no privileged token exposed to untrusted code).       ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: Auto-close issues on staging merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [staging]
+
+# Least privilege: we only need to comment-and-close issues.
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  close-issues:
+    name: "Close referenced issues"
+    runs-on: ubuntu-latest
+    # Only act on PRs that were actually MERGED (not merely closed/abandoned).
+    if: github.event.pull_request.merged == true
+
+    steps:
+      # ── Parse step ───────────────────────────────────────────────────────────
+      # Done in Python 3 (always present on ubuntu-latest) so the closing-keyword
+      # extraction is portable + testable and does not depend on the local grep
+      # flavour (GNU grep on the runner vs. ugrep on the maintainer's machine).
+      # PR_BODY and REPO are passed via the environment (NOT inline ${{ }}
+      # interpolation) so a malicious / quote-heavy multi-line body cannot break
+      # out of the script.
+      - name: Parse closing-keyword issue references
+        id: parse
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 <<'PY'
+          import os, re
+          body = os.environ.get("PR_BODY") or ""
+          repo = os.environ["REPO"]
+          kw_pat = re.compile(r'(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b')
+          ref_pat = re.compile(r'([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#(\d+)')
+          sep_pat = re.compile(r'[ \t,]+')
+          out=[]; seen=set()
+          for m in kw_pat.finditer(body):
+              i = m.end()
+              i += re.match(r'[:\s]*', body[i:]).end()
+              while True:
+                  r = ref_pat.match(body, i)
+                  if not r:
+                      break
+                  qual, n = r.group(1), r.group(2)
+                  if not (qual and qual != repo) and n not in seen:  # cross-repo reference -> skip
+                      seen.add(n); out.append(n)
+                  i = r.end()
+                  s = sep_pat.match(body, i)
+                  if not s:
+                      break
+                  i = s.end()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("issues=" + " ".join(out) + "\n")
+          print("Parsed closing-keyword issues:", out or "(none)")
+          PY
+
+      # ── Close step ───────────────────────────────────────────────────────────
+      # Idempotent: per-issue state check, never fails the job on a bad/missing
+      # issue. set -uo pipefail (NOT -e) so one bad close does not abort the loop.
+      - name: Close referenced issues
+        if: steps.parse.outputs.issues != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUES: ${{ steps.parse.outputs.issues }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -uo pipefail
+
+          echo "Candidate issues to close: ${ISSUES}"
+
+          CLOSED=""
+          SKIPPED=""
+          COMMENT="Auto-closed by PR #${PR_NUMBER} (\"${PR_TITLE}\") merged to \`staging\`. (Native Closes-#N only fires on the default branch; this Action covers staging.)"
+
+          for N in $ISSUES; do
+            # Idempotency: if the issue is already closed (or doesn't exist), skip it
+            # without failing the job. A single bad number must not abort the loop.
+            STATE="$(gh issue view "$N" --repo "$REPO" --json state -q .state 2>/dev/null || echo "MISSING")"
+            if [ "$STATE" = "CLOSED" ]; then
+              echo "Issue #${N} already CLOSED — skipping."
+              SKIPPED="${SKIPPED} #${N}(already-closed)"
+              continue
+            fi
+            if [ "$STATE" = "MISSING" ]; then
+              echo "Issue #${N} not found / not accessible — skipping."
+              SKIPPED="${SKIPPED} #${N}(missing)"
+              continue
+            fi
+            if gh issue close "$N" --repo "$REPO" --comment "$COMMENT" 2>&1; then
+              echo "Closed issue #${N}."
+              CLOSED="${CLOSED} #${N}"
+            else
+              echo "Failed to close issue #${N} — continuing."
+              SKIPPED="${SKIPPED} #${N}(error)"
+            fi
+          done
+
+          # ── Step summary ─────────────────────────────────────────────────────
+          {
+            echo "## Auto-close issues on staging merge"
+            echo ""
+            echo "PR #${PR_NUMBER} merged to \`staging\`."
+            echo ""
+            if [ -n "$CLOSED" ]; then
+              echo "- **Closed:**${CLOSED}"
+            else
+              echo "- **Closed:** none"
+            fi
+            if [ -n "$SKIPPED" ]; then
+              echo "- **Skipped:**${SKIPPED}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

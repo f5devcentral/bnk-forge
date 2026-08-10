@@ -1,0 +1,20 @@
+crds:
+  enabled: true
+  keep: false
+
+global:
+  leaderElection:
+    namespace: ${namespace}
+
+startupapicheck:
+  enabled: false
+
+webhook:
+  replicaCount: ${webhook_replicas}
+  timeoutSeconds: 30
+
+cainjector:
+  replicaCount: ${cainjector_replicas}
+
+replicaCount: ${controller_replicas}
+resources: ${resources}

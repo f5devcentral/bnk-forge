@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Config
+current-context: ocp-cluster
+clusters:
+- name: ocp-cluster
+  cluster:
+    certificate-authority: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+    server: https://api-ocp-f5-udf-com:6443
+contexts:
+- name: ocp-cluster
+  context:
+    cluster: ocp-cluster
+    user: ocp-admin
+users:
+- name: ocp-admin
+  user:
+    token: fake-token-value

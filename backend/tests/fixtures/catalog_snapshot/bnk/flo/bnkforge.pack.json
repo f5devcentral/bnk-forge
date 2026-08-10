@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "module": {
+    "name": "F5 Lifecycle Operator (FLO)",
+    "path": "bnk/flo",
+    "version": "2.0.0",
+    "category": "bnk",
+    "description": "Deploys F5 Lifecycle Operator from F5 OCI Helm registry with BNK licensing and certificate wiring values."
+  },
+  "deployment_pack": {
+    "engine": "kubernetes",
+    "runner_profile": "kubernetes-default",
+    "working_directory": ".",
+    "lifecycle": {
+      "supports_init": false,
+      "supports_plan": false,
+      "supports_apply": true,
+      "supports_destroy": true,
+      "supports_refresh": false,
+      "supports_drift": false
+    },
+    "entrypoints": {
+      "chart_ref": "oci://repo.f5.com/charts/f5-lifecycle-operator",
+      "chart_version": "${flo_version}",
+      "namespace": "${flo_namespace}",
+      "release_name": "flo",
+      "create_namespace": true,
+      "values_path": "values.yaml"
+    }
+  },
+  "dependencies": {
+    "required": [
+      {
+        "module": "k8s/bnk-prerequisites",
+        "reason": "Needs namespaces, FAR pull secret name, and FLO chart version wiring"
+      },
+      {
+        "module": "k8s/bnk-cert-issuer",
+        "reason": "FLO uses cert-manager ClusterIssuer for certificate management"
+      }
+    ],
+    "optional": []
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "flo_namespace",
+        "type": "string",
+        "description": "Namespace for FLO deployment",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "operator_namespace",
+        "default": "f5-operator"
+      },
+      {
+        "name": "flo_version",
+        "type": "string",
+        "description": "FLO Helm chart version",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "flo_version"
+      },
+      {
+        "name": "far_secret_name",
+        "type": "string",
+        "description": "FAR image pull secret name",
+        "source": "module",
+        "from_module": "k8s/bnk-prerequisites",
+        "from_output": "far_secret_name",
+        "default": "far-secret"
+      },
+      {
+        "name": "cluster_issuer_name",
+        "type": "string",
+        "description": "ClusterIssuer name for certificate management",
+        "source": "module",
+        "from_module": "k8s/bnk-cert-issuer",
+        "from_output": "cluster_issuer_name",
+        "default": "bnk-ca-cluster-issuer"
+      },
+      {
+        "name": "jwt_token",
+        "type": "string",
+        "description": "JWT token for F5 licensing",
+        "source": "user",
+        "sensitive": true
+      }
+    ],
+    "optional": [
+      {
+        "name": "cluster_name",
+        "type": "string",
+        "description": "Name of the Kubernetes cluster",
+        "default": "",
+        "source": "auto"
+      },
+      {
+        "name": "license_mode",
+        "type": "string",
+        "description": "License mode: connected or f5licenseproxy",
+        "default": "connected",
+        "source": "user"
+      },
+      {
+        "name": "f5_license_proxy_url",
+        "type": "string",
+        "description": "F5 License Proxy URL used when license_mode is f5licenseproxy",
+        "default": "",
+        "source": "user"
+      },
+      {
+        "name": "cert_manager_ready",
+        "type": "boolean",
+        "description": "Dependency gate from cert-manager",
+        "source": "module",
+        "from_module": "k8s/cert-manager",
+        "from_output": "cert_manager_ready",
+        "default": true
+      },
+      {
+        "name": "container_platform",
+        "type": "string",
+        "description": "Container platform type (Generic, AWS, Azure)",
+        "default": "Generic",
+        "source": "user"
+      }
+    ]
+  },
+  "outputs": {
+    "key_outputs": [
+      {
+        "name": "flo_namespace",
+        "type": "string",
+        "description": "Namespace where FLO is deployed"
+      },
+      {
+        "name": "flo_ready",
+        "type": "boolean",
+        "description": "Gate output indicating FLO is ready"
+      },
+      {
+        "name": "crds_installed",
+        "type": "boolean",
+        "description": "Gate output indicating CRDs are installed"
+      }
+    ]
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "@odata.id": "/redfish/v1/Managers/Bluefield_BMC",
+  "@odata.type": "#Manager.v1_15_0.Manager",
+  "Actions": {
+    "#Manager.Reset": {
+      "@Redfish.ActionInfo": "/redfish/v1/Managers/Bluefield_BMC/ResetActionInfo",
+      "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Manager.Reset"
+    },
+    "#Manager.ResetToDefaults": {
+      "ResetType@Redfish.AllowableValues": [
+        "ResetAll"
+      ],
+      "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Manager.ResetToDefaults"
+    },
+    "Oem": {
+      "#NvidiaManager.Activate": {
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.Activate"
+      },
+      "#NvidiaManager.AsyncOOBRawCommand": {
+        "@Redfish.ActionInfo": "/redfish/v1/Managers/Bluefield_BMC/Oem/Nvidia/AsyncOOBRawCommandActionInfo",
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.AsyncOOBRawCommand"
+      },
+      "#NvidiaManager.GetUpdateStatus": {
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.GetUpdateStatus"
+      },
+      "#NvidiaManager.ResetToDefaults": {
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.ResetToDefaults"
+      },
+      "#NvidiaManager.SetRshim": {
+        "Rshim": {
+          "@Redfish.AllowableValues": [
+            "Enabled",
+            "Disabled",
+            "Forced"
+          ]
+        },
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.SetRshim"
+      },
+      "#NvidiaManager.SyncOOBRawCommand": {
+        "@Redfish.ActionInfo": "/redfish/v1/Managers/Bluefield_BMC/Oem/Nvidia/SyncOOBRawCommandActionInfo",
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/NvidiaManager.SyncOOBRawCommand"
+      },
+      "#eMMC.SecureErase": {
+        "@Redfish.ActionInfo": "/redfish/v1/Managers/Bluefield_BMC/Oem/EmmcSecureEraseActionInfo",
+        "target": "/redfish/v1/Managers/Bluefield_BMC/Actions/Oem/eMMC.SecureErase"
+      }
+    }
+  },
+  "CommandShell": {
+    "ConnectTypesSupported": [
+      "SSH"
+    ],
+    "MaxConcurrentSessions": 1,
+    "ServiceEnabled": false
+  },
+  "DateTime": "2026-04-18T12:34:53+00:00",
+  "DateTimeLocalOffset": "+00:00",
+  "DedicatedNetworkPorts": {
+    "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/DedicatedNetworkPorts"
+  },
+  "Description": "Baseboard Management Controller",
+  "EthernetInterfaces": {
+    "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/EthernetInterfaces"
+  },
+  "FirmwareVersion": "BF-25.10-15",
+  "GraphicalConsole": {
+    "ConnectTypesSupported": [
+      "KVMIP"
+    ],
+    "MaxConcurrentSessions": 4,
+    "ServiceEnabled": true
+  },
+  "Id": "Bluefield_BMC",
+  "LastResetTime": "2026-04-15T18:37:32+00:00",
+  "Links": {
+    "ActiveSoftwareImage": {
+      "@odata.id": "/redfish/v1/UpdateService/FirmwareInventory/BMC_Firmware"
+    },
+    "ManagerForChassis": [
+      {
+        "@odata.id": "/redfish/v1/Chassis/Bluefield_BMC"
+      }
+    ],
+    "ManagerForChassis@odata.count": 1,
+    "ManagerForServers": [
+      {
+        "@odata.id": "/redfish/v1/Systems/Bluefield"
+      }
+    ],
+    "ManagerForServers@odata.count": 1,
+    "ManagerInChassis": {
+      "@odata.id": "/redfish/v1/Chassis/Bluefield_BMC"
+    },
+    "SoftwareImages": [
+      {
+        "@odata.id": "/redfish/v1/UpdateService/FirmwareInventory/BMC_Firmware"
+      }
+    ],
+    "SoftwareImages@odata.count": 1
+  },
+  "LogServices": {
+    "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/LogServices"
+  },
+  "ManagerDiagnosticData": {
+    "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/ManagerDiagnosticData"
+  },
+  "ManagerType": "BMC",
+  "Model": "OpenBmc",
+  "Name": "OpenBmc Manager",
+  "NetworkProtocol": {
+    "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/NetworkProtocol"
+  },
+  "Oem": {
+    "Nvidia": {
+      "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/Oem/Nvidia",
+      "@odata.type": "#NvidiaManager.v1_6_0.NvidiaManager",
+      "DebugTokenManagement": {
+        "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/Oem/Nvidia/DebugTokenManagement"
+      },
+      "FirmwareBuildType": null,
+      "OTPProvisioned": false,
+      "PersistentStorageSettings": {
+        "Status": {
+          "State": "Enabled"
+        }
+      }
+    },
+    "OpenBmc": {
+      "@odata.id": "/redfish/v1/Managers/Bluefield_BMC#/Oem/OpenBmc",
+      "@odata.type": "#OpenBMCManager.OpenBmc",
+      "Certificates": {
+        "@odata.id": "/redfish/v1/Managers/Bluefield_BMC/Truststore/Certificates"
+      }
+    }
+  },
+  "PowerState": "On",
+  "SerialConsole": {
+    "ConnectTypesSupported": [
+      "IPMI",
+      "SSH"
+    ],
+    "MaxConcurrentSessions": 15,
+    "ServiceEnabled": true
+  },
+  "ServiceEntryPointUUID": "89439e8a-7f61-46b0-a98c-531e7a489366",
+  "ServiceIdentification": "",
+  "Status": {
+    "Conditions": [],
+    "Health": "OK",
+    "HealthRollup": "OK",
+    "State": "Enabled"
+  },
+  "UUID": "770071de-788b-4114-8ecf-ca7cc901f08e"
+}

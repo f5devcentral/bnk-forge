@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${bnk_namespace}
+  labels:
+    app.kubernetes.io/name: f5-bnk
+    app.kubernetes.io/component: bnk-system
+    app.kubernetes.io/managed-by: bnk-forge
+    f5.com/product: bnk
+  annotations:
+    description: F5 BIG-IP Next for Kubernetes data plane (TMM pods)
