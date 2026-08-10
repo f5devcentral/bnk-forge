@@ -186,7 +186,9 @@ nohup.out
 # Editor
 # Node
 node_modules/
-package-lock.json
+# package-lock.json is intentionally TRACKED — `npm ci` and the CI setup-node
+# cache both require it. Ignoring it silently drops the lockfile from any export
+# built off the working tree, which breaks every frontend CI job.
 *.pyc
 # Environment
 # OpenCode
@@ -256,7 +258,12 @@ cli/go/
 *.tar.gz
 *.bnk
 .ssh/
-secrets/
+# Anchored to the repo root on purpose: an unanchored `secrets/` also matches
+# frontend-v2/src/components/secrets/, which silently removed a shipped component.
+# `/secrets/*` rather than `/secrets/`: git will not descend into an excluded
+# directory, so the tracked placeholder README could not be negated otherwise.
+/secrets/*
+!/secrets/README.md
 .agent/
 .agent-prev/
 .agent-local/

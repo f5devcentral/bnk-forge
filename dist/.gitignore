@@ -1,2 +1,20 @@
 *
 !.gitignore
+
+# Release artifacts that are deliberately TRACKED. dist/ is otherwise a build
+# output dir, so everything above is ignored — but these are the shipped
+# installer and its templates, referenced by README.md, the Makefile,
+# .github/workflows/release.yml and scripts/ibm_cloud_bnk_forge.sh.
+# They were previously kept only by `git add -f`, which does not survive an
+# export built from the working tree.
+!.env.example
+!README.md
+!VERSION
+!docker-compose.yml
+!docker-compose.local.yml
+!install.sh
+!uninstall.sh
+!nginx/
+!nginx/*.conf
+!secrets/
+!secrets/.gitkeep
