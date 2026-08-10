@@ -241,12 +241,29 @@ class KubernetesRunner(ContainerRunner):
         )
 
     def build_network_policy(self) -> k8s_client.V1NetworkPolicy:
-        """Deny-by-default NetworkPolicy for the runner namespace.
+        """Deny all ingress; allow only DNS + non-cluster-internal egress.
 
-        Selects every pod (empty podSelector) and declares both policy types
-        with NO ingress and NO egress rules → all pod traffic is denied unless
-        another, more specific policy explicitly allows it.
+        The previous version declared both policy types with ``egress=[]``,
+        which denies ALL egress including DNS. That contradicted the documented
+        posture — an artifact provisions cloud resources over the network — and
+        the two outcomes were both bad: on an enforcing CNI (Calico/Cilium) a
+        provisioning artifact could not resolve DNS or reach a cloud API at all,
+        and on a non-enforcing CNI the advertised isolation was fictional
+        either way. The E2E ran against the Docker backend, so this path was
+        under-exercised (issue #79, item 5).
+
+        What this expresses instead:
+          * ingress stays fully denied — nothing needs to reach a step pod;
+          * egress to DNS (udp/tcp 53) is allowed, or nothing resolves;
+          * egress to public address space is allowed, so cloud control planes
+            are reachable;
+          * egress to RFC1918 / loopback / link-local is DENIED, which is the
+            isolation that actually matters here: it keeps a third-party
+            artifact image away from cluster-internal services, the kubelet,
+            and the cloud metadata endpoint (169.254.169.254).
         """
+        private_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                         "127.0.0.0/8", "169.254.0.0/16"]
         return k8s_client.V1NetworkPolicy(
             metadata=k8s_client.V1ObjectMeta(
                 name=DENY_ALL_NETPOL_NAME,
@@ -257,7 +274,27 @@ class KubernetesRunner(ContainerRunner):
                 pod_selector=k8s_client.V1LabelSelector(),  # {} → all pods
                 policy_types=["Ingress", "Egress"],
                 ingress=[],
-                egress=[],
+                egress=[
+                    # DNS — to any resolver, including an in-cluster CoreDNS,
+                    # which is why this rule is not restricted by ipBlock.
+                    k8s_client.V1NetworkPolicyEgressRule(
+                        ports=[
+                            k8s_client.V1NetworkPolicyPort(protocol="UDP", port=53),
+                            k8s_client.V1NetworkPolicyPort(protocol="TCP", port=53),
+                        ],
+                    ),
+                    # Everything else: public destinations only.
+                    k8s_client.V1NetworkPolicyEgressRule(
+                        to=[
+                            k8s_client.V1NetworkPolicyPeer(
+                                ip_block=k8s_client.V1IPBlock(
+                                    cidr="0.0.0.0/0",
+                                    _except=private_cidrs,
+                                )
+                            )
+                        ],
+                    ),
+                ],
             ),
         )
 

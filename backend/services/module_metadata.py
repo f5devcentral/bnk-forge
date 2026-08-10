@@ -602,6 +602,66 @@ class ModuleMetadataValidator:
                 )
             seen_paths.add(normalized)
 
+        self._reject_secret_file_step_collisions(manifest, seen_paths)
+
+    @staticmethod
+    def _reject_secret_file_step_collisions(manifest: dict, secret_paths: set[str]) -> None:
+        """Reject a secret_files path whose parent a step also wants to CREATE.
+
+        Materialization runs before any step and creates each secret file's
+        parent directories. A step that then tries to create one of those
+        directories fails on its first run — and it is not recoverable by retry,
+        because materialization recreates the directory ahead of every attempt.
+        With ``run_once`` on the failing step, a retry skips it entirely and
+        fails further downstream, pointing the operator at the wrong step
+        (issue #102).
+
+        The general form is undecidable — step args are opaque argv. The common
+        case is not: both fields template off the same input, so the secret
+        path's FIRST SEGMENT equals a bare argv token of a step. That is what
+        this catches. It is deliberately narrow: a false positive here would
+        block a legitimate manifest, so anything less certain is left alone.
+        """
+        if not secret_paths:
+            return
+
+        first_segments = {p.split(os.sep)[0] for p in secret_paths if p and p != "."}
+        first_segments.discard("")
+        if not first_segments:
+            return
+
+        steps_block = manifest.get("steps")
+        if not isinstance(steps_block, dict):
+            return
+
+        for phase, steps in steps_block.items():
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                args = step.get("args")
+                if not isinstance(args, list):
+                    continue
+                for token in args:
+                    if not isinstance(token, str):
+                        continue
+                    bare = token.strip()
+                    # Only bare tokens: a flag or a path-like value is not a
+                    # directory the step is about to create in the workspace.
+                    if not bare or bare.startswith("-") or "/" in bare:
+                        continue
+                    if bare in first_segments:
+                        name = step.get("name") or "<unnamed>"
+                        raise InvalidMetadataSchemaError(
+                            f"secret_files[].path starts with '{bare}', which step "
+                            f"'{name}' (steps.{phase}) also passes as a bare argument. "
+                            "Materializing the secret creates that directory before the "
+                            "step runs, so the step will fail with an 'already exists' "
+                            "error that no retry can clear. Give the secret a different "
+                            "parent directory, or have the step adopt an existing one."
+                        )
+
     def _validate_artifact_steps(self, manifest: dict, kind: str) -> None:
         steps = manifest.get("steps")
         is_procedural = kind in PROCEDURAL_ARTIFACT_KINDS

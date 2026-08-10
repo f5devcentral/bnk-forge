@@ -243,9 +243,40 @@ class ContainerRegistryService:
         credential_template_id = update_data.pop("credential_template_id", "__unset__")
 
         old_type = reg.type
+        old_host = reg.registry_host
         for key, value in update_data.items():
             if hasattr(reg, key):
                 setattr(reg, key, value)
+
+        # Repointing a registry at a different host INVALIDATES its stored
+        # credential (issue #79, item 3).
+        #
+        # Registries are global. Without this, operator A could change the
+        # registry_host on a registry operator B configured — without
+        # re-supplying the token, which update_registry permits — then press
+        # Test. `_test_basic_v2` decrypts B's stored token and sends it as HTTP
+        # Basic auth to whatever host is now on the record, handing A a
+        # credential they never had. That defeats the write-only-secrets model.
+        #
+        # Clearing on host change is the precise fix: it closes the exfil
+        # without constraining WHICH hosts may be configured. An allowlist or a
+        # private-address check would also have blocked a self-hosted Harbor or
+        # Artifactory on RFC1918 — a supported configuration — so neither is
+        # the right tool here.
+        host_changed = old_host and reg.registry_host and reg.registry_host != old_host
+        if host_changed and not token:
+            self._clear_off_family_credentials(reg)
+            reg.token_encrypted = None
+            reg.last_test_status = None
+            reg.last_test_message = (
+                "Credential cleared because the registry host changed; supply a "
+                "token for the new host before testing."
+            )
+            logger.warning(
+                "Registry %s host changed %s -> %s without a new token; stored "
+                "credential cleared to prevent it being sent to the new host.",
+                reg.id, old_host, reg.registry_host,
+            )
 
         # A type switch crosses credential families (basic-auth / far / derived).
         # Drop the previous family's credential so no stale secret survives under
@@ -380,7 +411,10 @@ class ContainerRegistryService:
         url = f"https://{reg.registry_host}/v2/"
         auth = (reg.username or "", token)
         try:
-            resp = requests.get(url, auth=auth, timeout=15)
+            # allow_redirects=False: a 302 off the vetted host would carry the
+            # Authorization header to wherever it points, re-opening the exfil
+            # path the allowlist just closed.
+            resp = requests.get(url, auth=auth, timeout=15, allow_redirects=False)
         except requests.RequestException as exc:
             return {"success": False, "error": f"Connection to {reg.registry_host} failed: {exc}"}
 
