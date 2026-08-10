@@ -1,0 +1,131 @@
+# =============================================================================
+# Local Laptop Overrides — macOS / Windows (Docker Desktop)
+# =============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Switches from host networking to bridge networking with port mappings.
+# Requires: Docker Compose v2.24.0+ (for !reset support)
+#
+# Ports exposed on your laptop:
+#   443  → Nginx proxy (HTTPS — accept the self-signed cert warning)
+#   80   → Nginx proxy (HTTP → redirects to HTTPS)
+#   8080 → Frontend direct (no proxy, no HTTPS)
+#   8000 → Backend API direct
+#   8081 → MCP server
+
+x-local-backend-env: &local-backend-env
+  BNK_FORGE_DEPLOY_MODE: local
+  DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@postgres:5432/bnkforge
+  REDIS_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  # Bridge mode: reach the socket proxy by service DNS (the base compose's
+  # 127.0.0.1:2375 is the container's own loopback here, not the host).
+  DOCKER_HOST: tcp://docker-socket-proxy:2375
+
+networks:
+  bnk-local:
+    driver: bridge
+
+services:
+  postgres:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "5432:5432"
+
+  redis:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "6379:6379"
+
+  backend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *local-backend-env
+    volumes:
+      - module_catalog:/tmp/bnk-forge-modules
+      - bnk-forge-data:/app/projects
+      - bnk-forge-keys:/app/keys
+      - state_data:/app/state
+      - helm_cache:/home/bnkforge/.cache/helm
+      - helm_config:/home/bnkforge/.config/helm
+      - helm_charts:/app/helm_charts
+      - workspace_data:/app/workspaces
+      - ./secrets:/app/secrets:ro
+      - ./VERSION:/app/VERSION:ro
+
+  celery-worker:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  celery-worker-2:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  # On the bridge network the runner services reach the daemon proxy by its
+  # service name (docker-socket-proxy:2375), not the host loopback.
+  docker-socket-proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+
+  celery-beat:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  frontend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/frontend.local.conf:/etc/nginx/conf.d/default.conf:ro
+
+  proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/proxy.local.conf:/etc/nginx/conf.d/nginx.conf:ro
+
+  mcp:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8081:8081"
+    environment:
+      BNK_FORGE_API_URL: http://backend:8000
+      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
+      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      MCP_PORT: "8081"
+
+  postgres-backup:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      PGHOST: postgres
