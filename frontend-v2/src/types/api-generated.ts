@@ -806,6 +806,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/bnk-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure Bnk Cluster
+         * @description Configure BNK cluster side-table options (tmfifo CIDR pool, join transport, CP host).
+         */
+        post: operations["configure_bnk_cluster_api_k8s_clusters__cluster_id__bnk_config_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/bnk-members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign Bnk Cluster Members
+         * @description Assign bare-metal hosts and DPUs to a BNK cluster and perform tmfifo IP allocations.
+         */
+        post: operations["assign_bnk_cluster_members_api_k8s_clusters__cluster_id__bnk_members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/crds": {
         parameters: {
             query?: never;
@@ -2331,7 +2371,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/bare-metal/version-profiles": {
+    "/api/bare-metal/deployable-releases": {
         parameters: {
             query?: never;
             header?: never;
@@ -2339,10 +2379,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Version Profiles
-         * @description List all BNK version profiles.
+         * List Deployable Releases
+         * @description List all BNK deployable releases.
          */
-        get: operations["list_version_profiles_api_bare_metal_version_profiles_get"];
+        get: operations["list_deployable_releases_api_bare_metal_deployable_releases_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2351,7 +2391,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/bare-metal/version-profiles/{profile_id}": {
+    "/api/bare-metal/deployable-releases/{release_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2359,12 +2399,173 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Version Profile
-         * @description Get a specific version profile.
+         * Get Deployable Release
+         * @description Get a specific deployable release.
          */
-        get: operations["get_version_profile_api_bare_metal_version_profiles__profile_id__get"];
+        get: operations["get_deployable_release_api_bare_metal_deployable_releases__release_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/deployable-releases/{release_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate Deployable Release
+         * @description Set is_active on a deployable release.
+         */
+        post: operations["activate_deployable_release_api_bare_metal_deployable_releases__release_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/deployable-releases/{release_id}/set-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Default Deployable Release
+         * @description Mark this release as the default, clearing is_default on all others.
+         */
+        post: operations["set_default_deployable_release_api_bare_metal_deployable_releases__release_id__set_default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/release-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Release Sources
+         * @description List all BNK release sources.
+         */
+        get: operations["list_release_sources_api_bare_metal_release_sources_get"];
+        put?: never;
+        /**
+         * Create Release Source
+         * @description Create a new BNK release source.
+         */
+        post: operations["create_release_source_api_bare_metal_release_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/release-sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Release Source
+         * @description Get a specific BNK release source.
+         */
+        get: operations["get_release_source_api_bare_metal_release_sources__source_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Release Source
+         * @description Delete a BNK release source. Catalog rows retain source_id → NULL via FK ON DELETE SET NULL.
+         */
+        delete: operations["delete_release_source_api_bare_metal_release_sources__source_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Release Source
+         * @description Partial update of a BNK release source.
+         */
+        patch: operations["update_release_source_api_bare_metal_release_sources__source_id__patch"];
+        trace?: never;
+    };
+    "/api/bare-metal/release-sources/{source_id}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Release Source Tags
+         * @description List available manifest tags from the OCI/mirror registry.
+         *
+         *     Best-effort: on listing failure returns tags=[] with list_error set
+         *     (never 500s). The UI should keep a manual tag-entry fallback.
+         */
+        get: operations["list_release_source_tags_api_bare_metal_release_sources__source_id__tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/release-sources/{source_id}/tags:pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull Release Source Tags
+         * @description Pull selected manifest tags from the OCI/mirror registry and upsert Catalog rows.
+         *
+         *     Idempotent: already-present releases are reported in skipped[], not re-inserted.
+         *     Partial batch failure (one tag fails, others succeed) keeps sync_status=success.
+         */
+        post: operations["pull_release_source_tags_api_bare_metal_release_sources__source_id__tags_pull_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bare-metal/release-sources/{source_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Release Source
+         * @description Sync catalog releases from the supplied manifest YAML.
+         *
+         *     Persists sync_status='error' even when the sync fails, so the caller can
+         *     inspect the error via GET /{source_id}.
+         */
+        post: operations["sync_release_source_api_bare_metal_release_sources__source_id__sync_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7334,6 +7535,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/module-sources/{source_id}/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prune Module Source Versions
+         * @description Retire superseded module versions for this source.
+         *
+         *     D-033 adds an immutable row per (source, path, version) and never removes
+         *     one, so a source under active development accumulates every version it has
+         *     ever had. Until now the only way back was to delete the source and
+         *     re-register it, which discards its configuration and every blueprint release
+         *     alongside it.
+         *
+         *     Deactivating (the default) hides a version and stops it competing for
+         *     is_latest while leaving the row resolvable for anything pinned to it.
+         *     `delete` removes rows outright, and only ever those nothing references —
+         *     a pinned version is deactivated instead, because a prune must not break a
+         *     running deployment.
+         */
+        post: operations["prune_module_source_versions_api_module_sources__source_id__prune_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/blueprint-catalog/sources": {
         parameters: {
             query?: never;
@@ -7503,6 +7736,34 @@ export interface paths {
          *     Blocked for releases in 'discovered' state — import them first.
          */
         patch: operations["update_blueprint_release_visibility_api_blueprint_catalog_releases__release_id__visibility_patch"];
+        trace?: never;
+    };
+    "/api/blueprint-catalog/sources/{source_id}/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prune Blueprint Source Releases
+         * @description Retire superseded blueprint releases for this source.
+         *
+         *     Every edit to a blueprint adds an immutable release, so a source under
+         *     development ends up serving a version picker full of history. Deactivating
+         *     (the default) hides a release without discarding it. `delete` removes rows
+         *     outright and only ever those nothing was deployed from — a release a
+         *     StackInstance points at is deactivated instead, because that FK is
+         *     ON DELETE SET NULL and deleting would silently strip the stack of the record
+         *     of what it was built from.
+         */
+        post: operations["prune_blueprint_source_releases_api_blueprint_catalog_sources__source_id__prune_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/registry/search": {
@@ -7908,7 +8169,7 @@ export interface paths {
         put?: never;
         /**
          * Deploy Stack
-         * @description Start stack deployment.
+         * @description Start stack deployment. Accepts optional deployable_release_id for BNK/bare-metal blueprints.
          */
         post: operations["deploy_stack_api_stacks_projects__project_id__stacks__stack_id__deploy_post"];
         delete?: never;
@@ -7928,7 +8189,7 @@ export interface paths {
         put?: never;
         /**
          * Run Stack Deployment
-         * @description Deploy all stack modules (init + apply).
+         * @description Deploy all stack modules (init + apply). Accepts optional deployable_release_id for BNK/bare-metal blueprints.
          */
         post: operations["run_stack_deployment_api_stacks_projects__project_id__stacks__stack_id__run_deploy_post"];
         delete?: never;
@@ -9316,6 +9577,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/clusters/{cluster_id}/usecase-artifacts/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Capture Artifact
+         * @description Capture F5SPKVlan CRs from a cluster into a versioned use-case artifact.
+         */
+        post: operations["capture_artifact_api_clusters__cluster_id__usecase_artifacts_capture_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clusters/{cluster_id}/usecase-artifact-versions/{version_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Artifact
+         * @description Render a use-case artifact version and apply it to a cluster via the shared write path.
+         */
+        post: operations["apply_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clusters/{cluster_id}/usecase-artifact-versions/{version_id}/drift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Drift Artifact
+         * @description Render desired-state from a use-case artifact version and diff against the live cluster.
+         */
+        post: operations["drift_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__drift_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/bnk/upgrade/versions": {
         parameters: {
             query?: never;
@@ -10470,6 +10791,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/benchmarks/runs/{run_id}/baseline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Benchmark Run Baseline
+         * @description Mark a completed run as the baseline for its (target, scenario/config) context.
+         *
+         *     Clears any previous baseline in that same context — one baseline per context.
+         */
+        post: operations["set_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_post"];
+        /**
+         * Unset Benchmark Run Baseline
+         * @description Clear the baseline flag on a run.
+         */
+        delete: operations["unset_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/benchmarks/agents": {
         parameters: {
             query?: never;
@@ -10726,6 +11073,27 @@ export interface paths {
          * @description Get dashboard summary of benchmark activity.
          */
         get: operations["get_benchmark_summary_api_benchmarks_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Benchmark Trends
+         * @description Time-ordered completed-run metrics for a target/proxy/scenario/config context,
+         *     with the current baseline (if any) always included.
+         */
+        get: operations["get_benchmark_trends_api_benchmarks_trends_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12005,6 +12373,11 @@ export interface components {
              */
             by: string;
         };
+        /** ActivateReleaseRequest */
+        ActivateReleaseRequest: {
+            /** Is Active */
+            is_active: boolean;
+        };
         /**
          * ActiveProjectResponse
          * @description Response for GET /api/projects/active.
@@ -12316,7 +12689,11 @@ export interface components {
         /** BareMetalDeploymentCreate */
         BareMetalDeploymentCreate: {
             /** Host Id */
-            host_id: number;
+            host_id?: number | null;
+            /** Control Plane Host Id */
+            control_plane_host_id?: number | null;
+            /** Worker Host Ids */
+            worker_host_ids?: number[] | null;
             /** Resume From Step */
             resume_from_step?: number | null;
             /**
@@ -12328,6 +12705,8 @@ export interface components {
             selected_phases?: string[] | null;
             /** Selected Steps */
             selected_steps?: string[] | null;
+            /** Deployable Release Id */
+            deployable_release_id?: number | null;
         };
         /** BareMetalDeploymentListResponse */
         BareMetalDeploymentListResponse: {
@@ -12464,6 +12843,8 @@ export interface components {
             rshim_source?: string | null;
             /** Bond Mode */
             bond_mode?: string | null;
+            /** Net Rshim Mac Base */
+            net_rshim_mac_base?: string | null;
         };
         /** BareMetalHostListResponse */
         BareMetalHostListResponse: {
@@ -12572,6 +12953,8 @@ export interface components {
             rshim_source?: string | null;
             /** Bond Mode */
             bond_mode?: string | null;
+            /** Net Rshim Mac Base */
+            net_rshim_mac_base?: string | null;
             /**
              * Has Discovery Result
              * @default false
@@ -12640,6 +13023,8 @@ export interface components {
             rshim_source?: string | null;
             /** Bond Mode */
             bond_mode?: string | null;
+            /** Net Rshim Mac Base */
+            net_rshim_mac_base?: string | null;
         };
         /**
          * BatchConnectivityResponse
@@ -12819,6 +13204,11 @@ export interface components {
             winners: {
                 [key: string]: unknown;
             };
+            /**
+             * Context Mismatch
+             * @default false
+             */
+            context_mismatch: boolean;
         };
         /**
          * BenchmarkCompareRunMetrics
@@ -12835,6 +13225,12 @@ export interface components {
             tool: string;
             /** Run Label */
             run_label: string | null;
+            /** Config Id */
+            config_id?: number | null;
+            /** Scenario Key */
+            scenario_key?: string | null;
+            /** Variant Label */
+            variant_label?: string | null;
             /** Status */
             status: string;
             /** Total Requests */
@@ -13101,10 +13497,21 @@ export interface components {
             target_id: number | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
+            /** Scenario Key */
+            scenario_key?: string | null;
             /** Status */
             status: string;
             /** Error Message */
             error_message: string | null;
+            /**
+             * Is Baseline
+             * @default false
+             */
+            is_baseline: boolean;
+            /** Baseline Latency P99 */
+            baseline_latency_p99?: number | null;
+            /** Baseline Overall Rps */
+            baseline_overall_rps?: number | null;
             /** Duration Seconds */
             duration_seconds: number | null;
             /** Total Requests */
@@ -13195,10 +13602,21 @@ export interface components {
             target_id: number | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
+            /** Scenario Key */
+            scenario_key?: string | null;
             /** Status */
             status: string;
             /** Error Message */
             error_message: string | null;
+            /**
+             * Is Baseline
+             * @default false
+             */
+            is_baseline: boolean;
+            /** Baseline Latency P99 */
+            baseline_latency_p99?: number | null;
+            /** Baseline Overall Rps */
+            baseline_overall_rps?: number | null;
             /** Duration Seconds */
             duration_seconds: number | null;
             /** Total Requests */
@@ -13445,6 +13863,48 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * BenchmarkTrendPoint
+         * @description One time-series point for the Trends view.
+         */
+        BenchmarkTrendPoint: {
+            /** Id */
+            id: number;
+            /** Run Label */
+            run_label: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Is Baseline */
+            is_baseline: boolean;
+            /** Latency P50 */
+            latency_p50: number | null;
+            /** Latency P99 */
+            latency_p99: number | null;
+            /** Overall Rps */
+            overall_rps: number | null;
+            /** Peak Rps */
+            peak_rps: number | null;
+            /** Success Rate Pct */
+            success_rate_pct: number | null;
+            /** Tokens Per Sec */
+            tokens_per_sec: number | null;
+            /** Total Output Tokens */
+            total_output_tokens: number | null;
+        };
+        /**
+         * BenchmarkTrendsResponse
+         * @description Time-ordered (oldest-first) completed-run metrics for a target/proxy/scenario/config
+         *     context, plus the current baseline run id (included in points even if outside limit).
+         */
+        BenchmarkTrendsResponse: {
+            /** Points */
+            points: components["schemas"]["BenchmarkTrendPoint"][];
+            /** Baseline Run Id */
+            baseline_run_id: number | null;
+        };
         /** BfConfTemplateCreate */
         BfConfTemplateCreate: {
             /** Name */
@@ -13569,6 +14029,8 @@ export interface components {
             is_default: boolean;
             /** Notes */
             notes: string | null;
+            /** Url Warnings */
+            url_warnings?: string[];
             /**
              * Created At
              * Format: date-time
@@ -13823,6 +14285,90 @@ export interface components {
             /** Make Default */
             make_default?: boolean | null;
         };
+        /** BnkClusterConfigCreateRequest */
+        BnkClusterConfigCreateRequest: {
+            /**
+             * Tmfifo Pool Cidr
+             * @description Cluster-wide tmfifo pool CIDR (omit to keep current)
+             */
+            tmfifo_pool_cidr?: string | null;
+            /**
+             * Join Transport
+             * @description Join transport type ('rshim' or 'mgmt'; omit to keep current)
+             */
+            join_transport?: ("rshim" | "mgmt") | null;
+            /**
+             * Control Plane Host Id
+             * @description ID of designated Control Plane host
+             */
+            control_plane_host_id?: number | null;
+        };
+        /** BnkClusterConfigSummary */
+        BnkClusterConfigSummary: {
+            /** Id */
+            id: number;
+            /** Cluster Id */
+            cluster_id: number;
+            /**
+             * Tmfifo Pool Cidr
+             * @default 192.168.100.0/22
+             */
+            tmfifo_pool_cidr: string;
+            /**
+             * Join Transport
+             * @default rshim
+             */
+            join_transport: string;
+            /** Control Plane Host Id */
+            control_plane_host_id?: number | null;
+            /**
+             * Host Ids
+             * @description IDs of hosts currently in this cluster
+             */
+            host_ids?: number[];
+            /**
+             * Dpu Ids
+             * @description IDs of DPUs currently in this cluster
+             */
+            dpu_ids?: number[];
+        };
+        /** BnkClusterMemberAssignRequest */
+        BnkClusterMemberAssignRequest: {
+            /**
+             * Control Plane Host Id
+             * @description ID of designated Control Plane host
+             */
+            control_plane_host_id: number;
+            /**
+             * Host Ids
+             * @description IDs of member bare-metal hosts
+             */
+            host_ids?: number[];
+            /**
+             * Dpu Ids
+             * @description IDs of member DPUs
+             */
+            dpu_ids?: number[];
+            /**
+             * Tmfifo Pool Cidr
+             * @description Cluster-wide tmfifo pool CIDR (omit to keep current)
+             */
+            tmfifo_pool_cidr?: string | null;
+        };
+        /** BnkClusterMemberAssignResponse */
+        BnkClusterMemberAssignResponse: {
+            /** Cluster Id */
+            cluster_id: number;
+            /** Control Plane Host Id */
+            control_plane_host_id: number;
+            /** Host Ids */
+            host_ids: number[];
+            /** Assigned Dpus */
+            assigned_dpus: {
+                [key: string]: unknown;
+            }[];
+            bnk_config: components["schemas"]["BnkClusterConfigSummary"];
+        };
         /** BnkReleaseListResponse */
         BnkReleaseListResponse: {
             /** Releases */
@@ -13840,61 +14386,6 @@ export interface components {
             unmatched: number;
             /** Upserted */
             upserted: number;
-        };
-        /** BnkVersionProfileListResponse */
-        BnkVersionProfileListResponse: {
-            /** Profiles */
-            profiles: components["schemas"]["BnkVersionProfileResponse"][];
-        };
-        /** BnkVersionProfileResponse */
-        BnkVersionProfileResponse: {
-            /** Id */
-            id: number;
-            /** Name */
-            name: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description: string | null;
-            /** Is Default */
-            is_default: boolean;
-            /** Bnk Manifest Version */
-            bnk_manifest_version: string;
-            /** Bnk Cr Kind */
-            bnk_cr_kind: string;
-            /** Flo Version */
-            flo_version: string;
-            /** K8S Version */
-            k8s_version: string;
-            /** Doca Version */
-            doca_version: string;
-            /** Containerd Version */
-            containerd_version: string;
-            /** Runc Version */
-            runc_version: string;
-            /** Calico Version */
-            calico_version: string;
-            /** Cert Manager Version */
-            cert_manager_version: string;
-            /** Gateway Api Version */
-            gateway_api_version: string;
-            /** Multus Version */
-            multus_version: string;
-            /** Sriov Version */
-            sriov_version: string;
-            /** Storage Class Type */
-            storage_class_type: string;
-            /** Storage Provisioner */
-            storage_provisioner: string;
-            /** Feature Flags */
-            feature_flags: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
         };
         /** Body_create_file_secret_api_projects__project_id__secrets_file_post */
         Body_create_file_secret_api_projects__project_id__secrets_file_post: {
@@ -14441,12 +14932,41 @@ export interface components {
             meta_data?: {
                 [key: string]: unknown;
             } | null;
+            /** Deployable Release Id */
+            deployable_release_id?: number | null;
+            /** Running Release Id */
+            running_release_id?: number | null;
             /** Last Synced At */
             last_synced_at?: string | null;
             /** Created At */
             created_at?: string | null;
             /** Updated At */
             updated_at?: string | null;
+        };
+        /**
+         * ClusterDriftStatusResponse
+         * @description Response for GET /api/clusters/{cluster_id}/drift/status.
+         */
+        ClusterDriftStatusResponse: {
+            /** Cluster Id */
+            cluster_id: number;
+            /** Project Id */
+            project_id?: number | null;
+            /** Drift Enabled */
+            drift_enabled: boolean;
+            /** Total Modules */
+            total_modules: number;
+            /** Modules With Drift */
+            modules_with_drift: number;
+            /** Modules Ok */
+            modules_ok: number;
+            /** Modules Unchecked */
+            modules_unchecked: number;
+            /** Overall Status */
+            overall_status: string;
+            /** Module Statuses */
+            module_statuses: components["schemas"]["ModuleDriftStatus"][];
+            release_drift: components["schemas"]["ReleaseDrift"];
         };
         /**
          * ClusterEventsResponse
@@ -14602,8 +15122,13 @@ export interface components {
             ssh_host_override?: string | null;
             /** Enabled Prerequisites */
             enabled_prerequisites?: string[] | null;
+            bnk_config?: components["schemas"]["BnkClusterConfigSummary"] | null;
             /** Node Count */
             node_count?: number | null;
+            /** Deployable Release Id */
+            deployable_release_id?: number | null;
+            /** Running Release Id */
+            running_release_id?: number | null;
             /** Last Synced At */
             last_synced_at?: string | null;
             /** Created At */
@@ -15337,6 +15862,79 @@ export interface components {
             parallel: boolean;
         };
         /**
+         * DeployStackRequest
+         * @description Optional body for stack deploy / run-deploy. Carries BNK release override for bare-metal blueprints.
+         */
+        DeployStackRequest: {
+            /** Deployable Release Id */
+            deployable_release_id?: number | null;
+        };
+        /** DeployableReleaseListResponse */
+        DeployableReleaseListResponse: {
+            /** Releases */
+            releases: components["schemas"]["DeployableReleaseResponse"][];
+        };
+        /** DeployableReleaseResponse */
+        DeployableReleaseResponse: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string | null;
+            /** Is Default */
+            is_default: boolean;
+            /** Is Active */
+            is_active: boolean;
+            /** Source Type */
+            source_type: string;
+            /** Bnk Release Id */
+            bnk_release_id: number | null;
+            /** Bnk Manifest Version */
+            bnk_manifest_version: string;
+            /** Bnk Cr Kind */
+            bnk_cr_kind: string;
+            /** Flo Version */
+            flo_version: string;
+            /** K8S Version */
+            k8s_version: string;
+            /** Doca Version */
+            doca_version: string;
+            /** Containerd Version */
+            containerd_version: string;
+            /** Runc Version */
+            runc_version: string;
+            /** Calico Version */
+            calico_version: string;
+            /** Cert Manager Version */
+            cert_manager_version: string;
+            /** Gateway Api Version */
+            gateway_api_version: string;
+            /** Multus Version */
+            multus_version: string;
+            /** Sriov Version */
+            sriov_version: string;
+            /** Storage Class Type */
+            storage_class_type: string;
+            /** Storage Provisioner */
+            storage_provisioner: string;
+            /** Feature Flags */
+            feature_flags: {
+                [key: string]: unknown;
+            } | null;
+            /** Source Id */
+            source_id?: number | null;
+            /** Last Synced */
+            last_synced?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
          * DeploymentPlanPreview
          * @description Preview of the deployment plan before creation.
          */
@@ -15966,6 +16564,12 @@ export interface components {
             link_mode?: string | null;
             /** Bfb Hostname */
             bfb_hostname?: string | null;
+            /** Kubernetes Cluster Id */
+            kubernetes_cluster_id?: number | null;
+            /** Host Tmfifo Ip */
+            host_tmfifo_ip?: string | null;
+            /** Dpu Tmfifo Ip */
+            dpu_tmfifo_ip?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -16419,6 +17023,16 @@ export interface components {
             mgmt_credential_id?: number | null;
             /** Verify Https Cert */
             verify_https_cert?: boolean | null;
+        };
+        /**
+         * FailedTag
+         * @description A single tag that could not be added to the Catalog.
+         */
+        FailedTag: {
+            /** Tag */
+            tag: string;
+            /** Reason */
+            reason: string;
         };
         /**
          * FanOutCommandRequest
@@ -17665,6 +18279,34 @@ export interface components {
             actions: components["schemas"]["ModuleActionInfo"][];
             /** Total */
             total: number;
+        };
+        /**
+         * ModuleDriftStatus
+         * @description Per-module drift status entry within a cluster drift status response.
+         */
+        ModuleDriftStatus: {
+            /** Module Id */
+            module_id: number;
+            /** Module Name */
+            module_name?: string | null;
+            /** Module Path */
+            module_path?: string | null;
+            /** Engine Type */
+            engine_type?: string | null;
+            /** Status */
+            status: string;
+            /** Drift Detected */
+            drift_detected: boolean;
+            /** Drift Summary */
+            drift_summary?: string | null;
+            /** Drift Details */
+            drift_details?: {
+                [key: string]: unknown;
+            } | null;
+            /** Last Check At */
+            last_check_at?: string | null;
+            /** Check Id */
+            check_id?: number | null;
         };
         /**
          * ModuleReportContentResponse
@@ -19403,12 +20045,128 @@ export interface components {
             reason: string;
         };
         /**
+         * PruneItemResponse
+         * @description What happened to one catalog version.
+         */
+        PruneItemResponse: {
+            /**
+             * Identity
+             * @description Module path, or blueprint id
+             */
+            identity: string;
+            /**
+             * Version
+             * @description The version or release considered
+             */
+            version: string;
+            /**
+             * Action
+             * @description kept — within the newest `keep`, or already inactive; deactivated — hidden but still resolvable for anything pinned to it; deleted — row removed, only ever one nothing references; in_use — something is deployed from it, so it was left untouched
+             * @enum {string}
+             */
+            action: "kept" | "deactivated" | "deleted" | "in_use";
+            /**
+             * Reason
+             * @description Why, when the action needs explaining
+             * @default
+             */
+            reason: string;
+        };
+        /**
+         * PruneRequest
+         * @description How much of a source's version history to retire.
+         *
+         *     Shared by both prune routes. They were byte-identical inline models in the
+         *     two route files, which is the "schemas live in TWO places" trap in
+         *     AGENTS.md — and it would have produced two separate OpenAPI schema names
+         *     free to drift apart.
+         */
+        PruneRequest: {
+            /**
+             * Keep
+             * @description Newest versions to keep per module path / blueprint id
+             * @default 1
+             */
+            keep: number;
+            /**
+             * Delete
+             * @description Remove unreferenced rows outright instead of deactivating
+             * @default false
+             */
+            delete: boolean;
+            /**
+             * Dry Run
+             * @description Report what would happen and change nothing
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Include In Use
+             * @description Also deactivate versions something is deployed from. They are still never deleted.
+             * @default false
+             */
+            include_in_use: boolean;
+        };
+        /**
+         * PruneResponse
+         * @description The full plan, and what was carried out unless ``dry_run``.
+         */
+        PruneResponse: {
+            /** Source Id */
+            source_id: number;
+            /**
+             * Dry Run
+             * @description True when nothing was changed
+             */
+            dry_run: boolean;
+            /**
+             * Keep
+             * @description Newest versions retained per module path / blueprint id
+             */
+            keep: number;
+            /**
+             * Counts
+             * @description Item count per action
+             */
+            counts?: {
+                [key: string]: number;
+            };
+            /** Items */
+            items?: components["schemas"]["PruneItemResponse"][];
+        };
+        /**
          * PublishTemplateRequest
          * @description Schema for publishing/unpublishing a template
          */
         PublishTemplateRequest: {
             /** Is Public */
             is_public: boolean;
+        };
+        /**
+         * PullTagsRequest
+         * @description Request body for POST /{id}/tags:pull.
+         */
+        PullTagsRequest: {
+            /**
+             * Tags
+             * @description Registry tags to pull (verbatim).
+             */
+            tags: string[];
+        };
+        /**
+         * PullTagsSummary
+         * @description Response for POST /{id}/tags:pull.
+         *
+         *     Nested model (not dict) so Pydantic's response_model serialisation
+         *     preserves the reason field inside each FailedTag entry.
+         */
+        PullTagsSummary: {
+            /** Added */
+            added: string[];
+            /** Skipped */
+            skipped: string[];
+            /** Failed */
+            failed: components["schemas"]["FailedTag"][];
         };
         /**
          * QKViewCancelResponse
@@ -19827,6 +20585,34 @@ export interface components {
              */
             credential_template_id: number;
         };
+        /**
+         * ReleaseDrift
+         * @description Deployed-vs-running release-line drift signal (ADR-494 Phase B).
+         *
+         *     Granularity is VERSION LINE (e.g. BNK 2.3 vs BNK 2.4), not exact build
+         *     (e.g. 2.3.0 vs 2.3.1).  Discovery resolves a FLO chart version to a whole
+         *     release-line registry row; exact point-release comparison is deferred until
+         *     discovery emits build-level information.
+         *
+         *     Status meanings:
+         *       in_sync             — deployed and running resolve to the same release line
+         *       drifted             — deployed and running resolve to different release lines
+         *       not_forge_deployed  — cluster has no Forge-tracked deployable release
+         *       undiscovered        — cluster has not been scanned / FLO version undetectable
+         *       deployed_unresolved — cluster is Forge-deployed but the deployed release's FLO version
+         *                             could not be resolved to a known release line
+         */
+        ReleaseDrift: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "in_sync" | "drifted" | "not_forge_deployed" | "undiscovered" | "deployed_unresolved";
+            /** Deployed Release Id */
+            deployed_release_id?: number | null;
+            /** Running Release Id */
+            running_release_id?: number | null;
+        };
         /** ReleaseRegistryItemResponse */
         ReleaseRegistryItemResponse: {
             /** Id */
@@ -19855,6 +20641,121 @@ export interface components {
             notes?: string | null;
             /** Is Active */
             is_active: boolean;
+        };
+        /** ReleaseSourceCreate */
+        ReleaseSourceCreate: {
+            /** Name */
+            name: string;
+            kind: components["schemas"]["ReleaseSourceKind"];
+            /** Url */
+            url?: string | null;
+            /**
+             * Credential
+             * @description Pull-secret or token; encrypted before storage.
+             */
+            credential?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Auto Sync
+             * @default false
+             */
+            auto_sync: boolean;
+            /** Sync Interval Hours */
+            sync_interval_hours?: number | null;
+            /** Description */
+            description?: string | null;
+        };
+        /**
+         * ReleaseSourceKind
+         * @description The transport kind of a ReleaseSource — where the Catalog syncs releases from.
+         * @enum {string}
+         */
+        ReleaseSourceKind: "oci" | "mirror" | "manual";
+        /** ReleaseSourceResponse */
+        ReleaseSourceResponse: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Url */
+            url: string | null;
+            /** Has Credential */
+            has_credential: boolean;
+            /** Is Active */
+            is_active: boolean;
+            /** Auto Sync */
+            auto_sync: boolean;
+            /** Sync Interval Hours */
+            sync_interval_hours: number | null;
+            /** Last Synced At */
+            last_synced_at: string | null;
+            /** Sync Status */
+            sync_status: string;
+            /** Sync Error */
+            sync_error: string | null;
+            /** Release Count */
+            release_count: number;
+            /** Description */
+            description: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ReleaseSourceTag
+         * @description A single tag from the OCI/mirror registry with catalog-membership annotation.
+         */
+        ReleaseSourceTag: {
+            /** Tag */
+            tag: string;
+            /** In Catalog */
+            in_catalog: boolean;
+            /** Prerelease */
+            prerelease: boolean;
+        };
+        /**
+         * ReleaseSourceTagList
+         * @description Response for GET /{id}/tags. tags is empty on listing failure.
+         */
+        ReleaseSourceTagList: {
+            /** Tags */
+            tags: components["schemas"]["ReleaseSourceTag"][];
+            /** List Error */
+            list_error?: string | null;
+        };
+        /** ReleaseSourceUpdate */
+        ReleaseSourceUpdate: {
+            /** Name */
+            name?: string | null;
+            kind?: components["schemas"]["ReleaseSourceKind"] | null;
+            /** Url */
+            url?: string | null;
+            /**
+             * Credential
+             * @description Set to update; omit to leave unchanged.
+             */
+            credential?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Auto Sync */
+            auto_sync?: boolean | null;
+            /** Sync Interval Hours */
+            sync_interval_hours?: number | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * ResourceCreateRequest
@@ -21100,6 +22001,19 @@ export interface components {
             /** Project Id */
             project_id?: number | null;
         };
+        /** SyncSourceRequest */
+        SyncSourceRequest: {
+            /** Manifest Yaml */
+            manifest_yaml: string;
+        };
+        /** SyncSourceResponse */
+        SyncSourceResponse: {
+            source: components["schemas"]["ReleaseSourceResponse"];
+            /** Sync Result */
+            sync_result: {
+                [key: string]: number;
+            };
+        };
         /**
          * SystemHealthResponse
          * @description Response for GET /api/system/health.
@@ -21546,6 +22460,125 @@ export interface components {
              * @default 5m
              */
             timeout: string;
+        };
+        /** UseCaseApplicationResponse */
+        UseCaseApplicationResponse: {
+            /** Id */
+            id: number;
+            /** Artifact Version Id */
+            artifact_version_id: number;
+            /** Cluster Id */
+            cluster_id: number;
+            /** Param Values */
+            param_values: {
+                [key: string]: unknown;
+            };
+            /** Applied By */
+            applied_by: string | null;
+            /**
+             * Applied At
+             * Format: date-time
+             */
+            applied_at: string;
+        };
+        /**
+         * UseCaseApplyRequest
+         * @description Concrete param values to inject when rendering the artifact version.
+         */
+        UseCaseApplyRequest: {
+            /** Param Values */
+            param_values: {
+                [key: string]: unknown;
+            };
+        };
+        /** UseCaseApplyResponse */
+        UseCaseApplyResponse: {
+            /** Message */
+            message: string;
+            /** Results */
+            results: {
+                [key: string]: {
+                    [key: string]: unknown;
+                }[];
+            };
+            application: components["schemas"]["UseCaseApplicationResponse"];
+        };
+        /** UseCaseArtifactVersionResponse */
+        UseCaseArtifactVersionResponse: {
+            /** Id */
+            id: number;
+            /** Artifact Id */
+            artifact_id: number;
+            /** Version */
+            version: string;
+            /** Matching Bnk Version */
+            matching_bnk_version: string | null;
+            /** Cr Templates */
+            cr_templates: {
+                [key: string]: unknown;
+            }[];
+            /** Param Schema */
+            param_schema: {
+                [key: string]: unknown;
+            }[];
+            /** Source */
+            source: string;
+            /** Source Cluster Id */
+            source_cluster_id: number | null;
+            /** Content Hash */
+            content_hash: string;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * UseCaseCaptureRequest
+         * @description Capture F5SPKVlan CRs from a cluster into a named, versioned artifact.
+         */
+        UseCaseCaptureRequest: {
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Matching Bnk Version */
+            matching_bnk_version?: string | null;
+        };
+        /** UseCaseCaptureResponse */
+        UseCaseCaptureResponse: {
+            version: components["schemas"]["UseCaseArtifactVersionResponse"];
+            /** Already Captured */
+            already_captured: boolean;
+        };
+        /**
+         * UseCaseDriftRequest
+         * @description Param values to render the desired-state before diffing against the cluster.
+         */
+        UseCaseDriftRequest: {
+            /** Param Values */
+            param_values: {
+                [key: string]: unknown;
+            };
+        };
+        /** UseCaseDriftResponse */
+        UseCaseDriftResponse: {
+            /** Drift Detected */
+            drift_detected: boolean;
+            /** Resource Changes */
+            resource_changes: {
+                [key: string]: number;
+            };
+            /** Changed Resources */
+            changed_resources: {
+                [key: string]: unknown;
+            }[];
+            /** Summary */
+            summary: string;
+            /** Check Duration Ms */
+            check_duration_ms: number;
         };
         /**
          * UserCreateRequest
@@ -23250,6 +24283,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    configure_bnk_cluster_api_k8s_clusters__cluster_id__bnk_config_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BnkClusterConfigCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BnkClusterConfigSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_bnk_cluster_members_api_k8s_clusters__cluster_id__bnk_members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BnkClusterMemberAssignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BnkClusterMemberAssignResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25937,7 +27040,7 @@ export interface operations {
             };
         };
     };
-    list_version_profiles_api_bare_metal_version_profiles_get: {
+    list_deployable_releases_api_bare_metal_deployable_releases_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -25952,17 +27055,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BnkVersionProfileListResponse"];
+                    "application/json": components["schemas"]["DeployableReleaseListResponse"];
                 };
             };
         };
     };
-    get_version_profile_api_bare_metal_version_profiles__profile_id__get: {
+    get_deployable_release_api_bare_metal_deployable_releases__release_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                profile_id: number;
+                release_id: number;
             };
             cookie?: never;
         };
@@ -25974,7 +27077,333 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BnkVersionProfileResponse"];
+                    "application/json": components["schemas"]["DeployableReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_deployable_release_api_bare_metal_deployable_releases__release_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                release_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivateReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployableReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_default_deployable_release_api_bare_metal_deployable_releases__release_id__set_default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                release_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployableReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_release_sources_api_bare_metal_release_sources_get: {
+        parameters: {
+            query?: {
+                active_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSourceResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_release_source_api_bare_metal_release_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseSourceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_release_source_api_bare_metal_release_sources__source_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_release_source_api_bare_metal_release_sources__source_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_release_source_api_bare_metal_release_sources__source_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseSourceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_release_source_tags_api_bare_metal_release_sources__source_id__tags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSourceTagList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pull_release_source_tags_api_bare_metal_release_sources__source_id__tags_pull_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PullTagsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullTagsSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_release_source_api_bare_metal_release_sources__source_id__sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncSourceResponse"];
                 };
             };
             /** @description Validation Error */
@@ -31441,7 +32870,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ClusterDriftStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -33961,6 +35390,41 @@ export interface operations {
             };
         };
     };
+    prune_module_source_versions_api_module_sources__source_id__prune_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PruneRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PruneResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_blueprint_sources_api_blueprint_catalog_sources_get: {
         parameters: {
             query?: {
@@ -34407,6 +35871,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BlueprintReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prune_blueprint_source_releases_api_blueprint_catalog_sources__source_id__prune_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PruneRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PruneResponse"];
                 };
             };
             /** @description Validation Error */
@@ -35171,7 +36670,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeployStackRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -35203,7 +36706,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeployStackRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -37506,6 +39013,113 @@ export interface operations {
             };
         };
     };
+    capture_artifact_api_clusters__cluster_id__usecase_artifacts_capture_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UseCaseCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UseCaseCaptureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UseCaseApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UseCaseApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drift_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__drift_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UseCaseDriftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UseCaseDriftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_available_versions_api_k8s_clusters__cluster_id__bnk_upgrade_versions_get: {
         parameters: {
             query?: never;
@@ -39287,6 +40901,68 @@ export interface operations {
             };
         };
     };
+    set_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unset_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_benchmark_agents_api_benchmarks_agents_get: {
         parameters: {
             query?: never;
@@ -39707,6 +41383,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BenchmarkSummaryResponse"];
+                };
+            };
+        };
+    };
+    get_benchmark_trends_api_benchmarks_trends_get: {
+        parameters: {
+            query?: {
+                target_id?: number | null;
+                proxy?: string | null;
+                scenario_key?: string | null;
+                config_id?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkTrendsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

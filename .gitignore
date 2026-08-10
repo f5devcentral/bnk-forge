@@ -158,7 +158,11 @@ screenshots/
 .agent/
 .opencode
 .opencode/
+.claude
 .claude/
+.gemini
+.gemini/
+.cursor
 .cursor/
 .aider*
 # CLAUDE.md go ahead and share

@@ -107,7 +107,7 @@ REGULAR_STEPS: list[StepDefinition] = [
         estimated_duration_seconds=180, prerequisites=["kubeadm_join"], idempotent=True
     ),
     StepDefinition(
-        DeploymentPhase.PHASE_4_PLATFORM, "deploy_bnk_cr", "Deploy BNK CR (CNEInstance/BNKGatewayClass)",
+        DeploymentPhase.PHASE_4_PLATFORM, "deploy_bnk_cr", "Deploy BNK CR (CNEInstance)",
         estimated_duration_seconds=120, prerequisites=["install_flo"], idempotent=True
     ),
     StepDefinition(
@@ -352,16 +352,18 @@ class BareMetalDeploymentService:
         host_id: int,
         project_id: int,
         *,
+        worker_host_ids: list[int] | None = None,
         resume_from_step: int | None = None,
         triggered_by: str = "user",
         selected_phases: list[str] | None = None,
         selected_steps: list[str] | None = None,
+        deployable_release_id: int | None = None,
     ) -> BareMetalDeployment:
         """Create a new deployment for a host.
 
         Validates:
         - Host exists and belongs to project
-        - No active deployment for this host
+        - No active deployment for any host involved in this deployment
         - Topology is set on the host
 
         Creates DeploymentStep records for each step in the topology's plan.
@@ -376,11 +378,28 @@ class BareMetalDeploymentService:
         # Topology-specific pre-deployment validation
         self._validate_topology_prerequisites(host)
 
-        # Check for active deployment
+        # Validate worker_host_ids against project scope (M2 — same guard as host_id above).
+        if worker_host_ids:
+            from core.errors import NotFoundError
+            valid_worker_hosts = (
+                self.db.query(BareMetalHost)
+                .filter(
+                    BareMetalHost.id.in_(worker_host_ids),
+                    BareMetalHost.project_id == project_id,
+                )
+                .all()
+            )
+            valid_worker_host_id_set = {h.id for h in valid_worker_hosts}
+            missing_worker_ids = set(worker_host_ids) - valid_worker_host_id_set
+            if missing_worker_ids:
+                raise NotFoundError("BareMetalHost", sorted(missing_worker_ids))
+
+        # Check for active deployment across all target hosts
+        target_host_ids = list(set([host_id] + (worker_host_ids or [])))
         active = (
             self.db.query(BareMetalDeployment)
             .filter(
-                BareMetalDeployment.host_id == host_id,
+                BareMetalDeployment.host_id.in_(target_host_ids),
                 BareMetalDeployment.status.notin_(
                     [s.value for s in BareMetalDeploymentStatus.terminal_states()]
                 ),
@@ -391,7 +410,7 @@ class BareMetalDeploymentService:
             from core.errors import BadRequestError
 
             raise BadRequestError(
-                f"Host {host_id} already has an active deployment (id={active.id}, status={active.status})"
+                f"Host {active.host_id} already has an active deployment (id={active.id}, status={active.status})"
             )
 
         # Get steps for topology
@@ -402,16 +421,36 @@ class BareMetalDeploymentService:
             step_defs, selected_phases, selected_steps
         )
 
-        # Snapshot version profile
-        profile_snapshot = None
-        if host.version_profile:
-            profile_snapshot = {
-                "name": host.version_profile.name,
-                "bnk_manifest_version": host.version_profile.bnk_manifest_version,
-                "k8s_version": host.version_profile.k8s_version,
-                "doca_version": host.version_profile.doca_version,
-                "flo_version": host.version_profile.flo_version,
-            }
+        # Resolve deployable release — explicit or catalog default; fails fast if absent
+        release = self._resolve_deployable_release(deployable_release_id)
+
+        # Stamp host anchor so resolve_project_context reads the chosen release
+        host.version_profile_id = release.id
+
+        # Freeze the full release matrix for reproducibility (authoritative per-deploy record)
+        profile_snapshot = {
+            "deployable_release_id": release.id,
+            "name": release.name,
+            "display_name": release.display_name,
+            "bnk_manifest_version": release.bnk_manifest_version,
+            "bnk_cr_kind": release.bnk_cr_kind,
+            "flo_version": release.flo_version,
+            "k8s_version": release.k8s_version,
+            "doca_version": release.doca_version,
+            "containerd_version": release.containerd_version,
+            "runc_version": release.runc_version,
+            "calico_version": release.calico_version,
+            "cert_manager_version": release.cert_manager_version,
+            "gateway_api_version": release.gateway_api_version,
+            "multus_version": release.multus_version,
+            "sriov_version": release.sriov_version,
+            "storage_class_type": release.storage_class_type,
+            "storage_provisioner": release.storage_provisioner,
+            "feature_flags": release.feature_flags,
+            "full_manifest": release.full_manifest,
+            "source_type": release.source_type,
+            "bnk_release_id": release.bnk_release_id,
+        }
 
         # Create deployment
         deployment = BareMetalDeployment(
@@ -420,6 +459,7 @@ class BareMetalDeploymentService:
             topology=host.topology,
             status=BareMetalDeploymentStatus.PENDING,
             version_profile_snapshot=profile_snapshot,
+            deployable_release_id=release.id,
             resume_from_step=resume_from_step,
             triggered_by=triggered_by,
             selected_phases=selected_phases,
@@ -743,6 +783,39 @@ class BareMetalDeploymentService:
                 warnings.append("Phase 4 selected without Phase 3, but no K8s cluster is linked to this host")
 
         return warnings
+
+    def _resolve_deployable_release(self, deployable_release_id: int | None):
+        """Resolve a BnkDeployableRelease for deployment creation.
+
+        Explicit ID → load and validate (NotFoundError if missing, BadRequestError if inactive).
+        None → catalog is_default row. No default configured → BadRequestError (fail-fast).
+        """
+        from core.errors import BadRequestError, NotFoundError
+        from models.bnk_deployable_release import BnkDeployableRelease
+
+        if deployable_release_id is not None:
+            release = (
+                self.db.query(BnkDeployableRelease)
+                .filter(BnkDeployableRelease.id == deployable_release_id)
+                .first()
+            )
+            if not release:
+                raise NotFoundError("BnkDeployableRelease", str(deployable_release_id))
+            if not release.is_active:
+                raise BadRequestError(
+                    f"BNK release '{release.name}' (id={release.id}) is not active"
+                )
+            return release
+
+        # No explicit selection — fall back to catalog default
+        release = (
+            self.db.query(BnkDeployableRelease)
+            .filter(BnkDeployableRelease.is_default.is_(True))
+            .first()
+        )
+        if not release:
+            raise BadRequestError("no default BNK release configured")
+        return release
 
     def _get_host_for_project(self, host_id: int, project_id: int) -> BareMetalHost:
         """Get a host by ID and validate it belongs to the project."""

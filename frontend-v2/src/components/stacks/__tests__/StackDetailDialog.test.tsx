@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@/test/test-utils';
 import { StackDetailDialog } from '../StackDetailDialog';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
+import * as useBareMetalHooks from '@/hooks/useBareMetal';
 import type { Project } from '@/types';
 
 vi.mock('@/lib/notify', () => ({
@@ -74,6 +75,13 @@ vi.mock('@/hooks/useStacks', () => ({
   useStackPreview: () => ({
     data: { modules: [], total_modules: 1 },
   }),
+}));
+
+// Default: no releases, no hosts — keeps existing tests unaffected.
+// Individual tests override via vi.mocked(...).mockReturnValue(...).
+vi.mock('@/hooks/useBareMetal', () => ({
+  useBareMetalHosts: () => ({ data: [] }),
+  useDeployableReleases: () => ({ data: [] }),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -741,4 +749,175 @@ describe('StackDetailDialog auto-detect user_ip submit (PR #92 regression)', () 
     });
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// ADR-478 P1b: BNK release picker — bare-metal blueprint gating + submit payload
+// CT-012: MSW shape mirrors real backend response (GET /api/bare-metal/deployable-releases).
+// ---------------------------------------------------------------------------
+
+const bareMetalTemplate = {
+  id: 10,
+  name: 'BNK Bare Metal SSH',
+  slug: 'bnk-bare-metal-dpu-infra',
+  description: 'Deploy BNK over SSH on bare metal',
+  category: 'bare-metal',
+  is_active: true,
+  is_featured: false,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+  prerequisites: [],
+  modules: [
+    {
+      path: 'bare-metal/bnk-infra',
+      name: 'BNK Infra',
+      required: true,
+      variables: {},
+      engine_type: 'ssh',
+      lifecycle_capabilities: {
+        supports_init: true,
+        supports_plan: false,
+        supports_apply: true,
+        supports_destroy: false,
+        supports_refresh: false,
+        supports_drift: false,
+      },
+    },
+  ],
+};
+
+const mockReleases = [
+  { id: 1, name: 'bnk-2.2', display_name: 'BNK 2.2 (default)', is_default: true, is_active: true },
+  { id: 2, name: 'bnk-2.3.1', display_name: 'BNK 2.3.1', is_default: false, is_active: true },
+];
+
+const mockBareMetalHosts = [
+  { id: 5, hostname: 'dpu-server-2', host_ip: '172.28.13.16', topology: 'regular' },
+];
+
+const bareMetalProject = {
+  id: 42,
+  name: 'BM Test Project',
+  color: '#2563eb',
+  icon: '',
+  is_active: true,
+  has_deployments: false,
+  module_count: 0,
+  deployed_count: 0,
+  failed_count: 0,
+  cluster_count: 0,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+};
+
+describe('ADR-478 P1b — BNK release picker in StackDetailDialog', () => {
+  beforeAll(() => {
+    if (!HTMLElement.prototype.hasPointerCapture) HTMLElement.prototype.hasPointerCapture = () => false;
+    if (!HTMLElement.prototype.setPointerCapture) HTMLElement.prototype.setPointerCapture = () => {};
+    if (!HTMLElement.prototype.releasePointerCapture) HTMLElement.prototype.releasePointerCapture = () => {};
+    if (!HTMLElement.prototype.scrollIntoView) HTMLElement.prototype.scrollIntoView = () => {};
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTemplate = structuredClone(bareMetalTemplate) as typeof mockTemplate;
+    vi.mocked(api.getProjects).mockResolvedValue([bareMetalProject] as never);
+    vi.mocked(api.getStackRequiredInputs).mockResolvedValue({
+      all_inputs: [],
+      inputs_by_module: {},
+      total_required: 0,
+      summary: [],
+    } as never);
+    vi.mocked(api.checkStackPrerequisites).mockResolvedValue({
+      all_satisfied: true,
+      required_secrets: [],
+      missing_secrets: [],
+    } as never);
+    vi.mocked(api.createStackInstance).mockResolvedValue({ id: 77 } as never);
+    vi.mocked(api.deployStack).mockResolvedValue({} as never);
+    // Inject mock hooks for bare-metal data
+    vi.spyOn(useBareMetalHooks, 'useDeployableReleases').mockReturnValue({ data: mockReleases } as never);
+    vi.spyOn(useBareMetalHooks, 'useBareMetalHosts').mockReturnValue({ data: mockBareMetalHosts } as never);
+  });
+
+  it('shows the BNK release section for bare-metal templates in existing-project mode', async () => {
+    render(<StackDetailDialog slug="bnk-bare-metal-dpu-infra" open onOpenChange={vi.fn()} />);
+
+    // Select the existing project to reveal the bare-metal sections
+    const projectCombo = await screen.findByRole('combobox');
+    await userEvent.click(projectCombo);
+    const projectOption = await screen.findByRole('option', { name: /BM Test Project/i });
+    await userEvent.click(projectOption);
+
+    // The BNK release section should now be visible
+    await waitFor(() => {
+      expect(screen.getByText('BNK release')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show the BNK release section for non-bare-metal templates', async () => {
+    mockTemplate = structuredClone(defaultTemplate) as typeof mockTemplate; // bnk category
+    vi.mocked(api.getProjects).mockResolvedValue([
+      { ...bareMetalProject, cluster_count: 1 },
+    ] as never);
+
+    render(<StackDetailDialog slug="bnk-on-k8s" open onOpenChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(api.getProjects).toHaveBeenCalled();
+    });
+
+    // BNK release section must not appear for non-BM blueprints
+    await waitFor(() => {
+      expect(screen.queryByText('BNK release')).not.toBeInTheDocument();
+    });
+  });
+
+  it('sends deployable_release_id in the deploy call when a release is chosen', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    vi.mocked(api.deployStack).mockImplementation((_pid, _sid, body) => {
+      capturedBody = body as Record<string, unknown>;
+      return Promise.resolve({} as never);
+    });
+
+    const user = userEvent.setup();
+    render(<StackDetailDialog slug="bnk-bare-metal-dpu-infra" open onOpenChange={vi.fn()} />);
+
+    // Select project (bare-metal slug is existing-only)
+    const projectCombo = await screen.findByRole('combobox');
+    await user.click(projectCombo);
+    const projectOption = await screen.findByRole('option', { name: /BM Test Project/i });
+    await user.click(projectOption);
+
+    // Wait for bare-metal sections to appear (host + release pickers)
+    await waitFor(() => {
+      expect(screen.getByText('BNK release')).toBeInTheDocument();
+    });
+
+    // Select a host (required for BM validation)
+    const allCombos = screen.getAllByRole('combobox');
+    // Host picker is before the release picker
+    const hostCombo = allCombos[allCombos.length - 2];
+    await user.click(hostCombo);
+    const hostOption = await screen.findByRole('option', { name: /dpu-server-2/i });
+    await user.click(hostOption);
+
+    // Pick BNK 2.3.1 from the release picker (last combobox in the form)
+    const releaseCombos = screen.getAllByRole('combobox');
+    const releaseCombo = releaseCombos[releaseCombos.length - 1];
+    await user.click(releaseCombo);
+    const releaseOption = await screen.findByRole('option', { name: /BNK 2\.3\.1/i });
+    await user.click(releaseOption);
+
+    // In existing-project mode the button reads "Add to Project"
+    const deployBtn = screen.getByRole('button', { name: /Add to Project/i });
+    await user.click(deployBtn);
+
+    await waitFor(() => {
+      expect(api.deployStack).toHaveBeenCalled();
+    });
+
+    // CT-012: payload must carry deployable_release_id matching the selected release id (2)
+    expect(capturedBody).toMatchObject({ deployable_release_id: 2 });
+  });
 });

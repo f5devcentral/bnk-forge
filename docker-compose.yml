@@ -108,7 +108,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: api
     image: bnk-forge-api:latest
     container_name: bnk-forge-backend
@@ -161,7 +162,8 @@ services:
 
   celery-worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: worker
     image: bnk-forge-worker:latest
     container_name: bnk-forge-celery-worker
@@ -341,7 +343,8 @@ services:
 
   celery-beat:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: beat
     image: bnk-forge-beat:latest
     container_name: bnk-forge-celery-beat

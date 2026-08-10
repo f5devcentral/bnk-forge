@@ -21,7 +21,7 @@ variable "SOURCE_URL" {
 }
 
 group "default" {
-  targets = ["api", "worker", "beat", "frontend", "proxy", "mcp"]
+  targets = ["api", "worker", "beat", "frontend", "proxy", "mcp", "operator"]
 }
 
 target "_common" {
@@ -35,8 +35,11 @@ target "_common" {
 }
 
 target "_backend" {
-  inherits = ["_common"]
-  context  = "./backend"
+  inherits   = ["_common"]
+  // Repo root, not ./backend — the VERSION file lives above backend/ and the
+  // image needs it (see backend/Dockerfile). Matches the frontend target.
+  context    = "."
+  dockerfile = "backend/Dockerfile"
 }
 
 target "api" {
@@ -91,5 +94,15 @@ target "mcp" {
   tags = concat(
     ["${REGISTRY}/bnk-forge-mcp:${VERSION}"],
     ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-mcp:${ROLLING_TAG}"] : [],
+  )
+}
+
+target "operator" {
+  inherits = ["_common"]
+  context  = "./bnk-operator"
+  target   = "runtime"
+  tags = concat(
+    ["${REGISTRY}/bnk-forge-operator:${VERSION}"],
+    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-operator:${ROLLING_TAG}"] : [],
   )
 }

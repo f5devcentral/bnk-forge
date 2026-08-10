@@ -348,19 +348,47 @@ class ClusterManagementService(BaseService):
 
     def list_all_clusters(self) -> dict[str, Any]:
         """List all Kubernetes clusters (global)."""
+        from sqlalchemy.orm import selectinload
+
         from routes.k8s._shared import serialize_cluster
-        clusters = self.db.query(KubernetesCluster).all()
-        result = [serialize_cluster(c) for c in clusters]
+        from services.bnk_cluster_service import BnkClusterService
+
+        clusters = (
+            self.db.query(KubernetesCluster)
+            .options(selectinload(KubernetesCluster.bnk_config))
+            .all()
+        )
+        # Bulk-fetch membership for all BNK clusters in 2 queries (not 2N).
+        # selectinload(bnk_config) already avoids the config N+1; this bulk
+        # call eliminates the host+DPU membership N+1 in _serialize_bnk_config.
+        bnk_ids = [c.id for c in clusters if getattr(c, "bnk_config", None)]
+        membership_map = BnkClusterService(self.db).bulk_cluster_membership(bnk_ids)
+        result = [
+            serialize_cluster(c, membership=membership_map.get(c.id))
+            for c in clusters
+        ]
         return {"clusters": result, "count": len(result)}
 
     def list_project_clusters(self, project_id: int) -> dict[str, Any]:
         """List all Kubernetes clusters for a project."""
+        from sqlalchemy.orm import selectinload
+
         from routes.k8s._shared import serialize_cluster
+        from services.bnk_cluster_service import BnkClusterService
+
         self._get_project(project_id)
-        clusters = self.db.query(KubernetesCluster).filter(
-            KubernetesCluster.project_id == project_id
-        ).all()
-        result = [serialize_cluster(c, include_project_id=False) for c in clusters]
+        clusters = (
+            self.db.query(KubernetesCluster)
+            .filter(KubernetesCluster.project_id == project_id)
+            .options(selectinload(KubernetesCluster.bnk_config))
+            .all()
+        )
+        bnk_ids = [c.id for c in clusters if getattr(c, "bnk_config", None)]
+        membership_map = BnkClusterService(self.db).bulk_cluster_membership(bnk_ids)
+        result = [
+            serialize_cluster(c, include_project_id=False, membership=membership_map.get(c.id))
+            for c in clusters
+        ]
         return {"clusters": result, "count": len(result)}
 
     def get_cluster_details(self, cluster_id: int) -> dict[str, Any]:
@@ -377,6 +405,9 @@ class ClusterManagementService(BaseService):
             "region": cluster.region, "default_namespace": cluster.default_namespace,
             "status": cluster.status, "version": cluster.version,
             "project_id": cluster.project_id,
+            # ADR-478/494: release FK ids — deployable = intent; running = observed by scan.
+            "deployable_release_id": cluster.deployable_release_id,
+            "running_release_id": cluster.running_release_id,
             "last_synced_at": cluster.last_synced_at.isoformat() if cluster.last_synced_at else None,
             "created_at": cluster.created_at.isoformat() if cluster.created_at else None,
             "updated_at": cluster.updated_at.isoformat() if cluster.updated_at else None
@@ -484,6 +515,10 @@ class ClusterManagementService(BaseService):
         """Delete cluster configuration."""
         cluster = self._get_cluster(cluster_id)
         cluster_name = cluster.name
+
+        # tmfifo IP release is handled by the KubernetesCluster before_delete
+        # mapper event in models/kubernetes.py (ADR-424 finding B) — no
+        # per-caller wiring needed here.
         self.db.delete(cluster)
         self.db.flush()
         return {"message": f"Cluster '{cluster_name}' deleted successfully"}

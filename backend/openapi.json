@@ -1797,6 +1797,112 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/bnk-config": {
+      "post": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Configure Bnk Cluster",
+        "description": "Configure BNK cluster side-table options (tmfifo CIDR pool, join transport, CP host).",
+        "operationId": "configure_bnk_cluster_api_k8s_clusters__cluster_id__bnk_config_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BnkClusterConfigCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BnkClusterConfigSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/bnk-members": {
+      "post": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Assign Bnk Cluster Members",
+        "description": "Assign bare-metal hosts and DPUs to a BNK cluster and perform tmfifo IP allocations.",
+        "operationId": "assign_bnk_cluster_members_api_k8s_clusters__cluster_id__bnk_members_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BnkClusterMemberAssignRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BnkClusterMemberAssignResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/crds": {
       "get": {
         "tags": [
@@ -6579,21 +6685,21 @@
         }
       }
     },
-    "/api/bare-metal/version-profiles": {
+    "/api/bare-metal/deployable-releases": {
       "get": {
         "tags": [
           "bare-metal"
         ],
-        "summary": "List Version Profiles",
-        "description": "List all BNK version profiles.",
-        "operationId": "list_version_profiles_api_bare_metal_version_profiles_get",
+        "summary": "List Deployable Releases",
+        "description": "List all BNK deployable releases.",
+        "operationId": "list_deployable_releases_api_bare_metal_deployable_releases_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BnkVersionProfileListResponse"
+                  "$ref": "#/components/schemas/DeployableReleaseListResponse"
                 }
               }
             }
@@ -6601,22 +6707,22 @@
         }
       }
     },
-    "/api/bare-metal/version-profiles/{profile_id}": {
+    "/api/bare-metal/deployable-releases/{release_id}": {
       "get": {
         "tags": [
           "bare-metal"
         ],
-        "summary": "Get Version Profile",
-        "description": "Get a specific version profile.",
-        "operationId": "get_version_profile_api_bare_metal_version_profiles__profile_id__get",
+        "summary": "Get Deployable Release",
+        "description": "Get a specific deployable release.",
+        "operationId": "get_deployable_release_api_bare_metal_deployable_releases__release_id__get",
         "parameters": [
           {
-            "name": "profile_id",
+            "name": "release_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Profile Id"
+              "title": "Release Id"
             }
           }
         ],
@@ -6626,7 +6732,468 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BnkVersionProfileResponse"
+                  "$ref": "#/components/schemas/DeployableReleaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/deployable-releases/{release_id}/activate": {
+      "post": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Activate Deployable Release",
+        "description": "Set is_active on a deployable release.",
+        "operationId": "activate_deployable_release_api_bare_metal_deployable_releases__release_id__activate_post",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Release Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateReleaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployableReleaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/deployable-releases/{release_id}/set-default": {
+      "post": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Set Default Deployable Release",
+        "description": "Mark this release as the default, clearing is_default on all others.",
+        "operationId": "set_default_deployable_release_api_bare_metal_deployable_releases__release_id__set_default_post",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployableReleaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/release-sources": {
+      "get": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "List Release Sources",
+        "description": "List all BNK release sources.",
+        "operationId": "list_release_sources_api_bare_metal_release_sources_get",
+        "parameters": [
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReleaseSourceResponse"
+                  },
+                  "title": "Response List Release Sources Api Bare Metal Release Sources Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Create Release Source",
+        "description": "Create a new BNK release source.",
+        "operationId": "create_release_source_api_bare_metal_release_sources_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseSourceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/release-sources/{source_id}": {
+      "get": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Get Release Source",
+        "description": "Get a specific BNK release source.",
+        "operationId": "get_release_source_api_bare_metal_release_sources__source_id__get",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Update Release Source",
+        "description": "Partial update of a BNK release source.",
+        "operationId": "update_release_source_api_bare_metal_release_sources__source_id__patch",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseSourceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Delete Release Source",
+        "description": "Delete a BNK release source. Catalog rows retain source_id \u2192 NULL via FK ON DELETE SET NULL.",
+        "operationId": "delete_release_source_api_bare_metal_release_sources__source_id__delete",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/release-sources/{source_id}/tags": {
+      "get": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "List Release Source Tags",
+        "description": "List available manifest tags from the OCI/mirror registry.\n\nBest-effort: on listing failure returns tags=[] with list_error set\n(never 500s). The UI should keep a manual tag-entry fallback.",
+        "operationId": "list_release_source_tags_api_bare_metal_release_sources__source_id__tags_get",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSourceTagList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/release-sources/{source_id}/tags:pull": {
+      "post": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Pull Release Source Tags",
+        "description": "Pull selected manifest tags from the OCI/mirror registry and upsert Catalog rows.\n\nIdempotent: already-present releases are reported in skipped[], not re-inserted.\nPartial batch failure (one tag fails, others succeed) keeps sync_status=success.",
+        "operationId": "pull_release_source_tags_api_bare_metal_release_sources__source_id__tags_pull_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullTagsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullTagsSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bare-metal/release-sources/{source_id}/sync": {
+      "post": {
+        "tags": [
+          "bare-metal"
+        ],
+        "summary": "Sync Release Source",
+        "description": "Sync catalog releases from the supplied manifest YAML.\n\nPersists sync_status='error' even when the sync fails, so the caller can\ninspect the error via GET /{source_id}.",
+        "operationId": "sync_release_source_api_bare_metal_release_sources__source_id__sync_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncSourceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncSourceResponse"
                 }
               }
             }
@@ -14546,7 +15113,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDriftStatusResponse"
+                }
               }
             }
           },
@@ -18039,6 +18608,59 @@
         }
       }
     },
+    "/api/module-sources/{source_id}/prune": {
+      "post": {
+        "tags": [
+          "module-sources"
+        ],
+        "summary": "Prune Module Source Versions",
+        "description": "Retire superseded module versions for this source.\n\nD-033 adds an immutable row per (source, path, version) and never removes\none, so a source under active development accumulates every version it has\never had. Until now the only way back was to delete the source and\nre-register it, which discards its configuration and every blueprint release\nalongside it.\n\nDeactivating (the default) hides a version and stops it competing for\nis_latest while leaving the row resolvable for anything pinned to it.\n`delete` removes rows outright, and only ever those nothing references \u2014\na pinned version is deactivated instead, because a prune must not break a\nrunning deployment.",
+        "operationId": "prune_module_source_versions_api_module_sources__source_id__prune_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/blueprint-catalog/sources": {
       "get": {
         "tags": [
@@ -18738,6 +19360,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BlueprintReleaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/blueprint-catalog/sources/{source_id}/prune": {
+      "post": {
+        "tags": [
+          "blueprint-catalog"
+        ],
+        "summary": "Prune Blueprint Source Releases",
+        "description": "Retire superseded blueprint releases for this source.\n\nEvery edit to a blueprint adds an immutable release, so a source under\ndevelopment ends up serving a version picker full of history. Deactivating\n(the default) hides a release without discarding it. `delete` removes rows\noutright and only ever those nothing was deployed from \u2014 a release a\nStackInstance points at is deactivated instead, because that FK is\nON DELETE SET NULL and deleting would silently strip the stack of the record\nof what it was built from.",
+        "operationId": "prune_blueprint_source_releases_api_blueprint_catalog_sources__source_id__prune_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneResponse"
                 }
               }
             }
@@ -20037,7 +20712,7 @@
           "stacks"
         ],
         "summary": "Deploy Stack",
-        "description": "Start stack deployment.",
+        "description": "Start stack deployment. Accepts optional deployable_release_id for BNK/bare-metal blueprints.",
         "operationId": "deploy_stack_api_stacks_projects__project_id__stacks__stack_id__deploy_post",
         "parameters": [
           {
@@ -20059,6 +20734,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployStackRequest",
+                "default": {}
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -20087,7 +20772,7 @@
           "stacks"
         ],
         "summary": "Run Stack Deployment",
-        "description": "Deploy all stack modules (init + apply).",
+        "description": "Deploy all stack modules (init + apply). Accepts optional deployable_release_id for BNK/bare-metal blueprints.",
         "operationId": "run_stack_deployment_api_stacks_projects__project_id__stacks__stack_id__run_deploy_post",
         "parameters": [
           {
@@ -20109,6 +20794,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployStackRequest",
+                "default": {}
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -23536,6 +24231,183 @@
         }
       }
     },
+    "/api/clusters/{cluster_id}/usecase-artifacts/capture": {
+      "post": {
+        "tags": [
+          "usecase-artifacts"
+        ],
+        "summary": "Capture Artifact",
+        "description": "Capture F5SPKVlan CRs from a cluster into a versioned use-case artifact.",
+        "operationId": "capture_artifact_api_clusters__cluster_id__usecase_artifacts_capture_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UseCaseCaptureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UseCaseCaptureResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster_id}/usecase-artifact-versions/{version_id}/apply": {
+      "post": {
+        "tags": [
+          "usecase-artifacts"
+        ],
+        "summary": "Apply Artifact",
+        "description": "Render a use-case artifact version and apply it to a cluster via the shared write path.",
+        "operationId": "apply_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__apply_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UseCaseApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UseCaseApplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster_id}/usecase-artifact-versions/{version_id}/drift": {
+      "post": {
+        "tags": [
+          "usecase-artifacts"
+        ],
+        "summary": "Drift Artifact",
+        "description": "Render desired-state from a use-case artifact version and diff against the live cluster.",
+        "operationId": "drift_artifact_api_clusters__cluster_id__usecase_artifact_versions__version_id__drift_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UseCaseDriftRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UseCaseDriftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/bnk/upgrade/versions": {
       "get": {
         "tags": [
@@ -26265,6 +27137,84 @@
         }
       }
     },
+    "/api/benchmarks/runs/{run_id}/baseline": {
+      "post": {
+        "summary": "Set Benchmark Run Baseline",
+        "description": "Mark a completed run as the baseline for its (target, scenario/config) context.\n\nClears any previous baseline in that same context \u2014 one baseline per context.",
+        "operationId": "set_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Unset Benchmark Run Baseline",
+        "description": "Clear the baseline flag on a run.",
+        "operationId": "unset_benchmark_run_baseline_api_benchmarks_runs__run_id__baseline_delete",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/benchmarks/agents": {
       "get": {
         "summary": "List Benchmark Agents",
@@ -26788,6 +27738,113 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BenchmarkSummaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmarks/trends": {
+      "get": {
+        "summary": "Get Benchmark Trends",
+        "description": "Time-ordered completed-run metrics for a target/proxy/scenario/config context,\nwith the current baseline (if any) always included.",
+        "operationId": "get_benchmark_trends_api_benchmarks_trends_get",
+        "parameters": [
+          {
+            "name": "target_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Id"
+            }
+          },
+          {
+            "name": "proxy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Proxy"
+            }
+          },
+          {
+            "name": "scenario_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario Key"
+            }
+          },
+          {
+            "name": "config_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Config Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkTrendsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -29686,6 +30743,19 @@
         "title": "AbortMigrationRequest",
         "description": "Request body for POST .../migrate/{id}/abort."
       },
+      "ActivateReleaseRequest": {
+        "properties": {
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "is_active"
+        ],
+        "title": "ActivateReleaseRequest"
+      },
       "ActiveProjectResponse": {
         "properties": {
           "active": {
@@ -30514,8 +31584,40 @@
       "BareMetalDeploymentCreate": {
         "properties": {
           "host_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Host Id"
+          },
+          "control_plane_host_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Plane Host Id"
+          },
+          "worker_host_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Host Ids"
           },
           "resume_from_step": {
             "anyOf": [
@@ -30560,12 +31662,20 @@
               }
             ],
             "title": "Selected Steps"
+          },
+          "deployable_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Release Id"
           }
         },
         "type": "object",
-        "required": [
-          "host_id"
-        ],
         "title": "BareMetalDeploymentCreate"
       },
       "BareMetalDeploymentListResponse": {
@@ -31061,6 +32171,17 @@
               }
             ],
             "title": "Bond Mode"
+          },
+          "net_rshim_mac_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Rshim Mac Base"
           }
         },
         "type": "object",
@@ -31508,6 +32629,17 @@
             ],
             "title": "Bond Mode"
           },
+          "net_rshim_mac_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Rshim Mac Base"
+          },
           "has_discovery_result": {
             "type": "boolean",
             "title": "Has Discovery Result",
@@ -31829,6 +32961,17 @@
               }
             ],
             "title": "Bond Mode"
+          },
+          "net_rshim_mac_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Rshim Mac Base"
           }
         },
         "type": "object",
@@ -32310,6 +33453,11 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Winners"
+          },
+          "context_mismatch": {
+            "type": "boolean",
+            "title": "Context Mismatch",
+            "default": false
           }
         },
         "type": "object",
@@ -32348,6 +33496,39 @@
               }
             ],
             "title": "Run Label"
+          },
+          "config_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Id"
+          },
+          "scenario_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Key"
+          },
+          "variant_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Label"
           },
           "status": {
             "type": "string",
@@ -33121,6 +34302,17 @@
             ],
             "title": "Proxy Deployment Id"
           },
+          "scenario_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Key"
+          },
           "status": {
             "type": "string",
             "title": "Status"
@@ -33135,6 +34327,33 @@
               }
             ],
             "title": "Error Message"
+          },
+          "is_baseline": {
+            "type": "boolean",
+            "title": "Is Baseline",
+            "default": false
+          },
+          "baseline_latency_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Latency P99"
+          },
+          "baseline_overall_rps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Overall Rps"
           },
           "duration_seconds": {
             "anyOf": [
@@ -33491,6 +34710,17 @@
             ],
             "title": "Proxy Deployment Id"
           },
+          "scenario_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Key"
+          },
           "status": {
             "type": "string",
             "title": "Status"
@@ -33505,6 +34735,33 @@
               }
             ],
             "title": "Error Message"
+          },
+          "is_baseline": {
+            "type": "boolean",
+            "title": "Is Baseline",
+            "default": false
+          },
+          "baseline_latency_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Latency P99"
+          },
+          "baseline_overall_rps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Overall Rps"
           },
           "duration_seconds": {
             "anyOf": [
@@ -34253,6 +35510,156 @@
         "title": "BenchmarkTargetUpdate",
         "description": "Update a benchmark target."
       },
+      "BenchmarkTrendPoint": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "run_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Label"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "is_baseline": {
+            "type": "boolean",
+            "title": "Is Baseline"
+          },
+          "latency_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency P50"
+          },
+          "latency_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency P99"
+          },
+          "overall_rps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Rps"
+          },
+          "peak_rps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Rps"
+          },
+          "success_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Rate Pct"
+          },
+          "tokens_per_sec": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Per Sec"
+          },
+          "total_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Output Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "run_label",
+          "created_at",
+          "is_baseline",
+          "latency_p50",
+          "latency_p99",
+          "overall_rps",
+          "peak_rps",
+          "success_rate_pct",
+          "tokens_per_sec",
+          "total_output_tokens"
+        ],
+        "title": "BenchmarkTrendPoint",
+        "description": "One time-series point for the Trends view."
+      },
+      "BenchmarkTrendsResponse": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkTrendPoint"
+            },
+            "type": "array",
+            "title": "Points"
+          },
+          "baseline_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "points",
+          "baseline_run_id"
+        ],
+        "title": "BenchmarkTrendsResponse",
+        "description": "Time-ordered (oldest-first) completed-run metrics for a target/proxy/scenario/config\ncontext, plus the current baseline run id (included in points even if outside limit)."
+      },
       "BfConfTemplateCreate": {
         "properties": {
           "name": {
@@ -34693,6 +36100,13 @@
               }
             ],
             "title": "Notes"
+          },
+          "url_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Url Warnings"
           },
           "created_at": {
             "type": "string",
@@ -35598,6 +37012,188 @@
         "type": "object",
         "title": "BlueprintSourceUpdate"
       },
+      "BnkClusterConfigCreateRequest": {
+        "properties": {
+          "tmfifo_pool_cidr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmfifo Pool Cidr",
+            "description": "Cluster-wide tmfifo pool CIDR (omit to keep current)"
+          },
+          "join_transport": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rshim",
+                  "mgmt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Join Transport",
+            "description": "Join transport type ('rshim' or 'mgmt'; omit to keep current)"
+          },
+          "control_plane_host_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Plane Host Id",
+            "description": "ID of designated Control Plane host"
+          }
+        },
+        "type": "object",
+        "title": "BnkClusterConfigCreateRequest"
+      },
+      "BnkClusterConfigSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "tmfifo_pool_cidr": {
+            "type": "string",
+            "title": "Tmfifo Pool Cidr",
+            "default": "192.168.100.0/22"
+          },
+          "join_transport": {
+            "type": "string",
+            "title": "Join Transport",
+            "default": "rshim"
+          },
+          "control_plane_host_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Plane Host Id"
+          },
+          "host_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Host Ids",
+            "description": "IDs of hosts currently in this cluster"
+          },
+          "dpu_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Dpu Ids",
+            "description": "IDs of DPUs currently in this cluster"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "cluster_id"
+        ],
+        "title": "BnkClusterConfigSummary"
+      },
+      "BnkClusterMemberAssignRequest": {
+        "properties": {
+          "control_plane_host_id": {
+            "type": "integer",
+            "title": "Control Plane Host Id",
+            "description": "ID of designated Control Plane host"
+          },
+          "host_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Host Ids",
+            "description": "IDs of member bare-metal hosts"
+          },
+          "dpu_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Dpu Ids",
+            "description": "IDs of member DPUs"
+          },
+          "tmfifo_pool_cidr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmfifo Pool Cidr",
+            "description": "Cluster-wide tmfifo pool CIDR (omit to keep current)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "control_plane_host_id"
+        ],
+        "title": "BnkClusterMemberAssignRequest"
+      },
+      "BnkClusterMemberAssignResponse": {
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "control_plane_host_id": {
+            "type": "integer",
+            "title": "Control Plane Host Id"
+          },
+          "host_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Host Ids"
+          },
+          "assigned_dpus": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Assigned Dpus"
+          },
+          "bnk_config": {
+            "$ref": "#/components/schemas/BnkClusterConfigSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "control_plane_host_id",
+          "host_ids",
+          "assigned_dpus",
+          "bnk_config"
+        ],
+        "title": "BnkClusterMemberAssignResponse"
+      },
       "BnkReleaseListResponse": {
         "properties": {
           "releases": {
@@ -35646,151 +37242,6 @@
           "upserted"
         ],
         "title": "BnkReleaseSyncResponse"
-      },
-      "BnkVersionProfileListResponse": {
-        "properties": {
-          "profiles": {
-            "items": {
-              "$ref": "#/components/schemas/BnkVersionProfileResponse"
-            },
-            "type": "array",
-            "title": "Profiles"
-          }
-        },
-        "type": "object",
-        "required": [
-          "profiles"
-        ],
-        "title": "BnkVersionProfileListResponse"
-      },
-      "BnkVersionProfileResponse": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
-          "bnk_manifest_version": {
-            "type": "string",
-            "title": "Bnk Manifest Version"
-          },
-          "bnk_cr_kind": {
-            "type": "string",
-            "title": "Bnk Cr Kind"
-          },
-          "flo_version": {
-            "type": "string",
-            "title": "Flo Version"
-          },
-          "k8s_version": {
-            "type": "string",
-            "title": "K8S Version"
-          },
-          "doca_version": {
-            "type": "string",
-            "title": "Doca Version"
-          },
-          "containerd_version": {
-            "type": "string",
-            "title": "Containerd Version"
-          },
-          "runc_version": {
-            "type": "string",
-            "title": "Runc Version"
-          },
-          "calico_version": {
-            "type": "string",
-            "title": "Calico Version"
-          },
-          "cert_manager_version": {
-            "type": "string",
-            "title": "Cert Manager Version"
-          },
-          "gateway_api_version": {
-            "type": "string",
-            "title": "Gateway Api Version"
-          },
-          "multus_version": {
-            "type": "string",
-            "title": "Multus Version"
-          },
-          "sriov_version": {
-            "type": "string",
-            "title": "Sriov Version"
-          },
-          "storage_class_type": {
-            "type": "string",
-            "title": "Storage Class Type"
-          },
-          "storage_provisioner": {
-            "type": "string",
-            "title": "Storage Provisioner"
-          },
-          "feature_flags": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Feature Flags"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "display_name",
-          "description",
-          "is_default",
-          "bnk_manifest_version",
-          "bnk_cr_kind",
-          "flo_version",
-          "k8s_version",
-          "doca_version",
-          "containerd_version",
-          "runc_version",
-          "calico_version",
-          "cert_manager_version",
-          "gateway_api_version",
-          "multus_version",
-          "sriov_version",
-          "storage_class_type",
-          "storage_provisioner",
-          "feature_flags",
-          "created_at"
-        ],
-        "title": "BnkVersionProfileResponse"
       },
       "Body_create_file_secret_api_projects__project_id__secrets_file_post": {
         "properties": {
@@ -37349,6 +38800,28 @@
             ],
             "title": "Meta Data"
           },
+          "deployable_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Release Id"
+          },
+          "running_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Release Id"
+          },
           "last_synced_at": {
             "anyOf": [
               {
@@ -37390,6 +38863,73 @@
         ],
         "title": "ClusterDetailResponse",
         "description": "Response for GET /api/k8s/clusters/{id}."
+      },
+      "ClusterDriftStatusResponse": {
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "drift_enabled": {
+            "type": "boolean",
+            "title": "Drift Enabled"
+          },
+          "total_modules": {
+            "type": "integer",
+            "title": "Total Modules"
+          },
+          "modules_with_drift": {
+            "type": "integer",
+            "title": "Modules With Drift"
+          },
+          "modules_ok": {
+            "type": "integer",
+            "title": "Modules Ok"
+          },
+          "modules_unchecked": {
+            "type": "integer",
+            "title": "Modules Unchecked"
+          },
+          "overall_status": {
+            "type": "string",
+            "title": "Overall Status"
+          },
+          "module_statuses": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleDriftStatus"
+            },
+            "type": "array",
+            "title": "Module Statuses"
+          },
+          "release_drift": {
+            "$ref": "#/components/schemas/ReleaseDrift"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "drift_enabled",
+          "total_modules",
+          "modules_with_drift",
+          "modules_ok",
+          "modules_unchecked",
+          "overall_status",
+          "module_statuses",
+          "release_drift"
+        ],
+        "title": "ClusterDriftStatusResponse",
+        "description": "Response for GET /api/clusters/{cluster_id}/drift/status."
       },
       "ClusterEventsResponse": {
         "properties": {
@@ -37819,6 +39359,16 @@
             ],
             "title": "Enabled Prerequisites"
           },
+          "bnk_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BnkClusterConfigSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "node_count": {
             "anyOf": [
               {
@@ -37829,6 +39379,28 @@
               }
             ],
             "title": "Node Count"
+          },
+          "deployable_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Release Id"
+          },
+          "running_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Release Id"
           },
           "last_synced_at": {
             "anyOf": [
@@ -40256,6 +41828,214 @@
         "title": "DeployAllRequest",
         "description": "Request body for POST /api/projects/{id}/deploy-all."
       },
+      "DeployStackRequest": {
+        "properties": {
+          "deployable_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Release Id"
+          }
+        },
+        "type": "object",
+        "title": "DeployStackRequest",
+        "description": "Optional body for stack deploy / run-deploy. Carries BNK release override for bare-metal blueprints."
+      },
+      "DeployableReleaseListResponse": {
+        "properties": {
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/DeployableReleaseResponse"
+            },
+            "type": "array",
+            "title": "Releases"
+          }
+        },
+        "type": "object",
+        "required": [
+          "releases"
+        ],
+        "title": "DeployableReleaseListResponse"
+      },
+      "DeployableReleaseResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type"
+          },
+          "bnk_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bnk Release Id"
+          },
+          "bnk_manifest_version": {
+            "type": "string",
+            "title": "Bnk Manifest Version"
+          },
+          "bnk_cr_kind": {
+            "type": "string",
+            "title": "Bnk Cr Kind"
+          },
+          "flo_version": {
+            "type": "string",
+            "title": "Flo Version"
+          },
+          "k8s_version": {
+            "type": "string",
+            "title": "K8S Version"
+          },
+          "doca_version": {
+            "type": "string",
+            "title": "Doca Version"
+          },
+          "containerd_version": {
+            "type": "string",
+            "title": "Containerd Version"
+          },
+          "runc_version": {
+            "type": "string",
+            "title": "Runc Version"
+          },
+          "calico_version": {
+            "type": "string",
+            "title": "Calico Version"
+          },
+          "cert_manager_version": {
+            "type": "string",
+            "title": "Cert Manager Version"
+          },
+          "gateway_api_version": {
+            "type": "string",
+            "title": "Gateway Api Version"
+          },
+          "multus_version": {
+            "type": "string",
+            "title": "Multus Version"
+          },
+          "sriov_version": {
+            "type": "string",
+            "title": "Sriov Version"
+          },
+          "storage_class_type": {
+            "type": "string",
+            "title": "Storage Class Type"
+          },
+          "storage_provisioner": {
+            "type": "string",
+            "title": "Storage Provisioner"
+          },
+          "feature_flags": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Flags"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "last_synced": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "display_name",
+          "description",
+          "is_default",
+          "is_active",
+          "source_type",
+          "bnk_release_id",
+          "bnk_manifest_version",
+          "bnk_cr_kind",
+          "flo_version",
+          "k8s_version",
+          "doca_version",
+          "containerd_version",
+          "runc_version",
+          "calico_version",
+          "cert_manager_version",
+          "gateway_api_version",
+          "multus_version",
+          "sriov_version",
+          "storage_class_type",
+          "storage_provisioner",
+          "feature_flags",
+          "created_at"
+        ],
+        "title": "DeployableReleaseResponse"
+      },
       "DeploymentPlanPreview": {
         "properties": {
           "topology": {
@@ -42315,6 +44095,39 @@
             ],
             "title": "Bfb Hostname"
           },
+          "kubernetes_cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kubernetes Cluster Id"
+          },
+          "host_tmfifo_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Tmfifo Ip"
+          },
+          "dpu_tmfifo_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dpu Tmfifo Ip"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -43741,6 +45554,25 @@
         },
         "type": "object",
         "title": "F5DeviceUpdate"
+      },
+      "FailedTag": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag",
+          "reason"
+        ],
+        "title": "FailedTag",
+        "description": "A single tag that could not be added to the Catalog."
       },
       "FanOutCommandRequest": {
         "properties": {
@@ -46654,6 +48486,108 @@
         ],
         "title": "ModuleActionsListResponse",
         "description": "Response for GET /api/project-modules/{id}/actions."
+      },
+      "ModuleDriftStatus": {
+        "properties": {
+          "module_id": {
+            "type": "integer",
+            "title": "Module Id"
+          },
+          "module_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Name"
+          },
+          "module_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Path"
+          },
+          "engine_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "drift_detected": {
+            "type": "boolean",
+            "title": "Drift Detected"
+          },
+          "drift_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Summary"
+          },
+          "drift_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Details"
+          },
+          "last_check_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check At"
+          },
+          "check_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "module_id",
+          "status",
+          "drift_detected"
+        ],
+        "title": "ModuleDriftStatus",
+        "description": "Per-module drift status entry within a cluster drift status response."
       },
       "ModuleReportContentResponse": {
         "properties": {
@@ -51992,6 +53926,119 @@
         "title": "ProxyTranslateUnmapped",
         "description": "One lossy/unsupported construct that could not be auto-translated (D-017)."
       },
+      "PruneItemResponse": {
+        "properties": {
+          "identity": {
+            "type": "string",
+            "title": "Identity",
+            "description": "Module path, or blueprint id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "The version or release considered"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "kept",
+              "deactivated",
+              "deleted",
+              "in_use"
+            ],
+            "title": "Action",
+            "description": "kept \u2014 within the newest `keep`, or already inactive; deactivated \u2014 hidden but still resolvable for anything pinned to it; deleted \u2014 row removed, only ever one nothing references; in_use \u2014 something is deployed from it, so it was left untouched"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "Why, when the action needs explaining",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "version",
+          "action"
+        ],
+        "title": "PruneItemResponse",
+        "description": "What happened to one catalog version."
+      },
+      "PruneRequest": {
+        "properties": {
+          "keep": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Keep",
+            "description": "Newest versions to keep per module path / blueprint id",
+            "default": 1
+          },
+          "delete": {
+            "type": "boolean",
+            "title": "Delete",
+            "description": "Remove unreferenced rows outright instead of deactivating",
+            "default": false
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "Report what would happen and change nothing",
+            "default": false
+          },
+          "include_in_use": {
+            "type": "boolean",
+            "title": "Include In Use",
+            "description": "Also deactivate versions something is deployed from. They are still never deleted.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "PruneRequest",
+        "description": "How much of a source's version history to retire.\n\nShared by both prune routes. They were byte-identical inline models in the\ntwo route files, which is the \"schemas live in TWO places\" trap in\nAGENTS.md \u2014 and it would have produced two separate OpenAPI schema names\nfree to drift apart."
+      },
+      "PruneResponse": {
+        "properties": {
+          "source_id": {
+            "type": "integer",
+            "title": "Source Id"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "True when nothing was changed"
+          },
+          "keep": {
+            "type": "integer",
+            "title": "Keep",
+            "description": "Newest versions retained per module path / blueprint id"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts",
+            "description": "Item count per action"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PruneItemResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "dry_run",
+          "keep"
+        ],
+        "title": "PruneResponse",
+        "description": "The full plan, and what was carried out unless ``dry_run``."
+      },
       "PublishTemplateRequest": {
         "properties": {
           "is_public": {
@@ -52005,6 +54052,57 @@
         ],
         "title": "PublishTemplateRequest",
         "description": "Schema for publishing/unpublishing a template"
+      },
+      "PullTagsRequest": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Registry tags to pull (verbatim)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "title": "PullTagsRequest",
+        "description": "Request body for POST /{id}/tags:pull."
+      },
+      "PullTagsSummary": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skipped"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/FailedTag"
+            },
+            "type": "array",
+            "title": "Failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "added",
+          "skipped",
+          "failed"
+        ],
+        "title": "PullTagsSummary",
+        "description": "Response for POST /{id}/tags:pull.\n\nNested model (not dict) so Pydantic's response_model serialisation\npreserves the reason field inside each FailedTag entry."
       },
       "QKViewCancelResponse": {
         "properties": {
@@ -53056,6 +55154,49 @@
         "title": "RegistryTFCImport",
         "description": "Schema for importing a Terraform Cloud private module."
       },
+      "ReleaseDrift": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "in_sync",
+              "drifted",
+              "not_forge_deployed",
+              "undiscovered",
+              "deployed_unresolved"
+            ],
+            "title": "Status"
+          },
+          "deployed_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployed Release Id"
+          },
+          "running_release_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Release Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ReleaseDrift",
+        "description": "Deployed-vs-running release-line drift signal (ADR-494 Phase B).\n\nGranularity is VERSION LINE (e.g. BNK 2.3 vs BNK 2.4), not exact build\n(e.g. 2.3.0 vs 2.3.1).  Discovery resolves a FLO chart version to a whole\nrelease-line registry row; exact point-release comparison is deferred until\ndiscovery emits build-level information.\n\nStatus meanings:\n  in_sync             \u2014 deployed and running resolve to the same release line\n  drifted             \u2014 deployed and running resolve to different release lines\n  not_forge_deployed  \u2014 cluster has no Forge-tracked deployable release\n  undiscovered        \u2014 cluster has not been scanned / FLO version undetectable\n  deployed_unresolved \u2014 cluster is Forge-deployed but the deployed release's FLO version\n                        could not be resolved to a known release line"
+      },
       "ReleaseRegistryItemResponse": {
         "properties": {
           "id": {
@@ -53176,6 +55317,355 @@
           "is_active"
         ],
         "title": "ReleaseRegistryItemResponse"
+      },
+      "ReleaseSourceCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReleaseSourceKind"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "Pull-secret or token; encrypted before storage."
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "auto_sync": {
+            "type": "boolean",
+            "title": "Auto Sync",
+            "default": false
+          },
+          "sync_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Interval Hours"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "title": "ReleaseSourceCreate"
+      },
+      "ReleaseSourceKind": {
+        "type": "string",
+        "enum": [
+          "oci",
+          "mirror",
+          "manual"
+        ],
+        "title": "ReleaseSourceKind",
+        "description": "The transport kind of a ReleaseSource \u2014 where the Catalog syncs releases from."
+      },
+      "ReleaseSourceResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "has_credential": {
+            "type": "boolean",
+            "title": "Has Credential"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "auto_sync": {
+            "type": "boolean",
+            "title": "Auto Sync"
+          },
+          "sync_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Interval Hours"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "sync_status": {
+            "type": "string",
+            "title": "Sync Status"
+          },
+          "sync_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Error"
+          },
+          "release_count": {
+            "type": "integer",
+            "title": "Release Count"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "url",
+          "has_credential",
+          "is_active",
+          "auto_sync",
+          "sync_interval_hours",
+          "last_synced_at",
+          "sync_status",
+          "sync_error",
+          "release_count",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReleaseSourceResponse"
+      },
+      "ReleaseSourceTag": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "in_catalog": {
+            "type": "boolean",
+            "title": "In Catalog"
+          },
+          "prerelease": {
+            "type": "boolean",
+            "title": "Prerelease"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag",
+          "in_catalog",
+          "prerelease"
+        ],
+        "title": "ReleaseSourceTag",
+        "description": "A single tag from the OCI/mirror registry with catalog-membership annotation."
+      },
+      "ReleaseSourceTagList": {
+        "properties": {
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseSourceTag"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "list_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "List Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "title": "ReleaseSourceTagList",
+        "description": "Response for GET /{id}/tags. tags is empty on listing failure."
+      },
+      "ReleaseSourceUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseSourceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "Set to update; omit to leave unchanged."
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "auto_sync": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Sync"
+          },
+          "sync_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Interval Hours"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "title": "ReleaseSourceUpdate"
       },
       "ResourceCreateRequest": {
         "properties": {
@@ -56857,6 +59347,39 @@
         "title": "SuccessResponse",
         "description": "Generic success response for mutating operations."
       },
+      "SyncSourceRequest": {
+        "properties": {
+          "manifest_yaml": {
+            "type": "string",
+            "title": "Manifest Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "manifest_yaml"
+        ],
+        "title": "SyncSourceRequest"
+      },
+      "SyncSourceResponse": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/ReleaseSourceResponse"
+          },
+          "sync_result": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Sync Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "sync_result"
+        ],
+        "title": "SyncSourceResponse"
+      },
       "SystemHealthResponse": {
         "properties": {
           "services": {
@@ -57861,6 +60384,292 @@
         },
         "type": "object",
         "title": "UpgradeReleaseRequest"
+      },
+      "UseCaseApplicationResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "artifact_version_id": {
+            "type": "integer",
+            "title": "Artifact Version Id"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "param_values": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Param Values"
+          },
+          "applied_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied By"
+          },
+          "applied_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Applied At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "artifact_version_id",
+          "cluster_id",
+          "param_values",
+          "applied_by",
+          "applied_at"
+        ],
+        "title": "UseCaseApplicationResponse"
+      },
+      "UseCaseApplyRequest": {
+        "properties": {
+          "param_values": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Param Values"
+          }
+        },
+        "type": "object",
+        "required": [
+          "param_values"
+        ],
+        "title": "UseCaseApplyRequest",
+        "description": "Concrete param values to inject when rendering the artifact version."
+      },
+      "UseCaseApplyResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "results": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Results"
+          },
+          "application": {
+            "$ref": "#/components/schemas/UseCaseApplicationResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "results",
+          "application"
+        ],
+        "title": "UseCaseApplyResponse"
+      },
+      "UseCaseArtifactVersionResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "artifact_id": {
+            "type": "integer",
+            "title": "Artifact Id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "matching_bnk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matching Bnk Version"
+          },
+          "cr_templates": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Cr Templates"
+          },
+          "param_schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Param Schema"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Cluster Id"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "artifact_id",
+          "version",
+          "matching_bnk_version",
+          "cr_templates",
+          "param_schema",
+          "source",
+          "source_cluster_id",
+          "content_hash",
+          "created_by",
+          "created_at"
+        ],
+        "title": "UseCaseArtifactVersionResponse"
+      },
+      "UseCaseCaptureRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "matching_bnk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matching Bnk Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "UseCaseCaptureRequest",
+        "description": "Capture F5SPKVlan CRs from a cluster into a named, versioned artifact."
+      },
+      "UseCaseCaptureResponse": {
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/UseCaseArtifactVersionResponse"
+          },
+          "already_captured": {
+            "type": "boolean",
+            "title": "Already Captured"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "already_captured"
+        ],
+        "title": "UseCaseCaptureResponse"
+      },
+      "UseCaseDriftRequest": {
+        "properties": {
+          "param_values": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Param Values"
+          }
+        },
+        "type": "object",
+        "required": [
+          "param_values"
+        ],
+        "title": "UseCaseDriftRequest",
+        "description": "Param values to render the desired-state before diffing against the cluster."
+      },
+      "UseCaseDriftResponse": {
+        "properties": {
+          "drift_detected": {
+            "type": "boolean",
+            "title": "Drift Detected"
+          },
+          "resource_changes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Resource Changes"
+          },
+          "changed_resources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Changed Resources"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "check_duration_ms": {
+            "type": "integer",
+            "title": "Check Duration Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "drift_detected",
+          "resource_changes",
+          "changed_resources",
+          "summary",
+          "check_duration_ms"
+        ],
+        "title": "UseCaseDriftResponse"
       },
       "UserCreateRequest": {
         "properties": {

@@ -577,11 +577,13 @@ class ProjectService(BaseService):
             project.project_type = project_data.project_type
         if project_data.cloud_provider is not None:
             project.cloud_provider = project_data.cloud_provider
-        if hasattr(project_data, "target_platform_profile"):
+        # Same always-true hasattr() as the credential fields below: a partial
+        # update was nulling the project's platform routing on every request.
+        if self._field_was_supplied(project_data, "target_platform_profile"):
             project.target_platform_profile = project_data.target_platform_profile
-        if hasattr(project_data, "platform_provider"):
+        if self._field_was_supplied(project_data, "platform_provider"):
             project.platform_provider = project_data.platform_provider
-        if hasattr(project_data, "management_boundary"):
+        if self._field_was_supplied(project_data, "management_boundary"):
             project.management_boundary = project_data.management_boundary
 
         # PLATFORM-CONTEXT-004 baseline normalization on update:
@@ -612,12 +614,26 @@ class ProjectService(BaseService):
         if project_data.state_config is not None:
             self._apply_state_config(project, project_data.state_config)
 
-        # Update credential template if provided
-        if hasattr(project_data, "credential_template_id"):
+        # Only assign when the CALLER sent the field. hasattr() is always True
+        # for a declared Pydantic field, so the previous checks fired on every
+        # request and wrote the field's default of None — a partial update that
+        # never mentioned the credential template silently detached it.
+        #
+        # The damage is not cosmetic: get_cloud_credentials_env() derives
+        # IBMCLOUD_API_KEY (and the AWS/Azure/GCP equivalents) from the project's
+        # template, so once it is cleared every subsequent module runs with no
+        # cloud credentials at all. Because the project row is touched as modules
+        # complete, the first module in a blueprint succeeds and every later one
+        # fails with "no IBM Cloud API key", which reads like a module bug rather
+        # than a project one.
+        #
+        # _field_was_supplied() is the existing expression of "if provided" —
+        # already used below for target_platform_profile — so this uses it rather
+        # than reading model_fields_set inline a second time.
+        if self._field_was_supplied(project_data, "credential_template_id"):
             project.credential_template_id = project_data.credential_template_id
 
-        # Update SSH credential if provided
-        if hasattr(project_data, "ssh_credential_id"):
+        if self._field_was_supplied(project_data, "ssh_credential_id"):
             project.ssh_credential_id = project_data.ssh_credential_id
 
         # Update enabled status if provided

@@ -934,7 +934,7 @@ def _reset_dpu_os_via_tmfifo(db, dpu: Dpu, host_client) -> tuple[int, str, str]:
             "before a graceful restart."
         )
 
-    os_ip = dpu.dpu_os_ip or derive_tmfifo_dpu_host(getattr(dpu, "rshim_device", None))
+    os_ip = dpu.dpu_os_ip or derive_tmfifo_dpu_host(getattr(dpu, "rshim_device", None), dpu=dpu)
     transport = host_client.get_transport()
     if transport is None:
         return 1, "", "host SSH transport unavailable"

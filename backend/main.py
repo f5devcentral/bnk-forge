@@ -49,9 +49,9 @@ from routes.alert_channels import router as alert_channels_router
 from routes.api import router as api_router
 from routes.audit import router as audit_router
 from routes.auth import router as auth_router
+from routes.bare_metal_deployable_releases import router as bare_metal_deployable_releases_router
 from routes.bare_metal_deployments import router as bare_metal_deployments_router
 from routes.bare_metal_hosts import router as bare_metal_hosts_router
-from routes.bare_metal_version_profiles import router as bare_metal_version_profiles_router
 from routes.benchmarks import router as benchmarks_router
 from routes.benchmarks import ws_router as benchmarks_ws_router
 from routes.bf_conf_templates import router as bf_conf_templates_router
@@ -103,6 +103,7 @@ from routes.project_variables import router as project_variables_router
 from routes.projects import router as projects_router
 from routes.qkview import router as qkview_router
 from routes.registry import router as registry_router
+from routes.release_sources import router as release_sources_router
 from routes.runbooks import router as runbooks_router
 from routes.snapshots import router as snapshots_router
 from routes.ssh_credentials import router as ssh_credentials_router
@@ -112,6 +113,7 @@ from routes.system import public_router as system_public_router
 from routes.system import router as system_router
 from routes.tasks import router as tasks_router
 from routes.tasks import ws_router as tasks_ws_router
+from routes.usecase_artifacts import router as usecase_artifacts_router
 
 # Get logger (logging already configured via configure_logging above)
 logger = logging.getLogger(__name__)
@@ -132,6 +134,7 @@ async def lifespan(app: FastAPI):
         seed_auth_step,
         seed_cli_bnkctl_modules_step,
         seed_defaults_step,
+        seed_deployable_releases_step,
         seed_k8s_builtin_modules_step,
         seed_python_modules_step,
         seed_stack_templates_step,
@@ -164,6 +167,7 @@ async def lifespan(app: FastAPI):
 
     BEST_EFFORT_STEPS = [
         ("System defaults", seed_defaults_step),
+        ("BNK deployable releases", seed_deployable_releases_step),
         ("Python module catalog", seed_python_modules_step),
         ("k8s builtin modules", seed_k8s_builtin_modules_step),
         ("Module catalog sync", sync_module_catalog_step),
@@ -360,7 +364,8 @@ app.include_router(bare_metal_hosts_router)               # Bare-metal DPU hosts
 app.include_router(f5_devices_router)                     # F5 BIG-IP devices — CRUD + read-only probe (D-023 P1)
 app.include_router(f5_credentials_router)                 # F5 BIG-IP credentials — CRUD + test (D-023 P1)
 app.include_router(bare_metal_deployments_router)          # Bare-metal deployments — lifecycle
-app.include_router(bare_metal_version_profiles_router)     # BNK version profiles — version matrix
+app.include_router(bare_metal_deployable_releases_router)  # BNK deployable releases — version catalog (ADR-478)
+app.include_router(release_sources_router)                 # BNK release sources — management + sync (ADR-494)
 app.include_router(bluefield_images_router)                # DPU Provisioning — BFB image catalog
 app.include_router(bf_conf_templates_router)               # DPU Provisioning — bf.conf template catalog
 app.include_router(dpus_router)                            # DPU Provisioning — per-project DPUs + settings
@@ -400,6 +405,7 @@ app.include_router(operator_ws_router)  # Operator WebSocket — agent connectio
 app.include_router(operator_polling_router)  # Operator polling — HTTP-based command dispatch
 app.include_router(alert_channels_router)  # Alert channels — webhook/Slack/Teams notifications
 app.include_router(config_export_router)  # Config export/import/diff — cluster config snapshots
+app.include_router(usecase_artifacts_router)  # Use-case artifacts — capture/render/apply/drift (D-034 P0)
 app.include_router(bnk_upgrade_router)  # BNK upgrade workflow — version upgrades with health gates
 app.include_router(runbooks_router)  # Runbook automation — diagnostic sequences for common BNK issues
 app.include_router(licensing_router)  # BNK licensing — CWC license status, activation, telemetry via operator

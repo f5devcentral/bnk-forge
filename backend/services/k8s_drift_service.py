@@ -221,6 +221,76 @@ def check_k8s_module_drift(
     return check_manifest_drift(kubeconfig_path, module_path, variables, lib_module=lib_module)
 
 
+def check_usecase_drift(db, cluster, version, param_values: dict[str, Any]) -> dict[str, Any]:
+    """
+    Check drift between a use-case artifact version's rendered desired-state
+    and the cluster's actual F5SPKVlan CRs (D-034 Phase 0 tracer).
+
+    Renders `version` with `param_values` -> desired CRs, fetches actual CRs
+    (reusing `config_export_service._fetch_resources`), and diffs each pair
+    via the existing `_normalize_for_comparison` + `_diff_dicts` engine. This
+    closes the desired-state stub for the use-case-artifact slice — it no
+    longer returns "not available".
+
+    Note: In Phase 0, `param_values` come from the caller (drift endpoint).
+    Phase 4 will read the recorded `UseCaseApplication` binding to reproduce
+    the exact values that were applied, for full drift reproducibility.
+    """
+    from kubernetes import client as k8s_client
+
+    from services.config_export_service import _fetch_resources
+    from services.kubernetes_service import KubernetesService
+    from services.usecase_artifact_service import _VLAN_RESOURCE_TYPE, render
+
+    start = time.monotonic()
+
+    desired = render(version, param_values)
+
+    k8s_svc = KubernetesService(db)
+    api_client = k8s_svc.load_kubeconfig(cluster)
+    custom_api = k8s_client.CustomObjectsApi(api_client)
+    actual = _fetch_resources(custom_api, _VLAN_RESOURCE_TYPE)
+
+    def _key(resource: dict[str, Any]) -> str:
+        meta = resource.get("metadata", {})
+        return f"{resource.get('kind')}/{meta.get('namespace', '')}/{meta.get('name', '')}"
+
+    actual_by_key = {_key(r): r for r in actual}
+
+    resource_changes = {"add": 0, "change": 0, "destroy": 0, "ok": 0}
+    changed_resources: list[dict[str, Any]] = []
+
+    for desired_resource in desired:
+        key = _key(desired_resource)
+        actual_resource = actual_by_key.get(key)
+        if actual_resource is None:
+            resource_changes["add"] += 1
+            changed_resources.append({"address": key, "action": "add", "diffs": []})
+            continue
+
+        norm_desired, norm_actual = _normalize_for_comparison(desired_resource, actual_resource)
+        diffs = _diff_dicts(norm_desired, norm_actual)
+        if diffs:
+            resource_changes["change"] += 1
+            changed_resources.append({"address": key, "action": "change", "diffs": diffs})
+        else:
+            resource_changes["ok"] += 1
+
+    drift_detected = resource_changes["add"] > 0 or resource_changes["change"] > 0 or resource_changes["destroy"] > 0
+    total = sum(resource_changes.values())
+
+    return {
+        "drift_detected": drift_detected,
+        "resource_changes": resource_changes,
+        "changed_resources": changed_resources,
+        "summary": (
+            f"{resource_changes['change']} changed, {resource_changes['add']} to add, "
+            f"{resource_changes['destroy']} to destroy, {resource_changes['ok']} unchanged (of {total})"
+        ),
+        "check_duration_ms": int((time.monotonic() - start) * 1000),
+    }
+
+
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
     """Get or create an event loop for the current thread."""
     try:

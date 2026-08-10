@@ -273,6 +273,57 @@ class TestGetClusterDetails:
         assert "platform_capabilities" in result
         assert "platform_constraints" in result
 
+    def test_detail_exposes_running_release_id(self, db, make_project, make_k8s_cluster):
+        """get_cluster_details serializes running_release_id (ADR-494 Phase B read path)."""
+        from models.bnk_release import BnkRelease
+        from models.enums import ReleaseSourceType
+
+        p = make_project()
+        rel = BnkRelease(
+            ga_label="BNK 2.3 GA", product_line="BNK",
+            flo_version_prefix="2.21", source_type=ReleaseSourceType.CLOUDDOCS, is_active=True,
+        )
+        db.add(rel)
+        db.flush()
+
+        c = make_k8s_cluster(project=p, name="rel-cluster", running_release_id=rel.id)
+        svc = ClusterManagementService(db)
+        result = svc.get_cluster_details(c.id)
+
+        assert result["running_release_id"] == rel.id
+        assert result["deployable_release_id"] is None  # not set on this cluster
+
+    def test_detail_running_release_id_null_when_not_set(self, db, make_project, make_k8s_cluster):
+        """get_cluster_details returns running_release_id=None for undiscovered clusters."""
+        p = make_project()
+        c = make_k8s_cluster(project=p, name="no-rel-cluster")
+        svc = ClusterManagementService(db)
+        result = svc.get_cluster_details(c.id)
+
+        assert result["running_release_id"] is None
+        assert result["deployable_release_id"] is None
+
+    def test_list_all_clusters_exposes_running_release_id(self, db, make_project, make_k8s_cluster):
+        """list_all_clusters (serialize_cluster) serializes running_release_id."""
+        from models.bnk_release import BnkRelease
+        from models.enums import ReleaseSourceType
+
+        p = make_project()
+        rel = BnkRelease(
+            ga_label="BNK 2.3 GA", product_line="BNK",
+            flo_version_prefix="2.21", source_type=ReleaseSourceType.CLOUDDOCS, is_active=True,
+        )
+        db.add(rel)
+        db.flush()
+
+        make_k8s_cluster(project=p, name="list-rel-cluster", running_release_id=rel.id)
+        svc = ClusterManagementService(db)
+        result = svc.list_all_clusters()
+
+        cluster_dict = result["clusters"][0]
+        assert cluster_dict["running_release_id"] == rel.id
+        assert cluster_dict["deployable_release_id"] is None
+
 
 # ---------------------------------------------------------------------------
 # update_cluster
@@ -388,6 +439,119 @@ class TestDeleteCluster:
         svc = ClusterManagementService(db)
         with pytest.raises(NotFoundError):
             svc.delete_cluster(99999)
+
+    def test_delete_releases_dpu_tmfifo_allocations(self, db, make_project, make_k8s_cluster):
+        """Deleting a cluster must clear tmfifo IPs on all member DPUs (ADR-424 cold audit A1).
+
+        Flow: assign DPU to cluster (gets a /30) → delete_cluster →
+          assert dpu_tmfifo_ip is None AND derive_tmfifo_dpu_ip returns the formula.
+        Without the fix, dpu_tmfifo_ip survives and a re-flash bakes the stale /30.
+        """
+        from models.bare_metal import BareMetalHost
+        from models.dpu import Dpu
+        from services.bf_conf_renderer import derive_tmfifo_dpu_ip
+        from services.bnk_cluster_service import BnkClusterService
+
+        p = make_project()
+        c = make_k8s_cluster(project=p, name="del-ipam")
+
+        host = BareMetalHost(project_id=p.id, name="h-del", host_ip="10.200.0.1")
+        db.add(host)
+        db.flush()
+
+        dpu = Dpu(
+            project_id=p.id,
+            name="dpu-del",
+            access_mode="in-band",
+            host_node_ip="10.200.0.1",
+            rshim_device="rshim0",
+            oob0_ipv4="dhcp",
+        )
+        db.add(dpu)
+        db.flush()
+
+        # Assign DPU to cluster — triggers tmfifo IPAM allocation.
+        BnkClusterService(db).assign_members(
+            cluster_id=c.id,
+            control_plane_host_id=host.id,
+            host_ids=[host.id],
+            dpu_ids=[dpu.id],
+        )
+        db.flush()
+
+        # Verify allocation was made.
+        db.expire_all()
+        assert dpu.dpu_tmfifo_ip is not None, "DPU must have a tmfifo IP after assign_members"
+        stale_ip = dpu.dpu_tmfifo_ip
+
+        # Delete the cluster.
+        ClusterManagementService(db).delete_cluster(c.id)
+        db.flush()
+
+        # Allocation must be released.
+        db.expire_all()
+        assert dpu.dpu_tmfifo_ip is None, (
+            f"dpu_tmfifo_ip={stale_ip!r} was not cleared on cluster delete"
+        )
+        assert dpu.host_tmfifo_ip is None, "host_tmfifo_ip must be cleared on cluster delete"
+        assert dpu.kubernetes_cluster_id is None
+
+        # derive_tmfifo_dpu_ip must fall back to the rshim formula, not the stale IP.
+        formula_ip = derive_tmfifo_dpu_ip("rshim0", dpu=dpu)
+        assert formula_ip == "192.168.100.2/30", (
+            f"Expected formula IP 192.168.100.2/30, got {formula_ip!r}"
+        )
+
+    def test_delete_cluster_clears_is_control_plane(self, db, make_project, make_k8s_cluster):
+        """Deleting a cluster must clear is_control_plane on the former CP host (ADR-424 W-2).
+
+        Flow: assign host as control_plane_host_id → assert is_control_plane=True →
+          delete_cluster → assert is_control_plane=False AND kubernetes_cluster_id=None.
+        Without the fix, is_control_plane survives as True after the cluster is gone.
+        """
+        from models.bare_metal import BareMetalHost
+        from models.dpu import Dpu
+        from services.bnk_cluster_service import BnkClusterService
+
+        p = make_project()
+        c = make_k8s_cluster(project=p, name="del-cp-flag")
+
+        host = BareMetalHost(project_id=p.id, name="h-cp", host_ip="10.201.0.1")
+        db.add(host)
+        db.flush()
+
+        dpu = Dpu(
+            project_id=p.id,
+            name="dpu-cp",
+            access_mode="in-band",
+            host_node_ip="10.201.0.1",
+            rshim_device="rshim0",
+            oob0_ipv4="dhcp",
+        )
+        db.add(dpu)
+        db.flush()
+
+        BnkClusterService(db).assign_members(
+            cluster_id=c.id,
+            control_plane_host_id=host.id,
+            host_ids=[host.id],
+            dpu_ids=[dpu.id],
+        )
+        db.flush()
+        db.expire_all()
+
+        assert host.is_control_plane is True, "assign_members must set is_control_plane=True"
+
+        ClusterManagementService(db).delete_cluster(c.id)
+        db.flush()
+        db.expire_all()
+
+        assert host.is_control_plane is False, (
+            "is_control_plane must be cleared to False after cluster delete"
+        )
+        assert host.kubernetes_cluster_id is None, (
+            "kubernetes_cluster_id must be NULL after cluster delete"
+        )
 
 
 # ---------------------------------------------------------------------------

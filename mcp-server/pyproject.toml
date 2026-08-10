@@ -8,7 +8,12 @@ license = { text = "MIT" }
 authors = [{ name = "BNK-Forge Team" }]
 
 dependencies = [
-    "mcp>=1.26.0",
+    # Capped below 2: the 2.x major removed `mcp.server.fastmcp`, which
+    # server.py imports. An uncapped `>=1.26.0` resolved to 2.0.0 as soon as it
+    # was published, which broke the image (ModuleNotFoundError at startup, so
+    # bnk-forge-mcp crash-looped) and the test job together, on a commit that
+    # changed neither. Lifting the cap means porting off mcp.server.fastmcp.
+    "mcp>=1.26.0,<2",
     "httpx>=0.27.0",
 ]
 

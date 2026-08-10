@@ -68,6 +68,7 @@ class BnkCneInstanceSSHModule(BnkSSHModule):
         "external_pci_bus_id": InputSpec(name="external_pci_bus_id", source="module", default="0000:00:07.0"),
         "internal_pci_bus_id": InputSpec(name="internal_pci_bus_id", source="module", default="0000:00:08.0"),
         "cloud_provider": InputSpec(name="cloud_provider", source="auto", default=""),
+        "bnk_cr_kind": InputSpec(name="bnk_cr_kind", source="profile", required=True),
     }
 
     outputs = {
@@ -168,10 +169,11 @@ class BnkCneInstanceSSHModule(BnkSSHModule):
             "tmm": tmm,
         }
 
+        cr_kind = str(v.get("bnk_cr_kind") or "CNEInstance")
         return [
             {
                 "apiVersion": "k8s.f5.com/v1",
-                "kind": "CNEInstance",
+                "kind": cr_kind,
                 "metadata": {
                     "name": name,
                     "namespace": ns,

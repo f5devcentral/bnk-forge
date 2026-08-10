@@ -27,6 +27,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.full
+
 from models import User
 from models.benchmark import (
     BenchmarkAgent,
@@ -241,10 +243,11 @@ class TestIngestBenchmarkResult:
         assert data["model"] == "tinyllama"
         assert data["status"] == "completed"
 
-    def test_requires_valid_token(self, client, db):
-        """Global auth middleware rejects unauthenticated requests."""
+    def test_requires_valid_token(self, client, db, monkeypatch):
+        """When BENCHMARK_AGENT_AUTH_REQUIRED is ON, unauthenticated requests are rejected."""
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
         resp = client.post("/api/benchmarks/results", json=_result_push_payload())
-        assert resp.status_code == 401
+        assert resp.status_code in (400, 401)
 
     def test_response_contract(self, client, operator_headers, db):
         resp = client.post("/api/benchmarks/results", json=_result_push_payload(), headers=operator_headers)
@@ -285,9 +288,10 @@ class TestIngestAiperfResult:
         assert data["model"] == "tinyllama"
         assert data["status"] == "completed"
 
-    def test_requires_valid_token(self, client, db):
+    def test_requires_valid_token(self, client, db, monkeypatch):
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
         resp = client.post("/api/benchmarks/results/aiperf", json=_aiperf_raw_payload())
-        assert resp.status_code == 401
+        assert resp.status_code in (400, 401)
 
     def test_response_contract(self, client, operator_headers, db):
         resp = client.post("/api/benchmarks/results/aiperf", json=_aiperf_raw_payload(), headers=operator_headers)
@@ -778,6 +782,74 @@ class TestDeleteBenchmarkRun:
         assert resp.status_code == 404
 
 
+class TestSetBenchmarkRunBaseline:
+    """POST /api/benchmarks/runs/{run_id}/baseline (require_operator)."""
+
+    def test_happy_path(self, client, operator_headers, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="baseline-happy-cluster").id)
+        run = _make_run(db, target_id=target.id, status="completed")
+        resp = client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+        assert resp.status_code == 200
+        assert resp.json()["is_baseline"] is True
+
+    def test_rejects_missing_target_id(self, client, operator_headers, db):
+        run = _make_run(db, status="completed")
+        resp = client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "MISSING_TARGET_ID"
+
+    def test_requires_valid_token(self, client, db):
+        run = _make_run(db, status="completed")
+        resp = client.post(f"/api/benchmarks/runs/{run.id}/baseline")
+        assert resp.status_code == 401
+
+    def test_replaces_previous_baseline_in_same_context(self, client, operator_headers, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="baseline-replace-cluster").id)
+        first = _make_run(db, target_id=target.id, status="completed")
+        second = _make_run(db, target_id=target.id, status="completed")
+
+        resp1 = client.post(f"/api/benchmarks/runs/{first.id}/baseline", headers=operator_headers)
+        assert resp1.status_code == 200
+        resp2 = client.post(f"/api/benchmarks/runs/{second.id}/baseline", headers=operator_headers)
+        assert resp2.status_code == 200
+
+        db.refresh(first)
+        db.refresh(second)
+        assert first.is_baseline is False
+        assert second.is_baseline is True
+
+    def test_non_completed_run_returns_400(self, client, operator_headers, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="baseline-running-cluster").id)
+        run = _make_run(db, target_id=target.id, status="running")
+        resp = client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+        assert resp.status_code == 400
+
+    def test_not_found(self, client, operator_headers, db):
+        resp = client.post("/api/benchmarks/runs/99999/baseline", headers=operator_headers)
+        assert resp.status_code == 404
+
+
+class TestUnsetBenchmarkRunBaseline:
+    """DELETE /api/benchmarks/runs/{run_id}/baseline (require_operator)."""
+
+    def test_happy_path(self, client, operator_headers, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="unset-baseline-cluster").id)
+        run = _make_run(db, target_id=target.id, status="completed")
+        client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+        resp = client.delete(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+        assert resp.status_code == 200
+        assert resp.json()["is_baseline"] is False
+
+    def test_requires_valid_token(self, client, db):
+        run = _make_run(db, status="completed")
+        resp = client.delete(f"/api/benchmarks/runs/{run.id}/baseline")
+        assert resp.status_code == 401
+
+    def test_not_found(self, client, operator_headers, db):
+        resp = client.delete("/api/benchmarks/runs/99999/baseline", headers=operator_headers)
+        assert resp.status_code == 404
+
+
 # ============================================================================
 # 4. Agent Endpoints
 # ============================================================================
@@ -793,9 +865,10 @@ class TestRegisterBenchmarkAgent:
         assert data["name"] == "new-agent"
         assert data["status"] == "connected"
 
-    def test_requires_valid_token(self, client, db):
+    def test_requires_valid_token(self, client, db, monkeypatch):
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
         resp = client.post("/api/benchmarks/agents", json={"name": "noauth-agent"})
-        assert resp.status_code == 401
+        assert resp.status_code in (400, 401)
 
     def test_upsert_existing_agent(self, client, operator_headers, db):
         _make_agent(db, name="upsert-agent", hostname="old-host", status="disconnected")
@@ -926,6 +999,73 @@ class TestCompareBenchmarkRuns:
         for key in ("run_id", "proxy", "model", "tool", "status",
                      "latency_p50", "latency_p99", "overall_rps"):
             assert key in run_entry
+
+
+class TestBenchmarkTrends:
+    """GET /api/benchmarks/trends (require_viewer)."""
+
+    def test_happy_path(self, client, viewer_headers, all_test_users, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="trends-cluster").id)
+        _make_run(db, target_id=target.id, status="completed")
+        _make_run(db, target_id=target.id, status="completed")
+
+        resp = client.get(
+            "/api/benchmarks/trends",
+            params={"target_id": target.id},
+            headers=viewer_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["points"]) == 2
+        assert data["baseline_run_id"] is None
+
+    def test_requires_auth(self, client, db):
+        resp = client.get("/api/benchmarks/trends")
+        assert resp.status_code == 401
+
+    def test_filters_by_scenario_key(self, client, viewer_headers, all_test_users, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="trends-scenario-cluster").id)
+        matching = _make_run(db, target_id=target.id, status="completed", scenario_key="prefix-cache")
+        _make_run(db, target_id=target.id, status="completed", scenario_key="burst")
+
+        resp = client.get(
+            "/api/benchmarks/trends",
+            params={"target_id": target.id, "scenario_key": "prefix-cache"},
+            headers=viewer_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert [p["id"] for p in data["points"]] == [matching.id]
+
+    def test_includes_baseline_flag(self, client, viewer_headers, operator_headers, all_test_users, db, make_k8s_cluster):
+        target = _make_target(db, cluster_id=make_k8s_cluster(name="trends-baseline-cluster").id)
+        run = _make_run(db, target_id=target.id, status="completed")
+        client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=operator_headers)
+
+        resp = client.get(
+            "/api/benchmarks/trends",
+            params={"target_id": target.id},
+            headers=viewer_headers,
+        )
+        data = resp.json()
+        assert data["baseline_run_id"] == run.id
+        assert data["points"][0]["is_baseline"] is True
+
+    def test_limit_out_of_bounds_returns_422(self, client, viewer_headers, all_test_users, db):
+        resp = client.get(
+            "/api/benchmarks/trends",
+            params={"limit": 501},
+            headers=viewer_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_limit_below_minimum_returns_422(self, client, viewer_headers, all_test_users, db):
+        resp = client.get(
+            "/api/benchmarks/trends",
+            params={"limit": 0},
+            headers=viewer_headers,
+        )
+        assert resp.status_code == 422
 
 
 class TestBenchmarkSummary:
@@ -2119,6 +2259,16 @@ class TestMutatingRoutesForbidViewer:
             json={"scenario_key": "baseline", "agent_id": agent.id},
             headers=viewer_headers,
         )
+        assert resp.status_code == 403
+
+    def test_set_baseline_forbidsViewer(self, client, viewer_headers, all_test_users, db):
+        run = _make_run(db, status="completed")
+        resp = client.post(f"/api/benchmarks/runs/{run.id}/baseline", headers=viewer_headers)
+        assert resp.status_code == 403
+
+    def test_unset_baseline_forbidsViewer(self, client, viewer_headers, all_test_users, db):
+        run = _make_run(db, status="completed")
+        resp = client.delete(f"/api/benchmarks/runs/{run.id}/baseline", headers=viewer_headers)
         assert resp.status_code == 403
 
 

@@ -271,6 +271,8 @@ All paths prefixed with `/api/projects`.
 | POST | `/api/k8s/clusters/{cluster_id}/scan` | cluster_owner | — | Scan cluster prerequisites (`ClusterScanEnvelope`) |
 | POST | `/api/k8s/clusters/{cluster_id}/adaptive-modules` | cluster_owner | `AdaptiveModuleRequest` | Generate adaptive deploy plan |
 | POST | `/api/k8s/clusters/{cluster_id}/adaptive-modules/from-scan` | cluster_owner | `AdaptiveModuleRequest` | Adaptive plan from cached scan |
+| POST | `/api/k8s/clusters/{cluster_id}/bnk-config` | cluster_owner | `BnkClusterConfigCreateRequest` | Create or update BNK cluster config (tmfifo pool CIDR, join transport, CP host) |
+| POST | `/api/k8s/clusters/{cluster_id}/bnk-members` | cluster_owner | `BnkClusterMemberAssignRequest` | Assign bare-metal hosts and DPUs to a BNK cluster with tmfifo IP allocation |
 
 ---
 

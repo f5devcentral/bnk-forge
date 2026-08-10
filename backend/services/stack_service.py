@@ -799,7 +799,42 @@ class StackService(BaseService):
             "modules": serialized_modules,
         }
 
-    def deploy_stack(self, project_id: int, stack_id: int) -> dict:
+    def _stamp_host_release(self, stack: StackInstance, deployable_release_id: int) -> None:
+        """Stamp the chosen BNK release onto the bare-metal host's version_profile_id.
+
+        Searches for bare_metal_host_id nested in stack.variables (module-scoped dict)
+        and updates the host so resolve_project_context picks up the per-deploy override.
+        No-op when the stack has no bare-metal host association.
+        """
+        from models.bare_metal import BareMetalHost
+
+        variables = stack.variables or {}
+        host_id: int | None = None
+        for value in variables.values():
+            if isinstance(value, dict):
+                raw = value.get("bare_metal_host_id")
+                if raw is not None:
+                    try:
+                        host_id = int(raw)
+                    except (ValueError, TypeError):
+                        continue
+                    break
+
+        if host_id is None:
+            return
+
+        host = self.db.query(BareMetalHost).filter(BareMetalHost.id == host_id).first()
+        if host is None:
+            return
+
+        host.version_profile_id = deployable_release_id
+        self.db.flush()
+        logger.info(
+            "Stamped BareMetalHost %s version_profile_id=%s for stack %s deploy",
+            host_id, deployable_release_id, stack.id,
+        )
+
+    def deploy_stack(self, project_id: int, stack_id: int, *, deployable_release_id: int | None = None) -> dict:
         """Start stack deployment using StackDeploymentService."""
         from services.stack_deployment_service import StackDeploymentService
         from services.system_service import SystemService
@@ -812,6 +847,10 @@ class StackService(BaseService):
             )
 
         stack = self._get_stack(project_id, stack_id)
+
+        # ADR-478 P1b: stamp the chosen BNK release onto the host carrier before module creation.
+        if deployable_release_id is not None:
+            self._stamp_host_release(stack, deployable_release_id)
 
         try:
             deployment_service = StackDeploymentService(self.db)
@@ -851,7 +890,7 @@ class StackService(BaseService):
         deployment_service = StackDeploymentService(self.db)
         return deployment_service.check_prerequisites(project_id, template)
 
-    def run_deploy(self, project_id: int, stack_id: int) -> dict:
+    def run_deploy(self, project_id: int, stack_id: int, *, deployable_release_id: int | None = None) -> dict:
         """Deploy all stack modules (init + apply) with dependency ordering."""
         from models import Task as TaskModel
         from services.execution.task_dispatch import dispatch_apply, dispatch_init
@@ -861,6 +900,10 @@ class StackService(BaseService):
 
         if not stack.deployed_modules:
             raise BadRequestError("Stack has no modules to deploy", code="EMPTY_STACK")
+
+        # ADR-478 P1b: re-stamp host release on run-deploy (idempotent; supports retry with a different release).
+        if deployable_release_id is not None:
+            self._stamp_host_release(stack, deployable_release_id)
 
         # Re-sync stack-supplied shared defaults before every run to keep retry/resume
         # flows truthful when stack variables are module-scoped (e.g., user_ip).

@@ -26,8 +26,8 @@ from schemas.bare_metal import (
     BareMetalHostListResponse,
     BareMetalHostResponse,
     BareMetalHostUpdate,
-    BnkVersionProfileListResponse,
-    BnkVersionProfileResponse,
+    DeployableReleaseListResponse,
+    DeployableReleaseResponse,
     DeploymentStepResponse,
 )
 
@@ -134,15 +134,18 @@ def _profile_response_data(**overrides) -> dict:
         "display_name": "BNK 2.2 (GA)",
         "description": "BNK 2.2 General Availability release",
         "is_default": True,
-        "bnk_manifest_version": "2.2.0",
-        "bnk_cr_kind": "BNKGatewayClass",
-        "flo_version": "0.10.5",
+        "is_active": True,
+        "source_type": "manual",
+        "bnk_release_id": None,
+        "bnk_manifest_version": "2.2.1-3.2226.0-0.0.511",
+        "bnk_cr_kind": "CNEInstance",
+        "flo_version": "v2.9.27-0.3.4",
         "k8s_version": "1.30.4",
         "doca_version": "2.9.1",
         "containerd_version": "1.7.20",
         "runc_version": "1.1.13",
         "calico_version": "3.28.1",
-        "cert_manager_version": "1.15.3",
+        "cert_manager_version": "v1.15.3",
         "gateway_api_version": "1.1.0",
         "multus_version": "4.1.0",
         "sriov_version": "1.4.0",
@@ -452,47 +455,54 @@ class TestBareMetalDiscoverySchemas:
 
 
 # ===========================================================================
-# TestVersionProfileSchemas
+# TestDeployableReleaseSchemas
 # ===========================================================================
 
 @pytest.mark.unit
-class TestVersionProfileSchemas:
-    """Tests for BnkVersionProfileResponse and BnkVersionProfileListResponse."""
+class TestDeployableReleaseSchemas:
+    """Tests for DeployableReleaseResponse and DeployableReleaseListResponse."""
 
-    def test_profile_response_valid(self):
-        resp = BnkVersionProfileResponse(**_profile_response_data())
+    def test_release_response_valid(self):
+        resp = DeployableReleaseResponse(**_profile_response_data())
         assert resp.name == "bnk-2.2"
         assert resp.is_default is True
-        assert resp.bnk_cr_kind == "BNKGatewayClass"
+        assert resp.is_active is True
+        assert resp.source_type == "manual"
+        assert resp.bnk_release_id is None
+        assert resp.bnk_cr_kind == "CNEInstance"
         assert resp.feature_flags == {"ipv6": False, "tmm_node_labels": True}
 
-    def test_profile_response_nullable_description(self):
-        resp = BnkVersionProfileResponse(**_profile_response_data(description=None))
+    def test_release_response_nullable_description(self):
+        resp = DeployableReleaseResponse(**_profile_response_data(description=None))
         assert resp.description is None
 
-    def test_profile_response_nullable_feature_flags(self):
-        resp = BnkVersionProfileResponse(**_profile_response_data(feature_flags=None))
+    def test_release_response_nullable_feature_flags(self):
+        resp = DeployableReleaseResponse(**_profile_response_data(feature_flags=None))
         assert resp.feature_flags is None
 
-    def test_profile_response_missing_required_rejected(self):
+    def test_release_response_nullable_bnk_release_id(self):
+        resp = DeployableReleaseResponse(**_profile_response_data(bnk_release_id=42))
+        assert resp.bnk_release_id == 42
+
+    def test_release_response_missing_required_rejected(self):
         data = _profile_response_data()
         del data["bnk_manifest_version"]
         with pytest.raises(ValidationError):
-            BnkVersionProfileResponse(**data)
+            DeployableReleaseResponse(**data)
 
-    def test_profile_response_wrong_type_rejected(self):
+    def test_release_response_wrong_type_rejected(self):
         with pytest.raises(ValidationError):
-            BnkVersionProfileResponse(**_profile_response_data(id="not-an-int"))  # type: ignore[arg-type]
+            DeployableReleaseResponse(**_profile_response_data(id="not-an-int"))  # type: ignore[arg-type]
 
-    def test_profile_list_response_empty(self):
-        resp = BnkVersionProfileListResponse(profiles=[])
-        assert resp.profiles == []
+    def test_release_list_response_empty(self):
+        resp = DeployableReleaseListResponse(releases=[])
+        assert resp.releases == []
 
-    def test_profile_list_response_with_profiles(self):
-        prof = BnkVersionProfileResponse(**_profile_response_data())
-        resp = BnkVersionProfileListResponse(profiles=[prof])
-        assert len(resp.profiles) == 1
-        assert resp.profiles[0].name == "bnk-2.2"
+    def test_release_list_response_with_releases(self):
+        release = DeployableReleaseResponse(**_profile_response_data())
+        resp = DeployableReleaseListResponse(releases=[release])
+        assert len(resp.releases) == 1
+        assert resp.releases[0].name == "bnk-2.2"
 
 
 class TestBareMetalDiscoveryResponseDocaStatus:

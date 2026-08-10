@@ -94,6 +94,7 @@ class ContainerEngine(DeploymentEngine):
         workspace_subpath: str | None = None,
         outputs_filename: str = DEFAULT_OUTPUTS_FILENAME,
         secret_values: list[str] | None = None,
+        celery_task_id: str | None = None,
     ) -> None:
         self.runner = runner
         self.workspace_host_path = workspace_host_path
@@ -101,6 +102,9 @@ class ContainerEngine(DeploymentEngine):
         # worker; correct on Docker Desktop). None ⟹ host-path bind fallback.
         self.workspace_volume = workspace_volume
         self.workspace_subpath = workspace_subpath
+        # Stamped onto each step container so the reaper can tell a live step
+        # from one whose worker died. None outside a Celery context.
+        self.celery_task_id = celery_task_id
         # In-container path used by the engine itself (e.g. to read outputs.json
         # back). The DockerRunner bind-mounts workspace_host_path; the engine,
         # which runs in the worker, reads via its own mount of the same volume.
@@ -384,6 +388,7 @@ class ContainerEngine(DeploymentEngine):
                 pull_authfile_json=self.pull_authfile_json,
                 component_key=component_key,
                 step_name=step_name,
+                celery_task_id=self.celery_task_id,
             )
 
             # retry/backoff: a long-provisioning step (e.g. a cluster whose

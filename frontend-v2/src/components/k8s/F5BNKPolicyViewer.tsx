@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Network, AlertCircle, ChevronDown, ChevronRight, Lock, Unlock } from 'lucide-react';
+import { Shield, Network, AlertCircle, ChevronDown, ChevronRight, Lock, Unlock, ArrowRightLeft } from 'lucide-react';
 import { useF5PolicyGatewayAssociations } from '@/hooks/useK8s';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,13 +15,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import type { F5PolicyGatewayAssociation, F5FirewallRule } from '@/types';
 import { ErrorState } from '@/components/ui/error-state';
 import { parseApiError } from '@/lib/error-handler';
@@ -28,11 +22,113 @@ import { parseApiError } from '@/lib/error-handler';
 interface F5BNKPolicyViewerProps {
   clusterId: number;
   namespace?: string;
+  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
 }
 
-export function F5BNKPolicyViewer({ clusterId, namespace }: F5BNKPolicyViewerProps) {
+type ResourceSelector = (sel: { kind: string; name: string; namespace: string }) => void;
+
+function ClickableName({
+  name,
+  kind,
+  namespace,
+  onSelect,
+  className,
+}: {
+  name: string;
+  kind: string;
+  namespace: string;
+  onSelect?: ResourceSelector;
+  className?: string;
+}) {
+  if (!onSelect) {
+    return <span className={cn('font-medium text-xs', className)}>{name}</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect({ kind, name, namespace })}
+      className={cn(
+        'font-medium text-xs hover:underline text-left text-primary hover:text-primary/80',
+        className,
+      )}
+    >
+      {name}
+    </button>
+  );
+}
+
+/** Resolved addresses/ports for a rule endpoint, plus clickable provenance links */
+function RuleEndpointCell({
+  addresses,
+  ports,
+  addressLists,
+  portLists,
+  namespace,
+  onSelectResource,
+}: {
+  addresses?: string[];
+  ports?: number[];
+  addressLists?: string[];
+  portLists?: string[];
+  namespace: string;
+  onSelectResource?: ResourceSelector;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1">
+        {addresses && addresses.length > 0 ? (
+          addresses.map((addr) => (
+            <Badge key={addr} variant="outline" className="font-mono text-[10px] py-0">
+              {addr}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">any</span>
+        )}
+      </div>
+      {addressLists && addressLists.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+          <span>from:</span>
+          {addressLists.map((name) => (
+            <ClickableName
+              key={name}
+              name={name}
+              kind="F5BigCneAddresslist"
+              namespace={namespace}
+              onSelect={onSelectResource}
+            />
+          ))}
+        </div>
+      )}
+      {ports && ports.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {ports.map((port) => (
+            <Badge key={port} variant="secondary" className="text-[10px] py-0">
+              {port}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {portLists && portLists.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+          <span>from:</span>
+          {portLists.map((name) => (
+            <ClickableName
+              key={name}
+              name={name}
+              kind="F5BigCnePortlist"
+              namespace={namespace}
+              onSelect={onSelectResource}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function F5BNKPolicyViewer({ clusterId, namespace, onSelectResource }: F5BNKPolicyViewerProps) {
   const navigate = useNavigate();
-  const [selectedAssociation, setSelectedAssociation] = useState<F5PolicyGatewayAssociation | null>(null);
   const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error } = useF5PolicyGatewayAssociations(
@@ -123,10 +219,10 @@ export function F5BNKPolicyViewer({ clusterId, namespace }: F5BNKPolicyViewerPro
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            F5 BNK Policy-Gateway Associations
+            F5 BNK Policy Associations
           </CardTitle>
           <CardDescription>
-            No F5 BNK policy-gateway associations found in this cluster
+            No F5 BNK policy associations found in this cluster
             {namespace && ` (namespace: ${namespace})`}
           </CardDescription>
         </CardHeader>
@@ -138,7 +234,7 @@ export function F5BNKPolicyViewer({ clusterId, namespace }: F5BNKPolicyViewerPro
               <p className="text-sm mt-2">{apiInfo}</p>
             ) : (
               <p className="text-sm mt-2">
-                F5 BNK policies associate firewall rules with Gateway listeners.
+                F5 BNK policies associate firewall rules with Gateway listeners or egress traffic.
               </p>
             )}
           </div>
@@ -148,69 +244,98 @@ export function F5BNKPolicyViewer({ clusterId, namespace }: F5BNKPolicyViewerPro
   }
 
   return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
-            F5 BNK Policy-Gateway Associations
-          </CardTitle>
-          <CardDescription>
-            Viewing {associations.length} policy-gateway association{associations.length !== 1 ? 's' : ''}
-            {namespace && ` in namespace: ${namespace}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {associations.map((association: F5PolicyGatewayAssociation, index: number) => {
-              const associationKey = `${association.namespace}-${association.gateway_name}-${association.listener_name}-${index}`;
-              const isExpanded = expandedRules.has(associationKey);
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Shield className="h-5 w-5" />
+          F5 BNK Policy Associations
+        </CardTitle>
+        <CardDescription>
+          Viewing {associations.length} policy association{associations.length !== 1 ? 's' : ''} (gateway & egress)
+          {namespace && ` in namespace: ${namespace}`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {associations.map((association: F5PolicyGatewayAssociation, index: number) => {
+            const isEgress = association.kind === 'egress';
+            const associationKey = isEgress
+              ? `${association.namespace}-egress-${association.egress_name}-${index}`
+              : `${association.namespace}-${association.gateway_name}-${association.listener_name}-${index}`;
+            const isExpanded = expandedRules.has(associationKey);
 
-              return (
-                <Card key={associationKey} className="border-2">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1 flex-1">
-                        <div className="flex items-center gap-2">
+            return (
+              <Card key={associationKey} className="border-2">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center gap-2">
+                        {isEgress ? (
+                          <ArrowRightLeft className="h-5 w-5 text-info" />
+                        ) : (
                           <Network className="h-5 w-5 text-info" />
-                          <CardTitle className="text-lg">
-                            {association.gateway_name} / {association.listener_name}
-                          </CardTitle>
-                        </div>
-                        <CardDescription>
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            <Badge variant="outline">
-                              Namespace: {association.namespace}
-                            </Badge>
-                            {association.gateway_ip && (
-                              <Badge variant="outline">
-                                IP: {association.gateway_ip}
-                              </Badge>
-                            )}
-                            {association.port && (
-                              <Badge variant="outline">
-                                Port: {association.port}
-                              </Badge>
-                            )}
-                            {association.protocol && (
-                              <Badge variant="outline">
-                                Protocol: {association.protocol}
-                              </Badge>
-                            )}
-                          </div>
-                        </CardDescription>
+                        )}
+                        <CardTitle className="text-lg">
+                          {isEgress
+                            ? `Egress: ${association.egress_name}`
+                            : `${association.gateway_name} / ${association.listener_name}`}
+                        </CardTitle>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedAssociation(association)}
-                      >
-                        View Details
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
+                      <div className="text-muted-foreground text-sm flex flex-wrap gap-2 mt-2">
+                          <Badge variant="outline">
+                            Namespace: {association.namespace}
+                          </Badge>
+                          {isEgress ? (
+                            <>
+                              {association.snat_type && (
+                                <Badge variant="outline">
+                                  SNAT: {association.snat_type}
+                                </Badge>
+                              )}
+                              {(association.captured_namespaces || []).map((ns) => (
+                                <Badge key={ns} variant="secondary">
+                                  ns: {ns}
+                                </Badge>
+                              ))}
+                            </>
+                          ) : (
+                            <>
+                              {association.gateway_ip && (
+                                <Badge variant="outline">
+                                  IP: {association.gateway_ip}
+                                </Badge>
+                              )}
+                              {association.port && (
+                                <Badge variant="outline">
+                                  Port: {association.port}
+                                </Badge>
+                              )}
+                              {association.protocol && (
+                                <Badge variant="outline">
+                                  Protocol: {association.protocol}
+                                </Badge>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!onSelectResource}
+                      onClick={() => onSelectResource?.({
+                        kind: 'F5BigFwPolicy',
+                        name: association.firewall_policy_name,
+                        namespace: association.namespace,
+                      })}
+                    >
+                      Open Policy
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {!isEgress && (
                       <div className="flex items-center gap-2">
                         <Shield className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm font-medium">BNK Policy:</span>
@@ -218,234 +343,105 @@ export function F5BNKPolicyViewer({ clusterId, namespace }: F5BNKPolicyViewerPro
                           {association.bnk_policy_name}
                         </code>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Lock className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm font-medium">Firewall Policy:</span>
-                        <code className="text-sm bg-muted px-2 py-1 rounded">
-                          {association.firewall_policy_name}
-                        </code>
-                        {association.rules_count !== undefined && (
-                          <Badge variant="secondary">
-                            {association.rules_count} rule{association.rules_count !== 1 ? 's' : ''}
-                          </Badge>
-                        )}
-                      </div>
-
-                      {association.rules && association.rules.length > 0 && (
-                        <div className="mt-4">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => toggleRuleExpansion(associationKey)}
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 mr-2" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 mr-2" />
-                            )}
-                            {isExpanded ? 'Hide' : 'Show'} Firewall Rules
-                          </Button>
-
-                          {isExpanded && (
-                            <div className="mt-2 border rounded-lg overflow-hidden">
-                              <Table>
-                                <TableHeader>
-                                  <TableRow>
-                                    <TableHead>Rule</TableHead>
-                                    <TableHead>Action</TableHead>
-                                    <TableHead>Protocol</TableHead>
-                                    <TableHead>Source</TableHead>
-                                    <TableHead>Destination</TableHead>
-                                    <TableHead>Logging</TableHead>
-                                  </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                  {association.rules.map((rule: F5FirewallRule, ruleIndex: number) => (
-                                    <TableRow key={ruleIndex}>
-                                      <TableCell className="font-mono text-sm">
-                                        {rule.name}
-                                      </TableCell>
-                                      <TableCell>
-                                        {getActionBadge(rule.action)}
-                                      </TableCell>
-                                      <TableCell>
-                                        <Badge variant="outline">{rule.ipProtocol}</Badge>
-                                      </TableCell>
-                                      <TableCell className="text-sm">
-                                        <div>
-                                          {rule.source.addresses?.join(', ') || 'any'}
-                                        </div>
-                                        {rule.source.ports && rule.source.ports.length > 0 && (
-                                          <div className="text-xs text-muted-foreground">
-                                            Ports: {rule.source.ports.join(', ')}
-                                          </div>
-                                        )}
-                                      </TableCell>
-                                      <TableCell className="text-sm">
-                                        <div>
-                                          {rule.destination.addresses?.join(', ') || 'any'}
-                                        </div>
-                                        {rule.destination.ports && rule.destination.ports.length > 0 && (
-                                          <div className="text-xs text-muted-foreground">
-                                            Ports: {rule.destination.ports.join(', ')}
-                                          </div>
-                                        )}
-                                      </TableCell>
-                                      <TableCell>
-                                        <Badge variant={rule.logging ? 'default' : 'outline'}>
-                                          {rule.logging ? 'Enabled' : 'Disabled'}
-                                        </Badge>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            </div>
-                          )}
-                        </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Lock className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Firewall Policy:</span>
+                      <ClickableName
+                        name={association.firewall_policy_name}
+                        kind="F5BigFwPolicy"
+                        namespace={association.namespace}
+                        onSelect={onSelectResource}
+                        className="text-sm"
+                      />
+                      {association.rules_count !== undefined && (
+                        <Badge variant="secondary">
+                          {association.rules_count} rule{association.rules_count !== 1 ? 's' : ''}
+                        </Badge>
                       )}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* Details Dialog */}
-      <Dialog open={!!selectedAssociation} onOpenChange={() => setSelectedAssociation(null)}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Policy-Gateway Association Details
-            </DialogTitle>
-            <DialogDescription>
-              {selectedAssociation?.gateway_name} / {selectedAssociation?.listener_name}
-            </DialogDescription>
-          </DialogHeader>
+                    {association.rules && association.rules.length > 0 && (
+                      <div className="mt-4">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full justify-start"
+                          onClick={() => toggleRuleExpansion(associationKey)}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 mr-2" />
+                          )}
+                          {isExpanded ? 'Hide' : 'Show'} Firewall Rules
+                        </Button>
 
-          {selectedAssociation && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Gateway Information</h4>
-                  <dl className="space-y-1 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground inline">Name: </dt>
-                      <dd className="inline font-mono">{selectedAssociation.gateway_name}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground inline">Listener: </dt>
-                      <dd className="inline font-mono">{selectedAssociation.listener_name}</dd>
-                    </div>
-                    {selectedAssociation.gateway_ip && (
-                      <div>
-                        <dt className="text-muted-foreground inline">IP: </dt>
-                        <dd className="inline font-mono">{selectedAssociation.gateway_ip}</dd>
+                        {isExpanded && (
+                          <div className="mt-2 border rounded-lg overflow-hidden">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Rule</TableHead>
+                                  <TableHead>Action</TableHead>
+                                  <TableHead>Protocol</TableHead>
+                                  <TableHead>Source</TableHead>
+                                  <TableHead>Destination</TableHead>
+                                  <TableHead>Logging</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {association.rules.map((rule: F5FirewallRule, ruleIndex: number) => (
+                                  <TableRow key={ruleIndex}>
+                                    <TableCell className="font-mono text-sm">
+                                      {rule.name}
+                                    </TableCell>
+                                    <TableCell>
+                                      {getActionBadge(rule.action)}
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant="outline">{rule.ipProtocol}</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                      <RuleEndpointCell
+                                        addresses={rule.source.addresses}
+                                        ports={rule.source.ports}
+                                        addressLists={rule.source.addressLists}
+                                        portLists={rule.source.portLists}
+                                        namespace={association.namespace}
+                                        onSelectResource={onSelectResource}
+                                      />
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                      <RuleEndpointCell
+                                        addresses={rule.destination.addresses}
+                                        ports={rule.destination.ports}
+                                        addressLists={rule.destination.addressLists}
+                                        portLists={rule.destination.portLists}
+                                        namespace={association.namespace}
+                                        onSelectResource={onSelectResource}
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant={rule.logging ? 'default' : 'outline'}>
+                                        {rule.logging ? 'Enabled' : 'Disabled'}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {selectedAssociation.port && (
-                      <div>
-                        <dt className="text-muted-foreground inline">Port: </dt>
-                        <dd className="inline">{selectedAssociation.port}</dd>
-                      </div>
-                    )}
-                    {selectedAssociation.protocol && (
-                      <div>
-                        <dt className="text-muted-foreground inline">Protocol: </dt>
-                        <dd className="inline">{selectedAssociation.protocol}</dd>
-                      </div>
-                    )}
-                  </dl>
-                </div>
-
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Policy Information</h4>
-                  <dl className="space-y-1 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground inline">Namespace: </dt>
-                      <dd className="inline font-mono">{selectedAssociation.namespace}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground inline">BNK Policy: </dt>
-                      <dd className="inline font-mono">{selectedAssociation.bnk_policy_name}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground inline">Firewall Policy: </dt>
-                      <dd className="inline font-mono">{selectedAssociation.firewall_policy_name}</dd>
-                    </div>
-                    {selectedAssociation.rules_count !== undefined && (
-                      <div>
-                        <dt className="text-muted-foreground inline">Rules: </dt>
-                        <dd className="inline">{selectedAssociation.rules_count}</dd>
-                      </div>
-                    )}
-                  </dl>
-                </div>
-              </div>
-
-              {selectedAssociation.rules && selectedAssociation.rules.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Firewall Rules</h4>
-                  <div className="border rounded-lg overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Rule</TableHead>
-                          <TableHead>Action</TableHead>
-                          <TableHead>Protocol</TableHead>
-                          <TableHead>Source</TableHead>
-                          <TableHead>Destination</TableHead>
-                          <TableHead>Logging</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedAssociation.rules.map((rule, ruleIndex) => (
-                          <TableRow key={ruleIndex}>
-                            <TableCell className="font-mono text-sm">
-                              {rule.name}
-                            </TableCell>
-                            <TableCell>
-                              {getActionBadge(rule.action)}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{rule.ipProtocol}</Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              <div>{rule.source.addresses?.join(', ') || 'any'}</div>
-                              {rule.source.ports && rule.source.ports.length > 0 && (
-                                <div className="text-xs text-muted-foreground">
-                                  Ports: {rule.source.ports.join(', ')}
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              <div>{rule.destination.addresses?.join(', ') || 'any'}</div>
-                              {rule.destination.ports && rule.destination.ports.length > 0 && (
-                                <div className="text-xs text-muted-foreground">
-                                  Ports: {rule.destination.ports.join(', ')}
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={rule.logging ? 'default' : 'outline'}>
-                                {rule.logging ? 'Enabled' : 'Disabled'}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

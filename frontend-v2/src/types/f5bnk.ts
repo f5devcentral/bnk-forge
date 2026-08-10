@@ -9,26 +9,50 @@ export interface F5FirewallRule {
   source: {
     addresses?: string[];
     ports?: number[];
+    addressLists?: string[];
+    portLists?: string[];
   };
   destination: {
     addresses?: string[];
     ports?: number[];
+    addressLists?: string[];
+    portLists?: string[];
   };
   logging: boolean;
 }
 
-export interface F5PolicyGatewayAssociation {
-  bnk_policy_name: string;
+export interface F5GatewayPolicyAssociation {
+  kind?: 'gateway';
+  bnk_policy_name?: string;
   namespace: string;
-  gateway_name: string;
-  listener_name: string;
+  gateway_name?: string;
+  listener_name?: string;
   firewall_policy_name: string;
   gateway_ip?: string;
   port?: number;
   protocol?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  egress_name?: string;
+  captured_namespaces?: string[];
+  snat_type?: string;
 }
+
+export interface F5EgressPolicyAssociation {
+  kind: 'egress';
+  namespace: string;
+  egress_name?: string;
+  firewall_policy_name: string;
+  captured_namespaces?: string[];
+  snat_type?: string;
+  rules_count?: number;
+  rules?: F5FirewallRule[];
+  bnk_policy_name?: string;
+  gateway_name?: string;
+  listener_name?: string;
+}
+
+export type F5PolicyGatewayAssociation = F5GatewayPolicyAssociation | F5EgressPolicyAssociation;
 
 export interface F5PolicyGatewayAssociationsResponse {
   associations: F5PolicyGatewayAssociation[];
@@ -464,7 +488,16 @@ export interface TopologySnatPool {
 export interface TopologyEgress {
   name: string;
   namespace: string;
-  sourceTranslation: Record<string, unknown>;
+  snatType: string;
+  egressSnatpool: string | null;
+  firewallEnforcedPolicy: string | null;
+  logProfile: string | null;
+  capturedNamespaces: string[];
+  vxlan: {
+    tmmInterfaceName: string;
+    nodeInterfaceName: string;
+  } | null;
+  ready: boolean;
 }
 
 export interface TopologyDataPlane {

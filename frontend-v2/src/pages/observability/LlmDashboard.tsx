@@ -188,6 +188,7 @@ function OverviewTab({ clusterId, params, active }: TabProps) {
         metric="cost"
         title="Cost"
         active={active}
+        stacked
         valueFormatter={fmtCost}
         totalFormatter={fmtCost}
       />

@@ -70,8 +70,8 @@ class BareMetalHost(Base):
     host_mgmt_ip = Column(String(255), nullable=True)  # CIDR notation
     dpu_mgmt_ip = Column(String(255), nullable=True)   # CIDR notation (optional)
 
-    # Target BNK version
-    version_profile_id = Column(Integer, ForeignKey("bnk_version_profiles.id", ondelete="SET NULL"), nullable=True)
+    # Target BNK release (pre-fill anchor; column name kept stable per ADR-478 Option A)
+    version_profile_id = Column(Integer, ForeignKey("bnk_deployable_release.id", ondelete="SET NULL"), nullable=True)
 
     # Hardware discovery cache (updated by discovery)
     os_info = Column(JSON, nullable=True)        # {os_type, os_version, kernel, arch}
@@ -98,6 +98,12 @@ class BareMetalHost(Base):
     rshim_source = Column(String(20), nullable=True)              # "host" | "bmc"
     bond_mode = Column(String(20), nullable=True)                 # "independent" | "lag"
 
+    # Host-level tmfifo MAC base override (ADR-478 / BM2-005).
+    # When set, all DPUs flashed on this host enumerate their NET_RSHIM_MAC
+    # from this base (e.g. "00:1a:ca:ff:ff:2") instead of the default
+    # "00:1a:ca:ff:ff:1".  Unset (None) = use the default base.
+    net_rshim_mac_base = Column(String(50), nullable=True)
+
     # Full discovery result cache (for UI re-display without re-probing)
     last_discovery_result = Column(JSON, nullable=True)       # Complete BareMetalDiscoveryResponse dict
 
@@ -105,6 +111,7 @@ class BareMetalHost(Base):
     kubernetes_cluster_id = Column(
         Integer, ForeignKey("kubernetes_clusters.id", ondelete="SET NULL"), nullable=True
     )
+    is_control_plane = Column(Boolean, default=False, nullable=False, server_default="false")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -127,7 +134,7 @@ class BareMetalHost(Base):
     )
     ssh_credential = relationship("SSHCredential", foreign_keys=[ssh_credential_id])
     dpu_credential = relationship("SSHCredential", foreign_keys=[dpu_credential_id])
-    version_profile = relationship("BnkVersionProfile", foreign_keys=[version_profile_id])
+    version_profile = relationship("BnkDeployableRelease", foreign_keys=[version_profile_id])
     kubernetes_cluster = relationship("KubernetesCluster", foreign_keys=[kubernetes_cluster_id])
     deployments = relationship(
         "BareMetalDeployment", back_populates="host",
@@ -152,6 +159,11 @@ class BareMetalDeployment(Base):
     # Topology snapshot (frozen at deployment start)
     topology = Column(String(50), nullable=False)
     version_profile_snapshot = Column(JSON, nullable=True)  # Snapshot of version profile at start
+
+    # Deployable release selected for this deployment (nullable — legacy rows pre-ADR-478 have NULL)
+    deployable_release_id = Column(
+        Integer, ForeignKey("bnk_deployable_release.id", ondelete="SET NULL"), nullable=True
+    )
 
     # State machine
     status = Column(
@@ -190,6 +202,7 @@ class BareMetalDeployment(Base):
     # Relationships
     host = relationship("BareMetalHost", back_populates="deployments")
     project = relationship("Project")
+    deployable_release = relationship("BnkDeployableRelease", foreign_keys=[deployable_release_id])
     steps = relationship(
         "DeploymentStep", back_populates="deployment",
         cascade="all, delete-orphan", order_by="DeploymentStep.step_index",
@@ -258,50 +271,3 @@ class DeploymentStep(Base):
     )
 
 
-class BnkVersionProfile(Base):
-    """Coordinated component version matrix for a BNK release."""
-
-    __tablename__ = "bnk_version_profiles"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    # Identity
-    name = Column(String(100), nullable=False, unique=True, index=True)  # e.g., "bnk-2.1", "bnk-2.2"
-    display_name = Column(String(255), nullable=False)  # e.g., "BNK 2.1 (GA)"
-    description = Column(Text, nullable=True)
-    is_default = Column(Boolean, default=False)
-
-    # Core versions
-    bnk_manifest_version = Column(String(50), nullable=False)
-    bnk_cr_kind = Column(String(50), nullable=False)    # "BNKGatewayClass" or "CNEInstance"
-    flo_version = Column(String(50), nullable=False)
-    k8s_version = Column(String(50), nullable=False)
-    doca_version = Column(String(50), nullable=False)
-
-    # Runtime versions
-    containerd_version = Column(String(50), nullable=False)
-    runc_version = Column(String(50), nullable=False)
-
-    # Ecosystem versions
-    calico_version = Column(String(50), nullable=False)
-    cert_manager_version = Column(String(50), nullable=False)
-    gateway_api_version = Column(String(50), nullable=False)
-    multus_version = Column(String(50), nullable=False)
-    sriov_version = Column(String(50), nullable=False)
-
-    # Storage
-    storage_class_type = Column(String(50), nullable=False)       # "local-path" or "nfs"
-    storage_provisioner = Column(String(255), nullable=False)
-
-    # Feature flags
-    feature_flags = Column(JSON, nullable=True)  # {"ipv6": false, "tmm_node_labels": true, ...}
-
-    # Full version manifest (catch-all for additional components)
-    full_manifest = Column(JSON, nullable=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_version_profile_default", "is_default"),
-    )

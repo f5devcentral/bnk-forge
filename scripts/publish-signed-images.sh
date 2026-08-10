@@ -87,14 +87,14 @@ if [[ "$DRY_RUN" == "0" ]]; then
 fi
 
 # ─── Image list ───────────────────────────────────────────────────────────────
-# 6 images from docker-bake.hcl (pushed via `make push-images`).
+# 7 images from docker-bake.hcl (pushed via `make push-images`).
 #
-# The bnk-operator image is intentionally excluded: bnk-operator/build.sh
-# builds it as "bnk-operator" (not "bnk-forge-operator"), defaults its tag to
-# 1.1.0 (not VERSION), and pushes to an ECR/Docker Hub path rather than
-# BNK_FORGE_REGISTRY. It is not part of the docker-bake.hcl / push-images
-# publish path, so there is no "${BNK_FORGE_REGISTRY}/bnk-forge-operator:${VERSION}"
-# image to sign here. Revisit if the operator gets added to docker-bake.hcl.
+# bnk-forge-operator joined the docker-bake.hcl "default" group (target
+# "operator", context ./bnk-operator, Dockerfile target "runtime") so it now
+# publishes to BNK_FORGE_REGISTRY at the release VERSION like every other
+# image, alongside the separate bnk-operator/build.sh path. This image is
+# published and signed; chart deployments can override image.repository and
+# image.tag in values.yaml to point to this GHCR release image as needed.
 
 IMAGES=(
   "bnk-forge-api"
@@ -103,6 +103,7 @@ IMAGES=(
   "bnk-forge-frontend"
   "bnk-forge-proxy"
   "bnk-forge-mcp"
+  "bnk-forge-operator"
 )
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

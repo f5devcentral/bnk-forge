@@ -55,6 +55,7 @@ from schemas.benchmarks import (
     BenchmarkTargetListResponse,
     BenchmarkTargetResponse,
     BenchmarkTargetUpdate,
+    BenchmarkTrendsResponse,
     DiscoverTargetsRequest,
     DiscoverTargetsResponse,
     ImportAwsJumphostRequest,
@@ -339,6 +340,37 @@ def delete_benchmark_run(run_id: int, db: Session = Depends(get_db)):
     svc = BenchmarkService(db)
     svc.delete_run(run_id)
     db.commit()
+
+
+@router.post(
+    "/api/benchmarks/runs/{run_id}/baseline",
+    response_model=BenchmarkRunResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("set benchmark run baseline")
+def set_benchmark_run_baseline(run_id: int, db: Session = Depends(get_db)):
+    """Mark a completed run as the baseline for its (target, scenario/config) context.
+
+    Clears any previous baseline in that same context — one baseline per context.
+    """
+    svc = BenchmarkService(db)
+    result = svc.set_baseline(run_id)
+    db.commit()
+    return result
+
+
+@router.delete(
+    "/api/benchmarks/runs/{run_id}/baseline",
+    response_model=BenchmarkRunResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("unset benchmark run baseline")
+def unset_benchmark_run_baseline(run_id: int, db: Session = Depends(get_db)):
+    """Clear the baseline flag on a run."""
+    svc = BenchmarkService(db)
+    result = svc.unset_baseline(run_id)
+    db.commit()
+    return result
 
 
 # ============================================================================
@@ -684,6 +716,22 @@ def get_benchmark_summary(db: Session = Depends(get_db)):
     """Get dashboard summary of benchmark activity."""
     svc = BenchmarkService(db)
     return svc.get_summary()
+
+
+@router.get("/api/benchmarks/trends", response_model=BenchmarkTrendsResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("get benchmark trends")
+def get_benchmark_trends(
+    target_id: int | None = Query(None),
+    proxy: str | None = Query(None),
+    scenario_key: str | None = Query(None),
+    config_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Time-ordered completed-run metrics for a target/proxy/scenario/config context,
+    with the current baseline (if any) always included."""
+    svc = BenchmarkService(db)
+    return svc.get_trends(target_id=target_id, proxy=proxy, scenario_key=scenario_key, config_id=config_id, limit=limit)
 
 
 # ============================================================================

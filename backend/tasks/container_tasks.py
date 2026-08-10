@@ -119,7 +119,10 @@ def _resolve_runner(db, manifest: dict, project):
     )
 
 
-def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, ModuleContext]:
+def _build_engine_and_ctx(
+    db, module: ProjectModule, *, operation: str = "apply",
+    celery_task_id: str | None = None,
+) -> tuple[ContainerEngine, ModuleContext]:
     """Resolve manifest, substrate, pull secret, and build the engine + context."""
     from services.credentials_service import get_cloud_credentials_only
     from services.execution.container_run_secrets import (
@@ -173,6 +176,60 @@ def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, M
     # Effective form inputs for {{inputs.*}} templating: base variables overlaid
     # with variable_overrides (where blueprint-resolved form values are stored).
     effective_variables = {**(module.variables or {}), **(module.variable_overrides or {})}
+    # Inputs a pack declares `source: "module"` are resolved from the dependency's
+    # outputs, the same way every other engine resolves them. Without this the
+    # declaration is inert on this path — stored, never applied — and the step runs
+    # with the input unset, failing from inside the image in a way that names the
+    # input rather than the wiring that should have supplied it.
+    #
+    # Wired BEFORE the operator's own values are layered on, so an explicit form
+    # value still wins: a blueprint that hard-codes a registry host should not be
+    # overridden by a dependency that happens to publish one.
+    if library_module is not None:
+        # Imported here, not at module scope, matching how can_execute is pulled in
+        # below — variable_assembler reaches back into services/ and importing it
+        # eagerly from a tasks module risks a cycle.
+        from services.execution.variable_assembler import apply_dependency_output_wiring
+
+        # Not seeded with Layer 2.75's early transforms, and that is currently
+        # fine rather than a known hole: MODULE_TRANSFORMS is keyed on module
+        # path and every registered key is a Python-defined module
+        # (bare-metal/*, bnk/*, k8s/*). Container modules are artifacts selected
+        # by artifact kind, so none of them has an early transform to miss. If
+        # one ever gains a transform, this is the line that has to change.
+        #
+        # Seeded with what is already resolved, mirroring build_variables' Layer
+        # 2.6. The wiring decides whether a missing required dependency is fatal
+        # by checking whether the input is ALREADY present, so handing it an empty
+        # dict disables that check and makes this path stricter than every engine
+        # it is meant to match: a pack that wires from infra/aws/vpc raises here on
+        # bare metal, where that module does not exist, even though the operator
+        # supplied the value on the form. Layer 2.6 exists precisely to prevent
+        # that, and seeding is how this path inherits it.
+        wired: dict = dict(effective_variables)
+        apply_dependency_output_wiring(
+            db, module, library_module, wired, operation=operation
+        )
+        resolved = {k for k in wired if k not in effective_variables}
+        if resolved:
+            logger.info(
+                "Resolved %d input(s) from dependency wiring: %s",
+                len(resolved), ", ".join(sorted(resolved)),
+            )
+        # A dependency output that landed on a key the operator also set is
+        # discarded by the merge below. That is the intended precedence, but it
+        # is invisible to someone asking why their `from_output` "didn't apply",
+        # so say so once at debug level.
+        overridden = sorted(
+            k for k, v in wired.items()
+            if k in effective_variables and effective_variables[k] != v
+        )
+        if overridden:
+            logger.debug(
+                "Dependency output(s) overridden by the module's own values: %s",
+                ", ".join(overridden),
+            )
+        effective_variables = {**wired, **effective_variables}
     # Declared project secrets → workspace files (#442). After the form inputs
     # are known (paths may template {{inputs.*}}), before the engine runs, so a
     # missing secret fails fast naming it rather than surfacing as an opaque CLI
@@ -194,6 +251,7 @@ def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, M
 
     engine = ContainerEngine(
         runner,
+        celery_task_id=celery_task_id,
         mount_path=mount_path,
         workspace_host_path=workspace_host,
         workspace_local_path=workspace_local,
@@ -373,7 +431,7 @@ def run_container_init(self, task_db_id: int, module_id: int, auto_apply: bool =
                 raise ValueError(f"Module {module_id} not found")
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 result = engine.init(ctx, on_output=lambda ln: lines.append(f"[{_ts()}] {ln}"))
 
@@ -447,7 +505,7 @@ def run_container_plan(self, task_db_id: int, module_id: int, **kwargs):
             _notify_task_started(task)
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 result = engine.plan(ctx, on_output=lambda ln: lines.append(f"[{_ts()}] {ln}"))
 
@@ -507,7 +565,7 @@ def run_container_apply(self, task_db_id: int, module_id: int, **kwargs):
                 raise ValueError(f"Dependencies not satisfied: {', '.join(missing)}")
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE APPLY ===\nModule: {ctx.path}"
                 sink = _streaming_sink(task, db, header, lines)
@@ -581,6 +639,14 @@ def run_container_action(self, task_db_id: int, module_id: int, action: str, act
 
             # Status gate: actions exercise a deployed module — a test against an
             # absent cluster fails fast with an actionable error.
+            #
+            # This gate is also why _build_engine_and_ctx below takes the default
+            # operation="apply" rather than something destroy-flavoured: D-034's
+            # contract is that an action exercises a deployed module WITHOUT
+            # changing it, and this check means its dependencies are up by
+            # definition. There is no action that can reach the dependency wiring
+            # with its deps already torn down, so the strict (non-destroy) branch
+            # is correct here, not just consistent with kubernetes_tasks.
             if module.status != "applied":
                 task.status = "failed"
                 task.error = (
@@ -635,7 +701,7 @@ def run_container_action(self, task_db_id: int, module_id: int, action: str, act
                     _publish_task_completion(task)
                     return {"success": False, "error": task.error}
 
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE ACTION '{action}' ===\nModule: {ctx.path}"
                 result = engine.run_action(
@@ -710,7 +776,9 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             _notify_task_started(task)
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(
+                    db, module, operation="destroy", celery_task_id=self.request.id
+                )
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE DESTROY ===\nModule: {ctx.path}"
                 sink = _streaming_sink(task, db, header, lines)

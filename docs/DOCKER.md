@@ -149,6 +149,17 @@ All CLI tool downloads are pinned by version **and** verified by SHA256 checksum
 
 If a download is tampered with, the build fails immediately with a checksum mismatch.
 
+### Building Behind Corporate DLP TLS Interception
+
+Corporate DLP-managed workstations TLS-intercept `github.com` traffic with an internal CA (`ca.f5.goskope.com`). Inside a `docker build` container, `RUN curl https://github.com/...` fails with `curl: (60) SSL certificate problem` because build containers do not inherit the host OS trust store.
+
+Per F5 KB57735 and [D-035](adr/D-035-docker-netskope-tls-interception.md):
+- `github.com` downloads (`tofu`, `llmtop`) use Docker `ADD`, which fetches through the host Docker daemon trust store without baking CA certs into the image or using `curl -k`.
+- Non-intercepted downloads (`get.helm.sh`, `dl.k8s.io`, `awscli.amazonaws.com`) continue to use `curl`.
+- Per-architecture SHA256 checksum verification (`sha256sum -c`) remains strictly enforced for all downloaded binaries.
+
+Because `ADD` (unlike `curl`) has no built-in retry, a transient CDN/TLS blip aborts the whole build. For from-scratch builds on DLP-managed workstations use `make build-retry` (tune with `RETRY_ATTEMPTS` / `RETRY_DELAY`); BuildKit's layer cache makes each retry cheap.
+
 ### Updating Tool Versions
 
 When bumping a tool version:

@@ -176,7 +176,7 @@ class DpuOsProbeService:
         from services.bf_conf_renderer import derive_tmfifo_dpu_host
         from services.rshim_service import open_inband_host_ssh
 
-        os_ip = derive_tmfifo_dpu_host(getattr(dpu, "rshim_device", None))
+        os_ip = derive_tmfifo_dpu_host(getattr(dpu, "rshim_device", None), dpu=dpu)
 
         try:
             os_user, os_pw = self._resolve_os_credentials(dpu)

@@ -1,0 +1,10 @@
+# Operator-local settings — copy config.env.example → config.env and edit that.
+config.env
+
+# Deploy keypairs are operator-local, never committed.
+# Each operator generates their own keypair (see README §5) and registers
+# the public half on the bnk-forge repo's Settings → Deploy keys page.
+keys/
+
+# render-cloud-init.sh output — embeds the deploy private key, never commit.
+*-cloud-init.yaml

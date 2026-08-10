@@ -87,7 +87,7 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
-        build build-backend build-frontend build-worker build-agent build-all \
+        build build-retry build-backend build-frontend build-worker build-agent build-all \
         fetch-awsbnkctl \
         up down restart deploy deploy-backend deploy-frontend upgrade-safe \
         clean clean-docker check-disk setup-cleanup-cron check-migrations \
@@ -257,18 +257,33 @@ build:
 	@echo "  Build complete (cached)"
 	@echo "========================================="
 
+# Same as `build`, but retries on transient download failures. Use this for
+# from-scratch builds on DLP-managed workstations: the github.com tool
+# downloads use Docker `ADD` (see docs/adr/D-035), which has no built-in retry,
+# so a transient CDN/TLS blip aborts the whole build. BuildKit's layer cache
+# makes each retry cheap (only the failed layer re-runs). Tune with
+# RETRY_ATTEMPTS / RETRY_DELAY, e.g. `make build-retry RETRY_ATTEMPTS=5`.
+build-retry:
+	@echo ""
+	@echo "=== Building all app images (parallel, with retry) ==="
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 ./scripts/retry.sh -- docker compose build backend celery-worker celery-beat frontend forge-agent
+	@echo ""
+	@echo "========================================="
+	@echo "  Build complete (cached)"
+	@echo "========================================="
+
 # Build just the API image (backend code changes)
 build-backend:
 	@echo ""
 	@echo "=== Building backend (API) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build backend
 	@echo "  ✓ Backend image built"
 
 # Build just the frontend image
 build-frontend:
 	@echo ""
 	@echo "=== Building frontend ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build frontend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build frontend
 	@echo "  ✓ Frontend image built"
 
 # Fetch the pinned awsbnkctl release binary (linux/amd64) for the worker mount.
@@ -448,7 +463,7 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh
+	@shellcheck --severity=warning upgrade.sh scripts/*.sh vm-bnk-forge/*.sh vm-bnk-forge/lib/*.sh
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
@@ -746,11 +761,13 @@ test-docker: lint-backend-docker test-backend-docker test-frontend-docker test-o
 
 build-test-images: .stamp/backend-test-image .stamp/operator-test-image
 
-.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt
+# VERSION is a prerequisite because the image now COPYs it — without this a
+# version bump leaves a stale test image reporting the old number.
+.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt VERSION
 	@mkdir -p .stamp
 	@echo ""
 	@echo "=== Building backend test image ($(BACKEND_TEST_IMAGE)) ==="
-	docker build --target test -t $(BACKEND_TEST_IMAGE) backend/
+	docker build --target test -f backend/Dockerfile -t $(BACKEND_TEST_IMAGE) .
 	@touch $@
 
 .stamp/operator-test-image: bnk-operator/Dockerfile bnk-operator/requirements.txt bnk-operator/requirements-dev.txt
@@ -1149,7 +1166,7 @@ push-customer-build:
 	echo ""; \
 	echo "========================================="; \
 	echo "  ✅ Pushed to $$REGISTRY"; \
-	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp)"; \
+	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp/operator)"; \
 	echo "    Rolling:   $${REGISTRY}/bnk-forge-api:customer-build"; \
 	echo "    Platforms: $(CB_PLATFORMS)"; \
 	echo ""; \
@@ -1195,6 +1212,22 @@ publish-signed:
 docker-verify:
 	@echo ""
 	@echo "=== Docker Image Verification ==="
+	@echo ""
+	@echo "--- Version baked into the image ---"
+	@expected=$$(cat VERSION); \
+	failed=0; \
+	for img in bnk-forge-api bnk-forge-worker bnk-forge-beat; do \
+	  actual=$$(docker run --rm --entrypoint "" $$img:latest cat /app/VERSION 2>/dev/null || echo ""); \
+	  if [ "$$actual" = "$$expected" ]; then \
+	    echo "  OK    $$img reports $$actual"; \
+	  else \
+	    echo "  FAIL  $$img reports '$$actual', expected '$$expected'"; \
+	    echo "        settings.VERSION falls back to 0.0.0 when /app/VERSION is absent,"; \
+	    echo "        which surfaces on /api, the OpenAPI title and X-BNK-Forge-Version."; \
+	    failed=1; \
+	  fi; \
+	done; \
+	[ $$failed -eq 0 ] || exit 1
 	@echo ""
 	@echo "--- Worker CLI tools ---"
 	@failed=0; \
@@ -1269,8 +1302,8 @@ docker-check:
 	@echo "=== Docker Check (BuildKit lint) ==="
 	@failed=0; \
 	  for target_spec in \
-	    "backend/Dockerfile:backend" \
-	    "frontend-v2/Dockerfile:frontend-v2" \
+	    "backend/Dockerfile:." \
+	    "frontend-v2/Dockerfile:." \
 	    "proxy/Dockerfile:proxy" \
 	    "mcp-server/Dockerfile:mcp-server" \
 	    "bnk-operator/Dockerfile:bnk-operator"; do \

@@ -62,6 +62,7 @@ class BareMetalHostService:
             deploy_dpu_pci_address=data.deploy_dpu_pci_address,
             rshim_source=data.rshim_source,
             bond_mode=data.bond_mode,
+            net_rshim_mac_base=data.net_rshim_mac_base,
         )
         # Encrypt BMC credentials if provided
         if data.bmc_ip:
@@ -186,6 +187,7 @@ class BareMetalHostService:
             deploy_dpu_index=host.deploy_dpu_index,
             rshim_source=host.rshim_source,
             bond_mode=host.bond_mode,
+            net_rshim_mac_base=host.net_rshim_mac_base,
             has_discovery_result=bool(host.last_discovery_result),
             kubernetes_cluster_id=host.kubernetes_cluster_id,
             created_at=host.created_at,

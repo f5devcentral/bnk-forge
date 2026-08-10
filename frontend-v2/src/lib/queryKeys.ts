@@ -422,6 +422,8 @@ export const queryKeys = {
       all: ['benchmarks', 'run-groups'] as const,
       detail: (groupId: number) => ['benchmarks', 'run-groups', 'detail', groupId] as const,
     },
+    trends: (params?: { target_id?: number; proxy?: string; scenario_key?: string; config_id?: number; limit?: number }) =>
+      ['benchmarks', 'trends', params] as const,
   },
 
   // MCP server
@@ -471,6 +473,14 @@ export const queryKeys = {
     },
   },
 
+  // Release Sources (BNK catalog management — ADR-494)
+  releaseSources: {
+    all: ['release-sources'] as const,
+    list: () => ['release-sources', 'list'] as const,
+    detail: (id: number) => ['release-sources', 'detail', id] as const,
+    tags: (id: number) => ['release-sources', 'tags', id] as const,
+  },
+
   // Bare Metal DPU Deployment
   bareMetal: {
     all: ['bare-metal'] as const,
@@ -492,9 +502,9 @@ export const queryKeys = {
       stepLogs: (projectId: number, deploymentId: number, stepIndex: number) =>
         ['bare-metal', 'deployments', { projectId }, deploymentId, 'steps', stepIndex] as const,
     },
-    profiles: {
-      all: ['bare-metal', 'profiles'] as const,
-      detail: (profileId: number) => ['bare-metal', 'profiles', profileId] as const,
+    releases: {
+      all: ['bare-metal', 'releases'] as const,
+      detail: (releaseId: number) => ['bare-metal', 'releases', releaseId] as const,
     },
   },
 

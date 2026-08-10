@@ -1,4 +1,5 @@
 // Bare-metal DPU deployment types
+import type { components } from '@/types/api-generated';
 
 // --- Host ---
 
@@ -48,6 +49,7 @@ export interface BareMetalHost {
   deploy_dpu_index: number | null;
   rshim_source: string | null;  // "host" | "bmc"
   bond_mode: string | null;     // "independent" | "lag"
+  net_rshim_mac_base: string | null;  // advanced: host-level tmfifo MAC base override
   has_discovery_result: boolean;
   kubernetes_cluster_id: number | null;
   created_at: string;
@@ -104,6 +106,7 @@ export interface BareMetalHostUpdate {
   deploy_dpu_pci_address?: string;
   rshim_source?: string;
   bond_mode?: string;
+  net_rshim_mac_base?: string | null;  // advanced: host-level tmfifo MAC base override
 }
 
 // --- Deployment ---
@@ -169,9 +172,16 @@ export interface BareMetalDeployment {
 }
 
 export interface BareMetalDeploymentCreate {
-  host_id: number;
+  host_id?: number;
+  control_plane_host_id?: number;
+  /** Widens the active-deployment conflict check only; does not trigger worker
+   *  deployments — multi-host orchestration lands in Phase 2. */
+  worker_host_ids?: number[];
   resume_from_step?: number;
   skip_discovery?: boolean;
+  selected_phases?: string[];
+  selected_steps?: string[];
+  deployable_release_id?: number | null;
 }
 
 export interface BareMetalDeploymentResumeRequest {
@@ -224,31 +234,10 @@ export interface DiscoveryTriggerResponse {
   status: string;
 }
 
-// --- Version Profile ---
+// --- Deployable Release ---
 
-export interface BnkVersionProfile {
-  id: number;
-  name: string;
-  display_name: string;
-  description: string | null;
-  is_default: boolean;
-  bnk_manifest_version: string;
-  bnk_cr_kind: string;
-  flo_version: string;
-  k8s_version: string;
-  doca_version: string;
-  containerd_version: string;
-  runc_version: string;
-  calico_version: string;
-  cert_manager_version: string;
-  gateway_api_version: string;
-  multus_version: string;
-  sriov_version: string;
-  storage_class_type: string;
-  storage_provisioner: string;
-  feature_flags: Record<string, unknown> | null;
-  created_at: string;
-}
+/** Mirrors backend DeployableReleaseResponse — use the generated type as the source of truth. */
+export type DeployableRelease = components['schemas']['DeployableReleaseResponse'];
 
 export const DISCOVERY_STATUS_LABELS: Record<string, string> = {
   pending: 'Queued',

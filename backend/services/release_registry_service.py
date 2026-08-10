@@ -108,6 +108,44 @@ class ReleaseRegistryService:
 
         return None
 
+    def get_or_create_observed(self, flo_version: str) -> int:
+        """
+        Return the id of an observed BnkRelease row for this exact FLO chart version.
+
+        Dedup-guarded: if an observed row with flo_version_min == flo_version already
+        exists it is returned as-is; otherwise a new row is inserted.  The new row is
+        inactive (is_active=False) with no prefix or manifest so it never matches
+        resolve_ga() (which filters is_active=True).
+
+        Call this only after resolve_ga() returned None — i.e. the version is not
+        covered by any known active release line.  Source type = OBSERVED (not OCI).
+        """
+        existing = (
+            self.db.query(BnkRelease)
+            .filter(
+                BnkRelease.source_type == ReleaseSourceType.OBSERVED,
+                BnkRelease.flo_version_min == flo_version,
+            )
+            .first()
+        )
+        if existing:
+            return existing.id
+
+        row = BnkRelease(
+            ga_label=f"Observed FLO {flo_version}",
+            product_line="BNK",
+            flo_version_prefix=None,
+            flo_version_min=flo_version,
+            flo_version_max=None,
+            manifest_version=None,
+            source_type=ReleaseSourceType.OBSERVED,
+            notes=f"Auto-observed on cluster scan: FLO chart version {flo_version}",
+            is_active=False,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row.id
+
     def list_releases(self, active_only: bool = True) -> list[BnkRelease]:
         """Return all (or active-only) release rows, newest-first by ga_label."""
         q = self.db.query(BnkRelease)

@@ -3,7 +3,8 @@
  *
  * Visual template: NodeDiscoveryPanel (discovery tab) — expandable rows with status badges.
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -14,6 +15,7 @@ import {
   CircuitBoard,
   Copy,
   Cpu,
+  Eye,
   Info,
   Key,
   Link,
@@ -30,6 +32,8 @@ import {
 import { api } from '@/lib/api';
 import { bareMetalDeploymentsApi } from '@/lib/api/bare-metal';
 import { sshCredentialsApi } from '@/lib/api/ssh-credentials';
+import { stacksApi } from '@/lib/api/stacks';
+import { StackDetailDialog } from '@/components/stacks/StackDetailDialog';
 import { queryKeys } from '@/lib/queryKeys';
 import { useProject } from '@/hooks/useProjects';
 import { Badge } from '@/components/ui/badge';
@@ -54,7 +58,7 @@ import {
   useCreateBareMetalDeployment,
   useBareMetalDeployment,
   useCancelBareMetalDeployment,
-  useBnkVersionProfiles,
+  useDeployableReleases,
 } from '@/hooks/useBareMetal';
 import { notify, notifyError } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -69,9 +73,29 @@ import type {
   BareMetalHostUpdate,
   BareMetalDiscoveryResponse,
   BareMetalDeployment,
+  BareMetalDeploymentCreate,
   DeploymentStep,
   DeploymentPlanPreview,
 } from '@/types/bare-metal';
+
+/** Payload passed from MultiHostDeployModal to handleMultiHostDeploy.
+ *  Extends BareMetalDeploymentCreate with modal-routing and blueprint-only extras.
+ *  The blueprint_* fields are passed to createStackInstance variables and are
+ *  never forwarded to the deployment API. */
+interface MultiHostDeployPayload extends BareMetalDeploymentCreate {
+  deploy_engine?: 'blueprint' | 'orchestrator';
+  template_id?: number;
+  /** Blueprint-only: slug of the selected template — used to resolve module paths
+   *  so variables are stored in the same module-path-keyed nested shape as
+   *  StackDetailDialog (the backend keys per-module variables by path). */
+  template_slug?: string;
+  /** Blueprint-only: host_id → DPU PCI address mapping for stack instance variables. */
+  blueprint_dpu_selections?: Record<number, string>;
+  /** Blueprint-only: tmfifo IP pool CIDR for stack instance variables. */
+  blueprint_tmfifo_pool_cidr?: string;
+  /** Blueprint-only: topology string for stack instance variables. */
+  blueprint_topology?: string;
+}
 import { DocaStatusCard } from './DocaStatusCard';
 
 interface BareMetalPanelProps {
@@ -81,17 +105,28 @@ interface BareMetalPanelProps {
 
 export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showMultiHostModal, setShowMultiHostModal] = useState(false);
   const [selectedHostId, setSelectedHostId] = useState<number | null>(null);
   const [activeDeploymentId, setActiveDeploymentId] = useState<number | null>(null);
   const [deployPreview, setDeployPreview] = useState<{ hostId: number; plan: DeploymentPlanPreview } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
+  const [previewSlug, setPreviewSlug] = useState<string | null>(null);
+  const [previewVariables, setPreviewVariables] = useState<Record<string, unknown> | null>(null);
+
+  const handlePreviewInBlueprintDialog = useCallback((templateSlug: string, variables: Record<string, unknown>) => {
+    setShowMultiHostModal(false);
+    setPreviewSlug(templateSlug);
+    setPreviewVariables(variables);
+  }, []);
+
   const { data: project } = useProject(projectId);
   const projectSshCredentialId = project?.ssh_credential_id;
 
   const { data: hosts, isLoading: hostsLoading } = useBareMetalHostsWithPolling(projectId);
-  const { data: profiles } = useBnkVersionProfiles();
+  const { data: releases } = useDeployableReleases();
 
   // Track previous discovery statuses to detect transitions
   const prevStatusRef = useRef<Record<number, string | null>>({});
@@ -160,6 +195,11 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
 
   const [jumpCredMode, setJumpCredMode] = useState<'existing' | 'new'>('existing');
   const [newJumpCred, setNewJumpCred] = useState({ name: '', host: '', username: '', auth_type: 'password' as 'key' | 'password', password: '', private_key: '' });
+  // Default 'new' preserves the pre-ADR-424 behavior: a <host>-dpu SSH
+  // credential is auto-created from the ubuntu/password defaults on host
+  // registration. The 'existing' picker is an additive opt-in; ADR-424 does
+  // not require changing this default, so keep the prior behavior.
+  const [dpuCredMode, setDpuCredMode] = useState<'existing' | 'new'>('new');
   const [dpuCred, setDpuCred] = useState({ username: 'ubuntu', password: 'password' });
 
   const handleCreateHost = useCallback(async () => {
@@ -199,8 +239,8 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
         queryClient.invalidateQueries({ queryKey: queryKeys.sshCredentials.all });
       }
 
-      // Step 2.5: Create DPU SSH credential if username/password provided
-      if (dpuCred.username && dpuCred.password) {
+      // Step 2.5: Create DPU SSH credential if new mode selected
+      if (dpuCredMode === 'new' && dpuCred.username && dpuCred.password) {
         const credName = `${newHost.name || 'host'}-dpu`;
         const dpuCredResult = await sshCredentialsApi.createSSHCredential({
           name: credName,
@@ -222,12 +262,13 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
       setNewHostCred({ name: '', username: 'root', auth_type: 'key', password: '', private_key: '' });
       setJumpCredMode('existing');
       setNewJumpCred({ name: '', host: '', username: '', auth_type: 'password', password: '', private_key: '' });
+      setDpuCredMode('new');
       setDpuCred({ username: 'ubuntu', password: 'password' });
       setSelectedHostId(host.id);
     } catch (err) {
       notifyError(err, 'Failed to register host');
     }
-  }, [newHost, hostCredMode, newHostCred, jumpCredMode, newJumpCred, dpuCred, createHost, queryClient]);
+  }, [newHost, hostCredMode, newHostCred, jumpCredMode, newJumpCred, dpuCredMode, dpuCred, createHost, queryClient]);
 
   const handleDeleteHost = useCallback(async (hostId: number, hostName: string) => {
     if (!confirm(`Delete host "${hostName}"? This removes all discovery data and deployments.`)) return;
@@ -269,7 +310,9 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
   const handleConfirmDeploy = useCallback(async () => {
     if (!deployPreview) return;
     try {
-      const deployment = await createDeployment.mutateAsync({ host_id: deployPreview.hostId });
+      const deployment = await createDeployment.mutateAsync({
+        host_id: deployPreview.hostId,
+      });
       setActiveDeploymentId(deployment.id);
       setDeployPreview(null);
       notify.success('Deployment started', `Deployment #${deployment.id}`, { category: 'deployment' });
@@ -277,6 +320,91 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
       notifyError(err, 'Failed to start deployment');
     }
   }, [deployPreview, createDeployment]);
+
+  const handleMultiHostDeploy = useCallback(async (payload: MultiHostDeployPayload) => {
+    try {
+      if (payload.deploy_engine === 'blueprint' && payload.template_id) {
+        const cpHost = hosts?.find(h => h.id === (payload.control_plane_host_id ?? payload.host_id));
+        const instanceName = `Multi-Host Cluster (${cpHost?.name || 'CP'})`;
+
+        // Store variables in the SAME module-path-keyed nested shape that
+        // StackDetailDialog uses. The backend keys per-module variables by path
+        // (StackDeploymentService._build_stack_module_variables) and
+        // _stamp_host_release only finds bare_metal_host_id inside a nested
+        // dict — a flat object would break release stamping. Object/array
+        // values are JSON-stringified so they survive as strings, not raw
+        // values, when the flattener persists project-level defaults.
+        const flatVars: Record<string, unknown> = {
+          bare_metal_host_id: String(payload.host_id ?? payload.control_plane_host_id ?? ''),
+          control_plane_host_id: payload.control_plane_host_id ?? null,
+          worker_host_ids: payload.worker_host_ids ?? [],
+          dpu_selections: payload.blueprint_dpu_selections ?? {},
+          tmfifo_pool_cidr: payload.blueprint_tmfifo_pool_cidr ?? null,
+          topology: payload.blueprint_topology ?? null,
+        };
+        const template = payload.template_slug
+          ? await stacksApi.fetchStackTemplate(payload.template_slug)
+          : null;
+        const bareMetalModulePaths = (template?.modules || [])
+          .filter((m: { path: string }) => m.path.startsWith('bare-metal/'))
+          .map((m: { path: string }) => m.path);
+
+        // Guard: a template with no bare-metal/ modules produces an empty
+        // variables dict — creating the instance would silently discard every
+        // worker/DPU/CIDR selection (ADR-424 finding E).
+        if (bareMetalModulePaths.length === 0 || !payload.template_slug) {
+          notify.error(
+            'Template has no bare-metal modules',
+            'The selected template contains no bare-metal/ modules. Select a template that includes BNK bare-metal modules, or use the Orchestrator engine.',
+            { category: 'deployment' }
+          );
+          return;
+        }
+
+        const variables: Record<string, Record<string, string>> = {};
+        for (const modPath of bareMetalModulePaths) {
+          variables[modPath] = {};
+          for (const [k, v] of Object.entries(flatVars)) {
+            variables[modPath][k] =
+              typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '');
+          }
+        }
+        const instance = await stacksApi.createStackInstance(projectId, {
+          template_id: payload.template_id,
+          name: instanceName,
+          variables,
+        });
+        queryClient.invalidateQueries({ queryKey: queryKeys.stacks.instances.byProject(projectId) });
+        setShowMultiHostModal(false);
+        notify.success(
+          'Blueprint Stack Instance created',
+          `Added "${instanceName}" (#${instance.id}) to project. Navigating to Blueprints / Modules tab to review inputs…`,
+          { category: 'deployment' }
+        );
+        // Navigate to modules/blueprints tab so user can see and review the stack instance
+        navigate(`/projects/${projectId}?tab=modules`);
+      } else {
+        // Orchestrator path: worker_host_ids is not forwarded — the conflict check
+        // (widened to host_id + worker_host_ids in ADR-424) would block the deploy if any
+        // unrelated host is busy, and nothing on this path consumes worker selections.
+        const deployment = await createDeployment.mutateAsync({
+          host_id: payload.host_id,
+          control_plane_host_id: payload.control_plane_host_id,
+          resume_from_step: payload.resume_from_step,
+          skip_discovery: payload.skip_discovery,
+          selected_phases: payload.selected_phases,
+          selected_steps: payload.selected_steps,
+          deployable_release_id: payload.deployable_release_id,
+        });
+        setActiveDeploymentId(deployment.id);
+        setShowMultiHostModal(false);
+        notify.success('Multi-host deployment started', `Deployment #${deployment.id}`, { category: 'deployment' });
+      }
+    } catch (err) {
+      notifyError(err, 'Failed to create multi-host blueprint stack');
+      throw err;
+    }
+  }, [createDeployment, projectId, hosts, queryClient, navigate]);
 
   // If previewing a deployment plan, show confirmation
   if (deployPreview) {
@@ -414,11 +542,57 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
           </p>
         </div>
         {isOwner && (
-          <Button onClick={() => setShowAddForm(!showAddForm)} size="sm">
-            <Plus className="h-4 w-4 mr-1" />Add Host
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowMultiHostModal(true)}
+              disabled={!hosts || hosts.length === 0}
+              title={!hosts || hosts.length === 0 ? 'Add at least one host to deploy a cluster' : 'Deploy cluster across bare metal hosts'}
+            >
+              <Rocket className="h-4 w-4 mr-1" />
+              Deploy Cluster (Multi-Host)
+            </Button>
+            <Button onClick={() => setShowAddForm(!showAddForm)} size="sm" variant="outline">
+              <Plus className="h-4 w-4 mr-1" />Add Host
+            </Button>
+          </div>
         )}
       </div>
+
+      {/* Multi-Host Deployment Modal */}
+      {showMultiHostModal && hosts && hosts.length > 0 && (
+        <MultiHostDeployModal
+          isOpen={showMultiHostModal}
+          onClose={() => setShowMultiHostModal(false)}
+          hosts={hosts}
+          projectId={projectId}
+          onStartDeployment={handleMultiHostDeploy}
+          onPreviewInBlueprintDialog={handlePreviewInBlueprintDialog}
+          isPending={createDeployment.isPending}
+        />
+      )}
+
+      {/* Blueprint Stack Detail Dialog for Previewing & Customizing */}
+      {previewSlug && (
+        <StackDetailDialog
+          slug={previewSlug}
+          open={!!previewSlug}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPreviewSlug(null);
+              setPreviewVariables(null);
+            }
+          }}
+          initialProjectId={projectId}
+          initialVariables={previewVariables || undefined}
+          onSuccess={() => {
+            setPreviewSlug(null);
+            setPreviewVariables(null);
+            navigate(`/projects/${projectId}?tab=modules`);
+          }}
+        />
+      )}
 
       {/* Add Host Form */}
       {showAddForm && (
@@ -736,60 +910,112 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
 
           {/* Section 4: DPU Access */}
           <div className="rounded-lg border p-3 space-y-3 bg-muted/30">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Cpu className="h-4 w-4" />
-              DPU Access
-              <span className="text-xs text-muted-foreground font-normal">(rshim SSH — default BFB: ubuntu / password)</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Cpu className="h-4 w-4" />
+                DPU Access
+                <span className="text-xs text-muted-foreground font-normal">(rshim SSH — default BFB: ubuntu / password)</span>
+              </div>
+              {dpuCredMode === 'new' && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                  onClick={() => setDpuCredMode('existing')}
+                >
+                  Use existing credential
+                </button>
+              )}
             </div>
-            <div className="grid grid-cols-4 gap-3">
-              <div>
-                <Label htmlFor="dpu-username">DPU Username</Label>
-                <Input
-                  id="dpu-username"
-                  value={dpuCred.username}
-                  onChange={(e) => setDpuCred(prev => ({ ...prev, username: e.target.value }))}
-                  placeholder="ubuntu"
-                  className="h-9"
-                />
+
+            {dpuCredMode === 'existing' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="dpu-credential">DPU SSH Credential</Label>
+                  <select
+                    id="dpu-credential"
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                    value={newHost.dpu_credential_id || ''}
+                    onChange={(e) => {
+                      if (e.target.value === '__new__') {
+                        setDpuCredMode('new');
+                        setNewHost(prev => ({ ...prev, dpu_credential_id: undefined }));
+                      } else {
+                        const credId = e.target.value ? parseInt(e.target.value) : undefined;
+                        setNewHost(prev => ({ ...prev, dpu_credential_id: credId }));
+                      }
+                    }}
+                  >
+                    <option value="">Default / In-band (ubuntu / password)</option>
+                    {sshCredentials?.map(cred => (
+                      <option key={cred.id} value={cred.id}>
+                        {cred.name} ({cred.username}@{cred.host}:{cred.port})
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create new DPU credential...</option>
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="dpu-mgmt-ip">DPU IP</Label>
+                  <Input
+                    id="dpu-mgmt-ip"
+                    value={newHost.dpu_mgmt_ip || ''}
+                    onChange={(e) => setNewHost(prev => ({ ...prev, dpu_mgmt_ip: e.target.value }))}
+                    placeholder="192.168.100.2"
+                    className="h-9"
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="dpu-password">DPU Password</Label>
-                <Input
-                  id="dpu-password"
-                  type="password"
-                  value={dpuCred.password}
-                  onChange={(e) => setDpuCred(prev => ({ ...prev, password: e.target.value }))}
-                  placeholder="password"
-                  className="h-9"
-                />
+            ) : (
+              <div className="grid grid-cols-4 gap-3">
+                <div>
+                  <Label htmlFor="dpu-username">DPU Username</Label>
+                  <Input
+                    id="dpu-username"
+                    value={dpuCred.username}
+                    onChange={(e) => setDpuCred(prev => ({ ...prev, username: e.target.value }))}
+                    placeholder="ubuntu"
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dpu-password">DPU Password</Label>
+                  <Input
+                    id="dpu-password"
+                    type="password"
+                    value={dpuCred.password}
+                    onChange={(e) => setDpuCred(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder="password"
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dpu-mgmt-ip">DPU IP</Label>
+                  <Input
+                    id="dpu-mgmt-ip"
+                    value={newHost.dpu_mgmt_ip || ''}
+                    onChange={(e) => setNewHost(prev => ({ ...prev, dpu_mgmt_ip: e.target.value }))}
+                    placeholder="192.168.100.2"
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dpu-port">DPU Port</Label>
+                  <Input
+                    id="dpu-port"
+                    type="number"
+                    value={22}
+                    disabled
+                    className="h-9"
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="dpu-mgmt-ip">DPU IP</Label>
-                <Input
-                  id="dpu-mgmt-ip"
-                  value={newHost.dpu_mgmt_ip || ''}
-                  onChange={(e) => setNewHost(prev => ({ ...prev, dpu_mgmt_ip: e.target.value }))}
-                  placeholder="192.168.100.2"
-                  className="h-9"
-                />
-              </div>
-              <div>
-                <Label htmlFor="dpu-port">DPU Port</Label>
-                <Input
-                  id="dpu-port"
-                  type="number"
-                  value={22}
-                  disabled
-                  className="h-9"
-                />
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* BNK Version Profile */}
+          {/* BNK Release hint — pre-selects this release in the deploy dialog */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <Label htmlFor="version-profile">BNK Version</Label>
+              <Label htmlFor="version-profile">BNK Release</Label>
               <select
                 id="version-profile"
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
@@ -797,8 +1023,8 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
                 onChange={(e) => setNewHost(prev => ({ ...prev, version_profile_id: e.target.value ? parseInt(e.target.value) : undefined }))}
               >
                 <option value="">Auto (default)</option>
-                {profiles?.map(p => (
-                  <option key={p.id} value={p.id}>{p.display_name}</option>
+                {releases?.filter(r => r.is_active).map(r => (
+                  <option key={r.id} value={r.id}>{r.display_name}{r.is_default ? ' (default)' : ''}</option>
                 ))}
               </select>
             </div>
@@ -867,6 +1093,7 @@ export function BareMetalPanel({ projectId, isOwner }: BareMetalPanelProps) {
           )}
         </Card>
       )}
+
     </div>
   );
 }
@@ -938,11 +1165,11 @@ function HostRow({
   isSelected,
   onSelect,
   onDiscover,
-  onDeploy: _onDeploy,
+  onDeploy,
   onDelete,
   isOwner,
   isDiscovering,
-  isLoadingPreview: _isLoadingPreview,
+  isLoadingPreview,
   sshCredentials,
   projectSshCredentialId,
   discoveryResult,
@@ -1049,17 +1276,16 @@ function HostRow({
                 {(host.last_discovery_status !== null && host.last_discovery_status !== 'completed' && host.last_discovery_status !== 'failed') ? 'Discovering…' : 'Run Discovery'}
               </Button>
 
-              {host.topology && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled
-                  title="Use a Blueprint from the Stacks tab to deploy bare-metal infrastructure"
-                >
-                  <Rocket className="h-4 w-4 mr-1" />
-                  Deploy via Blueprint
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="default"
+                onClick={(e) => { e.stopPropagation(); onDeploy(); }}
+                disabled={isLoadingPreview}
+                title="Deploy cluster using this bare metal host"
+              >
+                {isLoadingPreview ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Rocket className="h-4 w-4 mr-1" />}
+                Deploy Cluster
+              </Button>
 
               <div className="ml-auto">
                 <Button
@@ -1100,6 +1326,9 @@ function HostRow({
           {host.topology === 'dual_dpu_obmc' && (
             <DualDpuObmcSettings host={host} projectId={projectId} isOwner={isOwner} />
           )}
+
+          {/* Advanced DPU flash settings — tmfifo MAC base override, all topologies */}
+          <RshimMacBaseSettings host={host} projectId={projectId} isOwner={isOwner} />
 
           {/* Discovery results */}
           {(() => {
@@ -1369,6 +1598,81 @@ function DualDpuObmcSettings({
       )}
 
       {/* Save button */}
+      {isOwner && isDirty && (
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={updateHost.isPending}
+          >
+            {updateHost.isPending ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4 mr-1" />
+            )}
+            Save Changes
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================================
+// RshimMacBaseSettings — advanced tmfifo MAC base override for any DPU host
+// Rendered for all topologies so regular/SSH hosts can reach it too (ADR-478).
+// ============================================================================
+
+function RshimMacBaseSettings({
+  host,
+  projectId,
+  isOwner,
+}: {
+  host: BareMetalHost;
+  projectId: number;
+  isOwner: boolean;
+}) {
+  const updateHost = useUpdateBareMetalHost(projectId);
+  const [editValue, setEditValue] = useState<string | null>(null);
+
+  const currentValue = host.net_rshim_mac_base ?? '';
+  const isDirty = editValue !== null && editValue !== currentValue;
+
+  const handleSave = async () => {
+    try {
+      await updateHost.mutateAsync({
+        hostId: host.id,
+        data: { net_rshim_mac_base: editValue || null },
+      });
+      setEditValue(null);
+    } catch (err) {
+      notifyError(err, 'Failed to update host');
+    }
+  };
+
+  return (
+    <div className="rounded-lg border p-3 space-y-3 bg-muted/30">
+      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+        <Cpu className="h-4 w-4" />
+        Advanced DPU Flash Settings
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs">tmfifo MAC Base (Advanced)</Label>
+        <Input
+          value={editValue ?? currentValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder="Default: 00:1a:ca:ff:ff:1  (rshim0=…:10, rshim1=…:11)"
+          className="h-8 text-sm font-mono"
+          disabled={!isOwner}
+        />
+        <p className="text-xs text-muted-foreground">
+          Override the base used for <code>NET_RSHIM_MAC</code> enumeration when flashing this host.
+          Leave blank to use the default. The rshim index is appended as a single digit.
+        </p>
+      </div>
+
       {isOwner && isDirty && (
         <div className="flex justify-end">
           <Button
@@ -1966,6 +2270,383 @@ function StepRow({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ============================================================================
+// MultiHostDeployModal — Realize multi-host cluster deployment
+// ============================================================================
+
+interface MultiHostDeployModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  hosts: BareMetalHost[];
+  projectId: number;
+  onStartDeployment: (payload: MultiHostDeployPayload) => Promise<void>;
+  onPreviewInBlueprintDialog: (templateSlug: string, variables: Record<string, unknown>) => void;
+  isPending: boolean;
+}
+
+export function MultiHostDeployModal({
+  isOpen,
+  onClose,
+  hosts,
+  onStartDeployment,
+  onPreviewInBlueprintDialog,
+  isPending,
+}: MultiHostDeployModalProps) {
+  const [deployEngine, setDeployEngine] = useState<'blueprint' | 'orchestrator'>('blueprint');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [controlPlaneHostId, setControlPlaneHostId] = useState<number | null>(
+    hosts.length > 0 ? hosts[0].id : null
+  );
+  const [workerHostIds, setWorkerHostIds] = useState<number[]>(
+    hosts.map(h => h.id)
+  );
+  const [selectedDpus, setSelectedDpus] = useState<Record<number, string>>({});
+  const [tmfifoPoolCidr, setTmfifoPoolCidr] = useState('192.168.100.0/22');
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const { data: templates } = useQuery({
+    queryKey: ['stackTemplates', 'bare-metal'],
+    queryFn: () => stacksApi.fetchStackTemplates({ category: 'bare-metal' }),
+    enabled: isOpen,
+  });
+
+  const bareMetalTemplates = useMemo(() => {
+    if (!templates) return [];
+    return templates.filter(t => t.is_active);
+  }, [templates]);
+
+  useEffect(() => {
+    if (bareMetalTemplates.length > 0 && !selectedTemplateId) {
+      const preferred = bareMetalTemplates.find(t => t.slug === 'bnk-bare-metal-full-poc-ssh') || bareMetalTemplates[0];
+      setSelectedTemplateId(preferred.id);
+    }
+  }, [bareMetalTemplates, selectedTemplateId]);
+
+  // Keep selectedDpus in sync with checked worker hosts. The single-DPU host
+  // branch renders a static span (no onChange), and an untouched multi-DPU
+  // <select> also never fires onChange — both would otherwise be dropped from
+  // dpu_selections. Seed every checked DPU host to its first DPU's PCI address
+  // (the same default the <select> displays) and prune hosts that are
+  // unchecked or have no DPU.
+  useEffect(() => {
+    setSelectedDpus(prev => {
+      const next: Record<number, string> = { ...prev };
+      let changed = false;
+      for (const h of hosts) {
+        const dpuList = h.dpu_info || [];
+        const checked = workerHostIds.includes(h.id);
+        if (checked && dpuList.length > 0 && !next[h.id]) {
+          next[h.id] = String(dpuList[0]?.pci_address || 'rshim0');
+          changed = true;
+        }
+      }
+      for (const key of Object.keys(next)) {
+        const id = Number(key);
+        const h = hosts.find(hh => hh.id === id);
+        // Preserve the CP host's DPU selection even when it's not in workerHostIds
+        // — handleSubmit/assign_members re-add the CP host to host_ids regardless,
+        // so pruning its DPU selection here would silently drop it (ADR-424 minor).
+        const isCp = id === controlPlaneHostId;
+        if (!h || (!workerHostIds.includes(id) && !isCp) || (h.dpu_info || []).length === 0) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [hosts, workerHostIds, controlPlaneHostId]);
+
+  const derivedTopology = useMemo(() => {
+    const cpHost = hosts.find(h => h.id === controlPlaneHostId);
+    if (cpHost?.topology) return cpHost.topology;
+    const hasBf3 = hosts.some(h =>
+      (h.dpu_info || []).some(d => {
+        const model = String(d.model || '').toLowerCase();
+        return model.includes('bluefield-3') || model.includes('bf3');
+      })
+    );
+    return hasBf3 ? 'bf3' : 'regular';
+  }, [hosts, controlPlaneHostId]);
+
+  if (!isOpen) return null;
+
+  const handleToggleWorker = (hostId: number) => {
+    setWorkerHostIds(prev =>
+      prev.includes(hostId) ? prev.filter(id => id !== hostId) : [...prev, hostId]
+    );
+  };
+
+  const handleSelectDpu = (hostId: number, dpuPci: string) => {
+    setSelectedDpus(prev => ({ ...prev, [hostId]: dpuPci }));
+  };
+
+  const handleSubmit = async () => {
+    if (!controlPlaneHostId) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const selectedTemplate = bareMetalTemplates.find(t => t.id === selectedTemplateId);
+      await onStartDeployment({
+        host_id: controlPlaneHostId,
+        control_plane_host_id: controlPlaneHostId,
+        worker_host_ids: workerHostIds,
+        blueprint_dpu_selections: selectedDpus,
+        blueprint_tmfifo_pool_cidr: tmfifoPoolCidr,
+        blueprint_topology: derivedTopology,
+        deploy_engine: deployEngine,
+        template_id: selectedTemplateId || undefined,
+        template_slug: selectedTemplate?.slug,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to create multi-host deployment';
+      setSubmitError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const isBusy = isPending || isSubmitting;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+      <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-6 border shadow-xl">
+        <div className="flex items-center justify-between border-b pb-3">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Rocket className="h-5 w-5 text-primary" />
+              Deploy Multi-Host Cluster (F5 BNK)
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Select control plane & worker hosts (regular hosts and DPU hosts) to realize cluster deployment.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={isBusy}>✕</Button>
+        </div>
+
+        {submitError && (
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>{submitError}</span>
+          </div>
+        )}
+
+        {/* Engine Selection: Blueprint Stack Engine vs Orchestrator */}
+        <div className="rounded-lg border bg-muted/30 p-3.5 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase text-muted-foreground">Deployment Engine</span>
+            <div className="flex gap-2">
+              <Button
+                variant={deployEngine === 'blueprint' ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setDeployEngine('blueprint')}
+              >
+                Blueprint Stack Engine
+              </Button>
+              <Button
+                variant={deployEngine === 'orchestrator' ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setDeployEngine('orchestrator')}
+              >
+                Multi-Phase Orchestrator
+              </Button>
+            </div>
+          </div>
+
+          {deployEngine === 'blueprint' && (
+            <div className="space-y-1.5 pt-1">
+              <Label className="text-xs font-medium">Select Bare-Metal Blueprint Template</Label>
+              <select
+                className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs"
+                value={selectedTemplateId || ''}
+                onChange={(e) => setSelectedTemplateId(Number(e.target.value))}
+              >
+                {bareMetalTemplates.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {deployEngine === 'orchestrator' && (
+            <p className="text-xs text-muted-foreground border border-warning/30 bg-warning/10 rounded px-2 py-1.5">
+              Phase 1: only the selected control-plane host is deployed. Worker/DPU
+              selections are not persisted in this path — use the Blueprint engine to record
+              them on the stack (ADR-424).
+            </p>
+          )}
+        </div>
+
+        {/* Derived Topology Banner */}
+        <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase text-muted-foreground">Blueprint & Topology</span>
+            <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
+              Derived Topology: {derivedTopology.toUpperCase()}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Unified SSH Deployment Pipeline — auto-derives rshim & network properties from host discovery data.
+          </p>
+        </div>
+
+        {/* Control Plane Host Selection */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">1. Control Plane Host *</Label>
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+            value={controlPlaneHostId || ''}
+            onChange={(e) => setControlPlaneHostId(Number(e.target.value))}
+          >
+            {hosts.map(h => {
+              const dpuCount = (h.dpu_info || []).length;
+              const dpuLabel = dpuCount > 0 ? ` (${dpuCount} DPU${dpuCount > 1 ? 's' : ''})` : ' (No DPU)';
+              return (
+                <option key={h.id} value={h.id}>
+                  {h.name} ({h.host_ip}){dpuLabel} — {h.topology || 'discovered'}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        {/* Worker Hosts & DPU Selection */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">2. Member Worker Nodes & DPU Acceleration</Label>
+          <div className="rounded-lg border divide-y max-h-56 overflow-y-auto">
+            {hosts.map(h => {
+              const isChecked = workerHostIds.includes(h.id);
+              const isCp = h.id === controlPlaneHostId;
+              const dpuList = h.dpu_info || [];
+              const hasDpu = dpuList.length > 0;
+              return (
+                <div key={h.id} className="p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleWorker(h.id)}
+                        className="rounded border-input text-primary focus:ring-primary h-4 w-4"
+                      />
+                      <span>{h.name} ({h.host_ip})</span>
+                      {isCp && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-primary/10 text-primary border-primary/20">
+                          Control Plane Host
+                        </Badge>
+                      )}
+                    </label>
+                    <Badge variant="outline" className={`text-xs ${hasDpu ? 'bg-success/10 text-success border-success/20' : 'bg-muted text-muted-foreground'}`}>
+                      {hasDpu ? `${dpuList.length} DPU${dpuList.length !== 1 ? 's' : ''} detected` : 'Regular Host (No DPU)'}
+                    </Badge>
+                  </div>
+
+                  {/* DPU selection if host has DPUs */}
+                  {isChecked && hasDpu && (
+                    <div className="pl-6 pt-1 flex items-center gap-2">
+                      <Label className="text-xs text-muted-foreground">DPU Worker Node:</Label>
+                      {dpuList.length === 1 ? (
+                        <span className="text-xs font-mono bg-muted/60 px-2 py-0.5 rounded border">
+                          DPU #0 ({String(dpuList[0]?.pci_address || 'rshim0')}) — {String(dpuList[0]?.model || 'BlueField')}
+                        </span>
+                      ) : (
+                        <select
+                          className="h-7 rounded border text-xs px-2 bg-background"
+                          value={selectedDpus[h.id] || String(dpuList[0]?.pci_address || '')}
+                          onChange={(e) => handleSelectDpu(h.id, e.target.value)}
+                        >
+                          {dpuList.map((dpu: Record<string, unknown>, idx: number) => (
+                            <option key={String(dpu.pci_address || idx)} value={String(dpu.pci_address || `rshim${idx}`)}>
+                              DPU #{idx} ({String(dpu.pci_address || `rshim${idx}`)}) — {String(dpu.model || 'BlueField')}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {hosts.length === 0 && (
+              <p className="p-3 text-xs text-muted-foreground italic">
+                No hosts in inventory. Register hosts to deploy a cluster.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Network & IPAM CIDR */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">3. tmfifo Pool CIDR (IPAM)</Label>
+          <Input
+            value={tmfifoPoolCidr}
+            onChange={(e) => setTmfifoPoolCidr(e.target.value)}
+            placeholder="192.168.100.0/22"
+            className="h-9 font-mono text-sm"
+          />
+          <p className="text-xs text-muted-foreground">
+            Point-to-point tmfifo interface pool allocated across member hosts & DPUs.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between border-t pt-4">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={isBusy}>
+            Cancel
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!controlPlaneHostId || isBusy}
+              onClick={() => {
+                const selectedTemplate = bareMetalTemplates.find(t => t.id === selectedTemplateId) || bareMetalTemplates[0];
+                const slug = selectedTemplate?.slug || 'bnk-bare-metal-full-poc-ssh';
+                onPreviewInBlueprintDialog(slug, {
+                  bare_metal_host_id: String(controlPlaneHostId),
+                  control_plane_host_id: controlPlaneHostId,
+                  worker_host_ids: workerHostIds,
+                  dpu_selections: selectedDpus,
+                  tmfifo_pool_cidr: tmfifoPoolCidr,
+                  topology: derivedTopology,
+                });
+              }}
+            >
+              <Eye className="h-4 w-4 mr-1.5 text-primary" />
+              Preview & Configure Blueprint
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!controlPlaneHostId || isBusy}
+            >
+              {isBusy ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  {deployEngine === 'orchestrator' ? 'Deploying...' : 'Saving Draft...'}
+                </>
+              ) : (
+                <>
+                  <Rocket className="h-4 w-4 mr-1.5" />
+                  {deployEngine === 'orchestrator'
+                    ? 'Deploy Control-Plane Host'
+                    : 'Save Draft & View in Blueprints'}
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

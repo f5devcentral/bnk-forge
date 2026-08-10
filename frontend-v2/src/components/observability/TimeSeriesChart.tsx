@@ -79,7 +79,8 @@ export function TimeSeriesChart({
   );
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <div style={{ width: '100%', height: `${height}px` }}>
+    <ResponsiveContainer width="100%" height="100%" debounce={50}>
       {type === 'bar' ? (
         <BarChart data={data}>
           {axes}
@@ -127,5 +128,6 @@ export function TimeSeriesChart({
         </LineChart>
       )}
     </ResponsiveContainer>
+    </div>
   );
 }

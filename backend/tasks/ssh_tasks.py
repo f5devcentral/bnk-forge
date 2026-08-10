@@ -183,15 +183,51 @@ def _build_ssh_context(db, module: ProjectModule, operation: str = "apply") -> M
     category = module.library_module.category if module.library_module else "bare-metal"
 
     # Resolve DPU management IP.
-    # Precedence: BareMetalHost.dpu_mgmt_ip (persisted by wait-dpu-ready —
-    # carries the OOB IP for dual_dpu_obmc and the tmfifo IP otherwise) →
-    # first entry in dpu_info[*].mgmt_ip (legacy discovery JSON) →
-    # 192.168.100.2 (regular-topology tmfifo default).
+    # Precedence (stop at first match):
+    # 1. BareMetalHost.dpu_mgmt_ip — explicit OOB management IP (dual_dpu_obmc
+    #    path); highest priority so that topology is unaffected by the cluster
+    #    IPAM path.
+    # 2. Cluster-member DPU dpu_tmfifo_ip — persisted by the ADR-424 IPAM
+    #    allocator when the DPU joined a cluster (query: Dpu.project_id ==
+    #    module.project_id AND Dpu.host_node_ip == host.host_ip AND
+    #    kubernetes_cluster_id IS NOT NULL AND dpu_tmfifo_ip IS NOT NULL).
+    #    host_node_ip is unique only per (project_id, host_node_ip,
+    #    pci_address), so the project scope prevents a foreign project's
+    #    same-IP host from leaking its relay target; the cluster filter
+    #    excludes orphans left by ondelete=SET NULL (dpu_tmfifo_ip stays
+    #    populated after the cluster is deleted). Used only when exactly one
+    #    such DPU exists on the host; more than one makes the relay target
+    #    ambiguous (multi-DPU-per-host, Phase 2).
+    # 3. first entry in dpu_info[*].mgmt_ip — legacy discovery JSON.
+    # 4. 192.168.100.2 — single-DPU regular-topology tmfifo default.
     dpu_host: str | None = None
     if host.dpu_mgmt_ip:
         dpu_host = host.dpu_mgmt_ip
-    elif host.dpu_info and isinstance(host.dpu_info, list) and host.dpu_info:
-        dpu_host = host.dpu_info[0].get("mgmt_ip", "192.168.100.2")
+    else:
+        from models.dpu import Dpu as DpuModel
+
+        tmfifo_dpus = (
+            db.query(DpuModel)
+            .filter(
+                DpuModel.project_id == module.project_id,
+                DpuModel.host_node_ip == host.host_ip,
+                DpuModel.kubernetes_cluster_id.isnot(None),
+                DpuModel.dpu_tmfifo_ip.isnot(None),
+            )
+            .all()
+        )
+        if len(tmfifo_dpus) == 1:
+            dpu_host = tmfifo_dpus[0].dpu_tmfifo_ip
+        elif len(tmfifo_dpus) > 1:
+            logger.warning(
+                "Host %s has %d cluster-member DPUs with tmfifo IPs — "
+                "multi-DPU-per-host relay target selection is not yet supported (Phase 2); "
+                "falling through to legacy dpu_info / 192.168.100.2",
+                host.host_ip,
+                len(tmfifo_dpus),
+            )
+        if dpu_host is None and host.dpu_info and isinstance(host.dpu_info, list) and host.dpu_info:
+            dpu_host = host.dpu_info[0].get("mgmt_ip", "192.168.100.2")
 
     return ModuleContext(
         module_id=module.id,
@@ -317,11 +353,18 @@ def _try_auto_register_cluster(db, module: ProjectModule, outputs: dict, lock=No
             if host_id:
                 host = db.query(BareMetalHost).filter(BareMetalHost.id == int(host_id)).first()
                 if host:
+                    from models.kubernetes import KubernetesCluster
                     host.kubernetes_cluster_id = reg_result["cluster_id"]
+                    # ADR-478 P1b: stamp cluster with the release the host was built with.
+                    cluster = db.query(KubernetesCluster).filter(
+                        KubernetesCluster.id == reg_result["cluster_id"]
+                    ).first()
+                    if cluster and host.version_profile_id is not None:
+                        cluster.deployable_release_id = host.version_profile_id
                     db.commit()
                     logger.info(
-                        "Linked BareMetalHost %s to cluster %s",
-                        host.id, reg_result["cluster_id"],
+                        "Linked BareMetalHost %s to cluster %s (release_id=%s)",
+                        host.id, reg_result["cluster_id"], host.version_profile_id,
                     )
         elif reg_result:
             logger.warning(

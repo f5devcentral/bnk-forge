@@ -38,7 +38,7 @@ METADATA_TABLES = [
     "users",
     "bare_metal_hosts",
     "bare_metal_deployments",
-    "bnk_version_profiles",
+    "bnk_deployable_release",
     "helm_charts",
     "stack_templates",
     "stack_instances",

@@ -195,10 +195,10 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
         <div className="p-6">
           <div className="max-w-6xl mx-auto">
             <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-2">Policy-Gateway Associations</h2>
-              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners</p>
+              <h2 className="text-xl font-semibold mb-2">Policy Associations</h2>
+              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners and egress traffic</p>
             </div>
-            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} />
+            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
           </div>
         </div>
       );
@@ -911,7 +911,7 @@ export default function F5BNK() {
             <ResourceExplorerLayout.DetailPanel
               open={
                 (!!selectedResource && !isSpecialView(selectedResourceType)) ||
-                (!!topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW))
+                (!!topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP))
               }
             >
               {/* Resource list selection */}
@@ -928,7 +928,7 @@ export default function F5BNK() {
                 />
               )}
               {/* Topology / Traffic Flow selection */}
-              {topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW) && (
+              {topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP) && (
                 <F5BNKDetailPanel
                   resource={topologySelectedResource}
                   onClose={() => setTopologySelectedResource(null)}
@@ -940,7 +940,7 @@ export default function F5BNK() {
                   borderDefault={borderDefault}
                 />
               )}
-              {topologyLoading && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW) && (
+              {topologyLoading && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP) && (
                 <div className="flex items-center justify-center py-20">
                   <Activity className="h-5 w-5 animate-spin text-primary mr-2" />
                   <span className="text-sm text-muted-foreground">

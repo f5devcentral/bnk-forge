@@ -121,8 +121,10 @@ jobs:
           # branch-name lookup can return a stale run from an unrelated
           # earlier push). ci.yml has a push:staging trigger specifically so
           # every staging push gets its own CI run carrying that push's SHA.
-          TIMEOUT_SECONDS=900
-          POLL_INTERVAL=15
+          # Budget: last five green CI runs on this repo took ~18 min
+          # end-to-end; 2700s (45 min) covers queue delays and future growth.
+          TIMEOUT_SECONDS="$CI_POLL_TIMEOUT_SECONDS"
+          POLL_INTERVAL=30
           ELAPSED=0
 
           while true; do
@@ -170,6 +172,7 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_POLL_TIMEOUT_SECONDS: 2700
 
       - name: Derive version from conventional commits
         id: version
@@ -567,3 +570,93 @@ jobs:
           echo "| CI | passed |" >> "$GITHUB_STEP_SUMMARY"
           echo "| E2E | ${{ needs.e2e-gate.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Notes | ${{ inputs.release_notes }} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Publish images to ghcr (final releases only) ──────────────────────────────
+  # Two problems, one job:
+  #   1. Until now, release.yml cut a GitHub release but never built/pushed
+  #      container images — no ghcr images existed per release.
+  #   2. The frontend bakes its displayed version (__APP_VERSION__, from the
+  #      root VERSION file) at image-build time. Checking out the just-created
+  #      release tag (VERSION already bumped by release-final/release-manual)
+  #      and building from THIS commit makes the baked UI version equal the
+  #      release tag instead of drifting from it.
+  # Keyless cosign signing (Sigstore/Fulcio/Rekor via OIDC) needs no secrets
+  # beyond the built-in GITHUB_TOKEN: id-token: write mints the OIDC token
+  # cosign uses, packages: write lets it push to ghcr.io/<owner-of-this-repo>.
+  release-publish:
+    name: "Publish images v${{ needs.preflight.outputs.new_version }}"
+    needs:
+      - preflight
+      - release-final
+      - release-manual
+    if: |
+      always() &&
+      (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
+      (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      # Derived from the repo owner so forks and mirrors publish to their own
+      # namespace without editing this workflow.
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      VERSION: ${{ needs.preflight.outputs.new_version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.preflight.outputs.new_version }}
+          fetch-depth: 0
+
+      - name: Resolve release commit
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Build and push all images (docker-bake.hcl)
+        run: docker buildx bake --push default
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          VERSION: ${{ env.VERSION }}
+          PLATFORMS: linux/amd64,linux/arm64
+          # OCI source label tracks whichever remote actually built the image.
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+          GIT_REVISION: ${{ steps.rev.outputs.sha }}
+          ROLLING_TAG: latest
+
+      - name: Sign, SBOM, and attest all images (keyless cosign)
+        run: bash scripts/publish-signed-images.sh --execute
+        env:
+          BNK_FORGE_REGISTRY: ${{ env.REGISTRY }}
+          BNK_FORGE_VERSION: ${{ env.VERSION }}
+
+      - name: Publish summary
+        run: |
+          echo "## Published images v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
+          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
+            echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
+          done

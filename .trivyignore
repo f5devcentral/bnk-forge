@@ -106,3 +106,15 @@ CVE-2026-60002
 # Tracked: GitHub issue #103
 # Added: 2026-05-06
 CVE-2026-33845
+
+# CVE-2026-57433: perl Storable signed-integer flaw (Storable < 3.41)
+# Affects: libperl5.40, perl-base (5.40.1-6) in our Debian Trixie base image.
+# No Debian fix available yet (Trivy "Fixed Version" is blank).
+# Pulled in transitively: base image / git tooling — forge does not execute perl
+# at runtime and never deserializes untrusted Storable-format data, which is the
+# required trigger. The vulnerable code path is present but unreachable.
+# REVISIT: monthly — drop once Debian ships a patched perl (Storable >= 3.41) to
+#          trixie-security. Check: https://security-tracker.debian.org/tracker/CVE-2026-57433
+# Tracked: GitHub issue #492
+# Added: 2026-07-22
+CVE-2026-57433

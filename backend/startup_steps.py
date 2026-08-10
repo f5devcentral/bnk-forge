@@ -199,6 +199,19 @@ def seed_cli_bnkctl_modules_step():
         logger.info("  cli-bnkctl modules up to date")
 
 
+def seed_deployable_releases_step():
+    """Seed BNK deployable releases into the catalog if not already present."""
+    from database import get_db_context
+    from services.bare_metal.version_profiles import BnkDeployableReleaseService
+    with get_db_context() as db:
+        seeded_count = BnkDeployableReleaseService(db).seed_profiles()
+        db.commit()
+    if seeded_count > 0:
+        logger.info(f"  Seeded {seeded_count} BNK deployable release(s)")
+    else:
+        logger.info("  BNK deployable releases already configured")
+
+
 def seed_auth_step():
     """Seed default admin user if no users exist; always reconcile MCP service account."""
     from database import get_db_context

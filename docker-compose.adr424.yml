@@ -1,0 +1,61 @@
+# ADR-424 per-developer isolated stack overlay.
+# Layered AFTER docker-compose.yml + docker-compose.local.yml so this stack can
+# run alongside other feature-branch stacks without colliding on host ports, the
+# host-global `bnk-forge-*` container names, or the SHARED `bnk-forge-*:latest`
+# image tags.
+#   container_name: !reset null → project-prefixed default names
+#   ports: !override []         → publish NOTHING on the host (internal bridge only)
+#   ports: !override [...]       → replace host port mapping
+#   image: adr424-*             → project-scoped image tags
+#
+# Entrypoint: https://localhost:11443  (admin / changeme)
+# Bring up command:
+#   docker compose -p adr424 \
+#     -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.adr424.yml \
+#     up -d --build proxy frontend backend postgres redis celery-worker
+# Tear down command:
+#   docker compose -p adr424 \
+#     -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.adr424.yml \
+#     down -v
+
+services:
+  postgres:
+    container_name: !reset null
+    ports: !override
+      - "35432:5432"
+  redis:
+    container_name: !reset null
+    ports: !override []
+  backend:
+    container_name: !reset null
+    image: adr424-api:latest
+    ports: !override []
+  celery-worker:
+    container_name: !reset null
+    image: adr424-worker:latest
+  celery-worker-2:
+    container_name: !reset null
+    image: adr424-worker:latest
+  celery-beat:
+    container_name: !reset null
+    image: adr424-api:latest
+  docker-socket-proxy:
+    container_name: !reset null
+  frontend:
+    container_name: !reset null
+    image: adr424-web:latest
+    ports: !override []
+  proxy:
+    container_name: !reset null
+    image: adr424-proxy:latest
+    ports: !override
+      - "11443:8443"
+  mcp:
+    container_name: !reset null
+    image: adr424-mcp:latest
+    ports: !override []
+  postgres-backup:
+    container_name: !reset null
+  forge-agent:
+    container_name: !reset null
+    image: adr424-agent:latest

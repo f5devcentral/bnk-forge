@@ -39,6 +39,7 @@ from services.qkview_service import (
     _check_cert_manager_available,
     _check_curl_status,
     _cleanup_all_client_pods,
+    _client_pod_resources,
     _copy_cert_to_cwc_license_secret,
     _create_client_pod,
     _delete_client_pod,
@@ -657,6 +658,87 @@ class TestCreateClientPod:
 
         with pytest.raises(QKViewError, match="Failed to create"):
             _create_client_pod(MagicMock(), CLIENT_CERT_CONFIG, CWC_DEFAULT_NAMESPACE)
+
+    @patch("services.qkview_service.k8s_client")
+    @patch("services.qkview_service.uuid")
+    def test_create_api_error_includes_body_message(self, mock_uuid, mock_k8s):
+        """Should extract detailed error message from e.body when available."""
+        v1 = MagicMock()
+        mock_k8s.CoreV1Api.return_value = v1
+        mock_k8s.rest.ApiException = ApiException
+        mock_uuid.uuid4.return_value = MagicMock(hex="abcd1234xxxxxx")
+
+        # Create a mock ApiException with detailed error body (e.g., memory limit violation)
+        exc = _api_exception(422, "Unprocessable Entity")
+        exc.body = json.dumps({
+            "message": "requests: Invalid value: 128Mi: must be less than or equal to memory limit of 64Mi"
+        })
+        v1.create_namespaced_pod.side_effect = exc
+
+        with pytest.raises(QKViewError) as exc_info:
+            _create_client_pod(MagicMock(), CLIENT_CERT_CONFIG, CWC_DEFAULT_NAMESPACE)
+
+        # Error message should include the detailed message from body
+        assert "must be less than or equal to memory limit" in str(exc_info.value)
+
+    @patch("services.qkview_service.k8s_client")
+    @patch("services.qkview_service.uuid")
+    def test_create_api_error_fallback_to_body_string(self, mock_uuid, mock_k8s):
+        """Should fall back to raw body string when JSON parsing fails."""
+        v1 = MagicMock()
+        mock_k8s.CoreV1Api.return_value = v1
+        mock_k8s.rest.ApiException = ApiException
+        mock_uuid.uuid4.return_value = MagicMock(hex="abcd1234xxxxxx")
+
+        exc = _api_exception(500, "Internal Server Error")
+        exc.body = "raw error text without json"
+        v1.create_namespaced_pod.side_effect = exc
+
+        with pytest.raises(QKViewError) as exc_info:
+            _create_client_pod(MagicMock(), CLIENT_CERT_CONFIG, CWC_DEFAULT_NAMESPACE)
+
+        # Should include the raw body string in error
+        assert "raw error text without json" in str(exc_info.value)
+
+    def test_resource_limits_survive_shrink_requests_mutation(self):
+        """Regression: pod's memory limit must be >= 128Mi to survive kyverno request-raising mutation.
+
+        Test verifies that limits.memory >= 128Mi and requests.memory <= limits.memory,
+        so a cluster-side kyverno policy that floors memory requests to 128Mi cannot exceed the limit.
+        """
+        # Get the resource dicts directly from the pure helper (no k8s mocking needed)
+        requests, limits = _client_pod_resources()
+
+        # Parse resource values as Kubernetes quantity format (e.g., "128Mi" -> 128 MiB)
+        def parse_quantity(value):
+            """Parse K8s quantity string to bytes. Handles Mi, Gi, m, etc."""
+            if isinstance(value, int):
+                return value
+            value_str = str(value)
+            if value_str.endswith("Mi"):
+                return int(value_str[:-2]) * 1024 * 1024
+            if value_str.endswith("Gi"):
+                return int(value_str[:-2]) * 1024 * 1024 * 1024
+            if value_str.endswith("m"):
+                return int(value_str[:-1])
+            return int(value_str)
+
+        # Get memory requests and limits in bytes
+        mem_request = parse_quantity(requests.get("memory", 0))
+        mem_limit = parse_quantity(limits.get("memory", 0))
+
+        # Invariant 1: Limit must be >= 128Mi (floor imposed by kyverno shrink-requests mutation)
+        min_limit = 128 * 1024 * 1024
+        assert mem_limit >= min_limit, (
+            f"Memory limit ({limits['memory']}) must be >= 128Mi to survive "
+            f"kyverno mutation; got {mem_limit} bytes"
+        )
+
+        # Invariant 2: Requests must be <= limit (K8s API validation)
+        assert mem_request <= mem_limit, (
+            f"Memory requests ({requests['memory']}) must be <= limit "
+            f"({limits['memory']}); got {mem_request} bytes <= {mem_limit} bytes"
+        )
 
 
 class TestDeleteClientPod:
