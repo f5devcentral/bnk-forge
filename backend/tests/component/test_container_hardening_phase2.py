@@ -30,7 +30,9 @@ class TestRegistryHostChangeClearsCredential:
         reg = ContainerRegistry(name="harbor-1", type="harbor",
                                 registry_host="harbor.internal",
                                 username="robot$ci", token_encrypted="enc_secret")
-        db.add(reg); db.commit(); db.refresh(reg)
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
 
         from routes.container_registries import ContainerRegistryUpdate
 
@@ -51,7 +53,9 @@ class TestRegistryHostChangeClearsCredential:
         reg = ContainerRegistry(name="harbor-2", type="harbor",
                                 registry_host="harbor.internal",
                                 username="robot$ci", token_encrypted="enc_old")
-        db.add(reg); db.commit(); db.refresh(reg)
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
 
         from routes.container_registries import ContainerRegistryUpdate
 
