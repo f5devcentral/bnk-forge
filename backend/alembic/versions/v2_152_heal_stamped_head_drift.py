@@ -129,13 +129,31 @@ def upgrade() -> None:
     # carries an extra non-unique index that create_all never builds. Harmless
     # in itself, but it is exactly the create_all-vs-chain divergence this
     # release is about, and it is reachable from here — so drop it rather than
-    # record it in the parity allowlist. Guarded: absent on a create_all
-    # database, present on a chain-built one.
-    op.drop_index(
-        "ix_container_registries_name",
-        table_name="container_registries",
-        if_exists=True,
-    )
+    # record it in the parity allowlist.
+    #
+    # The guard is on UNIQUENESS, not existence. The name means opposite things
+    # on the two provisioning paths:
+    #
+    #   * chain-built — the redundant PLAIN index from v2_138; uniqueness is
+    #     enforced by the separate container_registries_name_key. Drop it.
+    #   * create_all — the ONE index the model renders to, and UNIQUE. It is the
+    #     only thing enforcing uniqueness on name. Keep it.
+    #
+    # `if_exists` cannot tell those apart: it is present either way. Guarding on
+    # existence alone therefore drops the unique index out from under every
+    # stamped-head install that upgrades through here — v3.1.6 stamps at v2_141,
+    # below this revision, so that is the ordinary fresh-install path, and it
+    # would leave duplicate registry names insertable.
+    #
+    # Re-inspect rather than reuse the inspector above: the create_table branch
+    # may have run since, and a cached table list would be stale.
+    for index in sa.inspect(bind).get_indexes("container_registries"):
+        if index["name"] == "ix_container_registries_name" and not index["unique"]:
+            op.drop_index(
+                "ix_container_registries_name",
+                table_name="container_registries",
+            )
+            break
 
 
 def downgrade() -> None:
