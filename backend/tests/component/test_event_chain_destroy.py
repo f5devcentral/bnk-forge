@@ -1877,3 +1877,50 @@ class TestDisabledModuleNotDispatchedByChain:
         mock_init.assert_not_called()
         db.refresh(disabled)
         assert disabled.status == "initialized"
+
+
+class TestDestroyWaveIgnoresEnabled:
+    """A project teardown must destroy DISABLED modules too.
+
+    The deploy paths gained an `enabled` gate (issue #527). The destroy wave
+    deliberately did NOT, and that asymmetry is easy to "tidy up" later into a
+    data-loss bug: a disabled module can still hold live infrastructure, so
+    skipping it in a project destroy strands whatever it already built, with no
+    UI affordance left to reach it.
+
+    Pinning the invariant so the omission reads as intentional.
+    """
+
+    def test_disabled_module_is_still_dispatched_by_the_destroy_wave(
+        self, db, make_project, make_project_module, make_module_library,
+    ):
+        from services.parallel_execution_service import ParallelExecutionService
+
+        project = make_project()
+        lib = make_module_library(name="vpc", path="bnk/vpc")
+        disabled = make_project_module(
+            project=project, library_module=lib, status="applied", enabled=False,
+        )
+        db.flush()
+
+        dispatched = []
+
+        def capture(task_id, module):
+            dispatched.append(module.id)
+            mock = MagicMock()
+            mock.apply_async.return_value.id = f"celery-{module.id}"
+            return mock
+
+        with patch("tasks._tofu_helpers.DependencyGraphService") as mock_gs, \
+             patch("services.execution.task_dispatch.dispatch_destroy_signature", side_effect=capture):
+            graph = MagicMock()
+            graph.get_reverse_dependencies.return_value = []
+            mock_gs.return_value = graph
+            ParallelExecutionService(db)._dispatch_first_destroy_wave(
+                project.id, run_handle="h-destroy", force_destroy=True
+            )
+
+        assert disabled.id in dispatched, (
+            "a disabled module was skipped by the project destroy wave — its "
+            "infrastructure would be stranded with no way to reach it"
+        )
