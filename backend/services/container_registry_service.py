@@ -248,44 +248,50 @@ class ContainerRegistryService:
             if hasattr(reg, key):
                 setattr(reg, key, value)
 
-        # Repointing a registry at a different host INVALIDATES its stored
+        # Repointing a registry at a different host INVALIDATES every stored
         # credential (issue #79, item 3).
         #
-        # Registries are global. Without this, operator A could change the
-        # registry_host on a registry operator B configured — without
-        # re-supplying the token, which update_registry permits — then press
-        # Test. `_test_basic_v2` decrypts B's stored token and sends it as HTTP
-        # Basic auth to whatever host is now on the record, handing A a
-        # credential they never had. That defeats the write-only-secrets model.
+        # Registries are global and `require_operator` is the only gate on the
+        # PUT, so any operator reaches any other operator's registry. Without
+        # this, operator A changes registry_host on a registry operator B
+        # configured and presses Test: `_test_basic_v2` decrypts B's token,
+        # `_test_far` base64s B's service account, `_test_derived` mints a live
+        # ECR token — each sent to A's host.
         #
-        # Clearing on host change is the precise fix: it closes the exfil
-        # without constraining WHICH hosts may be configured. An allowlist or a
-        # private-address check would also have blocked a self-hosted Harbor or
-        # Artifactory on RFC1918 — a supported configuration — so neither is
-        # the right tool here.
-        # Every credential family must be cleared, not just basic-auth.
-        # _clear_off_family_credentials deliberately PRESERVES the current
-        # family's credential, so on its own it would leave a FAR registry's
-        # service account (sent by _test_far to the same registry_host) or a
-        # derived registry's credential_template_id intact — the identical exfil
-        # with a different secret. Clear all three.
-        host_changed = old_host and reg.registry_host and reg.registry_host != old_host
-        supplied_new_credential = bool(token or far_service_account) or (
-            credential_template_id != "__unset__" and credential_template_id is not None
-        )
-        if host_changed and not supplied_new_credential:
+        # UNCONDITIONAL on host change, deliberately. A previous version gated
+        # this on "did the caller supply a new credential", which was a
+        # disjunction over all three families and therefore bypassable by
+        # supplying an OFF-family value: a `far_service_account: "{}"` (which
+        # _normalize_far_service_account accepts, since any parseable JSON
+        # passes) preserved a harbor record's token; replaying the record's own
+        # credential_template_id — serialized to every viewer — preserved a
+        # derived record's template. The clearing must not depend on what the
+        # caller sent.
+        #
+        # The re-apply blocks below then put back only what WAS supplied in this
+        # same request, which is the legitimate "move the registry and give it
+        # new credentials" flow.
+        #
+        # Explicit None comparison rather than a truthiness test: registry_host
+        # has no min_length at create, so an empty-string host is reachable and
+        # `"" -> "attacker.example.com"` must still clear.
+        host_changed = (old_host or "") != (reg.registry_host or "")
+        if host_changed:
             reg.username = None
             reg.token_encrypted = None
             reg.far_service_account_encrypted = None
             reg.credential_template_id = None
+            # Clear the whole cached verdict — leaving last_test_at behind
+            # renders a stale success timestamp beside a null status.
             reg.last_test_status = None
+            reg.last_test_at = None
             reg.last_test_message = (
-                "Credential cleared because the registry host changed; supply a "
-                "token for the new host before testing."
+                "Credentials cleared because the registry host changed; supply "
+                "credentials for the new host before testing."
             )
             logger.warning(
-                "Registry %s host changed %s -> %s without a new token; stored "
-                "credential cleared to prevent it being sent to the new host.",
+                "Registry %s host changed %r -> %r; all stored credentials "
+                "cleared to prevent them being sent to the new host.",
                 reg.id, old_host, reg.registry_host,
             )
 
@@ -302,6 +308,20 @@ class ContainerRegistryService:
                 self._normalize_far_service_account(far_service_account)
             )
         if credential_template_id != "__unset__":
+            # Re-applied even on a host change, deliberately.
+            #
+            # A template id is a public reference rather than a secret, so at
+            # first glance honouring it here lets an attacker re-attach the
+            # victim's credentials to their own host. But `create_registry`
+            # already accepts ANY template id on a NEW registry at ANY host
+            # (:212, no ownership check), so refusing it here buys nothing —
+            # the same outcome is one POST away — while making a derived
+            # registry's host impossible to change at all, since the
+            # derived-type invariant below then rejects the update.
+            #
+            # The real gap is that credential templates carry no per-operator
+            # authorisation on either path. That is a separate, pre-existing
+            # issue and is filed as such; it is NOT closed by this change.
             self._apply_derived_template(reg, credential_template_id, required=False)
 
         # Switching to a derived type without a template leaves a registry that

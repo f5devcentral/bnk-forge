@@ -67,6 +67,13 @@ DEFAULT_RUNNER_NAMESPACE = "bnk-forge-runner"
 # NetworkPolicy name — one deny-by-default policy per runner namespace.
 DENY_ALL_NETPOL_NAME = "bnk-forge-runner-deny-by-default"
 
+# Namespace the cluster DNS resolver runs in. The DNS egress rule is scoped to
+# it by namespaceSelector rather than left unscoped — an egress rule with ports
+# and no peers permits ALL destinations on those ports. Overridable for clusters
+# that run CoreDNS elsewhere; `kubernetes.io/metadata.name` is set automatically
+# on every namespace since k8s 1.21.
+DNS_NAMESPACE = os.environ.get("CONTAINER_RUNNER_DNS_NAMESPACE", "kube-system")
+
 # A K8s name must be a DNS-1123 label: lowercase alnum + '-', <= 63 chars.
 _MAX_NAME_LEN = 63
 
@@ -264,7 +271,7 @@ class KubernetesRunner(ContainerRunner):
         """
         private_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
                          "127.0.0.0/8", "169.254.0.0/16"]
-        return k8s_client.V1NetworkPolicy(
+        policy = k8s_client.V1NetworkPolicy(
             metadata=k8s_client.V1ObjectMeta(
                 name=DENY_ALL_NETPOL_NAME,
                 namespace=self.namespace,
@@ -275,9 +282,24 @@ class KubernetesRunner(ContainerRunner):
                 policy_types=["Ingress", "Egress"],
                 ingress=[],
                 egress=[
-                    # DNS — to any resolver, including an in-cluster CoreDNS,
-                    # which is why this rule is not restricted by ipBlock.
+                    # DNS — scoped to the cluster resolver's namespace.
+                    #
+                    # This rule previously carried `ports` and NO `to`, which in
+                    # NetworkPolicy means ALL destinations on those ports: the
+                    # `except` list below binds only to its own ipBlock, so
+                    # 169.254.169.254:53 and every RFC1918 host on 53 stayed
+                    # reachable — TCP included, which is a clean bidirectional
+                    # exfil channel out of a pod holding cloud credentials.
                     k8s_client.V1NetworkPolicyEgressRule(
+                        to=[
+                            k8s_client.V1NetworkPolicyPeer(
+                                namespace_selector=k8s_client.V1LabelSelector(
+                                    match_labels={
+                                        "kubernetes.io/metadata.name": DNS_NAMESPACE
+                                    }
+                                )
+                            )
+                        ],
                         ports=[
                             k8s_client.V1NetworkPolicyPort(protocol="UDP", port=53),
                             k8s_client.V1NetworkPolicyPort(protocol="TCP", port=53),
@@ -297,6 +319,24 @@ class KubernetesRunner(ContainerRunner):
                 ],
             ),
         )
+        self._assert_every_egress_rule_is_scoped(policy)
+        return policy
+
+    @staticmethod
+    def _assert_every_egress_rule_is_scoped(policy: k8s_client.V1NetworkPolicy) -> None:
+        """Refuse to build an egress rule with no ``to``.
+
+        A rule with ports but no peers means *all destinations* on those ports.
+        That is what made the DNS rule above defeat its own ipBlock `except`
+        list, and it is invisible on reading unless you know the semantics — so
+        it is enforced here rather than left to review.
+        """
+        for index, rule in enumerate(policy.spec.egress or []):
+            if not getattr(rule, "to", None):
+                raise ValueError(
+                    f"egress rule[{index}] has no 'to': a NetworkPolicy egress "
+                    "rule without peers permits ALL destinations on its ports"
+                )
 
     def build_job(self, spec: StepSpec) -> k8s_client.V1Job:
         """The per-step Job: the artifact's OWN digest-pinned image + argv.
@@ -457,10 +497,36 @@ class KubernetesRunner(ContainerRunner):
         networking = k8s_client.NetworkingV1Api(api_client)
         try:
             networking.create_namespaced_network_policy(self.namespace, netpol)
-            logger.info("Applied deny-by-default NetworkPolicy in %s", self.namespace)
+            logger.info("Applied runner NetworkPolicy in %s", self.namespace)
+            return
         except ApiException as exc:
-            if exc.status != 409:  # already exists — fine
-                logger.warning("Failed to ensure NetworkPolicy: %s", exc.reason)
+            if exc.status != 409:
+                # Fail CLOSED. This is the isolation boundary for a third-party
+                # artifact image that receives cloud credentials via env_from —
+                # running the step without it is precisely the outcome the
+                # policy exists to prevent, so a failure here must stop the run
+                # rather than log and continue.
+                raise RuntimeError(
+                    f"Could not apply the runner NetworkPolicy in namespace "
+                    f"{self.namespace}: {exc.reason}. Refusing to run an "
+                    "artifact step without network isolation."
+                ) from exc
+
+        # 409 = a policy of this name already exists. It may predate a hardening
+        # change (an older build shipped a rule that denied DNS, and before that
+        # one that permitted all destinations on port 53), so leaving it alone
+        # silently pins whatever the namespace happened to have. Reconcile it.
+        try:
+            networking.replace_namespaced_network_policy(
+                DENY_ALL_NETPOL_NAME, self.namespace, netpol
+            )
+            logger.info("Reconciled existing runner NetworkPolicy in %s", self.namespace)
+        except ApiException as exc:
+            raise RuntimeError(
+                f"Could not reconcile the existing runner NetworkPolicy in "
+                f"namespace {self.namespace}: {exc.reason}. Refusing to run an "
+                "artifact step against an unverified policy."
+            ) from exc
 
     def _ensure_workspace_pvc(self, core_v1: k8s_client.CoreV1Api, spec: StepSpec) -> None:
         pvc = self.build_workspace_pvc(spec)

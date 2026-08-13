@@ -630,11 +630,19 @@ class ModuleMetadataValidator:
         if not first_segments:
             return
 
+        # Both step-sets: materialize_secret_files runs on the action path too,
+        # so the same unrecoverable first-run failure recurs verbatim there.
+        step_sets: list = []
         steps_block = manifest.get("steps")
-        if not isinstance(steps_block, dict):
-            return
+        if isinstance(steps_block, dict):
+            step_sets.extend(steps_block.items())
+        actions_block = manifest.get("actions")
+        if isinstance(actions_block, dict):
+            for action_name, definition in actions_block.items():
+                if isinstance(definition, dict):
+                    step_sets.append((f"actions.{action_name}", definition.get("steps")))
 
-        for phase, steps in steps_block.items():
+        for phase, steps in step_sets:
             if not isinstance(steps, list):
                 continue
             for step in steps:
@@ -643,13 +651,27 @@ class ModuleMetadataValidator:
                 args = step.get("args")
                 if not isinstance(args, list):
                     continue
+                previous_was_flag = False
                 for token in args:
                     if not isinstance(token, str):
+                        previous_was_flag = False
                         continue
                     bare = token.strip()
-                    # Only bare tokens: a flag or a path-like value is not a
+                    if bare.startswith("-"):
+                        # `--name=poc` carries its value inline, so it consumes
+                        # nothing; `--name poc` consumes the next token.
+                        previous_was_flag = "=" not in bare
+                        continue
+                    # The token AFTER a flag is that flag's value, not a
+                    # positional the step creates a directory from. Treating it
+                    # as one rejected `["init", "--name", "poc"]` — a false
+                    # positive the docstring below explicitly disclaims.
+                    if previous_was_flag:
+                        previous_was_flag = False
+                        continue
+                    # Only bare positionals: a path-like value is not a
                     # directory the step is about to create in the workspace.
-                    if not bare or bare.startswith("-") or "/" in bare:
+                    if not bare or "/" in bare:
                         continue
                     if bare in first_segments:
                         name = step.get("name") or "<unnamed>"

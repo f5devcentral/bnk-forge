@@ -284,7 +284,20 @@ class ContainerEngine(DeploymentEngine):
 
         def _sub(match: re.Match[str]) -> str:
             key = match.group(1)
-            return str(self._lookup_input(key, variables))
+            resolved = self._lookup_input(key, variables)
+            # Reject non-scalars HERE, at the single point where a value becomes
+            # part of an argv token. The equivalent check in
+            # validate_action_inputs only guards the action path; lifecycle
+            # steps render from ctx.variables (module.variables +
+            # variable_overrides, both JSON columns), so a dict there still
+            # reached step argv as a Python repr — the same class on the other
+            # of the two surfaces that exhibit it.
+            if not isinstance(resolved, (str, int, float, bool)):
+                raise ValueError(
+                    f"Input '{key}' is a {type(resolved).__name__}; only scalar "
+                    "values can be templated into a step argument"
+                )
+            return str(resolved)
 
         return _INPUT_TOKEN_RE.sub(_sub, value)
 
