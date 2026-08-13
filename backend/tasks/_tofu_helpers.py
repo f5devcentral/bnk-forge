@@ -308,30 +308,62 @@ def _trigger_next_stack_module(stack, completed_module: ProjectModule, db) -> No
         logger.warning(f"Failed to trigger next stack module: {e}")
 
 
-def _destroy_scope_for(module: ProjectModule, db) -> str | None:
-    """Return the destroy scope stamped on this module's most-recent destroy Task.
+def _destroy_scope_for(
+    module: ProjectModule, db, task_id: int | None = None
+) -> str | None:
+    """Return the destroy scope of the RUN that is executing, not of the module.
 
-    One of "module" / "project" / "stack", or None when the Task predates the
-    stamp (pre-#525 rows) and callers should fall back to their own heuristic.
+    ``task_id`` is the destroy Task actually running. Pass it wherever it is in
+    scope — scope is a property of the run, and reading "the newest destroy Task
+    for this module id" instead produced a real regression:
 
-    Read by both _trigger_next_destroy_module and _run_terminal_detection; kept
-    in one place so the two can never disagree about how far a teardown reaches.
+      1. user destroys leaf module M     → Task stamped destroy_scope="module"
+      2. user clicks Destroy All while it runs → _dispatch_first_destroy_wave
+         sees M's non-terminal destroy Task and skips creating a project-scoped
+         row for it
+      3. M completes → the newest row is still the module-scoped one → the chain
+         guard returns before chaining AND before terminal detection
+      4. dependencies never queued (cloud infra stranded) and the stack/project
+         sits in DESTROYING forever
+
+    Returns "module" / "project" / "stack", or None when the caller should fall
+    back to its own heuristic.
+
+    Unknown scope resolves to "module", i.e. DO NOT CHAIN. Every destroy Task
+    created before the stamp existed has meta_data = NULL, and the previous
+    None-return let those fall through to the stack_instance_id heuristic —
+    which cascades. A single-module destroy enqueued by the old code and still
+    QUEUED across a deploy would have completed under the heuristic and deleted
+    its dependency: the original data-loss bug, live during the rollout window.
+    The failure direction of an unknown scope must not be destruction.
+
+    ``run_handle`` is the discriminator that exists on legacy rows: both wave
+    dispatchers set it, ``create_task`` never does. So run_handle IS NULL means
+    a single-module run regardless of when the row was written.
     """
-    predecessor_task = (
-        db.query(TaskModel)
-        .filter(
-            TaskModel.module_id == module.id,
-            TaskModel.task_type == "destroy",
+    query = db.query(TaskModel).filter(TaskModel.task_type == "destroy")
+    if task_id is not None:
+        row = query.filter(TaskModel.id == task_id).first()
+    else:
+        row = (
+            query.filter(TaskModel.module_id == module.id)
+            .order_by(TaskModel.id.desc())
+            .first()
         )
-        .order_by(TaskModel.id.desc())
-        .first()
-    )
-    if not predecessor_task:
+    if not row:
         return None
-    return (predecessor_task.meta_data or {}).get("destroy_scope")
+
+    stamped = (row.meta_data or {}).get("destroy_scope")
+    if stamped:
+        return stamped
+    # Unstamped: infer from run_handle rather than falling through to a
+    # heuristic that cascades.
+    return "module" if not row.run_handle else None
 
 
-def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
+def _trigger_next_destroy_module(
+    module: ProjectModule, db, task_id: int | None = None
+) -> None:
     """
     Post-destroy trigger hook — invoked when destroy worker completes for module M.
 
@@ -360,7 +392,7 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
     Module-scope destroys (a single POST /project-modules/{id}/destroy) do NOT
     chain at all — see the destroy_scope == "module" guard below.
     """
-    if _destroy_scope_for(module, db) == "module":
+    if _destroy_scope_for(module, db, task_id) == "module":
         # Single-module destroy: the dependencies are precisely what the caller
         # asked to keep, and there is no parent stack/project teardown in flight
         # to finalize. Stop here (issue #525).
@@ -374,7 +406,7 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
 
     if not module.dependencies:
         # No dependencies to check — still run terminal detection
-        _run_terminal_detection(module, db)
+        _run_terminal_detection(module, db, task_id)
         return
 
     try:
@@ -394,7 +426,7 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
         # first-wave Task.  Blueprint modules have stack_instance_id but MUST be treated
         # as project-scope in a project destroy.  Relying on stack_instance_id alone would
         # misclassify them as stack-scope and break the fail-soft barrier logic.
-        scope_from_meta = _destroy_scope_for(module, db)
+        scope_from_meta = _destroy_scope_for(module, db, task_id)
         # is_stack_scope: True only when there is no explicit meta_data override saying
         # "project" AND the module actually belongs to a stack.
         is_stack_scope = (scope_from_meta != "project") and bool(module.stack_instance_id)
@@ -547,10 +579,12 @@ def _trigger_next_destroy_module(module: ProjectModule, db) -> None:
         )
 
     # Always run terminal detection after attempting triggers
-    _run_terminal_detection(module, db)
+    _run_terminal_detection(module, db, task_id)
 
 
-def _run_terminal_detection(module: ProjectModule, db) -> None:
+def _run_terminal_detection(
+    module: ProjectModule, db, task_id: int | None = None
+) -> None:
     """
     Check if all modules in the destroy scope are terminal and finalize if so.
 
@@ -564,7 +598,7 @@ def _run_terminal_detection(module: ProjectModule, db) -> None:
     try:
         # Resolve scope from task metadata first (prevents blueprint modules with
         # stack_instance_id from being misclassified as stack-scope on project destroy).
-        scope_from_meta = _destroy_scope_for(module, db)
+        scope_from_meta = _destroy_scope_for(module, db, task_id)
 
         if scope_from_meta == "module":
             # Single-module destroy — no parent stack/project teardown is in

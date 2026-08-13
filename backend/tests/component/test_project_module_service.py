@@ -1536,7 +1536,7 @@ class TestCancelStopsRealWork:
 
         revoked = []
         with patch("celery_app.celery_app") as mock_celery, \
-             patch.object(svc, "_kill_containers_for_tasks", return_value=[]):
+             patch.object(svc, "_kill_containers_for_tasks", return_value=([], True)):
             mock_celery.control.revoke.side_effect = lambda tid, **kw: revoked.append(tid)
             result = svc.cancel_operation(module.id)
 
@@ -1561,7 +1561,13 @@ class TestCancelStopsRealWork:
     def test_cancel_kills_the_daemon_side_container(
         self, _deps, _counts, svc, db, project_and_lib, make_task
     ):
-        """F3: the container is killed, and killed BEFORE the lock is released."""
+        """F3: the container is killed, and killed BEFORE the lock is released.
+
+        The kill is now DISPATCHED TO THE WORKER rather than run inline: cancel
+        executes in the FastAPI `backend` service, whose image has no docker CLI
+        (only the worker stage copies one) and no DOCKER_HOST. Inline it raised
+        FileNotFoundError and was swallowed into "0 killed".
+        """
         from models import ProjectModule
 
         project, lib = project_and_lib
@@ -1576,23 +1582,26 @@ class TestCancelStopsRealWork:
         )
 
         order = []
-        with patch("celery_app.celery_app"), \
-             patch("services.execution.task_dispatch.get_engine_type", return_value="container"), \
-             patch("services.execution.container_runner.DockerRunner") as mock_runner, \
-             patch("services.module_lock.ModuleLockService") as mock_lock:
-            mock_runner.return_value.kill_task_containers.side_effect = (
-                lambda tid: order.append("kill") or ["abc123def456"]
-            )
+        dispatched = MagicMock()
+        dispatched.get.side_effect = (
+            lambda timeout=None: order.append("kill")
+            or {"killed": ["abc123def456"], "reachable": True, "error": None}
+        )
+
+        with patch("celery_app.celery_app"),              patch("services.execution.task_dispatch.get_engine_type", return_value="container"),              patch("tasks.container_tasks.kill_module_containers") as mock_task,              patch("services.module_lock.ModuleLockService") as mock_lock:
+            mock_task.apply_async.return_value = dispatched
             mock_lock.return_value.force_release.side_effect = lambda mid: order.append("unlock")
 
             result = svc.cancel_operation(module.id)
 
-        assert result["containers_killed"] == 1, (
-            "the daemon-side container was not killed — it keeps mutating the "
-            "workspace while Forge reports the operation cancelled (issue #462 F3)"
+        assert mock_task.apply_async.called, (
+            "the kill was not dispatched to the worker — run inline it hits an "
+            "image with no docker CLI and silently reports nothing killed"
         )
+        assert result["containers_killed"] == 1
+        assert result["containers_kill_confirmed"] is True
         assert order == ["kill", "unlock"], (
-            f"lock must not be released while a container is still live, got {order}"
+            f"lock must not be released before a confirmed kill, got {order}"
         )
 
     @patch("services.project_module_service.update_project_counts")
@@ -1725,7 +1734,7 @@ class TestCancelGuardDoesNotDependOnTheNewestRow:
 
         revoked = []
         with patch("celery_app.celery_app") as mock_celery, \
-             patch.object(ProjectModuleService, "_kill_containers_for_tasks", return_value=[]):
+             patch.object(ProjectModuleService, "_kill_containers_for_tasks", return_value=([], True)):
             mock_celery.control.revoke.side_effect = lambda tid, **kw: revoked.append(tid)
             result = svc.cancel_operation(module.id)
 

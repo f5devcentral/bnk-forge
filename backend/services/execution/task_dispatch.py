@@ -64,6 +64,30 @@ def _get_explicit_execution_engine(module) -> str | None:
     return None
 
 
+def _assert_module_runnable(module, operation: str) -> None:
+    """Refuse to dispatch work for a DISABLED module.
+
+    Enforced HERE because this is the chokepoint every deploy path crosses.
+    Gating at the callers missed several: stack_service.run_deploy (Deploy All
+    for a stack — and _apply_topology_module_filter is the tree's main producer
+    of disabled modules, so that path is the one that matters most),
+    submit_init, and the worker auto-apply chains in container_tasks /
+    opentofu_tasks, which gate only on can_execute() — a dependency check that
+    never looks at `enabled`.
+
+    Destroy is deliberately NOT gated: a disabled module can still hold live
+    infrastructure, and refusing to tear it down would strand it with no UI
+    affordance left to reach it.
+    """
+    if operation == "destroy":
+        return
+    if getattr(module, "enabled", True) is False:
+        raise ValueError(
+            f"Module {getattr(module, 'id', '?')} is disabled; refusing to "
+            f"dispatch {operation}. Enable it first."
+        )
+
+
 def _resolve_dispatch_engine(module) -> str:
     """Resolve dispatch family: ansible | kubernetes | opentofu."""
     explicit_execution_engine = _get_explicit_execution_engine(module)
@@ -93,6 +117,7 @@ def dispatch_init(task_id: int, module, auto_apply: bool = False, force_reinit: 
 
     Returns the Celery AsyncResult (same as .delay() would return).
     """
+    _assert_module_runnable(module, "init")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -139,6 +164,7 @@ def dispatch_init(task_id: int, module, auto_apply: bool = False, force_reinit: 
 
 def dispatch_plan(task_id: int, module):
     """Dispatch a plan operation to the correct engine."""
+    _assert_module_runnable(module, "plan")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -258,6 +284,7 @@ def dispatch_apply(task_id: int, module, force_new_plan: bool = False, auto_appr
 
     Returns the Celery AsyncResult.
     """
+    _assert_module_runnable(module, "apply")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -363,6 +390,7 @@ def dispatch_container_action(task_id: int, module, action: str, action_inputs: 
     Actions are a container-engine-only contract; any other engine is a
     caller error surfaced loudly rather than silently routed elsewhere.
     """
+    _assert_module_runnable(module, "action")
     dispatch_engine = _resolve_dispatch_engine(module)
     if dispatch_engine != "container":
         raise ValueError(
@@ -390,6 +418,7 @@ def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False,
         auto_approve: Accepted for API compatibility but not used to force a new plan
                       (see dispatch_apply docstring).
     """
+    _assert_module_runnable(module, "apply")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":

@@ -1103,43 +1103,58 @@ class ProjectModuleService(BaseService):
             **dispatch_state,
         }
 
-    def _kill_containers_for_tasks(self, module, tasks) -> list[str]:
-        """Kill the daemon-side step container(s) owned by ``tasks``.
+    # How long cancel waits for the worker to confirm the container kill. Short
+    # on purpose: this runs inside a request, and a slow answer degrades to
+    # "unconfirmed", which keeps the lock rather than dropping it optimistically.
+    _KILL_CONFIRM_TIMEOUT_SECONDS = 15
 
-        Celery's ``revoke(terminate=True)`` only kills the worker-side client.
-        The step container is detached on the host daemon and survives, still
-        driving the vendor CLI against live infrastructure while Forge reports
-        the operation cancelled and drops the module lock — so a user who
-        cancels then re-applies races a live container over the same workspace
-        with no lock held (issue #462).
+    def _kill_containers_for_tasks(self, module, tasks) -> tuple[list[str], bool]:
+        """Kill the daemon-side step container(s), on the WORKER.
 
-        Containers are matched by the ``bnkforge.task`` label the runner already
-        stamps for the reaper, so a cancel and a reap agree on ownership.
+        Returns ``(killed_ids, confirmed)``. ``confirmed`` is False when the
+        docker endpoint could not be reached at all — the caller must NOT
+        release the module lock in that case.
 
-        Returns the container ids killed. Never raises: a cancel must still reset
-        DB state when the daemon is unreachable.
+        Dispatched as a Celery task rather than called inline. cancel_operation
+        runs in the FastAPI ``backend`` service, which is built from the ``api``
+        Dockerfile stage: it has no docker CLI (only the ``worker`` stage copies
+        one) and compose sets DOCKER_HOST only on the celery services. Inline,
+        `docker ps` raised FileNotFoundError, the runner swallowed it, and the
+        caller saw "0 containers killed" — so the lock was force-released while
+        the container kept running, which is precisely the corruption this whole
+        path exists to prevent.
         """
         from services.execution.task_dispatch import get_engine_type
 
         try:
             if get_engine_type(module) != "container":
-                return []
-        except Exception as exc:  # unresolvable engine metadata — nothing to kill
+                return [], True          # nothing to kill; not an unknown state
+        except Exception as exc:
             logger.warning("cancel: could not resolve engine for module %s: %s", module.id, exc)
-            return []
+            return [], True
+
+        celery_ids = [t.celery_task_id for t in tasks if t.celery_task_id]
+        if not celery_ids:
+            return [], True
 
         try:
-            from services.execution.container_runner import DockerRunner
+            from tasks.container_tasks import kill_module_containers
 
-            runner = DockerRunner()
-            killed: list[str] = []
-            for task in tasks:
-                if task.celery_task_id:
-                    killed.extend(runner.kill_task_containers(task.celery_task_id))
-            return killed
+            async_result = kill_module_containers.apply_async(
+                (celery_ids,), queue="default"
+            )
+            outcome = async_result.get(timeout=self._KILL_CONFIRM_TIMEOUT_SECONDS)
         except Exception as exc:
-            logger.warning("cancel: container kill failed for module %s: %s", module.id, exc)
-            return []
+            # Broker down, no worker, or timeout — all mean "unconfirmed".
+            logger.warning(
+                "cancel: container kill for module %s was not confirmed: %s",
+                module.id, exc,
+            )
+            return [], False
+
+        if not isinstance(outcome, dict):
+            return [], False
+        return list(outcome.get("killed") or []), bool(outcome.get("reachable"))
 
     def cancel_operation(self, module_id: int) -> dict:
         """Cancel a running deployment operation (revoke Celery task, reset status)."""
@@ -1189,15 +1204,29 @@ class ProjectModuleService(BaseService):
                 # Kill the daemon-side container BEFORE releasing the lock, so the
                 # lock is never dropped while a live container still holds the
                 # workspace.
-                killed = self._kill_containers_for_tasks(module, cancellable)
+                killed, kill_confirmed = self._kill_containers_for_tasks(module, cancellable)
 
-                # Release module lock
-                try:
-                    from services.module_lock import ModuleLockService
-                    ModuleLockService(self.db).force_release(module.id)
-                    logger.info(f"Released module lock for module={module.id}")
-                except Exception as lock_err:
-                    logger.warning(f"Failed to release module lock on cancel: {lock_err}")
+                # Release the module lock ONLY on a confirmed kill.
+                #
+                # The lock is what stops a re-apply racing a still-running
+                # container over the same workspace. Dropping it because the
+                # kill *reported* nothing — when in fact the daemon was
+                # unreachable — hands the user a green light into exactly that
+                # corruption. Unconfirmed keeps the lock; the reaper sweeps the
+                # container and the janitor frees the lock on its own schedule.
+                if kill_confirmed:
+                    try:
+                        from services.module_lock import ModuleLockService
+                        ModuleLockService(self.db).force_release(module.id)
+                        logger.info(f"Released module lock for module={module.id}")
+                    except Exception as lock_err:
+                        logger.warning(f"Failed to release module lock on cancel: {lock_err}")
+                else:
+                    logger.warning(
+                        "cancel: module %s lock RETAINED — the container kill could "
+                        "not be confirmed, so a re-apply must not be allowed to race it.",
+                        module.id,
+                    )
 
                 # Mark every revoked task cancelled — leaving a queued row
                 # "queued" is what let it look live to the rest of the system.
@@ -1210,13 +1239,24 @@ class ProjectModuleService(BaseService):
 
                 update_project_counts(self.db, module.project_id)
 
-                message = "Deployment cancelled successfully"
-                if killed:
-                    message += f" ({len(killed)} container(s) killed)"
+                if kill_confirmed:
+                    message = "Deployment cancelled successfully"
+                    if killed:
+                        message += f" ({len(killed)} container(s) killed)"
+                else:
+                    # Say so. The previous shape returned success=True here,
+                    # which is how "it stopped" became a claim nobody had checked.
+                    message = (
+                        "Cancellation requested, but the container could not be "
+                        "confirmed stopped — the docker endpoint was unreachable. "
+                        "The module stays locked until the reaper clears it; do "
+                        "not re-apply yet."
+                    )
                 return {
                     "success": True,
                     "message": message,
                     "containers_killed": len(killed),
+                    "containers_kill_confirmed": kill_confirmed,
                     "tasks_cancelled": len(cancellable),
                 }
 
@@ -1246,6 +1286,7 @@ class ProjectModuleService(BaseService):
                     "success": True,
                     "message": message,
                     "containers_killed": len(killed),
+                    "containers_kill_confirmed": True,
                     "tasks_cancelled": 0,
                 }
 
@@ -1253,6 +1294,7 @@ class ProjectModuleService(BaseService):
                 "success": False,
                 "message": "No active deployment found for this module",
                 "containers_killed": 0,
+                "containers_kill_confirmed": True,
                 "tasks_cancelled": 0,
             }
 

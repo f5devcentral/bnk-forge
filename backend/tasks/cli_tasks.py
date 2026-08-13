@@ -841,7 +841,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
 
                 create_deployment_record(db, task, module, "destroy", task.logs)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             return {"success": result.success, "exit_code": task.exit_code}
 
@@ -858,7 +858,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI ModuleLockError: %s", trigger_err,
@@ -878,7 +878,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI ModuleLockLostError: %s", trigger_err,
@@ -892,7 +892,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI generic exception: %s", trigger_err,

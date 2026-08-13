@@ -43,6 +43,15 @@ from utils.security import validate_cli_arg
 
 logger = logging.getLogger(__name__)
 
+
+class ContainerKillUnavailableError(RuntimeError):
+    """The docker endpoint could not be reached to enumerate/kill containers.
+
+    Distinct from "no containers were running": a cancel releases the module
+    lock on the strength of a kill, so an unreachable daemon must not be
+    reported as a successful stop.
+    """
+
 # A digest pin looks like ``<repo>@sha256:<64 hex>``. Anything else (a floating
 # tag, or a tag-only reference) is rejected — running an artifact requires an
 # immutable digest so the bytes can never silently change underneath us.
@@ -915,15 +924,20 @@ class DockerRunner(ContainerRunner):
                 env=run_env, capture_output=True, text=True, timeout=_DOCKER_CALL_TIMEOUT,
             )
         except Exception as exc:
-            logger.warning("kill_task_containers: listing for task %s failed: %s", celery_task_id, exc)
-            return []
+            # FileNotFoundError (no docker CLI) lands here too. Raising rather
+            # than returning [] is the point: "I killed nothing" and "I could
+            # not look" must not be the same answer, because the caller
+            # releases the module lock on the strength of it.
+            raise ContainerKillUnavailableError(
+                f"cannot reach the docker daemon to kill containers for task "
+                f"{celery_task_id}: {exc}"
+            ) from exc
 
         if listed.returncode != 0:
-            logger.warning(
-                "kill_task_containers: docker ps for task %s exited %s: %s",
-                celery_task_id, listed.returncode, (listed.stderr or "").strip(),
+            raise ContainerKillUnavailableError(
+                f"docker ps for task {celery_task_id} exited "
+                f"{listed.returncode}: {(listed.stderr or '').strip()}"
             )
-            return []
 
         killed: list[str] = []
         for container_id in [ln.strip() for ln in (listed.stdout or "").splitlines() if ln.strip()]:

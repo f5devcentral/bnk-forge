@@ -655,6 +655,13 @@ class TestWorkerDeathBackstop:
             module_id=mod.id,
             celery_task_id="dead-worker-task-id",
             created_at=datetime.now(UTC),
+            # run_handle is what _dispatch_first_destroy_wave stamps on every
+            # row of a project run, and create_task (single-module) never does.
+            # It is now the discriminator for an UNSTAMPED row: no run_handle
+            # means a single-module destroy, which must not chain. Without it
+            # this fixture described a row a project destroy cannot produce.
+            run_handle="run-worker-death",
+            meta_data={"destroy_scope": "project"},
         )
         db.add(stuck_task)
         db.commit()

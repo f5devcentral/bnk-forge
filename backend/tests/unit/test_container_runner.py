@@ -861,11 +861,29 @@ class TestKillTaskContainers:
             assert runner.kill_task_containers("") == []
         run.assert_not_called()
 
-    def test_never_raises_when_the_daemon_is_unreachable(self):
-        """A cancel must still reset DB state when docker cannot be reached."""
+    def test_unreachable_daemon_RAISES_rather_than_reporting_zero(self):
+        """"I killed nothing" and "I could not look" must not be the same answer.
+
+        This previously returned [], which the caller could not distinguish from
+        a clean no-op — so it force-released the module lock while the container
+        was still running. The API image has no docker CLI at all, so this is
+        the DEFAULT outcome there, not an edge case.
+        """
+        from services.execution.container_runner import ContainerKillUnavailableError
+
         runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("docker", 30)):
-            assert runner.kill_task_containers("celery-mine") == []
+            with pytest.raises(ContainerKillUnavailableError):
+                runner.kill_task_containers("celery-mine")
+
+    def test_missing_docker_binary_also_raises(self):
+        """The exact API-image case: FileNotFoundError, not a timeout."""
+        from services.execution.container_runner import ContainerKillUnavailableError
+
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        with patch("subprocess.run", side_effect=FileNotFoundError("docker")):
+            with pytest.raises(ContainerKillUnavailableError):
+                runner.kill_task_containers("celery-mine")
 
     def test_tolerates_a_container_exiting_between_ps_and_kill(self):
         """ps → kill is inherently racy; a container that exits first is fine."""
