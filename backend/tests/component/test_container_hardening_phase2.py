@@ -320,6 +320,7 @@ class TestNetworkPolicyScoping:
     def test_the_builder_refuses_an_unscoped_rule(self):
         """The guard is enforced in code, not left to review."""
         from kubernetes import client as k
+
         from services.execution.kubernetes_runner import KubernetesRunner
         bad = k.V1NetworkPolicy(spec=k.V1NetworkPolicySpec(
             pod_selector=k.V1LabelSelector(), policy_types=["Egress"],
@@ -390,8 +391,9 @@ class TestRenderRejectsNonScalars:
     """
 
     def _engine(self, tmp_path):
-        from services.execution.container_engine import ContainerEngine
         from unittest.mock import MagicMock
+
+        from services.execution.container_engine import ContainerEngine
         return ContainerEngine(MagicMock(), workspace_host_path=str(tmp_path),
                                workspace_local_path=str(tmp_path))
 
