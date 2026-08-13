@@ -535,6 +535,50 @@ class ContainerEngine(DeploymentEngine):
             return declared
         return self.outputs_filename
 
+    def _contained_workspace_path(self, relative: str) -> str:
+        """Resolve ``relative`` under the workspace, refusing to escape it.
+
+        Lexical checks alone are NOT sufficient here, which is the lesson from
+        the first version of this code. The workspace is writable by the
+        artifact's own container — that is its purpose — so a step can simply
+        plant a symlink at the expected name and the subsequent
+        ``os.path.join`` → ``open()`` follows it as the WORKER uid:
+
+            ln -sf /app/keys/encryption.key /state/outputs.json
+
+        ``/app/keys/encryption.key`` is the master encryption key and
+        ``/app/secrets`` is a real read-only mount, so the read direction is
+        credential disclosure into ``module.outputs`` (served by the state
+        viewer), and the write direction is an arbitrary-file truncate.
+
+        Mirrors module_reports_service, which already solved this: realpath
+        containment first, then O_NOFOLLOW on the open so the final component
+        cannot be a symlink either.
+        """
+        root = os.path.realpath(self.workspace_local_path)
+        target = os.path.realpath(os.path.join(root, relative))
+        if target != root and not target.startswith(root + os.sep):
+            raise ValueError(
+                f"path {relative!r} resolves outside the module workspace"
+            )
+        return target
+
+    @staticmethod
+    def _open_contained(path: str, mode: str):
+        """Open a already-realpath-contained workspace path without following a symlink."""
+        import errno
+
+        flags = os.O_RDONLY if mode == "r" else (os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        try:
+            fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.EMLINK):
+                raise ValueError(
+                    f"{path} is a symlink; refusing to follow it out of the workspace"
+                ) from exc
+            raise
+        return os.fdopen(fd, mode, encoding="utf-8")
+
     @staticmethod
     def _is_workspace_relative(candidate: str) -> bool:
         """True when ``candidate`` stays inside the workspace when joined to it.
@@ -562,12 +606,19 @@ class ContainerEngine(DeploymentEngine):
         Tolerates a missing file (the artifact may not emit one) and malformed
         JSON (logged, returns empty). Always returns a flat string-keyed dict.
         """
-        path = os.path.join(self.workspace_local_path, filename or self.outputs_filename)
+        try:
+            path = self._contained_workspace_path(filename or self.outputs_filename)
+        except ValueError as exc:
+            logger.warning("Refusing to read artifact outputs file: %s", exc)
+            return {}
         if not os.path.isfile(path):
             return {}
         try:
-            with open(path) as handle:
+            with self._open_contained(path, "r") as handle:
                 data = json.load(handle)
+        except ValueError as exc:          # symlinked final component
+            logger.warning("Refusing to read artifact outputs file: %s", exc)
+            return {}
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Could not read artifact outputs file %s: %s", path, exc)
             return {}
@@ -607,9 +658,16 @@ class ContainerEngine(DeploymentEngine):
     def _write_step_marker(self, step_name: str) -> None:
         try:
             os.makedirs(self.workspace_local_path, exist_ok=True)
-            with open(self._step_marker_path(step_name), "w") as handle:
+            # Same symlink exposure in the WRITE direction: a planted symlink at
+            # the marker name would otherwise be an arbitrary-file truncate to
+            # "done\n" as the worker uid. _step_marker_path sanitises the step
+            # name (traversal), which does nothing about symlinks.
+            marker = self._contained_workspace_path(
+                os.path.basename(self._step_marker_path(step_name))
+            )
+            with self._open_contained(marker, "w") as handle:
                 handle.write("done\n")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             # Non-fatal: a missing marker only means the run_once step re-runs next
             # time (and a truly non-idempotent step would then surface its own error).
             logger.warning("Could not write run_once marker for step '%s': %s", step_name, exc)

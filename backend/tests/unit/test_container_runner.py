@@ -328,9 +328,26 @@ class TestNonRootGate:
     def test_root_users_are_detected(self, user):
         assert DockerRunner.is_root_user(user) is True
 
-    @pytest.mark.parametrize("user", ["1000", "nonroot", "1000:1000", "app"])
-    def test_non_root_users_pass(self, user):
+    @pytest.mark.parametrize("user", ["1000", "1000:1000", "65532", "00065532"])
+    def test_numeric_non_root_users_pass(self, user):
         assert DockerRunner.is_root_user(user) is False
+
+    @pytest.mark.parametrize("user", ["nonroot", "app", "toor"])
+    def test_named_users_are_now_REFUSED(self, user):
+        """BREAKING CHANGE, deliberate — see the polarity note in is_root_user.
+
+        These previously passed. A name cannot be resolved to a uid without the
+        image's own /etc/passwd, so `USER toor` mapped to uid 0 sailed through
+        the gate that exists to stop exactly that. The gate now refuses anything
+        it cannot prove is a non-zero decimal uid.
+
+        Operational cost: an artifact image declaring `USER nonroot` (the
+        distroless convention) must switch to its numeric form (`USER 65532`).
+        The Kubernetes substrate already required this — runAsNonRoot is
+        kubelet-checked against a resolved numeric uid — so this makes the two
+        backends agree rather than introducing a new constraint.
+        """
+        assert DockerRunner.is_root_user(user) is True
 
     def test_run_step_refuses_a_root_image_and_never_starts_it(self):
         runner = DockerRunner()
@@ -832,6 +849,17 @@ class TestRootUserGate:
     """
 
     @pytest.mark.parametrize("declared", [
+        # Signed forms: runc falls back to strconv.Atoi, which accepts a sign,
+        # so these resolve to uid 0 — while str.isdigit() rejected them, so the
+        # old gate cleared the image.
+        "+0", "-0",
+        # "²".isdigit() is True but int("²") raises; the old code only failed
+        # closed by accident, because ContainerEngine._run_step swallows Exception.
+        "²",
+        "0x0",          # not decimal — unprovable, therefore refused
+        ":0",           # empty uid half
+        "toor",         # named alias that may be uid 0 in the image's passwd
+        "nonroot",      # named: unresolvable without the image's /etc/passwd
         "0:100",        # the reported bypass
         "root:wheel",
         "0:0",
@@ -845,6 +873,13 @@ class TestRootUserGate:
         "ROOT",
     ])
     def test_root_images_are_detected(self, declared):
+        """Polarity: anything not PROVABLY a decimal uid must be refused.
+
+        This aligns the Docker gate with the Kubernetes one, where
+        runAsNonRoot=True is kubelet-enforced against a resolved numeric uid and
+        a non-numeric USER is refused outright — the two backends previously
+        disagreed on the same security property.
+        """
         assert DockerRunner.is_root_user(declared) is True, (
             f"USER {declared!r} resolves to uid 0 but passed the non-root gate — "
             "the image would run as root over the host-mounted workspace (#408.1)"
@@ -854,9 +889,8 @@ class TestRootUserGate:
         "1000",
         "1000:1000",
         "65532:65532",
-        "nonroot",
-        "nonroot:nonroot",
         "10",
+        "00065532",     # zero-padded decimal is still provably non-zero
     ])
     def test_non_root_images_are_allowed(self, declared):
         """Contrast: the gate must not start rejecting legitimate images."""

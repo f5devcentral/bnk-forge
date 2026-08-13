@@ -72,3 +72,45 @@ class TestSensitiveInputValues:
     def test_missing_or_malformed_inputs_are_tolerated(self, manifest):
         """A manifest without inputs must not break the engine build."""
         assert _sensitive_input_values(manifest, {"anything": "x"}) == []
+
+
+@pytest.mark.unit
+class TestActionInputRedaction:
+    """Action inputs are declared separately and supplied at invocation time.
+
+    Review finding: `_sensitive_input_values` read only the TOP-LEVEL
+    manifest["inputs"], while actions declare their own under
+    manifest["actions"][<name>]["inputs"] — and run_action merges the values in
+    after the engine is built. So a sensitive action input reached step argv and
+    was echoed verbatim into task.logs, the module-log WebSocket and
+    OperationResult.stdout.
+    """
+
+    MANIFEST = {
+        "inputs": {"required": [{"name": "region", "type": "string", "source": "user"}]},
+        "actions": {
+            "run-e2e": {
+                "title": "E2E",
+                "inputs": [{"name": "api_token", "type": "string", "sensitive": True}],
+                "steps": [{"name": "e", "args": ["e2e", "--token", "{{inputs.api_token}}"]}],
+            }
+        },
+    }
+
+    def test_action_declared_sensitive_input_is_collected(self):
+        values = _sensitive_input_values(self.MANIFEST, {"api_token": "ACTION-SECRET"})
+        assert "ACTION-SECRET" in values, (
+            "an action input marked sensitive never reached the redactor — the "
+            "token is echoed in the `$ docker run ...` line"
+        )
+
+    def test_non_sensitive_action_inputs_are_not_collected(self):
+        assert _sensitive_input_values(self.MANIFEST, {"region": "us-south"}) == []
+
+    def test_top_level_inputs_still_collected_alongside_actions(self):
+        m = {
+            "inputs": [{"name": "ibmcloud_api_key", "type": "string"}],
+            "actions": {"a": {"inputs": [{"name": "api_token", "sensitive": True}]}},
+        }
+        values = _sensitive_input_values(m, {"ibmcloud_api_key": "K1", "api_token": "K2"})
+        assert set(values) == {"K1", "K2"}
