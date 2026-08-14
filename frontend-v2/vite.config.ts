@@ -30,10 +30,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
-  // Required for monaco-editor ?worker imports
-  worker: {
-    format: 'es',
-  },
+
   server: {
     port: 5173,
     // WSL2 + Windows-mounted /mnt/* drives don't propagate inotify events,
@@ -61,11 +58,6 @@ export default defineConfig({
     // Set VITE_SOURCEMAP=true during build to enable for debugging
     sourcemap: process.env.VITE_SOURCEMAP === 'true',
     rollupOptions: {
-      // monaco-editor ?worker imports are resolved at runtime via MonacoEnvironment.getWorker
-      onwarn(warning, defaultHandler) {
-        if (warning.code === 'UNRESOLVED_IMPORT' && warning.message?.includes('monaco-editor')) return;
-        defaultHandler(warning);
-      },
       output: {
         manualChunks: {
           // React core - rarely changes
