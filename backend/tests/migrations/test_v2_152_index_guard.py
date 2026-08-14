@@ -55,10 +55,26 @@ CREATE TABLE container_registries (
 """
 
 
+# These tests DROP AND RECREATE container_registries, so they must never point
+# at a real database. CI targets a dedicated scratch DB (bnkforge_orm_ci); this
+# refuses anything that does not look disposable, rather than trusting the
+# operator to have read the docstring.
+_DISPOSABLE_DB_MARKERS = ("_ci", "_test", "test_", "scratch")
+
+
 @pytest.fixture()
 def engine():
     if not PG_URL:
         pytest.skip("TEST_POSTGRES_URL not set; v2_152 index semantics need Postgres")
+
+    db_name = sa.engine.make_url(PG_URL).database or ""
+    if not any(marker in db_name for marker in _DISPOSABLE_DB_MARKERS):
+        pytest.fail(
+            f"refusing to run: TEST_POSTGRES_URL points at database {db_name!r}, "
+            f"which does not look disposable. These tests DROP container_registries. "
+            f"Use a scratch database whose name contains one of "
+            f"{', '.join(_DISPOSABLE_DB_MARKERS)}."
+        )
     return sa.create_engine(PG_URL)
 
 
