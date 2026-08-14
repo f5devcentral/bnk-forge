@@ -136,7 +136,7 @@ export function useTaskWebSocket() {
             30000 // Max 30 seconds
           );
 
-          reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = window.setTimeout(() => {
             reconnectAttemptsRef.current += 1;
             connect();
           }, delay);
