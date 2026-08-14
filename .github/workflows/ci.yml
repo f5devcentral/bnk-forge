@@ -728,6 +728,16 @@ jobs:
       - name: "Assert create_all and the migration chain agree"
         run: python scripts/check-schema-parity.py "$ORM_DATABASE_URL" "$DATABASE_URL"
 
+      # Targeted regression tests for revisions whose behaviour depends on WHICH
+      # provisioning path built the database. The parity check above catches the
+      # same class, but only as a whole-schema diff after a full upgrade — these
+      # name the specific invariant and fail with a message that says what broke.
+      - name: "Migration regression tests (Postgres)"
+        working-directory: backend
+        env:
+          TEST_POSTGRES_URL: ${{ env.ORM_DATABASE_URL }}
+        run: python -m pytest tests/migrations/ -v
+
   frontend-build:
     name: "P2 · Build · Frontend"
     needs: [changes, lint-frontend, typecheck-frontend, unit-tests-frontend]

@@ -157,9 +157,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Intentionally empty. This revision only ADDS objects that other revisions
-    # already claim to own — v2_136 owns the column, v2_138 the table — and each
-    # drops its own in its downgrade(). Dropping them here as well would make a
-    # downgrade past this point destroy schema that a database reaching it by the
-    # normal chain legitimately has.
+    # Intentionally empty.
+    #
+    # The objects this revision ADDS are ones other revisions already claim to
+    # own — v2_136 the column, v2_138 the table — and each drops its own in its
+    # downgrade(). Dropping them here as well would make a downgrade past this
+    # point destroy schema that a database reaching it by the normal chain
+    # legitimately has.
+    #
+    # It also DROPS one object: the redundant plain ix_container_registries_name
+    # on a chain-built database. That is deliberately not recreated here either.
+    # Recreating it would reintroduce the create_all-vs-chain divergence this
+    # revision exists to remove, and v2_138 — which owns that index — drops it
+    # with if_exists=True, so a downgrade through v2_138 tolerates its absence.
     pass
