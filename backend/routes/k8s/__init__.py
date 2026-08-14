@@ -23,6 +23,7 @@ from routes.k8s.resources import router as resources_router
 from routes.k8s.tmm_debug import router as tmm_debug_router
 from routes.k8s.topology import router as topology_router
 from routes.k8s.tunnels import router as tunnels_router
+from routes.k8s.waf_policies import router as waf_policies_router
 
 __all__ = [
     "clusters_router",
@@ -35,4 +36,5 @@ __all__ = [
     "tunnels_router",
     "recovery_router",
     "topology_router",
+    "waf_policies_router",
 ]

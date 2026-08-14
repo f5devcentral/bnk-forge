@@ -681,6 +681,52 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         description="F5 CIS Policy — reusable traffic policy for VirtualServer/TransportServer (EOL Apr 2026)",
         category=ResourceCategory.F5_CIS,
     ),
+
+    # =========================================================================
+    # WAF POLICY MANAGER — nap-policy-operator PLM CRDs (appprotect.f5.com)
+    # Unmodified upstream CRD schema; PLM's own Policy Controller compiles
+    # spec.policy into a bundle and writes status.bundle.
+    # =========================================================================
+    "appolicy": K8sResourceType(
+        api_group=ApiGroups.APPPROTECT,
+        api_version="v1",
+        kind="APPolicy",
+        plural="appolicies",
+        namespaced=True,
+        display_name="WAF Policy",
+        description="App Protect WAF policy, compiled by the PLM Policy Controller",
+        category=ResourceCategory.WAF
+    ),
+    "aplogconf": K8sResourceType(
+        api_group=ApiGroups.APPPROTECT,
+        api_version="v1",
+        kind="APLogConf",
+        plural="aplogconfs",
+        namespaced=True,
+        display_name="WAF Log Profile",
+        description="App Protect WAF security logging profile",
+        category=ResourceCategory.WAF
+    ),
+    "apsignatures": K8sResourceType(
+        api_group=ApiGroups.APPPROTECT,
+        api_version="v1",
+        kind="APSignatures",
+        plural="apsignatures",
+        namespaced=True,
+        display_name="WAF Signatures",
+        description="Attack/bot signature and threat campaign revisions (singleton per namespace, name must be 'apsignatures')",
+        category=ResourceCategory.WAF
+    ),
+    "apusersig": K8sResourceType(
+        api_group=ApiGroups.APPPROTECT,
+        api_version="v1",
+        kind="APUserSig",
+        plural="apusersigs",
+        namespaced=True,
+        display_name="WAF User Signature",
+        description="User-defined App Protect attack signature",
+        category=ResourceCategory.WAF
+    ),
 }
 
 
