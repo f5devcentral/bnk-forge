@@ -281,3 +281,127 @@ class TestRepairInfrastructureAccess:
         assert data["infrastructure_private_key_available"] is False
         assert data["infrastructure_private_key_path"] is None
         assert data["infrastructure_access_status"] == "recovery_required"
+
+
+class TestGetDeploymentOutput:
+    """GET /api/project-modules/{module_id}/deployments/{deployment_id}/output.
+
+    Issue #526: the deployments endpoint returned status, timing and resource
+    counts but no log, and every other plausible path 404'd. A failed container
+    deploy could only be diagnosed by opening the UI, which makes headless/CI
+    deployment effectively undebuggable.
+    """
+
+    def _deployment(self, db, module, **overrides):
+        fields = dict(
+            module_id=module.id,
+            action="apply",
+            status="failed",
+            exit_code=1,
+            started_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+            duration_seconds=804.79,
+            stdout="[1/6] Container-runtime preflight ...\nerror: refusing to overwrite: /state/poc already exists\n",
+            stderr="",
+        )
+        fields.update(overrides)
+        dep = Deployment(**fields)
+        db.add(dep)
+        db.commit()
+        db.refresh(dep)
+        return dep
+
+    def test_returns_the_captured_step_output(self, client, admin_headers, sample_module, db):
+        """The stdout captured at deploy time is actually reachable over the API."""
+        mod = sample_module["module"]
+        dep = self._deployment(db, mod)
+
+        response = client.get(
+            f"/api/project-modules/{mod.id}/deployments/{dep.id}/output",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["deployment_id"] == dep.id
+        assert data["module_id"] == mod.id
+        assert data["status"] == "failed"
+        assert data["exit_code"] == 1
+        assert "refusing to overwrite" in data["stdout"], (
+            "the failure reason is missing — this endpoint exists precisely so a "
+            "failed deploy can be diagnosed without the UI (issue #526)"
+        )
+        assert data["truncated"] is False
+
+    def test_keeps_the_tail_when_output_exceeds_the_cap(
+        self, client, admin_headers, sample_module, db
+    ):
+        """Truncation keeps the END — the error is at the bottom of a deploy log."""
+        mod = sample_module["module"]
+        dep = self._deployment(
+            db, mod, stdout=("filler line\n" * 5000) + "FINAL ERROR: cluster unreachable\n"
+        )
+
+        response = client.get(
+            f"/api/project-modules/{mod.id}/deployments/{dep.id}/output?max_bytes=1024",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["truncated"] is True
+        assert len(data["stdout"]) <= 1024
+        assert "FINAL ERROR: cluster unreachable" in data["stdout"], (
+            "truncation dropped the tail, discarding the only line that explains "
+            "the failure"
+        )
+
+    def test_unknown_deployment_returns_404(self, client, admin_headers, sample_module):
+        mod = sample_module["module"]
+        response = client.get(
+            f"/api/project-modules/{mod.id}/deployments/999999/output",
+            headers=admin_headers,
+        )
+        assert response.status_code == 404
+
+    def test_deployment_of_another_module_is_not_readable(
+        self, client, admin_headers, sample_module, sample_project, db
+    ):
+        """A real deployment id belonging to a different module must 404 here."""
+        mod = sample_module["module"]
+        other = ProjectModule(
+            project_id=sample_project.id,
+            module_library_id=sample_module["library"].id,
+            path_in_project="infra/other",
+            status="applied",
+        )
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+
+        dep = self._deployment(db, other, stdout="secrets of another module")
+
+        response = client.get(
+            f"/api/project-modules/{mod.id}/deployments/{dep.id}/output",
+            headers=admin_headers,
+        )
+        assert response.status_code == 404, (
+            "a deployment was readable through the wrong module's path"
+        )
+
+    def test_viewer_can_read_output(
+        self, client, viewer_headers, all_test_users, sample_project, db
+    ):
+        """Diagnosis is a read operation — viewers get it."""
+        from tests.factories import ModuleLibraryFactory, ProjectModuleFactory
+
+        lib = ModuleLibraryFactory(db, name="rbac-output-test", category="test")
+        mod = ProjectModuleFactory(db, project=sample_project, library_module=lib)
+        db.commit()
+        dep = self._deployment(db, mod)
+
+        response = client.get(
+            f"/api/project-modules/{mod.id}/deployments/{dep.id}/output",
+            headers=viewer_headers,
+        )
+        assert response.status_code == 200

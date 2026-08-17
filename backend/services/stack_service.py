@@ -1010,7 +1010,29 @@ class StackService(BaseService):
 
         unchanged_applied = [m for m in modules if m.status == ModuleStatus.APPLIED and not workspace.vars_changed(m)]
         changed_applied = [m for m in modules if m.status == ModuleStatus.APPLIED and workspace.vars_changed(m)]
-        pending_modules = [m for m in modules if m.status != ModuleStatus.APPLIED] + changed_applied
+        # Disabled modules are filtered OUT here rather than left to raise at
+        # dispatch. This loop commits a queued Task row before calling
+        # dispatch_init, and has no try/except: a raise would abandon every
+        # later module, leave the stack DEPLOYING, and leave an orphan queued
+        # row that makes _has_active_task true forever — permanently skipping
+        # that module on every re-run.
+        #
+        # _apply_topology_module_filter is the tree's main producer of disabled
+        # modules (optional bare-metal modules that don't match host topology),
+        # and those deploy through exactly this path.
+        pending_modules = [
+            m for m in ([m for m in modules if m.status != ModuleStatus.APPLIED] + changed_applied)
+            if m.enabled
+        ]
+        skipped_disabled = [
+            m.id for m in modules
+            if not m.enabled and (m.status != ModuleStatus.APPLIED or m in changed_applied)
+        ]
+        if skipped_disabled:
+            logger.info(
+                "Stack deploy: skipping %d disabled module(s): %s",
+                len(skipped_disabled), skipped_disabled,
+            )
 
         if changed_applied:
             logger.info(

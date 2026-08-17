@@ -766,7 +766,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 db.commit()
                 _publish_task_completion(task)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
                 return {"status": "skipped", "module_id": module.id}
 
             task.status = "in_progress"
@@ -803,7 +803,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 db.commit()
                 create_deployment_record(db, task, module, "destroy", task.logs)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             if result.success:
                 _maybe_unregister_container_cluster(db, module)
@@ -823,7 +823,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("destroy trigger failed after container lock error: %s", trigger_err)
             raise
@@ -834,7 +834,44 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("destroy trigger failed after container exception: %s", trigger_err)
             raise
+
+
+@celery_app.task(name="tasks.container_tasks.kill_module_containers")
+def kill_module_containers(celery_task_ids: list[str]) -> dict:
+    """Kill the step containers owned by ``celery_task_ids``. Runs on the WORKER.
+
+    This exists because cancel is invoked from a FastAPI route — i.e. the
+    ``backend`` service, built from the ``api`` Dockerfile stage, which does NOT
+    copy the docker CLI (only the ``worker`` stage does) and is not given
+    DOCKER_HOST by compose. Calling the runner inline there raised
+    FileNotFoundError, which the old code swallowed into "0 containers killed",
+    so the user was told the operation stopped while the detached container kept
+    driving the vendor CLI against live infrastructure.
+
+    Same constraint the reaper already documents: only the celery services can
+    reach the docker endpoint.
+
+    Returns ``{"killed": [...], "reachable": bool, "error": str | None}`` so the
+    caller can tell "nothing was running" from "I could not look" — the module
+    lock must only be released on the former.
+    """
+    from services.execution.container_runner import (
+        ContainerKillUnavailableError,
+        DockerRunner,
+    )
+
+    runner = DockerRunner()
+    killed: list[str] = []
+    for task_id in celery_task_ids or []:
+        if not task_id:
+            continue
+        try:
+            killed.extend(runner.kill_task_containers(task_id))
+        except ContainerKillUnavailableError as exc:
+            logger.warning("kill_module_containers: %s", exc)
+            return {"killed": killed, "reachable": False, "error": str(exc)}
+    return {"killed": killed, "reachable": True, "error": None}

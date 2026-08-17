@@ -367,6 +367,14 @@ def rerun_module(module_id: int, user: User = Depends(require_module_owner), db:
     if module.status in ("initializing", "planning", "applying", "destroying"):
         raise BadRequestError(f"Cannot rerun: module is currently {module.status}", code="OPERATION_IN_PROGRESS")
 
+    # Validate BEFORE any mutation. Everything below nulls outputs/plan_output
+    # and commits, so a rejection at dispatch time would already have destroyed
+    # an applied module's outputs on a request that never ran.
+    if not module.enabled:
+        raise BadRequestError(
+            "Module is disabled — enable it before rerunning", code="MODULE_DISABLED"
+        )
+
     # Reset module state
     module.status = "not_initialized"
     module.deployment_error = None

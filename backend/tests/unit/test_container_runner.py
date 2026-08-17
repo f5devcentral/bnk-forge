@@ -818,3 +818,85 @@ class TestDetachedExecution:
             )
         assert (code, timed_out, transport) == (124, True, None)
         assert any("kill" in str(c) for c in run.call_args_list), "the container must be killed"
+
+
+@pytest.mark.unit
+class TestKillTaskContainers:
+    """Cancel needs to kill the daemon-side container, not just the client.
+
+    Issue #462: revoke(terminate=True) SIGKILLs the worker-side client while the
+    detached step container keeps running against live infrastructure. This
+    reuses the same ``bnkforge.task`` ownership label the reaper reads, so a
+    cancel and a reap cannot disagree about who owns a container.
+    """
+
+    def test_kills_each_container_owned_by_the_task(self):
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if argv[1] == "ps":
+                return MagicMock(returncode=0, stdout="abc123\ndef456\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            killed = runner.kill_task_containers("celery-mine")
+
+        assert killed == ["abc123", "def456"]
+        # Selection is by the task ownership label, not by name or image.
+        assert "label=bnkforge.task=celery-mine" in calls[0]
+        assert calls[1][1:] == ["kill", "abc123"]
+        assert calls[2][1:] == ["kill", "def456"]
+
+    def test_no_containers_running_returns_empty(self):
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="\n", stderr="")):
+            assert runner.kill_task_containers("celery-mine") == []
+
+    def test_empty_task_id_does_not_shell_out(self):
+        """A task with no celery id must not become an unfiltered `docker ps`."""
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        with patch("subprocess.run") as run:
+            assert runner.kill_task_containers("") == []
+        run.assert_not_called()
+
+    def test_unreachable_daemon_RAISES_rather_than_reporting_zero(self):
+        """"I killed nothing" and "I could not look" must not be the same answer.
+
+        This previously returned [], which the caller could not distinguish from
+        a clean no-op — so it force-released the module lock while the container
+        was still running. The API image has no docker CLI at all, so this is
+        the DEFAULT outcome there, not an edge case.
+        """
+        from services.execution.container_runner import ContainerKillUnavailableError
+
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("docker", 30)):
+            with pytest.raises(ContainerKillUnavailableError):
+                runner.kill_task_containers("celery-mine")
+
+    def test_missing_docker_binary_also_raises(self):
+        """The exact API-image case: FileNotFoundError, not a timeout."""
+        from services.execution.container_runner import ContainerKillUnavailableError
+
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+        with patch("subprocess.run", side_effect=FileNotFoundError("docker")):
+            with pytest.raises(ContainerKillUnavailableError):
+                runner.kill_task_containers("celery-mine")
+
+    def test_tolerates_a_container_exiting_between_ps_and_kill(self):
+        """ps → kill is inherently racy; a container that exits first is fine."""
+        runner = DockerRunner(docker_host="tcp://docker-socket-proxy:2375")
+
+        def fake_run(argv, **kwargs):
+            if argv[1] == "ps":
+                return MagicMock(returncode=0, stdout="abc123\ndef456\n", stderr="")
+            if argv[2] == "abc123":
+                return MagicMock(returncode=1, stdout="", stderr="No such container: abc123")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            killed = runner.kill_task_containers("celery-mine")
+
+        assert killed == ["def456"], "an already-exited container must not abort the sweep"
