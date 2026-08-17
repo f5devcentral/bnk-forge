@@ -245,17 +245,18 @@ class ContainerEngine(DeploymentEngine):
     def _resolve_steps(self, ctx: ModuleContext, operation: str) -> list[dict]:
         """Resolve the step list for a lifecycle op from the artifact manifest.
 
-        Reads ``execution.steps.<op>`` first (the SEAMS-named location), then
-        falls back to top-level ``steps.<op>`` (where the validator stores it).
+        Delegates to ``module_metadata.canonical_step_sets`` — the SAME resolver
+        the validator uses — so the steps that run are always the steps that were
+        validated. Previously this preferred ``execution.steps`` while every
+        validator read top-level ``steps``, which made the reviewed manifest a
+        decoy for the executed one.
+
         Returns ``[]`` when the phase is not declared.
         """
+        from services.module_metadata import canonical_step_sets
+
         manifest = ctx.pack_manifest or {}
-        execution = manifest.get("execution")
-        if isinstance(execution, dict) and isinstance(execution.get("steps"), dict):
-            steps = execution["steps"].get(operation)
-        else:
-            steps_block = manifest.get("steps")
-            steps = steps_block.get(operation) if isinstance(steps_block, dict) else None
+        steps = canonical_step_sets(manifest).get(operation)
 
         if steps is None:
             return []
@@ -284,7 +285,20 @@ class ContainerEngine(DeploymentEngine):
 
         def _sub(match: re.Match[str]) -> str:
             key = match.group(1)
-            return str(self._lookup_input(key, variables))
+            resolved = self._lookup_input(key, variables)
+            # Reject non-scalars HERE, at the single point where a value becomes
+            # part of an argv token. The equivalent check in
+            # validate_action_inputs only guards the action path; lifecycle
+            # steps render from ctx.variables (module.variables +
+            # variable_overrides, both JSON columns), so a dict there still
+            # reached step argv as a Python repr — the same class on the other
+            # of the two surfaces that exhibit it.
+            if not isinstance(resolved, (str, int, float, bool)):
+                raise ValueError(
+                    f"Input '{key}' is a {type(resolved).__name__}; only scalar "
+                    "values can be templated into a step argument"
+                )
+            return str(resolved)
 
         return _INPUT_TOKEN_RE.sub(_sub, value)
 
