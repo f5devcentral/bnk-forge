@@ -122,6 +122,7 @@ def _resolve_runner(db, manifest: dict, project):
 def _build_engine_and_ctx(
     db, module: ProjectModule, *, operation: str = "apply",
     celery_task_id: str | None = None,
+    extra_variables: dict | None = None,
 ) -> tuple[ContainerEngine, ModuleContext]:
     """Resolve manifest, substrate, pull secret, and build the engine + context."""
     from services.credentials_service import get_cloud_credentials_only
@@ -258,9 +259,69 @@ def _build_engine_and_ctx(
         workspace_volume=workspace_volume,
         workspace_subpath=workspace_subpath,
         pull_authfile_json=pull_authfile,
-        secret_values=list(credentials_env.values()) + ([pull_authfile] if pull_authfile else []),
+        secret_values=(
+            list(credentials_env.values())
+            + ([pull_authfile] if pull_authfile else [])
+            # extra_variables carries invocation-time action inputs, which are
+            # NOT in module.variables — the engine is built before run_action
+            # merges them, so without this the declared-sensitive action input
+            # has no value for the redactor to match against.
+            + _sensitive_input_values(
+                manifest, {**effective_variables, **(extra_variables or {})}
+            )
+        ),
     )
     return engine, ctx
+
+
+def _sensitive_input_values(manifest: dict, variables: dict) -> list[str]:
+    """Values of manifest inputs marked (or inferred) sensitive.
+
+    The engine redacts these from streamed and captured log lines. Previously
+    only cloud-credential and pull values were redacted, but a step's argv is
+    echoed verbatim to the task log and the module-log WebSocket — so an
+    artifact declaring ``args: [..., "--token", "{{inputs.api_token}}"]`` leaked
+    that token in cleartext (issue #408.6). The shipped roksbnkctl artifact was
+    unaffected (its secret rides in a redacted ``-e`` env var), which is why this
+    stayed latent.
+    """
+    from utils.security import is_sensitive_input
+
+    values: list[str] = []
+    definitions: list[dict] = []
+
+    def _collect(block) -> None:
+        if isinstance(block, list):
+            definitions.extend(d for d in block if isinstance(d, dict))
+        elif isinstance(block, dict):
+            # Both shapes appear in the wild: a flat list, or required/optional
+            # groups.
+            for group in block.values():
+                if isinstance(group, list):
+                    definitions.extend(d for d in group if isinstance(d, dict))
+
+    _collect((manifest or {}).get("inputs"))
+
+    # Actions declare their OWN inputs, which run_action merges into the
+    # templating variables. Reading only the top-level block meant an action
+    # input marked sensitive never reached the redactor, so `--token
+    # {{inputs.api_token}}` was echoed verbatim into task.logs, the module-log
+    # WebSocket and OperationResult.stdout — the same leak class this function
+    # exists to close, on the sibling path.
+    actions = (manifest or {}).get("actions")
+    if isinstance(actions, dict):
+        for definition in actions.values():
+            if isinstance(definition, dict):
+                _collect(definition.get("inputs"))
+
+    for definition in definitions:
+        name = definition.get("name")
+        if not isinstance(name, str) or not is_sensitive_input(definition):
+            continue
+        value = (variables or {}).get(name)
+        if isinstance(value, str) and value:
+            values.append(value)
+    return values
 
 
 def _streaming_sink(task, db, header: str, lines: list[str], *, interval: float = 2.0):
@@ -701,7 +762,10 @@ def run_container_action(self, task_db_id: int, module_id: int, action: str, act
                     _publish_task_completion(task)
                     return {"success": False, "error": task.error}
 
-                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
+                engine, ctx = _build_engine_and_ctx(
+                    db, module, celery_task_id=self.request.id,
+                    extra_variables=action_inputs,
+                )
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE ACTION '{action}' ===\nModule: {ctx.path}"
                 result = engine.run_action(

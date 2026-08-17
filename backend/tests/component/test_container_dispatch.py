@@ -77,14 +77,45 @@ class TestContainerDispatchRouting:
     def test_dispatch_destroy_routes_to_container_task(self, db):
         module = _container_module(db)
         with patch("tasks.container_tasks.run_container_destroy") as task:
-            task.delay.return_value = MagicMock(id="celery-4")
+            task.apply_async.return_value = MagicMock(id="celery-4")
             task_dispatch.dispatch_destroy(104, module)
-            task.delay.assert_called_once_with(104, module.id)
+            # No manifest budget → global defaults (no time-limit kwargs).
+            task.apply_async.assert_called_once_with((104, module.id))
+
+    def test_dispatch_destroy_derives_time_limit_from_manifest_budget(self, db):
+        """A destroy can outlive the global limit exactly as an apply can.
+
+        Being hard-killed mid-destroy leaves the module lock for the reclaim
+        sweep — the same failure the apply path was already protected against
+        (issue #463 F5).
+        """
+        module = _container_module(db)
+        module.library_module.pack_manifest = {
+            "steps": {
+                "destroy": [
+                    {"name": "teardown", "timeout_seconds": 3600,
+                     "retry": {"max_attempts": 3, "backoff_seconds": 300}},
+                ]
+            }
+        }
+        db.flush()
+        with patch("tasks.container_tasks.run_container_destroy") as task:
+            task.apply_async.return_value = MagicMock(id="celery-4b")
+            task_dispatch.dispatch_destroy(104, module)
+
+        kwargs = task.apply_async.call_args.kwargs
+        assert kwargs.get("time_limit", 0) > 7500, (
+            "destroy budget exceeding the global limit did not raise this task's "
+            "limit — a long teardown is hard-killed mid-run (#463 F5)"
+        )
+        assert kwargs["soft_time_limit"] < kwargs["time_limit"]
 
     def test_apply_signature_routes_to_container_task(self, db):
         module = _container_module(db)
         with patch("tasks.container_tasks.run_container_apply") as task:
-            task.s.return_value = "sig-apply"
+            signature = MagicMock()
+            signature.set.return_value = "sig-apply"
+            task.s.return_value = signature
             sig = task_dispatch.dispatch_apply_signature(105, module)
             assert sig == "sig-apply"
             task.s.assert_called_once_with(105, module.id)
@@ -92,7 +123,52 @@ class TestContainerDispatchRouting:
     def test_destroy_signature_routes_to_container_task(self, db):
         module = _container_module(db)
         with patch("tasks.container_tasks.run_container_destroy") as task:
-            task.s.return_value = "sig-destroy"
+            signature = MagicMock()
+            signature.set.return_value = "sig-destroy"
+            task.s.return_value = signature
             sig = task_dispatch.dispatch_destroy_signature(106, module)
             assert sig == "sig-destroy"
             task.s.assert_called_once_with(106, module.id)
+
+
+@pytest.mark.component
+class TestContainerActionTimeLimits:
+    """A long e2e/scenario action needs the same derived limit as apply (#463 F5)."""
+
+    def test_action_dispatch_derives_time_limit_from_the_action_step_set(self, db):
+        module = _container_module(db)
+        module.library_module.pack_manifest = {
+            "actions": {
+                "run-e2e": {
+                    "title": "E2E",
+                    "steps": [
+                        {"name": "e2e", "timeout_seconds": 3600,
+                         "retry": {"max_attempts": 3, "backoff_seconds": 300}},
+                    ],
+                }
+            }
+        }
+        db.flush()
+        with patch("tasks.container_tasks.run_container_action") as task:
+            task.apply_async.return_value = MagicMock(id="celery-act")
+            task_dispatch.dispatch_container_action(107, module, "run-e2e", {"scenario": "x"})
+
+        kwargs = task.apply_async.call_args.kwargs
+        assert kwargs.get("time_limit", 0) > 7500, (
+            "an action budget exceeding the global limit did not raise this task's "
+            "limit — a long e2e run is hard-killed mid-run, leaving the module lock "
+            "for the reclaim sweep (#463 F5)"
+        )
+
+    def test_action_without_a_budget_uses_global_defaults(self, db):
+        """Contrast: a short action must not get a bespoke limit."""
+        module = _container_module(db)
+        module.library_module.pack_manifest = {
+            "actions": {"quick": {"title": "Quick", "steps": [{"name": "q", "timeout_seconds": 60}]}}
+        }
+        db.flush()
+        with patch("tasks.container_tasks.run_container_action") as task:
+            task.apply_async.return_value = MagicMock(id="celery-act2")
+            task_dispatch.dispatch_container_action(108, module, "quick", None)
+
+        assert "time_limit" not in task.apply_async.call_args.kwargs

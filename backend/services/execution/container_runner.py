@@ -88,12 +88,13 @@ _LABEL_WORKSPACE = "bnkforge.workspace"
 _LABEL_TASK = "bnkforge.task"
 _MAX_NAME_PREFIX = 48            # keep generated container names comfortably legal
 
-# Image users that mean "root". Docker leaves Config.User empty when the image
-# never declares a USER, which the daemon runs as uid 0.
-_ROOT_USERS = {"", "0", "root", "0:0", "root:root"}
-
 # Env var names: letters/digits/underscore, not starting with a digit.
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# A uid we are willing to accept as proven non-root: ASCII decimal digits only.
+# Deliberately stricter than str.isdigit(), which accepts unicode digits ("²")
+# that int() then rejects, and which misses the signed forms runc accepts.
+_NUMERIC_UID_RE = re.compile(r"^[0-9]+$")
 
 
 _RFC3339_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z?\S*$")
@@ -548,8 +549,53 @@ class DockerRunner(ContainerRunner):
 
         An image that never declares USER reports an empty string and runs as
         root — that is the common case and must be caught.
+
+        Closes the numeric bypass only — see the KNOWN GAP note in the body.
+
+        Only the uid half decides this. Docker's USER is ``<user>[:<group>]``,
+        so an image declaring ``USER 0:100`` or ``USER root:wheel`` runs as uid 0
+        while never matching a fixed set of full strings. Exact-string membership
+        therefore let a root image through the gate documented as *the* protection
+        for the host-mounted workspace (issue #408.1). Compare the uid alone, and
+        numerically, so ``0``, ``00`` and ``0:anything`` are all caught.
+
+        The Kubernetes path is unaffected — ``run_as_non_root=True`` is
+        kubelet-enforced against the resolved numeric uid.
         """
-        return (image_user or "").strip().lower() in _ROOT_USERS
+        uid = (image_user or "").strip().split(":", 1)[0].strip()
+
+        # POLARITY: return True (root/refused) for anything not PROVABLY a
+        # non-zero decimal uid.
+        #
+        # The previous shape — `if uid.isdigit(): return int(uid)==0` then
+        # `return False` — classified everything unparseable as non-root, so it
+        # failed OPEN. runc's user.GetExecUser falls back to strconv.Atoi when no
+        # passwd entry matches, and Go's Atoi accepts a sign, so `USER +0` and
+        # `USER -0` both resolve to uid 0 while str.isdigit() rejects them.
+        # `USER ²` was worse: "²".isdigit() is True but int("²") raises, and the
+        # call only failed closed by accident because ContainerEngine._run_step
+        # swallows Exception.
+        #
+        # Refusing an unrecognised USER also subsumes the named-alias case
+        # (`USER toor` mapped to uid 0 in the image's own /etc/passwd), which the
+        # previous version documented as a known gap. It aligns this gate with
+        # the Kubernetes path, where runAsNonRoot=True is kubelet-enforced and
+        # refuses a non-numeric USER outright — the two backends previously
+        # disagreed on the same security property.
+        if not _NUMERIC_UID_RE.match(uid):
+            return True
+        # Prove the value is in the runtime's REPRESENTABLE non-root range, not
+        # merely != 0. runc's strconv.Atoi yields a 64-bit Go int, and moby's
+        # getUser then narrows it with uint32(execUser.Uid) — so any decimal uid
+        # whose low 32 bits are zero (4294967296, 8589934592, ...) becomes uid 0
+        # in the container while passing a `!= 0` check. Values above 2**31 are
+        # also unrepresentable in practice and fail later as an opaque runc
+        # error instead of the actionable refusal below.
+        try:
+            value = int(uid)
+        except ValueError:      # pragma: no cover - regex already guarantees digits
+            return True
+        return not (0 < value < 2**31)
 
     def _gate_image(
         self,
@@ -601,7 +647,11 @@ class DockerRunner(ContainerRunner):
                 f"Artifact image {spec.image_digest} runs as root "
                 f"(USER={image_user or '<unset>'}). Refusing to start it: the workspace is "
                 f"mounted from the host, so a root container is a host-root write primitive. "
-                f"Rebuild the image with a non-root USER."
+                f"Rebuild the image with a NUMERIC non-root USER (e.g. `USER 65532`). "
+                f"A named user is refused because it cannot be resolved to a uid "
+                f"without the image's own /etc/passwd — `USER toor` may well be uid 0. "
+                f"The Kubernetes substrate already enforces this: runAsNonRoot is "
+                f"kubelet-checked against the resolved numeric uid."
             )
 
         if on_output:
