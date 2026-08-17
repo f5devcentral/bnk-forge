@@ -860,6 +860,12 @@ class TestRootUserGate:
         ":0",           # empty uid half
         "toor",         # named alias that may be uid 0 in the image's passwd
         "nonroot",      # named: unresolvable without the image's /etc/passwd
+        # Decimal uids whose low 32 bits are zero: runc's strconv.Atoi yields a
+        # 64-bit int and moby narrows it with uint32(), so these run as uid 0
+        # while passing a `!= 0` check.
+        "4294967296", "8589934592",
+        "2147483648",   # above the representable non-root range
+        "999999999999",
         "0:100",        # the reported bypass
         "root:wheel",
         "0:0",
@@ -891,6 +897,8 @@ class TestRootUserGate:
         "65532:65532",
         "10",
         "00065532",     # zero-padded decimal is still provably non-zero
+        "65536",        # above 16-bit, but representable and non-zero
+        "2147483647",   # top of the accepted range
     ])
     def test_non_root_images_are_allowed(self, declared):
         """Contrast: the gate must not start rejecting legitimate images."""

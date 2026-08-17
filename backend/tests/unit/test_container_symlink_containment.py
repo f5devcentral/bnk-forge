@@ -84,3 +84,98 @@ class TestStepMarkerSymlink:
         assert engine._step_marker_exists("init") is False
         engine._write_step_marker("init")
         assert engine._step_marker_exists("init") is True
+
+
+@pytest.mark.unit
+class TestParentDirectorySwap:
+    """A symlinked PARENT must not be traversed either (review finding).
+
+    O_NOFOLLOW on the final component alone is not containment: the path is
+    resolved, re-resolved by isfile(), then re-resolved by open(), so swapping a
+    parent between those steps escapes. Not contrived — the shipped artifact
+    declares a NESTED outputs_file, and `state: {scope: deployment}` shares one
+    workspace across blueprint modules dispatched concurrently, so a sibling
+    module's step container can swap the directory mid-read.
+    """
+
+    def test_parent_swapped_AFTER_validation_is_refused(self, tmp_path, monkeypatch):
+        """The actual TOCTOU: the swap happens between validation and open.
+
+        A statically-planted symlink is caught by realpath in either design, so
+        that alone does not distinguish a fixed implementation from a broken
+        one. This models the real race — the directory is a genuine directory
+        when the path is validated, and becomes a symlink before the open — by
+        performing the swap from inside the first realpath() call.
+
+        Fixed: the component walk opens `sub` with O_NOFOLLOW and gets ELOOP.
+        Broken: validation saw a real directory, the later open() follows.
+        """
+        engine, ws = _engine(tmp_path)
+        real_sub = ws / "sub"
+        real_sub.mkdir()
+        (real_sub / "out.json").write_text(json.dumps({"benign": True}))
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "out.json").write_text(json.dumps({"master_key": "PWNED"}))
+
+        # Hook os.open, not realpath: the swap has to land AFTER every
+        # name-resolution the implementation does for validation and BEFORE the
+        # first open, which is precisely the window a TOCTOU exploits.
+        real_open = os.open
+        swapped = {"done": False}
+
+        def swapping_open(path, *a, **kw):
+            if not swapped["done"]:
+                swapped["done"] = True
+                try:
+                    real_sub.rename(tmp_path / "sub_aside")
+                    os.symlink(outside, ws / "sub")
+                except OSError:
+                    pass
+            return real_open(path, *a, **kw)
+
+        monkeypatch.setattr(os, "open", swapping_open)
+
+        data = engine._read_outputs_file("sub/out.json")
+
+        assert data.get("master_key") != "PWNED", (
+            "followed a parent directory swapped between validation and open — "
+            "O_NOFOLLOW on the final component alone is not containment"
+        )
+        assert data == {}
+
+    def test_symlinked_parent_is_refused(self, tmp_path):
+        engine, ws = _engine(tmp_path)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "out.json").write_text(json.dumps({"master_key": "PWNED"}))
+        # `sub` is itself a symlink — the swapped-parent shape.
+        os.symlink(outside, ws / "sub")
+
+        assert engine._read_outputs_file("sub/out.json") == {}, (
+            "read through a symlinked PARENT — realpath validated one path and "
+            "open() resolved another"
+        )
+
+    def test_deeply_nested_symlinked_parent_is_refused(self, tmp_path):
+        engine, ws = _engine(tmp_path)
+        real = ws / ".roksbnkctl"
+        real.mkdir()
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "cluster-outputs.json").write_text(json.dumps({"k": "v"}))
+        os.symlink(outside, real / "forge")   # mid-path component
+
+        assert engine._read_outputs_file(".roksbnkctl/forge/cluster-outputs.json") == {}
+
+    def test_the_real_nested_path_still_reads(self, tmp_path):
+        """Contrast: the shipped artifact's nested layout must keep working."""
+        engine, ws = _engine(tmp_path)
+        nested = ws / ".roksbnkctl" / "forge"
+        nested.mkdir(parents=True)
+        (nested / "cluster-outputs.json").write_text(json.dumps({"cluster": "c1"}))
+
+        assert engine._read_outputs_file(".roksbnkctl/forge/cluster-outputs.json") == {
+            "cluster": "c1"
+        }

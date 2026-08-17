@@ -575,7 +575,18 @@ class DockerRunner(ContainerRunner):
         # disagreed on the same security property.
         if not _NUMERIC_UID_RE.match(uid):
             return True
-        return int(uid) == 0
+        # Prove the value is in the runtime's REPRESENTABLE non-root range, not
+        # merely != 0. runc's strconv.Atoi yields a 64-bit Go int, and moby's
+        # getUser then narrows it with uint32(execUser.Uid) — so any decimal uid
+        # whose low 32 bits are zero (4294967296, 8589934592, ...) becomes uid 0
+        # in the container while passing a `!= 0` check. Values above 2**31 are
+        # also unrepresentable in practice and fail later as an opaque runc
+        # error instead of the actionable refusal below.
+        try:
+            value = int(uid)
+        except ValueError:      # pragma: no cover - regex already guarantees digits
+            return True
+        return not (0 < value < 2**31)
 
     def _gate_image(
         self,

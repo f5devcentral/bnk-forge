@@ -563,21 +563,69 @@ class ContainerEngine(DeploymentEngine):
             )
         return target
 
-    @staticmethod
-    def _open_contained(path: str, mode: str):
-        """Open a already-realpath-contained workspace path without following a symlink."""
+    def _open_contained(self, relative: str, mode: str):
+        """Open a workspace-relative path with NO component able to be a symlink.
+
+        O_NOFOLLOW on the final component is not containment. The path is
+        resolved, then re-resolved by isfile(), then re-resolved again by open()
+        — and swapping a PARENT directory between those steps escapes, because
+        only the last component is checked. That is not contrived here: the
+        shipped artifact declares a nested outputs_file
+        (.roksbnkctl/forge/cluster-outputs.json), and `state: {scope: deployment}`
+        shares one workspace across blueprint modules dispatched concurrently
+        onto --concurrency=4 workers, so module A's still-running step container
+        can swap a directory while module B's engine reads.
+
+        So walk the components, opening each directory with O_NOFOLLOW |
+        O_DIRECTORY relative to the previous fd, then open the leaf relative to
+        the last fd. No component is ever resolved by name twice, and none of
+        them may be a symlink.
+        """
         import errno
 
-        flags = os.O_RDONLY if mode == "r" else (os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        if not self._is_workspace_relative(relative):
+            raise ValueError(f"path {relative!r} escapes the module workspace")
+
+        parts = [p for p in os.path.normpath(relative).split(os.sep) if p and p != "."]
+        if not parts:
+            raise ValueError(f"path {relative!r} does not name a file")
+
+        root_fd = os.open(os.path.realpath(self.workspace_local_path), os.O_RDONLY | os.O_DIRECTORY)
+        open_fds = [root_fd]
         try:
-            fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
-        except OSError as exc:
-            if exc.errno in (errno.ELOOP, errno.EMLINK):
-                raise ValueError(
-                    f"{path} is a symlink; refusing to follow it out of the workspace"
-                ) from exc
-            raise
-        return os.fdopen(fd, mode, encoding="utf-8")
+            for component in parts[:-1]:
+                try:
+                    fd = os.open(
+                        component,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=open_fds[-1],
+                    )
+                except OSError as exc:
+                    if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                        raise ValueError(
+                            f"{relative!r}: component {component!r} is a symlink; "
+                            "refusing to follow it out of the workspace"
+                        ) from exc
+                    raise
+                open_fds.append(fd)
+
+            flags = os.O_RDONLY if mode == "r" else (os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            try:
+                leaf = os.open(parts[-1], flags | os.O_NOFOLLOW, 0o600, dir_fd=open_fds[-1])
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.EMLINK):
+                    raise ValueError(
+                        f"{relative!r} is a symlink; refusing to follow it out of "
+                        "the workspace"
+                    ) from exc
+                raise
+            return os.fdopen(leaf, mode, encoding="utf-8")
+        finally:
+            for fd in open_fds:
+                try:
+                    os.close(fd)
+                except OSError:      # pragma: no cover - best effort
+                    pass
 
     @staticmethod
     def _is_workspace_relative(candidate: str) -> bool:
@@ -606,21 +654,20 @@ class ContainerEngine(DeploymentEngine):
         Tolerates a missing file (the artifact may not emit one) and malformed
         JSON (logged, returns empty). Always returns a flat string-keyed dict.
         """
+        relative = filename or self.outputs_filename
+        # No isfile() precheck: it re-resolves the path by name, which is the
+        # very window a parent-directory swap exploits. Open first and let a
+        # missing file surface as FileNotFoundError.
         try:
-            path = self._contained_workspace_path(filename or self.outputs_filename)
-        except ValueError as exc:
-            logger.warning("Refusing to read artifact outputs file: %s", exc)
-            return {}
-        if not os.path.isfile(path):
-            return {}
-        try:
-            with self._open_contained(path, "r") as handle:
+            with self._open_contained(relative, "r") as handle:
                 data = json.load(handle)
-        except ValueError as exc:          # symlinked final component
+        except FileNotFoundError:
+            return {}
+        except ValueError as exc:          # symlinked component, or escapes
             logger.warning("Refusing to read artifact outputs file: %s", exc)
             return {}
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Could not read artifact outputs file %s: %s", path, exc)
+            logger.warning("Could not read artifact outputs file %s: %s", relative, exc)
             return {}
         return self._normalize_outputs(data)
 
@@ -662,9 +709,7 @@ class ContainerEngine(DeploymentEngine):
             # the marker name would otherwise be an arbitrary-file truncate to
             # "done\n" as the worker uid. _step_marker_path sanitises the step
             # name (traversal), which does nothing about symlinks.
-            marker = self._contained_workspace_path(
-                os.path.basename(self._step_marker_path(step_name))
-            )
+            marker = os.path.basename(self._step_marker_path(step_name))
             with self._open_contained(marker, "w") as handle:
                 handle.write("done\n")
         except (OSError, ValueError) as exc:
