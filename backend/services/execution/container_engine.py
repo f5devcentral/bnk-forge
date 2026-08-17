@@ -619,7 +619,13 @@ class ContainerEngine(DeploymentEngine):
                         "the workspace"
                     ) from exc
                 raise
-            return os.fdopen(leaf, mode, encoding="utf-8")
+            try:
+                return os.fdopen(leaf, mode, encoding="utf-8")
+            except Exception:
+                # fdopen takes ownership on success only; on failure the raw fd
+                # would leak, and this runs per step on a long-lived worker.
+                os.close(leaf)
+                raise
         finally:
             for fd in open_fds:
                 try:
