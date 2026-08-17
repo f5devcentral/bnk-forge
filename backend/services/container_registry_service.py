@@ -552,8 +552,15 @@ class ContainerRegistryService:
     # general host allowlist was rejected earlier — ECR and ICR hosts are
     # provider-shaped and therefore constrainable.
     _DERIVED_HOST_PATTERNS = {
-        "ecr": re.compile(r"^\d+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$"),
-        "icr": re.compile(r"^([a-z0-9-]+\.)?icr\.io$"),
+        # ecr-fips is a real endpoint family (govcloud/regulated), public.ecr.aws
+        # is ECR Public, and IBM exposes private.<region>.icr.io — all legitimate
+        # and all refused by a first pass that was too tight. A false positive
+        # here blocks a working registry, which is the same mistake as the
+        # allowlist that would have broken self-hosted Harbor.
+        "ecr": re.compile(
+            r"^(\d+\.dkr\.ecr(-fips)?\.[a-z0-9-]+\.amazonaws\.com(\.cn)?|public\.ecr\.aws)$"
+        ),
+        "icr": re.compile(r"^([a-z0-9-]+\.)*icr\.io$"),
     }
 
     def _assert_derived_host_matches_provider(self, reg: ContainerRegistry) -> None:

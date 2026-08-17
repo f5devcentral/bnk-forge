@@ -530,6 +530,7 @@ class TestDerivedHostMustMatchProvider:
         ("ecr", "attacker.example.com"),
         ("ecr", "123456789012.dkr.ecr.us-east-1.amazonaws.com.evil.net"),
         ("icr", "evil.io"),
+        ("icr", "icr.io.evil.net"),
     ])
     def test_non_provider_hosts_are_refused(self, type_, host):
         from core.errors import BadRequestError
@@ -538,7 +539,12 @@ class TestDerivedHostMustMatchProvider:
 
     @pytest.mark.parametrize("type_,host", [
         ("ecr", "123456789012.dkr.ecr.us-east-1.amazonaws.com"),
-        ("icr", "us.icr.io"), ("icr", "icr.io"),
+        # Real endpoint families a first, tighter pass wrongly refused. A false
+        # positive here blocks a working registry.
+        ("ecr", "123456789012.dkr.ecr-fips.us-east-1.amazonaws.com"),
+        ("ecr", "public.ecr.aws"),
+        ("ecr", "123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn"),
+        ("icr", "us.icr.io"), ("icr", "icr.io"), ("icr", "private.us.icr.io"),
     ])
     def test_real_provider_hosts_are_allowed(self, type_, host):
         self._svc()._assert_derived_host_matches_provider(self._reg(type_, host))
