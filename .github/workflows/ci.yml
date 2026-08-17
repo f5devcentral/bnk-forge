@@ -736,7 +736,18 @@ jobs:
         working-directory: backend
         env:
           TEST_POSTGRES_URL: ${{ env.ORM_DATABASE_URL }}
-        run: python -m pytest tests/migrations/ -v
+        run: |
+          # Assert the precondition rather than letting the tests skip.
+          # Actions substitutes an unresolvable env.X with the EMPTY STRING and
+          # says nothing, so a rename of ORM_DATABASE_URL would leave this step
+          # green while asserting nothing — and the gate treats `skipped` as
+          # acceptable. That is the "gate exists but never executes" class this
+          # very job was added to catch.
+          if [ -z "$TEST_POSTGRES_URL" ]; then
+            echo "::error::TEST_POSTGRES_URL is empty — the migration regression tests would silently skip"
+            exit 1
+          fi
+          python -m pytest tests/migrations/ -v
 
   frontend-build:
     name: "P2 · Build · Frontend"

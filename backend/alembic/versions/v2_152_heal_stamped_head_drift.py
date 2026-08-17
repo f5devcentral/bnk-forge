@@ -165,7 +165,10 @@ def downgrade() -> None:
     # point destroy schema that a database reaching it by the normal chain
     # legitimately has.
     #
-    # It also DROPS one object: the redundant plain ix_container_registries_name
+    # It also ALTERS one: upgrade() relaxes stack_instances.template_id to
+    # nullable. Left alone here because v2_136 restores that on the way down.
+    #
+    # And it DROPS one object: the redundant plain ix_container_registries_name
     # on a chain-built database. That is deliberately not recreated here either.
     # Recreating it would reintroduce the create_all-vs-chain divergence this
     # revision exists to remove, and v2_138 — which owns that index — drops it

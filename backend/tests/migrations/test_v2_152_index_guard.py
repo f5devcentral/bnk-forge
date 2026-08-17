@@ -55,27 +55,60 @@ CREATE TABLE container_registries (
 """
 
 
-# These tests DROP AND RECREATE container_registries, so they must never point
-# at a real database. CI targets a dedicated scratch DB (bnkforge_orm_ci); this
-# refuses anything that does not look disposable, rather than trusting the
-# operator to have read the docstring.
-_DISPOSABLE_DB_MARKERS = ("_ci", "_test", "test_", "scratch")
+# These tests DROP AND RECREATE container_registries, so they must never run
+# against a database anyone else owns.
+#
+# A name-shaped guard was tried first and was not enough: a substring check for
+# "_test"/"_ci" admits `bnk_forge_test`, which is THIS REPO'S OWN
+# docker-compose.test.yml database, and `bnkforge_orm_ci`, which is the artifact
+# the parity gate in the same CI job reads. Dropping a table there destroys
+# token_encrypted / far_service_account_encrypted — unrecoverable secrets, not
+# regenerable schema — or silently breaks a sibling gate.
+#
+# So the fixture creates its OWN database per run and drops it afterwards.
+# Nothing pre-existing is touched, which makes the whole question moot rather
+# than merely constrained.
 
 
 @pytest.fixture()
 def engine():
     if not PG_URL:
+        # Skipping locally is fine; skipping in CI is a gate that reports green
+        # while asserting nothing, so fail there instead.
+        if os.environ.get("CI"):
+            pytest.fail(
+                "TEST_POSTGRES_URL is unset under CI — these tests would skip "
+                "and the gate would pass without asserting anything"
+            )
         pytest.skip("TEST_POSTGRES_URL not set; v2_152 index semantics need Postgres")
 
-    db_name = sa.engine.make_url(PG_URL).database or ""
-    if not any(marker in db_name for marker in _DISPOSABLE_DB_MARKERS):
-        pytest.fail(
-            f"refusing to run: TEST_POSTGRES_URL points at database {db_name!r}, "
-            f"which does not look disposable. These tests DROP container_registries. "
-            f"Use a scratch database whose name contains one of "
-            f"{', '.join(_DISPOSABLE_DB_MARKERS)}."
-        )
-    return sa.create_engine(PG_URL)
+    import uuid
+
+    url = sa.engine.make_url(PG_URL)
+    scratch_name = f"bnkforge_migtest_{uuid.uuid4().hex[:12]}"
+
+    # CREATE/DROP DATABASE cannot run inside a transaction.
+    admin = sa.create_engine(
+        url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'CREATE DATABASE "{scratch_name}"'))
+    except sa.exc.OperationalError as exc:
+        pytest.skip(f"cannot create a scratch database on this server: {exc}")
+
+    scratch = sa.create_engine(url.set(database=scratch_name))
+    try:
+        yield scratch
+    finally:
+        scratch.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = :d AND pid <> pg_backend_pid()"
+            ), {"d": scratch_name})
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{scratch_name}"'))
+        admin.dispose()
 
 
 def _provision(engine, *, unique_index: bool) -> None:
