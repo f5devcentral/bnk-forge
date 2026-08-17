@@ -73,12 +73,16 @@ CREATE TABLE container_registries (
 @pytest.fixture()
 def engine():
     if not PG_URL:
-        # Skipping locally is fine; skipping in CI is a gate that reports green
-        # while asserting nothing, so fail there instead.
-        if os.environ.get("CI"):
+        # Fail only in the job that is SUPPOSED to run these, which sets
+        # BNK_REQUIRE_MIGRATION_TESTS alongside the URL. Keying on CI generally
+        # was wrong: every other CI job legitimately has no Postgres, and the
+        # broad legacy suite collected this directory, so the guard failed three
+        # jobs it was never meant to touch.
+        if os.environ.get("BNK_REQUIRE_MIGRATION_TESTS"):
             pytest.fail(
-                "TEST_POSTGRES_URL is unset under CI — these tests would skip "
-                "and the gate would pass without asserting anything"
+                "TEST_POSTGRES_URL is unset in the job that requires the "
+                "migration tests — they would skip and the gate would pass "
+                "without asserting anything"
             )
         pytest.skip("TEST_POSTGRES_URL not set; v2_152 index semantics need Postgres")
 

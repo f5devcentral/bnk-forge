@@ -655,6 +655,7 @@ test-backend-legacy: $(BACKEND_PREREQ)
 	    --ignore=tests/component \
 	    --ignore=tests/integration \
 	    --ignore=tests/contract \
+	    --ignore=tests/migrations \
 	    --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
 build-frontend-check: $(FRONTEND_PREREQ)

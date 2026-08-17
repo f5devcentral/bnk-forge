@@ -736,6 +736,7 @@ jobs:
         working-directory: backend
         env:
           TEST_POSTGRES_URL: ${{ env.ORM_DATABASE_URL }}
+          BNK_REQUIRE_MIGRATION_TESTS: "1"
         run: |
           # Assert the precondition rather than letting the tests skip.
           # Actions substitutes an unresolvable env.X with the EMPTY STRING and
