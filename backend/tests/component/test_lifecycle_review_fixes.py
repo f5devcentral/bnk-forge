@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.errors import BadRequestError
+
 
 @pytest.mark.component
 class TestDestroyScopeBelongsToTheRun:
@@ -17,26 +19,56 @@ class TestDestroyScopeBelongsToTheRun:
     in DESTROYING forever.
     """
 
-    def test_scope_comes_from_the_supplied_task_not_the_newest(
+    def test_destroy_all_ADOPTS_an_in_flight_module_scoped_task(
         self, db, make_project, make_project_module, make_module_library, make_task
     ):
+        """The real scenario, which my previous test had inverted.
+
+        Previously this class created a project-scoped row and asserted it won.
+        That state is unreachable: the wave's idempotency guard is precisely why
+        no project row exists for a module with an in-flight destroy. The test
+        pinned the opposite of the bug.
+
+        What must happen instead: the wave ADOPTS the in-flight module-scoped
+        task into the run, so when it completes the chain resolves "project" and
+        the dependencies are queued.
+        """
+        from services.parallel_execution_service import ParallelExecutionService
         from tasks._tofu_helpers import _destroy_scope_for
 
         project = make_project()
-        lib = make_module_library(name="m", path="bnk/m")
-        module = make_project_module(project=project, library_module=lib, status="destroyed")
+        lib_root = make_module_library(name="cluster", path="bnk/cluster")
+        lib_leaf = make_module_library(name="bnk", path="bnk/bnk")
+        root = make_project_module(project=project, library_module=lib_root, status="applied")
+        leaf = make_project_module(project=project, library_module=lib_leaf,
+                                   status="destroying", dependencies=[root.id])
 
-        project_task = make_task(project=project, module=module, task_type="destroy",
-                                 status="in_progress", meta_data={"destroy_scope": "project"},
-                                 run_handle="run-1")
-        make_task(project=project, module=module, task_type="destroy", status="completed",
-                  meta_data={"destroy_scope": "module"})
+        # Step 1: a single-module destroy is already running for the leaf.
+        in_flight = make_task(project=project, module=leaf, task_type="destroy",
+                              status="in_progress",
+                              meta_data={"destroy_scope": "module"})
+        assert _destroy_scope_for(leaf, db, in_flight.id) == "module"
 
-        assert _destroy_scope_for(module, db, project_task.id) == "project", (
-            "the executing project-scope run resolved as 'module' because a newer "
-            "module-scoped row existed — dependencies would be stranded and the "
-            "entity left DESTROYING forever"
+        # Step 2: user clicks Destroy All.
+        with patch("tasks._tofu_helpers.DependencyGraphService") as gs, \
+             patch("services.execution.task_dispatch.dispatch_destroy_signature") as sig:
+            graph = MagicMock()
+            graph.get_reverse_dependencies.return_value = []
+            gs.return_value = graph
+            sig.return_value = MagicMock()
+            ParallelExecutionService(db)._dispatch_first_destroy_wave(
+                project.id, run_handle="run-adopt", force_destroy=True
+            )
+        db.refresh(in_flight)
+
+        # Step 3: the executing task is now part of the project run, so when it
+        # completes the chain proceeds instead of stranding the dependency.
+        assert _destroy_scope_for(leaf, db, in_flight.id) == "project", (
+            "the in-flight module-scoped task was skipped rather than adopted — "
+            "its dependencies would never be queued and the project would sit in "
+            "DESTROYING forever"
         )
+        assert in_flight.run_handle == "run-adopt"
 
     def test_without_a_task_id_it_still_falls_back_to_newest(
         self, db, make_project, make_project_module, make_module_library, make_task
@@ -195,3 +227,116 @@ class TestDispatchChokepointGate:
             task_dispatch.dispatch_destroy(1, MagicMock(id=7, enabled=False,
                                                        library_module=None,
                                                        path_in_project="p"))
+
+
+@pytest.mark.component
+class TestCancelResolvesSubstrateNotDispatchFamily:
+    """A container artifact on Kubernetes has no kill path — say so (review finding).
+
+    `get_engine_type` returns the DISPATCH FAMILY; the substrate is chosen
+    separately from execution.container_runner.backend or deploy_model. So a
+    K8s-substrate module took the docker branch, `docker ps` returned zero rows
+    with exit 0, and that read as a CONFIRMED kill: lock released, user told it
+    stopped, while the Job ran on against live infrastructure.
+    """
+
+    def _module(self, manifest):
+        return MagicMock(id=9, library_module=MagicMock(pack_manifest=manifest))
+
+    @pytest.mark.parametrize("manifest,expected", [
+        ({"execution": {"container_runner": {"backend": "kubernetes"}}}, "kubernetes"),
+        ({"deploy_model": "helm"}, "kubernetes"),
+        ({"execution": {"container_runner": {"backend": "docker"}}}, "docker"),
+        ({"deploy_model": "compose"}, "docker"),
+        ({}, "docker"),
+    ])
+    def test_substrate_resolution_mirrors_the_task_layer(self, manifest, expected):
+        from services.project_module_service import ProjectModuleService
+        assert ProjectModuleService._container_substrate(self._module(manifest)) == expected
+
+    def test_kubernetes_substrate_reports_UNCONFIRMED(self):
+        """No bnkforge.task label is stamped and the reaper is docker-only, so
+        there is nothing to kill by — unconfirmed retains the lock."""
+        from services.project_module_service import ProjectModuleService
+
+        svc = ProjectModuleService(MagicMock())
+        module = self._module({"deploy_model": "helm"})
+        task = MagicMock(celery_task_id="celery-1")
+
+        with patch("services.execution.task_dispatch.get_engine_type", return_value="container"), \
+             patch("tasks.container_tasks.kill_module_containers") as kill:
+            killed, confirmed = svc._kill_containers_for_tasks(module, [task])
+
+        assert confirmed is False, (
+            "a Kubernetes-substrate module reported a confirmed kill having killed "
+            "nothing — the lock would be released while the Job kept running"
+        )
+        assert killed == []
+        # The decisive assertion: it must not even TRY the docker kill. Without
+        # this, the test passes against the broken version too — the unpatched
+        # dispatch fails on a missing broker and also returns unconfirmed, which
+        # is the right answer reached by accident rather than by design.
+        kill.apply_async.assert_not_called()
+
+    def test_docker_substrate_still_dispatches_the_kill(self):
+        """Contrast: the substrate that DOES have a kill path must still use it."""
+        from services.project_module_service import ProjectModuleService
+
+        svc = ProjectModuleService(MagicMock())
+        module = self._module({"deploy_model": "compose"})
+        task = MagicMock(celery_task_id="celery-1")
+        dispatched = MagicMock()
+        dispatched.get.return_value = {"killed": ["abc"], "reachable": True, "error": None}
+
+        with patch("services.execution.task_dispatch.get_engine_type", return_value="container"), \
+             patch("tasks.container_tasks.kill_module_containers") as kill:
+            kill.apply_async.return_value = dispatched
+            killed, confirmed = svc._kill_containers_for_tasks(module, [task])
+
+        assert (killed, confirmed) == (["abc"], True)
+
+
+@pytest.mark.component
+class TestDisabledModulesAreFilteredNotRaisedOver:
+    """The gate must not raise into loops that commit before dispatching.
+
+    stack_service.run_deploy commits a queued Task row before dispatch_init and
+    has no try/except: a raise abandons every later module, leaves the stack
+    DEPLOYING, and leaves an orphan queued row that makes _has_active_task true
+    forever — permanently skipping that module on re-runs.
+    """
+
+    def test_stack_deploy_filters_disabled_modules_out(self):
+        """The filter is on the dispatch SET, so no raise can reach the loop."""
+        import inspect
+
+        from services import stack_service
+
+        src = inspect.getsource(stack_service.StackService.run_deploy)
+        assert "if m.enabled" in src, (
+            "run_deploy does not filter disabled modules — a disabled module "
+            "would raise mid-loop and strand the whole stack deploy"
+        )
+
+    def test_submit_init_rejects_before_creating_a_task(self, db, make_project,
+                                                        make_module_library,
+                                                        make_project_module):
+        """Rejection must precede create_task, which commits."""
+        from models import Task as TaskModel
+        from services.project_module_service import ProjectModuleService
+
+        project = make_project()
+        lib = make_module_library(name="v", path="i/v")
+        module = make_project_module(project=project, library_module=lib,
+                                     status="not_initialized", enabled=False)
+        db.flush()
+
+        with pytest.raises(BadRequestError, match="(?i)disabled"):
+            ProjectModuleService(db).submit_init(module.id)
+
+        assert db.query(TaskModel).filter(TaskModel.module_id == module.id).count() == 0, (
+            "an orphan Task row was committed before the rejection — "
+            "_has_active_task would then skip this module forever"
+        )
+        db.refresh(module)
+        assert module.status == "not_initialized", "a transitional status was stranded"

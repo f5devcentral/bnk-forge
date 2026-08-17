@@ -812,6 +812,12 @@ class ProjectModuleService(BaseService):
         if not module.library_module.git_source:
             raise BadRequestError("Module library has no git source configured")
 
+        # Before create_task/_commit_before_dispatch: those commit a queued Task
+        # row and flip module.status, so a rejection at dispatch time would
+        # strand a transitional status and leave an orphan task behind.
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before running init")
+
         task = self.create_task("init", module, triggered_by)
         self._commit_before_dispatch(task, module, "initializing")
 
@@ -1108,6 +1114,34 @@ class ProjectModuleService(BaseService):
     # "unconfirmed", which keeps the lock rather than dropping it optimistically.
     _KILL_CONFIRM_TIMEOUT_SECONDS = 15
 
+    @staticmethod
+    def _container_substrate(module) -> str:
+        """Where a container artifact's steps actually run: "docker" | "kubernetes".
+
+        Mirrors the precedence in container_tasks._resolve_runner — explicit
+        execution.container_runner.backend, else deploy_model ("helm" ⟹
+        kubernetes), else docker.
+        """
+        lib = getattr(module, "library_module", None)
+        manifest = getattr(lib, "pack_manifest", None) if lib else None
+        if not isinstance(manifest, dict):
+            return "docker"
+
+        execution = manifest.get("execution")
+        runner_cfg = (
+            execution.get("container_runner") if isinstance(execution, dict) else None
+        )
+        backend = (
+            (runner_cfg or {}).get("backend") if isinstance(runner_cfg, dict) else None
+        )
+        if isinstance(backend, str) and backend.strip():
+            return backend.strip().lower()
+
+        deploy_model = manifest.get("deploy_model")
+        if isinstance(deploy_model, str) and deploy_model.strip().lower() == "helm":
+            return "kubernetes"
+        return "docker"
+
     def _kill_containers_for_tasks(self, module, tasks) -> tuple[list[str], bool]:
         """Kill the daemon-side step container(s), on the WORKER.
 
@@ -1132,6 +1166,32 @@ class ProjectModuleService(BaseService):
         except Exception as exc:
             logger.warning("cancel: could not resolve engine for module %s: %s", module.id, exc)
             return [], True
+
+        # Resolve the SUBSTRATE, not just the dispatch family. `get_engine_type`
+        # returns "container" for a container artifact regardless of where its
+        # steps actually run; the substrate is chosen separately from
+        # execution.container_runner.backend, or inferred from deploy_model.
+        #
+        # A container artifact on Kubernetes therefore took the docker branch,
+        # `docker ps --filter label=bnkforge.task=<id>` returned zero rows with
+        # exit 0, and that read as a CONFIRMED kill: the lock was released and
+        # the user told the deployment had stopped, while the Job ran on to its
+        # active_deadline_seconds against live infrastructure — and a re-apply
+        # reused the same PVC.
+        #
+        # There is no Kubernetes kill path to fall back to: the runner stamps no
+        # bnkforge.task label (so nothing could select the Job even if a delete
+        # existed), and the reaper is DockerRunner-only. So this is UNCONFIRMED,
+        # which retains the lock — the honest answer until a Job-deletion path
+        # and a label exist.
+        substrate = self._container_substrate(module)
+        if substrate != "docker":
+            logger.warning(
+                "cancel: module %s runs on the %s substrate, which has no kill "
+                "path — reporting UNCONFIRMED so the lock is retained.",
+                module.id, substrate,
+            )
+            return [], False
 
         celery_ids = [t.celery_task_id for t in tasks if t.celery_task_id]
         if not celery_ids:

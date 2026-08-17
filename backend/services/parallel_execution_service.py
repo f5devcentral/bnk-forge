@@ -470,10 +470,40 @@ class ParallelExecutionService:
                 ]),
             ).first()
             if existing:
-                logger.info(
-                    "First destroy wave: skipping module %s — task %s already %s",
-                    module.id, existing.id, existing.status,
-                )
+                # ADOPT the in-flight task into this run rather than merely
+                # skipping it.
+                #
+                # Skipping left a module-scoped destroy (from
+                # POST /project-modules/{id}/destroy) as the newest — and only —
+                # destroy task for the module. When its worker finished, the
+                # chain guard read destroy_scope="module" off that very row and
+                # returned before chaining AND before terminal detection: the
+                # module's dependencies were never queued (live cloud infra
+                # stranded) and the stack/project sat in DESTROYING forever,
+                # because "applied" is not a terminal destroy status.
+                #
+                # Restamping makes the executing task a member of this run, so
+                # the guard resolves "project" and the chain proceeds. Scope
+                # belongs to the teardown run, not to whichever request happened
+                # to create the row.
+                meta = dict(existing.meta_data or {})
+                if meta.get("destroy_scope") != "project" or not existing.run_handle:
+                    meta["destroy_scope"] = "project"
+                    existing.meta_data = meta
+                    existing.run_handle = existing.run_handle or run_handle
+                    self.db.flush()
+                    logger.info(
+                        "First destroy wave: adopted in-flight task %s for module %s "
+                        "into run %s (was %s)",
+                        existing.id, module.id, run_handle,
+                        (existing.meta_data or {}).get("destroy_scope"),
+                    )
+                else:
+                    logger.info(
+                        "First destroy wave: skipping module %s — task %s already %s "
+                        "and already in this run",
+                        module.id, existing.id, existing.status,
+                    )
                 if first_task_id is None:
                     first_task_id = existing.celery_task_id
                 continue
