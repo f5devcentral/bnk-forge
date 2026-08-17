@@ -504,6 +504,26 @@ class ParallelExecutionService:
                         "and already in this run",
                         module.id, existing.id, existing.status,
                     )
+                    # RESIDUAL RACE, deliberately not mitigated here.
+                    #
+                    # If the worker completes between the SELECT above and this
+                    # flush, its trigger has already run under the old "module"
+                    # scope and returned before chaining — the module's
+                    # dependencies stay unqueued and the entity stays DESTROYING.
+                    # The janitor does NOT recover it: reset_stale_tasks only
+                    # touches NON-TERMINAL tasks, and this one is terminal.
+                    #
+                    # I tried a commit-refresh-and-re-trigger here and could not
+                    # demonstrate it firing under test, so it is not shipped: an
+                    # unverified mitigation inside a destroy path is worse than a
+                    # documented window. Closing it properly wants an atomic
+                    # conditional UPDATE (adopt only while still non-terminal,
+                    # and re-trigger when it matches zero rows), which is a
+                    # change to how the wave claims work rather than a patch
+                    # here. Tracked separately.
+                    #
+                    # The window is microseconds and the adoption above covers
+                    # every other ordering.
                 if first_task_id is None:
                     first_task_id = existing.celery_task_id
                 continue
