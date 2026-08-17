@@ -4540,6 +4540,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/project-modules/{module_id}/deployments/{deployment_id}/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Deployment Output
+         * @description Get the captured output of a single deployment run.
+         *
+         *     The deployment list endpoint reports status, timing and resource counts but
+         *     carries no log, so a failed module could only be diagnosed by opening the UI.
+         *     This returns the run's stdout/stderr so a headless or CI-driven deploy can
+         *     find out what actually failed (issue #526).
+         *
+         *     Output is kept from the END when it exceeds ``max_bytes`` — a failure message
+         *     is at the tail of the log, not the head.
+         */
+        get: operations["get_deployment_output_api_project_modules__module_id__deployments__deployment_id__output_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/project-modules/project/{project_id}/deployments": {
         parameters: {
             query?: never;
@@ -15933,6 +15961,41 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * DeploymentOutputResponse
+         * @description Response for GET /api/project-modules/{id}/deployments/{deployment_id}/output.
+         *
+         *     The captured stdout/stderr of a deployment run. Without this the only place a
+         *     failed module's step output existed was the UI's log viewer, so a headless or
+         *     CI-driven deploy had no way to find out why it failed (issue #526).
+         */
+        DeploymentOutputResponse: {
+            /** Module Id */
+            module_id: number;
+            /** Deployment Id */
+            deployment_id: number;
+            /** Action */
+            action: string;
+            /** Status */
+            status: string;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Duration Seconds */
+            duration_seconds?: number | null;
+            /** Stdout */
+            stdout: string;
+            /** Stderr */
+            stderr: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /**
          * DeploymentPlanPreview
@@ -30579,6 +30642,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_deployment_output_api_project_modules__module_id__deployments__deployment_id__output_get: {
+        parameters: {
+            query?: {
+                /** @description Cap on returned stdout size; the TAIL is kept when it exceeds this */
+                max_bytes?: number;
+            };
+            header?: never;
+            path: {
+                module_id: number;
+                deployment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentOutputResponse"];
                 };
             };
             /** @description Validation Error */

@@ -133,6 +133,10 @@ def reset_stale_tasks(
             # own work) sees a consistent state — matches the steady-state
             # per-iteration commit in _trigger_next_destroy_module.
             db.commit()
+            # No task_id on purpose: the janitor re-drives after a WORKER DEATH,
+            # so there is no executing task — "the module's newest destroy Task"
+            # is exactly the interrupted run we are resuming. Every other caller
+            # passes its own task id, because scope belongs to the run.
             _trigger_next_destroy_module(module, db)
 
     return reset_ids

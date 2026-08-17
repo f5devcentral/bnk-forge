@@ -704,7 +704,7 @@ def run_ssh_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 create_deployment_record(db, task, module, "destroy", task.logs)
                 _update_stack_status_if_needed(module, db)
                 # D-001 Phase 3: event-chain destroy trigger hook
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             return {"success": result.success, "exit_code": task.exit_code}
 
@@ -722,7 +722,7 @@ def run_ssh_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after SSH ModuleLockError: %s", trigger_err)
             raise
@@ -741,7 +741,7 @@ def run_ssh_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after SSH ModuleLockLostError: %s", trigger_err)
             raise
@@ -754,7 +754,7 @@ def run_ssh_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after SSH generic exception: %s", trigger_err)
             raise

@@ -748,6 +748,7 @@ class ProjectModuleService(BaseService):
         task_type: str,
         module: ProjectModule,
         triggered_by: str = "user",
+        meta_data: dict | None = None,
     ) -> Any:
         """
         Create a Task record in the database for an execution operation.
@@ -759,6 +760,10 @@ class ProjectModuleService(BaseService):
         deferred caller commit propagates — racing into a "Task X not found"
         ValueError. Reproduced 2026-05-04 driving destroys from a CLI script.
         Committing here closes the race for every submit_* method.
+
+        ``meta_data`` is stamped onto the Task row; the destroy event chain reads
+        ``meta_data["destroy_scope"]`` from it to decide how far the teardown
+        propagates (see submit_destroy).
         """
         from models import Task as TaskModel
 
@@ -769,6 +774,7 @@ class ProjectModuleService(BaseService):
             module_id=module.id,
             triggered_by=triggered_by,
             created_at=datetime.now(UTC),
+            meta_data=meta_data,
         )
         self.db.add(task)
         self.db.commit()
@@ -805,6 +811,12 @@ class ProjectModuleService(BaseService):
             raise BadRequestError("Module has no library module associated")
         if not module.library_module.git_source:
             raise BadRequestError("Module library has no git source configured")
+
+        # Before create_task/_commit_before_dispatch: those commit a queued Task
+        # row and flip module.status, so a rejection at dispatch time would
+        # strand a transitional status and leave an orphan task behind.
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before running init")
 
         task = self.create_task("init", module, triggered_by)
         self._commit_before_dispatch(task, module, "initializing")
@@ -947,7 +959,23 @@ class ProjectModuleService(BaseService):
 
         module.stage_detail = None
 
-        task = self.create_task("destroy", module, triggered_by)
+        # Scope the teardown to THIS module only.
+        #
+        # The destroy event chain (_trigger_next_destroy_module) walks
+        # module.dependencies and queues a destroy for each one as the predecessor
+        # reaches a terminal state. That reverse-DAG walk is correct for a whole
+        # project or stack teardown, where every module is meant to come down.
+        # It is wrong here: this endpoint destroys one named module, and the
+        # modules it *depends on* are exactly the ones that must survive.
+        #
+        # Without this stamp the chain fell through to the stack_instance_id
+        # heuristic, so destroying a blueprint's bnk-install cascaded down into
+        # cluster-create and deleted the ROKS cluster BNK was installed on
+        # (issue #525) — ~48 minutes of infrastructure removed by a request that
+        # named only the application layer.
+        task = self.create_task(
+            "destroy", module, triggered_by, meta_data={"destroy_scope": "module"}
+        )
         self._commit_before_dispatch(task, module, "destroying")
 
         from services.execution.task_dispatch import dispatch_destroy
@@ -1014,6 +1042,11 @@ class ProjectModuleService(BaseService):
         """
         module = self.get_module(module_id)
 
+        # An action runs the artifact's own image against live infrastructure,
+        # so a disabled module must not be actionable either (issue #527).
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before running actions")
+
         lib = module.library_module
         manifest = getattr(lib, "pack_manifest", None) if lib else None
         if not isinstance(manifest, dict) or not isinstance(manifest.get("container_image"), dict):
@@ -1076,6 +1109,113 @@ class ProjectModuleService(BaseService):
             **dispatch_state,
         }
 
+    # How long cancel waits for the worker to confirm the container kill. Short
+    # on purpose: this runs inside a request, and a slow answer degrades to
+    # "unconfirmed", which keeps the lock rather than dropping it optimistically.
+    _KILL_CONFIRM_TIMEOUT_SECONDS = 15
+
+    @staticmethod
+    def _container_substrate(module) -> str:
+        """Where a container artifact's steps actually run: "docker" | "kubernetes".
+
+        Mirrors the precedence in container_tasks._resolve_runner — explicit
+        execution.container_runner.backend, else deploy_model ("helm" ⟹
+        kubernetes), else docker.
+        """
+        lib = getattr(module, "library_module", None)
+        manifest = getattr(lib, "pack_manifest", None) if lib else None
+        if not isinstance(manifest, dict):
+            return "docker"
+
+        execution = manifest.get("execution")
+        runner_cfg = (
+            execution.get("container_runner") if isinstance(execution, dict) else None
+        )
+        backend = (
+            (runner_cfg or {}).get("backend") if isinstance(runner_cfg, dict) else None
+        )
+        if isinstance(backend, str) and backend.strip():
+            return backend.strip().lower()
+
+        deploy_model = manifest.get("deploy_model")
+        if isinstance(deploy_model, str) and deploy_model.strip().lower() == "helm":
+            return "kubernetes"
+        return "docker"
+
+    def _kill_containers_for_tasks(self, module, tasks) -> tuple[list[str], bool]:
+        """Kill the daemon-side step container(s), on the WORKER.
+
+        Returns ``(killed_ids, confirmed)``. ``confirmed`` is False when the
+        docker endpoint could not be reached at all — the caller must NOT
+        release the module lock in that case.
+
+        Dispatched as a Celery task rather than called inline. cancel_operation
+        runs in the FastAPI ``backend`` service, which is built from the ``api``
+        Dockerfile stage: it has no docker CLI (only the ``worker`` stage copies
+        one) and compose sets DOCKER_HOST only on the celery services. Inline,
+        `docker ps` raised FileNotFoundError, the runner swallowed it, and the
+        caller saw "0 containers killed" — so the lock was force-released while
+        the container kept running, which is precisely the corruption this whole
+        path exists to prevent.
+        """
+        from services.execution.task_dispatch import get_engine_type
+
+        try:
+            if get_engine_type(module) != "container":
+                return [], True          # nothing to kill; not an unknown state
+        except Exception as exc:
+            logger.warning("cancel: could not resolve engine for module %s: %s", module.id, exc)
+            return [], True
+
+        # Resolve the SUBSTRATE, not just the dispatch family. `get_engine_type`
+        # returns "container" for a container artifact regardless of where its
+        # steps actually run; the substrate is chosen separately from
+        # execution.container_runner.backend, or inferred from deploy_model.
+        #
+        # A container artifact on Kubernetes therefore took the docker branch,
+        # `docker ps --filter label=bnkforge.task=<id>` returned zero rows with
+        # exit 0, and that read as a CONFIRMED kill: the lock was released and
+        # the user told the deployment had stopped, while the Job ran on to its
+        # active_deadline_seconds against live infrastructure — and a re-apply
+        # reused the same PVC.
+        #
+        # There is no Kubernetes kill path to fall back to: the runner stamps no
+        # bnkforge.task label (so nothing could select the Job even if a delete
+        # existed), and the reaper is DockerRunner-only. So this is UNCONFIRMED,
+        # which retains the lock — the honest answer until a Job-deletion path
+        # and a label exist.
+        substrate = self._container_substrate(module)
+        if substrate != "docker":
+            logger.warning(
+                "cancel: module %s runs on the %s substrate, which has no kill "
+                "path — reporting UNCONFIRMED so the lock is retained.",
+                module.id, substrate,
+            )
+            return [], False
+
+        celery_ids = [t.celery_task_id for t in tasks if t.celery_task_id]
+        if not celery_ids:
+            return [], True
+
+        try:
+            from tasks.container_tasks import kill_module_containers
+
+            async_result = kill_module_containers.apply_async(
+                (celery_ids,), queue="default"
+            )
+            outcome = async_result.get(timeout=self._KILL_CONFIRM_TIMEOUT_SECONDS)
+        except Exception as exc:
+            # Broker down, no worker, or timeout — all mean "unconfirmed".
+            logger.warning(
+                "cancel: container kill for module %s was not confirmed: %s",
+                module.id, exc,
+            )
+            return [], False
+
+        if not isinstance(outcome, dict):
+            return [], False
+        return list(outcome.get("killed") or []), bool(outcome.get("reachable"))
+
     def cancel_operation(self, module_id: int) -> dict:
         """Cancel a running deployment operation (revoke Celery task, reset status)."""
         from celery_app import celery_app
@@ -1083,40 +1223,102 @@ class ProjectModuleService(BaseService):
 
         module = self.get_module(module_id)
 
-        active_task = (
+        # Match queued/pending as well as in-progress. Module status flips to
+        # applying/destroying at SUBMIT time, which is what the UI's Stop gate
+        # keys off — so Stop is routinely clicked while the Celery task is still
+        # queued. Matching only "in_progress" left that task un-revoked, and the
+        # worker later picked it up and ran the full apply after the user had
+        # been told it stopped (issue #462 F4, issue #527 part 2).
+        cancellable = (
             self.db.query(TaskModel)
             .filter(
                 and_(
                     TaskModel.module_id == module_id,
-                    TaskModel.status == "in_progress",
+                    TaskModel.status.in_(["in_progress", "queued", "pending"]),
                 )
             )
             .order_by(TaskModel.created_at.desc())
-            .first()
+            .all()
         )
+        # Guard on whether ANY cancellable task carries a celery id, not on the
+        # newest one. create_task commits before dispatch stamps the id, and
+        # _trigger_next_stack_module commits its "pending" row before calling
+        # dispatch_apply — so a NEWER, id-less row can sit in front of the
+        # running task. Keying the guard on cancellable[0] meant the whole
+        # cancel was skipped in that window: the running task was never revoked,
+        # no container was killed, and the caller was told
+        # "Reset stuck deployment status" with success=True.
+        dispatchable = [t for t in cancellable if t.celery_task_id]
 
-        if active_task and active_task.celery_task_id:
+        if dispatchable:
             try:
-                celery_app.control.revoke(active_task.celery_task_id, terminate=True, signal="SIGKILL")
-                logger.info(f"Revoked Celery task {active_task.celery_task_id} for module {module_id}")
+                # Revoke every non-terminal task for this module, not just the
+                # newest — a queued task behind the running one is exactly the
+                # zombie F4 describes.
+                for task in dispatchable:
+                    celery_app.control.revoke(
+                        task.celery_task_id, terminate=True, signal="SIGKILL"
+                    )
+                    logger.info(f"Revoked Celery task {task.celery_task_id} for module {module_id}")
 
-                # Release module lock
-                try:
-                    from services.module_lock import ModuleLockService
-                    ModuleLockService(self.db).force_release(module.id)
-                    logger.info(f"Released module lock for module={module.id}")
-                except Exception as lock_err:
-                    logger.warning(f"Failed to release module lock on cancel: {lock_err}")
+                # Kill the daemon-side container BEFORE releasing the lock, so the
+                # lock is never dropped while a live container still holds the
+                # workspace.
+                killed, kill_confirmed = self._kill_containers_for_tasks(module, cancellable)
 
-                active_task.status = "cancelled"
-                active_task.error = "Operation cancelled by user"
-                active_task.completed_at = datetime.now(UTC)
+                # Release the module lock ONLY on a confirmed kill.
+                #
+                # The lock is what stops a re-apply racing a still-running
+                # container over the same workspace. Dropping it because the
+                # kill *reported* nothing — when in fact the daemon was
+                # unreachable — hands the user a green light into exactly that
+                # corruption. Unconfirmed keeps the lock; the reaper sweeps the
+                # container and the janitor frees the lock on its own schedule.
+                if kill_confirmed:
+                    try:
+                        from services.module_lock import ModuleLockService
+                        ModuleLockService(self.db).force_release(module.id)
+                        logger.info(f"Released module lock for module={module.id}")
+                    except Exception as lock_err:
+                        logger.warning(f"Failed to release module lock on cancel: {lock_err}")
+                else:
+                    logger.warning(
+                        "cancel: module %s lock RETAINED — the container kill could "
+                        "not be confirmed, so a re-apply must not be allowed to race it.",
+                        module.id,
+                    )
+
+                # Mark every revoked task cancelled — leaving a queued row
+                # "queued" is what let it look live to the rest of the system.
+                for task in cancellable:
+                    task.status = "cancelled"
+                    task.error = "Operation cancelled by user"
+                    task.completed_at = datetime.now(UTC)
 
                 self._reset_module_status(module, "Operation cancelled by user")
 
                 update_project_counts(self.db, module.project_id)
 
-                return {"success": True, "message": "Deployment cancelled successfully"}
+                if kill_confirmed:
+                    message = "Deployment cancelled successfully"
+                    if killed:
+                        message += f" ({len(killed)} container(s) killed)"
+                else:
+                    # Say so. The previous shape returned success=True here,
+                    # which is how "it stopped" became a claim nobody had checked.
+                    message = (
+                        "Cancellation requested, but the container could not be "
+                        "confirmed stopped — the docker endpoint was unreachable. "
+                        "The module stays locked until the reaper clears it; do "
+                        "not re-apply yet."
+                    )
+                return {
+                    "success": True,
+                    "message": message,
+                    "containers_killed": len(killed),
+                    "containers_kill_confirmed": kill_confirmed,
+                    "tasks_cancelled": len(cancellable),
+                }
 
             except Exception as e:
                 logger.error(f"Error cancelling deployment: {e}")
@@ -1127,13 +1329,34 @@ class ProjectModuleService(BaseService):
                 logger.warning(
                     f"No active task found but module {module_id} is in {module.status} state - resetting"
                 )
+                # A module stuck in a running state with no cancellable task row
+                # is the signature of a lost worker. Its container may still be
+                # running; the reaper (container_reaper) owns that sweep, since
+                # it can tell a dead task's orphan from a live sibling's step.
+                killed = []
+
                 self._reset_module_status(module, "Stuck deployment reset by user")
 
                 update_project_counts(self.db, module.project_id)
 
-                return {"success": True, "message": "Reset stuck deployment status"}
+                message = "Reset stuck deployment status"
+                if killed:
+                    message += f" ({len(killed)} container(s) killed)"
+                return {
+                    "success": True,
+                    "message": message,
+                    "containers_killed": len(killed),
+                    "containers_kill_confirmed": True,
+                    "tasks_cancelled": 0,
+                }
 
-            return {"success": False, "message": "No active deployment found for this module"}
+            return {
+                "success": False,
+                "message": "No active deployment found for this module",
+                "containers_killed": 0,
+                "containers_kill_confirmed": True,
+                "tasks_cancelled": 0,
+            }
 
     def deploy_module(self, module_id: int, triggered_by: str = "user") -> dict:
         """Trigger full init→plan→apply chain for a module.
@@ -1147,6 +1370,14 @@ class ProjectModuleService(BaseService):
         - Already deploying (APPLYING/INITIALIZING/PLANNING): raises BadRequestError.
         """
         module = self.get_module(module_id)
+
+        # A disabled module is not runnable by ANY path (issue #527). This one
+        # does not go through _validate_for_operation the way submit_plan and
+        # submit_apply do, so without this check the endpoint the UI's Deploy
+        # button calls would still deploy a disabled module — the headline fix
+        # defeated by the most likely route a user takes.
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before deploying")
 
         if module.status in (ModuleStatus.APPLYING, ModuleStatus.INITIALIZING, ModuleStatus.PLANNING):
             raise BadRequestError(f"Module is already deploying (current status: {module.status})")
@@ -1197,6 +1428,9 @@ class ProjectModuleService(BaseService):
         from models import DeploymentLog
 
         module = self.get_module(module_id)
+
+        if not module.enabled:
+            raise BadRequestError("Module is disabled — enable it before retrying")
 
         failed_statuses = ["failed", "apply_failed", "init_failed", "destroy_failed"]
         if module.status not in failed_statuses:
@@ -1523,6 +1757,12 @@ class ProjectModuleService(BaseService):
 
         errors = []
         warnings = []
+
+        # A disabled module is not runnable by any path (issue #527). The
+        # dependency chain honours this too; enforcing it here as well means
+        # "disabled" cannot be defeated by calling plan/apply directly.
+        if not module.enabled:
+            errors.append("Module is disabled — enable it before running plan or apply")
 
         if not module.library_module:
             errors.append("Module has no library module associated")

@@ -197,6 +197,7 @@ All paths prefixed with `/api/projects`.
 |--------|------|------|-------------|
 | GET | `/{module_id}/logs` | viewer | Get deployment logs (query: `limit`, `level`) |
 | GET | `/{module_id}/deployments` | viewer | Get deployment history (query: `action`, `status`, `limit`) |
+| GET | `/{module_id}/deployments/{deployment_id}/output` | viewer | Get a run's captured stdout/stderr (query: `max_bytes`; keeps the tail when it exceeds the cap) |
 | GET | `/project/{project_id}/deployments` | viewer | Get all deployments in project |
 | GET | `/{module_id}/state-info` | viewer | Get state file metadata |
 | GET | `/{module_id}/state-resources` | viewer | Get managed resources list |
