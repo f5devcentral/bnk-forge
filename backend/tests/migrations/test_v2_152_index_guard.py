@@ -99,6 +99,16 @@ def engine():
         with admin.connect() as conn:
             conn.execute(sa.text(f'CREATE DATABASE "{scratch_name}"'))
     except sa.exc.OperationalError as exc:
+        # Same rule as the missing-URL branch: skipping is fine locally, but in
+        # the job that REQUIRES these tests a skip is a gate reporting green
+        # while asserting nothing. I reintroduced exactly that hole here one
+        # layer down — an unreachable database or a role without CREATEDB
+        # skipped straight past the guard.
+        if os.environ.get("BNK_REQUIRE_MIGRATION_TESTS"):
+            pytest.fail(
+                f"cannot create a scratch database in the job that requires the "
+                f"migration tests: {exc}"
+            )
         pytest.skip(f"cannot create a scratch database on this server: {exc}")
 
     scratch = sa.create_engine(url.set(database=scratch_name))
