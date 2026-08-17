@@ -27,6 +27,7 @@ import gzip
 import io
 import json
 import logging
+import re
 import tarfile
 from datetime import UTC, datetime
 from typing import Any
@@ -218,6 +219,28 @@ class ContainerRegistryService:
         self.db.refresh(reg)
         return self.serialize(reg)
 
+    @staticmethod
+    def canonical_host(value: str | None) -> str:
+        """Canonical form of a registry host, for COMPARISON.
+
+        Every consumer already canonicalizes before matching —
+        container_run_secrets and supply_chain both `.strip().lower()` — so a
+        raw string comparison here made the guard more sensitive than any real
+        behaviour. "harbor.internal" -> "Harbor.Internal" is a no-op for
+        matching, for DNS and for the https://{host}/v2/ URL, yet it tripped the
+        clearing and destroyed write-only credentials that cannot be re-obtained.
+
+        That was reachable from the UI, not theoretical: the edit dialog's type
+        dropdown writes DEFAULT_HOSTS[type], which is '' for artifactory/harbor/
+        distribution/oci, and '' is not nullish so the ?? fallback does not fire.
+        """
+        host = (value or "").strip().lower().rstrip("/")
+        # A default port is not a different host.
+        for scheme_port in (":443", ":80"):
+            if host.endswith(scheme_port):
+                host = host[: -len(scheme_port)]
+        return host
+
     def update_registry(self, registry_id: int, data) -> dict:
         reg = self._get_registry(registry_id)
 
@@ -275,7 +298,7 @@ class ContainerRegistryService:
         # Explicit None comparison rather than a truthiness test: registry_host
         # has no min_length at create, so an empty-string host is reachable and
         # `"" -> "attacker.example.com"` must still clear.
-        host_changed = (old_host or "") != (reg.registry_host or "")
+        host_changed = self.canonical_host(old_host) != self.canonical_host(reg.registry_host)
         if host_changed:
             reg.username = None
             reg.token_encrypted = None
@@ -523,6 +546,41 @@ class ContainerRegistryService:
             "error": f"Unexpected response from FAR {reg.registry_host} (HTTP {resp.status_code}).",
         }
 
+    # Derived registries mint a LIVE cloud credential at test time, so their
+    # host must look like the provider's. Unlike a standalone Harbor or
+    # Artifactory — which is legitimately self-hosted on any name, and is why a
+    # general host allowlist was rejected earlier — ECR and ICR hosts are
+    # provider-shaped and therefore constrainable.
+    _DERIVED_HOST_PATTERNS = {
+        "ecr": re.compile(r"^\d+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$"),
+        "icr": re.compile(r"^([a-z0-9-]+\.)?icr\.io$"),
+    }
+
+    def _assert_derived_host_matches_provider(self, reg: ContainerRegistry) -> None:
+        """Refuse to mint a cloud token for a host that is not the provider's.
+
+        credential_template_id is a PUBLIC reference — it is serialized to every
+        viewer — so an operator can repoint a derived registry at a host they
+        control, replay the id, press Test, and receive a live ECR
+        authorization token minted from someone else's AWS keys. Clearing on
+        host change does not stop it, because the replayed id re-attaches the
+        template in the same request; and templates carry no per-operator
+        authorisation (a separate, wider gap).
+
+        Constraining the DESTINATION is what actually closes the exfil: the
+        token can only ever be sent to the cloud provider it came from.
+        """
+        pattern = self._DERIVED_HOST_PATTERNS.get(reg.type)
+        if not pattern:
+            return
+        host = self.canonical_host(reg.registry_host)
+        if not pattern.match(host):
+            raise BadRequestError(
+                f"registry_host '{reg.registry_host}' is not a valid {reg.type.upper()} "
+                f"endpoint. A derived registry mints a live cloud credential when "
+                f"tested, so it may only point at its own provider."
+            )
+
     def _test_derived(self, reg: ContainerRegistry) -> dict[str, Any]:
         """Connectivity test for derived registry types (icr, ecr).
 
@@ -530,6 +588,8 @@ class ContainerRegistryService:
         CloudCredentialTemplate, then probes the registry v2 API with the
         exchanged credential.
         """
+        self._assert_derived_host_matches_provider(reg)
+
         try:
             username, password = self.resolve_pull_credentials(reg)
         except DerivedTokenExchangeError as exc:
@@ -537,7 +597,12 @@ class ContainerRegistryService:
 
         url = f"https://{reg.registry_host}/v2/"
         try:
-            resp = requests.get(url, auth=(username, password), timeout=15)
+            # allow_redirects=False on every test path, not just basic-auth: a
+            # 302 lets the server steer the probe, and this one carries a live
+            # minted cloud token.
+            resp = requests.get(
+                url, auth=(username, password), timeout=15, allow_redirects=False
+            )
         except requests.RequestException as exc:
             return {"success": False, "error": f"Connection to {reg.registry_host} failed: {exc}"}
 

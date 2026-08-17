@@ -245,17 +245,18 @@ class ContainerEngine(DeploymentEngine):
     def _resolve_steps(self, ctx: ModuleContext, operation: str) -> list[dict]:
         """Resolve the step list for a lifecycle op from the artifact manifest.
 
-        Reads ``execution.steps.<op>`` first (the SEAMS-named location), then
-        falls back to top-level ``steps.<op>`` (where the validator stores it).
+        Delegates to ``module_metadata.canonical_step_sets`` — the SAME resolver
+        the validator uses — so the steps that run are always the steps that were
+        validated. Previously this preferred ``execution.steps`` while every
+        validator read top-level ``steps``, which made the reviewed manifest a
+        decoy for the executed one.
+
         Returns ``[]`` when the phase is not declared.
         """
+        from services.module_metadata import canonical_step_sets
+
         manifest = ctx.pack_manifest or {}
-        execution = manifest.get("execution")
-        if isinstance(execution, dict) and isinstance(execution.get("steps"), dict):
-            steps = execution["steps"].get(operation)
-        else:
-            steps_block = manifest.get("steps")
-            steps = steps_block.get(operation) if isinstance(steps_block, dict) else None
+        steps = canonical_step_sets(manifest).get(operation)
 
         if steps is None:
             return []

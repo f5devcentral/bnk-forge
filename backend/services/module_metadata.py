@@ -398,6 +398,27 @@ class ModuleMetadataParser:
             self._cache.clear()
 
 
+def canonical_step_sets(manifest: dict) -> dict:
+    """The lifecycle step-sets that will ACTUALLY execute, from either location.
+
+    A manifest may carry lifecycle steps at top-level ``steps`` or at
+    ``execution.steps``. The engine preferred the latter and no validator read
+    it, so a manifest could show benign argv to review at ``steps`` while
+    ``execution.steps`` ran a shell — bypassing the denylist, the shell-token
+    check, the argv-strings check and the secret_files collision check, all at
+    once, in a step pod holding cloud credentials.
+
+    One resolver, imported by both the validator and the engine, so the two can
+    never again disagree about which steps are real. Declaring BOTH is rejected
+    at validation (see _validate_artifact_steps) rather than silently resolved.
+    """
+    execution = manifest.get("execution")
+    if isinstance(execution, dict) and isinstance(execution.get("steps"), dict):
+        return execution["steps"]
+    steps = manifest.get("steps")
+    return steps if isinstance(steps, dict) else {}
+
+
 class ModuleMetadataValidator:
     """
     Validates module metadata against schema
@@ -633,7 +654,7 @@ class ModuleMetadataValidator:
         # Both step-sets: materialize_secret_files runs on the action path too,
         # so the same unrecoverable first-run failure recurs verbatim there.
         step_sets: list = []
-        steps_block = manifest.get("steps")
+        steps_block = canonical_step_sets(manifest)
         if isinstance(steps_block, dict):
             step_sets.extend(steps_block.items())
         actions_block = manifest.get("actions")
@@ -685,7 +706,28 @@ class ModuleMetadataValidator:
                         )
 
     def _validate_artifact_steps(self, manifest: dict, kind: str) -> None:
-        steps = manifest.get("steps")
+        # Reject a manifest that declares lifecycle steps in BOTH locations
+        # rather than silently resolving one. Two declared step-sets is how a
+        # reviewed manifest becomes a decoy for an executed one.
+        execution = manifest.get("execution")
+        has_execution_steps = (
+            isinstance(execution, dict) and isinstance(execution.get("steps"), dict)
+        )
+        if has_execution_steps and isinstance(manifest.get("steps"), dict):
+            raise InvalidMetadataSchemaError(
+                "lifecycle steps are declared in both 'steps' and "
+                "'execution.steps'; declare exactly one — the engine executes "
+                "'execution.steps' and a second set would never run while still "
+                "being what a reviewer reads"
+            )
+
+        # Validate whatever will actually execute, resolved the same way the
+        # engine resolves it.
+        # Preserve the declared-but-empty vs not-declared distinction: {} must
+        # still reach the per-phase checks so the error names steps.apply rather
+        # than degrading to a generic "requires a 'steps' object".
+        declared_steps = has_execution_steps or isinstance(manifest.get("steps"), dict)
+        steps = canonical_step_sets(manifest) if declared_steps else None
         is_procedural = kind in PROCEDURAL_ARTIFACT_KINDS
         lifecycle = manifest.get("lifecycle") if isinstance(manifest.get("lifecycle"), dict) else {}
 

