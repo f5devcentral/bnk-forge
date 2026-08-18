@@ -29,9 +29,19 @@ from sqlalchemy.orm import Session
 
 from models import StackInstance
 from models import Task as TaskModel
-from models.enums import StackInstanceStatus, TaskStatus
+from models.enums import ModuleStatus, StackInstanceStatus, TaskStatus
 
 logger = logging.getLogger(__name__)
+
+# Transient module states owned by a deploy task, and the terminal state each
+# should land in when the worker running it dies. DESTROYING is deliberately
+# absent: the destroy path re-drives the chain instead of a plain reset, because
+# the next module in the reverse DAG depends on that transition (see below).
+_TRANSIENT_TO_FAILED: dict[str, str] = {
+    ModuleStatus.INITIALIZING.value: ModuleStatus.INIT_FAILED.value,
+    ModuleStatus.PLANNING.value: ModuleStatus.PLAN_FAILED.value,
+    ModuleStatus.APPLYING.value: ModuleStatus.APPLY_FAILED.value,
+}
 
 NON_TERMINAL_TASK_STATUSES = (
     TaskStatus.QUEUED.value,
@@ -99,6 +109,9 @@ def reset_stale_tasks(
     # trigger after, so a single module with several stale destroy tasks (one per
     # retry) is re-driven once, not per row.
     destroy_modules_to_redrive: dict[int, object] = {}
+    # Non-destroy modules left in a transient state by a dead worker. Collected
+    # the same way, so one module with several stale tasks is reset once.
+    deploy_modules_to_reset: dict[int, object] = {}
     for row in rows:
         if row.celery_task_id and row.celery_task_id in live_task_ids:
             continue
@@ -107,10 +120,35 @@ def reset_stale_tasks(
         row.completed_at = completed_at
         reset_ids.append(row.id)
 
-        # Only destroy tasks need the module/chain recovery below; deploy tasks
-        # keep their existing reset behaviour (Task row flipped, nothing else).
+        # Destroy tasks additionally re-drive the destroy chain (below). Deploy
+        # tasks used to stop at "Task row flipped, nothing else" -- which is what
+        # left modules pinned in applying/planning/initializing with no error and
+        # no Retry button, recoverable only by a manual UPDATE (#6).
         if row.task_type == "destroy" and row.module is not None:
             destroy_modules_to_redrive[row.module.id] = row.module
+        elif row.module is not None:
+            deploy_modules_to_reset[row.module.id] = row.module
+
+    if deploy_modules_to_reset:
+        # A worker that dies between the route setting `applying` and the task's
+        # error handler leaves the module transient forever: the UI shows a
+        # perpetually-applying module with no error, and Retry only appears for
+        # *_failed states. Drive it to the matching failed state so the module is
+        # actionable again -- the same recovery the destroy path already gets.
+        for module in deploy_modules_to_reset.values():
+            previous = module.status
+            failed_status = _TRANSIENT_TO_FAILED.get(previous)
+            if failed_status is None:
+                continue  # already terminal, or a state this janitor does not own
+            module.status = failed_status
+            module.deployment_error = (
+                module.deployment_error
+                or "Worker no longer alive — reset by stale-execution janitor"
+            )
+            logger.warning(
+                "Janitor reset stuck module %s from %s to %s (worker died)",
+                module.id, previous, failed_status,
+            )
 
     if destroy_modules_to_redrive:
         # Lazy import: _tofu_helpers pulls in services.* which would create an
