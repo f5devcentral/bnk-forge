@@ -260,6 +260,44 @@ class TestWSTokenValidationLogic:
         with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
             assert _agent_ws_authorized(ws, 5) == 4401
 
+    def test_flag_off_still_admits_a_claimless_token(self):
+        """Regression guard: the built-in agent must keep working.
+
+        The stricter claim requirement is Layer 1 only. With
+        BENCHMARK_AGENT_AUTH_REQUIRED off, the built-in forge-agent -- which
+        ships with an empty AGENT_TOKEN and registers before it has an agent_id
+        -- must still connect, or this fix breaks every default install.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin"})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
+
+    def test_flag_off_still_admits_no_token_at_all(self):
+        """The built-in agent's default: AGENT_TOKEN empty."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+
+        ws = MagicMock()
+        ws.query_params = {}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
+
     def test_matching_agent_id_passes(self):
         """Token with agent_id=7 and path agent_id=7 → accepted."""
         from services.auth_service import create_access_token, decode_token
