@@ -1010,6 +1010,17 @@ help:
 #   make push-images   — tag + push all images to BNK_FORGE_REGISTRY
 #
 
+# Files that `make dist` generates into dist/ but git does NOT track. The
+# tarball manifest is `git ls-files dist/` plus this list, so packaging inherits
+# the tracked set by definition -- dist/.gitignore stays the single source of
+# truth -- while still shipping generated artifacts. Anything else sitting in a
+# builder's dist/ (real secrets, .env, logs) is never copied. See #133.
+#
+# Note: git supplies the file NAMES only; contents are copied from the working
+# tree, so the tracked files this target regenerates in place (VERSION, the two
+# nginx confs) ship with their fresh content, not their committed content.
+DIST_GENERATED := install-guide.html
+
 # Build distributable install package (no source code needed by end users)
 # No 'build' prerequisite: the tarball bundles no images (recipients pull from
 # the registry), so rebuilding images here would be wasted work.
@@ -1030,12 +1041,26 @@ dist:
 	cp frontend-v2/nginx.local.conf dist/nginx/frontend.local.conf; \
 	echo "=== Bundling install guide ==="; \
 	cp user-pack/install-guide.html dist/install-guide.html; \
-	echo "=== Creating tarball ==="; \
+	echo "=== Creating tarball (tracked files + generated artifacts only) ==="; \
 	TMPDIR=$$(mktemp -d); \
-	cp -R dist "$$TMPDIR/bnk-forge-$${VERSION}"; \
-	rm -f "$$TMPDIR/bnk-forge-$${VERSION}/bnk-forge-"*.tar.gz; \
+	STAGE="$$TMPDIR/bnk-forge-$${VERSION}"; \
+	mkdir -p "$$STAGE"; \
+	{ git ls-files -z -- dist/; \
+	  for g in $(DIST_GENERATED); do printf 'dist/%s\0' "$$g"; done; } \
+	  | sort -zu \
+	  | while IFS= read -r -d '' f; do \
+	      if [ ! -f "$$f" ]; then \
+	        echo "  ✗ manifest lists a file that is not in the working tree: $$f" >&2; \
+	        exit 1; \
+	      fi; \
+	      rel="$${f#dist/}"; \
+	      mkdir -p "$$STAGE/$$(dirname "$$rel")"; \
+	      cp "$$f" "$$STAGE/$$rel"; \
+	    done || { rm -rf "$$TMPDIR"; exit 1; }; \
 	tar -czf "dist/bnk-forge-$${VERSION}.tar.gz" -C "$$TMPDIR" "bnk-forge-$${VERSION}"; \
 	rm -rf "$$TMPDIR"; \
+	DIST_GENERATED="$(DIST_GENERATED)" scripts/check-dist-contents.sh \
+	  "dist/bnk-forge-$${VERSION}.tar.gz" || exit 1; \
 	echo ""; \
 	echo "  ✓ Created: dist/bnk-forge-$${VERSION}.tar.gz"; \
 	echo ""; \
