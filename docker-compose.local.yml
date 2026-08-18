@@ -72,6 +72,9 @@ services:
       - module_catalog:/tmp/bnk-forge-modules
       - bnk-forge-data:/app/projects
       - bnk-forge-keys:/app/keys
+      # This override REPLACES the base volume list, so the agent bootstrap
+      # token mount must be repeated here (#148).
+      - bnk-forge-agent-token:/app/agent-token
       - state_data:/app/state
       - helm_cache:/home/bnkforge/.cache/helm
       - helm_config:/home/bnkforge/.config/helm

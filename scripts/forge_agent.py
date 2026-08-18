@@ -110,11 +110,17 @@ class ForgeAgent:
         agent_name: str,
         token: str,
         insecure: bool = True,
+        token_file: str | None = None,
         advertise_ip: str | None = None,
     ):
         self.forge_url = forge_url.rstrip("/")
         self.agent_name = agent_name
         self.token = token
+        # When the token came from a file, keep the path so a reconnect can pick
+        # up a token the backend has since reissued (secret rotation, early
+        # renewal). Reading it once at startup would leave a long-running agent
+        # holding a token that no longer verifies, 4401ing forever.
+        self.token_file = token_file
         self.advertise_ip = advertise_ip  # explicit IP override for ip_address field
         # Single switch for ALL TLS-skip behavior (H2). Lab default is insecure:
         # HGX exposes Forge over self-signed NodePort certs, so the agent must
@@ -191,12 +197,31 @@ class ForgeAgent:
         log.info("Registered as agent #%d (status=%s)", self.agent_id, data.get("status"))
         return self.agent_id
 
+    def _refresh_token_from_file(self) -> None:
+        """Re-read the token file, if we have one, so a reissued token is picked up.
+
+        Best-effort and quiet: a transient read failure keeps the current token.
+        Also refreshes the Authorization header used for HTTP calls.
+        """
+        if not self.token_file:
+            return
+        try:
+            with open(self.token_file) as f:
+                fresh = f.read().strip()
+        except OSError:
+            return
+        if fresh and fresh != self.token:
+            log.info("Bearer token changed on disk — using the reissued token")
+            self.token = fresh
+            self.headers["Authorization"] = f"Bearer {fresh}"
+
     async def run_forever(self):
         """Main loop: connect WS, heartbeat, listen for commands."""
         delay = RECONNECT_DELAY
 
         while self.running:
             try:
+                self._refresh_token_from_file()
                 # M2: the backend authenticates the agent WS by validating the
                 # same JWT used in the register POST, passed as a ?token= query
                 # param. URL-encode it so '+'/'='/'/' in the token survive.
@@ -773,6 +798,7 @@ def main():
         args.token,
         insecure=args.insecure,
         advertise_ip=args.advertise_ip or None,
+        token_file=args.token_file or None,
     )
 
     def sighandler(sig, frame):

@@ -19,7 +19,9 @@ import pytest
 
 @pytest.fixture
 def keys_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr("core.config._KEYS_DIR", str(tmp_path))
+    # The token lives in its own volume/dir (AGENT_TOKEN_DIR), deliberately
+    # NOT beside jwt_secret.key -- see mint_builtin_agent_token_step.
+    monkeypatch.setenv("AGENT_TOKEN_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -86,6 +88,48 @@ class TestMintBuiltinAgentToken:
         (keys_dir / "builtin_agent.token").write_text("")
         _run_step()
         assert decode_token((keys_dir / "builtin_agent.token").read_text().strip())["role"] == "agent"
+
+    def test_nearly_expired_token_is_reissued_early(self, keys_dir):
+        """A token that decodes today but expires soon must be renewed now.
+
+        Otherwise it expires under a running agent, every heartbeat 4401s, and
+        nothing reissues until the NEXT backend restart -- a silent lockout.
+        """
+        from datetime import timedelta
+
+        from services.auth_service import create_access_token, decode_token
+
+        soon = create_access_token(
+            {"sub": "forge-builtin-agent", "role": "agent"},
+            expires_delta=timedelta(days=5),
+        )
+        (keys_dir / "builtin_agent.token").write_text(soon)
+
+        _run_step()
+
+        token = (keys_dir / "builtin_agent.token").read_text().strip()
+        assert token != soon, "near-expiry token was left alone"
+        exp = decode_token(token)["exp"]
+        import time
+        assert exp - time.time() > 300 * 86400, "reissued token is not long-lived"
+
+    def test_reissue_restores_world_read_on_a_locked_down_file(self, keys_dir):
+        """chmod must apply on rewrite, not only on create.
+
+        An opener's mode applies only when the file is created; rewriting an
+        existing 0600 file keeps it 0600, and the agent (a different uid) could
+        not read the reissued token.
+        """
+        import stat
+
+        p = keys_dir / "builtin_agent.token"
+        p.write_text("not.a.valid.jwt")
+        p.chmod(0o600)
+
+        _run_step()
+
+        mode = stat.S_IMODE(p.stat().st_mode)
+        assert mode & stat.S_IROTH, f"reissued token file is {oct(mode)}, agent cannot read it"
 
     def test_file_is_world_readable(self, keys_dir):
         """The agent runs as a different uid and reads it via the compose mount."""

@@ -249,23 +249,35 @@ def mint_builtin_agent_token_step():
     token deliberately carries role=agent and NO agent_id. That lets it
     register and connect the WS as a claimless agent, and nothing more.
 
-    Written to its own file (not the JWT/encryption keys) so the agent
-    container can mount exactly this and nothing else. The file is stable
-    across restarts: it is regenerated only when missing or no longer valid
-    for the current JWT_SECRET_KEY, so a running agent keeps working across
-    backend restarts.
+    Written to its OWN VOLUME (AGENT_TOKEN_DIR, default /app/agent-token) --
+    not into the keys volume beside jwt_secret.key. That is what lets
+    docker-compose.yml hand the agent container this one file and nothing
+    else, and it works on a cold first boot: a volume `subpath` mount fails
+    container creation if the path does not exist yet, and on first boot the
+    backend has not written anything when the agent container is created.
+    A dedicated named volume is created empty by Docker and needs no
+    ordering. The file is stable across restarts: reissued only when
+    missing, no longer valid for the current JWT_SECRET_KEY, or close to
+    expiry -- so a running agent keeps working across backend restarts.
 
     Only meaningful when BENCHMARK_AGENT_AUTH_REQUIRED is on; when it is off,
     the endpoints are open and the file is harmless.
     """
     import os
-    from datetime import timedelta
+    from datetime import UTC, datetime, timedelta
 
-    from core.config import _KEYS_DIR
     from core.errors import UnauthorizedError
     from services.auth_service import create_access_token, decode_token
 
-    path = os.path.join(_KEYS_DIR, "builtin_agent.token")
+    token_dir = os.environ.get("AGENT_TOKEN_DIR", "/app/agent-token")
+    path = os.path.join(token_dir, "builtin_agent.token")
+    lifetime = timedelta(days=365)
+    # Reissue while there is still comfortably more life left than the gap
+    # between backend restarts. A token that merely "decodes today" is not
+    # good enough: if it expires under a running agent, every heartbeat starts
+    # 4401ing and nothing reissues until the NEXT restart -- a silent lockout,
+    # which is the one thing a bootstrap credential must never do.
+    renew_before = timedelta(days=30)
 
     existing = None
     try:
@@ -278,25 +290,38 @@ def mint_builtin_agent_token_step():
 
     if existing:
         try:
-            decode_token(existing)
-            logger.info("  Built-in agent bootstrap token present and valid")
-            return
+            payload = decode_token(existing)
+            exp = payload.get("exp")
+            remaining = (
+                datetime.fromtimestamp(int(exp), tz=UTC) - datetime.now(UTC)
+                if exp is not None else timedelta(0)
+            )
+            if remaining > renew_before:
+                logger.info("  Built-in agent bootstrap token present and valid")
+                return
+            logger.info(
+                "  Built-in agent bootstrap token expires in %s — reissuing early", remaining
+            )
         except UnauthorizedError:
             logger.info("  Built-in agent bootstrap token stale (secret rotated?) — reissuing")
 
     token = create_access_token(
         {"sub": "forge-builtin-agent", "role": "agent"},
-        expires_delta=timedelta(days=365),
+        expires_delta=lifetime,
     )
     try:
-        os.makedirs(_KEYS_DIR, exist_ok=True)
+        os.makedirs(token_dir, exist_ok=True)
+        with open(path, "w") as f:
+            f.write(token)
         # 0644, not 0600: the agent container runs as uid 1001 (Dockerfile.agent)
         # and the backend as another uid, and the file crosses between them via
         # the compose mount. World-read is the mechanism, not an accident -- the
         # token is deliberately narrow (role=agent, no agent_id) so this exposure
         # buys register + claimless WS and nothing else. Never widen its claims.
-        with open(path, "w", opener=lambda p, f: os.open(p, f, 0o644)) as f:
-            f.write(token)
+        # chmod AFTER write, not via an opener: an opener's mode applies only on
+        # create, so a rewrite of an existing 0600 file would keep it 0600 and
+        # the agent could not read the reissued token.
+        os.chmod(path, 0o644)
         logger.info("  Wrote built-in agent bootstrap token to %s", path)
     except OSError as exc:
         logger.warning(
