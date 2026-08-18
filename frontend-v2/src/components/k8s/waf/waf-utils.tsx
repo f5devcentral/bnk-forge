@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { AlertTriangle } from 'lucide-react';
 
 const RFC1123_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -20,7 +21,7 @@ export function extractApiError(e: unknown): string {
 
 export function InlineError({ message }: { message: string }) {
   return (
-    <div className="flex items-start gap-1.5 rounded-md border border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-900/20 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+    <div className="flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 dark:border-destructive/20 dark:bg-destructive/20/20 px-3 py-2 text-xs text-destructive dark:text-destructive/80">
       <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
       <span>{message}</span>
     </div>

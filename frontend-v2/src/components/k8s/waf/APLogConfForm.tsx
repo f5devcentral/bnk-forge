@@ -31,7 +31,7 @@ function FieldRow({ label, hint, required, children, span2 }: {
 }) {
   return (
     <div className={cn('space-y-1.5', span2 && 'col-span-2')}>
-      <Label className="text-xs">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</Label>
+      <Label className="text-xs">{label}{required && <span className="text-destructive ml-0.5">*</span>}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
@@ -206,8 +206,8 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
     <div className="grid grid-cols-2 gap-4">
       {/* API version selector only shown on create — immutable on existing CRs */}
       {!isEdit && (
-        <div className="col-span-2 flex items-start gap-3 rounded-md border border-slate-200 dark:border-zinc-700 p-3 bg-slate-50 dark:bg-zinc-900/50">
-          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
+        <div className="col-span-2 flex items-start gap-3 rounded-md border border-border dark:border-border p-3 bg-muted/50 dark:bg-card/50">
+          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
           <div className="flex-1 space-y-2">
             <div className="flex items-center gap-3">
               <span className="text-xs font-medium">API Version:</span>
@@ -215,11 +215,11 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
                 {(['v1', 'v1beta1'] as const).map(v => (
                   <button key={v} type="button" onClick={() => setApiVersion(v)}
                     className={cn('px-2.5 py-0.5 rounded text-xs font-mono border transition-colors',
-                      apiVersion === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 dark:border-zinc-600 text-slate-600 dark:text-zinc-400 hover:border-blue-400')}>{v}</button>
+                      apiVersion === v ? 'bg-primary text-white border-primary' : 'border-border dark:border-border text-muted-foreground dark:text-muted-foreground hover:border-primary/40')}>{v}</button>
                 ))}
               </div>
-              {apiVersion === 'v1' && <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-500/20">recommended</Badge>}
-              {apiVersion === 'v1beta1' && <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20">not default storage</Badge>}
+              {apiVersion === 'v1' && <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/50/20">recommended</Badge>}
+              {apiVersion === 'v1beta1' && <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/50/20">not default storage</Badge>}
             </div>
             <p className="text-xs text-muted-foreground">
               Both versions have identical field schemas. <strong>v1</strong> is the storage version (recommended).
@@ -240,8 +240,8 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
       ) : (
         <FieldRow label="Name (metadata.name)" required hint="Lowercase alphanumeric with hyphens, max 63 chars.">
           <Input value={crName} onChange={e => setCrName(e.target.value)} placeholder="my-log-profile"
-            className={crNameError ? 'border-red-500' : ''} />
-          {crNameError && <p className="text-xs text-red-500 flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
+            className={crNameError ? 'border-destructive/50' : ''} />
+          {crNameError && <p className="text-xs text-destructive flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
         </FieldRow>
       )}
 
@@ -273,10 +273,10 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
           value={formatString}
           onChange={e => setFormatString(e.target.value)}
           placeholder="%date_time,%src_ip,%request,%response_code,%blocking_exception_reason"
-          className={cn(formatStringError ? 'border-red-500' : '', format !== 'user-defined' ? 'opacity-50' : '')}
+          className={cn(formatStringError ? 'border-destructive/50' : '', format !== 'user-defined' ? 'opacity-50' : '')}
           disabled={format !== 'user-defined'}
         />
-        {formatStringError && <p className="text-xs text-red-500 mt-1">{formatStringError}</p>}
+        {formatStringError && <p className="text-xs text-destructive mt-1">{formatStringError}</p>}
       </FieldRow>
 
       {/* ── Filter ── */}
@@ -287,9 +287,9 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
       >
         <div className="grid grid-cols-3 gap-2">
           {([
-            { value: 'illegal', label: 'illegal', desc: 'Requests that violated a policy rule', color: 'text-amber-600' },
-            { value: 'blocked', label: 'blocked', desc: 'Requests that were actually blocked', color: 'text-red-600' },
-            { value: 'all',     label: 'all',     desc: 'Every request (very high volume)', color: 'text-slate-500' },
+            { value: 'illegal', label: 'illegal', desc: 'Requests that violated a policy rule', color: 'text-warning' },
+            { value: 'blocked', label: 'blocked', desc: 'Requests that were actually blocked', color: 'text-destructive' },
+            { value: 'all',     label: 'all',     desc: 'Every request (very high volume)', color: 'text-muted-foreground' },
           ] as const).map(opt => (
             <button
               key={opt.value}
@@ -298,8 +298,8 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
               className={cn(
                 'flex flex-col items-start gap-0.5 rounded-md border p-2.5 text-left transition-colors',
                 requestType === opt.value
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-slate-200 dark:border-zinc-700 hover:border-blue-300'
+                  ? 'border-primary/50 bg-primary/10 dark:bg-primary/20/20'
+                  : 'border-border dark:border-border hover:border-primary/30'
               )}
             >
               <span className={cn('text-xs font-semibold font-mono', opt.color)}>{opt.label}</span>
@@ -308,7 +308,7 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
           ))}
         </div>
         {requestType === 'all' && (
-          <p className="text-xs text-amber-500 flex items-center gap-1 mt-1">
+          <p className="text-xs text-warning flex items-center gap-1 mt-1">
             <AlertTriangle className="h-3 w-3" /> "all" logs every request — this fills storage quickly in production.
           </p>
         )}
@@ -316,18 +316,18 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
 
       {/* ── Size limits ── */}
       <FieldRow label="Max Message Size" hint="Maximum size of a single log event message. Range: 1k–64k. Default: 10k.">
-        <Input value={maxMsgSize} onChange={e => setMaxMsgSize(e.target.value)} placeholder="10k" className={msgSizeError ? 'border-red-500' : ''} />
+        <Input value={maxMsgSize} onChange={e => setMaxMsgSize(e.target.value)} placeholder="10k" className={msgSizeError ? 'border-destructive/50' : ''} />
         {msgSizeError
-          ? <p className="text-xs text-red-500 mt-1">{msgSizeError}</p>
+          ? <p className="text-xs text-destructive mt-1">{msgSizeError}</p>
           : <p className="text-xs text-muted-foreground">Valid values: 1k, 2k, … 64k</p>}
       </FieldRow>
 
       <FieldRow label="Max Request Size" hint="Maximum logged request body size. Valid: 1–10240, 1k–10k, or 'any'.">
-        <Input value={maxReqSize} onChange={e => setMaxReqSize(e.target.value)} placeholder="any" className={reqSizeError ? 'border-red-500' : ''} />
+        <Input value={maxReqSize} onChange={e => setMaxReqSize(e.target.value)} placeholder="any" className={reqSizeError ? 'border-destructive/50' : ''} />
         {reqSizeError
-          ? <p className="text-xs text-red-500 mt-1">{reqSizeError}</p>
+          ? <p className="text-xs text-destructive mt-1">{reqSizeError}</p>
           : <p className="text-xs text-muted-foreground">Valid: 1–10240 (bytes), 1k–10k, or &quot;any&quot;</p>}
-        {crossSizeError && <p className="text-xs text-red-500 mt-1">{crossSizeError}</p>}
+        {crossSizeError && <p className="text-xs text-destructive mt-1">{crossSizeError}</p>}
       </FieldRow>
 
       {/* ── List formatting ── */}
@@ -362,7 +362,7 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
               placeholder='\"' className="h-8 text-xs font-mono flex-1" />
             <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0"
               onClick={() => setEscapingPairs(ps => ps.filter((_, idx) => idx !== i))}>
-              <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-red-500" />
+              <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
             </Button>
           </div>
         ))}
@@ -387,7 +387,7 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
         spellCheck={false}
       />
       {jsonError && (
-        <p className="text-xs text-red-500 flex items-center gap-1">
+        <p className="text-xs text-destructive flex items-center gap-1">
           <AlertTriangle className="h-3 w-3" />{jsonError}
         </p>
       )}
@@ -473,12 +473,12 @@ export function APLogConfForm({ clusterId, namespace, existingItem, onClose, clo
       submitError={clusterErrors ? `Cluster error: ${clusterErrors.join(' | ')}` : submitError}
       statusNote={
         compileState && compileState !== 'ready' && compileState !== 'invalid' ? (
-          <span className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1">
+          <span className="text-xs text-primary dark:text-primary/80 flex items-center gap-1">
             <RefreshCw className="h-3 w-3 animate-spin" />
             Compiling… <span className="font-mono">{compileState}</span>
           </span>
         ) : compileState === 'invalid' ? (
-          <span className="text-xs text-red-500">❌ Compilation failed — see error above</span>
+          <span className="text-xs text-destructive">❌ Compilation failed — see error above</span>
         ) : undefined
       }
     />

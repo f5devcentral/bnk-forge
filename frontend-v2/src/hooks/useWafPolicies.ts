@@ -6,7 +6,8 @@
  * docs/WAF_POLICY_MANAGER_DESIGN.md.
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppMutation } from '@/hooks/lib/useAppMutation';
 import { wafPoliciesApi } from '@/lib/api/waf-policies';
 import { queryKeys } from '@/lib/queryKeys';
 import { POLL_INTERVALS } from '@/lib/constants';
@@ -52,7 +53,7 @@ export function useWafPolicy(clusterId: number, name: string, namespace: string,
 
 export function useCreateWafPolicy(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<APPolicyResource, Error, WafPolicyCreateRequest>({
+  return useAppMutation<APPolicyResource, Error, WafPolicyCreateRequest>({
     mutationFn: (data) => wafPoliciesApi.createPolicy(clusterId, data),
     onSuccess: (data) => {
       notify({ title: 'WAF Policy Created', message: `${data.metadata.name} created — compile pending`, severity: 'success' });
@@ -64,7 +65,7 @@ export function useCreateWafPolicy(clusterId: number) {
 
 export function useUpdateWafPolicy(clusterId: number, name: string) {
   const queryClient = useQueryClient();
-  return useMutation<APPolicyResource, Error, WafPolicyUpdateRequest>({
+  return useAppMutation<APPolicyResource, Error, WafPolicyUpdateRequest>({
     mutationFn: (data) => wafPoliciesApi.updatePolicy(clusterId, name, data),
     onSuccess: (data) => {
       notify({ title: 'WAF Policy Updated', message: `${data.metadata.name} updated — recompile pending`, severity: 'success' });
@@ -77,7 +78,7 @@ export function useUpdateWafPolicy(clusterId: number, name: string) {
 
 export function useDeleteWafPolicy(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<{ message: string }, Error, { name: string; namespace: string }>({
+  return useAppMutation<{ message: string }, Error, { name: string; namespace: string }>({
     mutationFn: ({ name, namespace }) => wafPoliciesApi.deletePolicy(clusterId, name, { namespace }),
     onSuccess: (_data, variables) => {
       notify({ title: 'WAF Policy Deleted', message: `${variables.name} deleted`, severity: 'success' });
@@ -102,7 +103,7 @@ export function useWafLogConfs(clusterId: number, namespace?: string, options?: 
 
 export function useCreateWafLogConf(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<unknown, Error, WafLogConfCreateRequest>({
+  return useAppMutation<unknown, Error, WafLogConfCreateRequest>({
     mutationFn: (data) => wafPoliciesApi.createLogConf(clusterId, data),
     onSuccess: () => {
       notify({ title: 'Log Profile Created', severity: 'success' });
@@ -114,7 +115,7 @@ export function useCreateWafLogConf(clusterId: number) {
 
 export function useUpdateWafLogConf(clusterId: number, name: string) {
   const queryClient = useQueryClient();
-  return useMutation<APLogConfResource, Error, WafLogConfUpdateRequest>({
+  return useAppMutation<APLogConfResource, Error, WafLogConfUpdateRequest>({
     mutationFn: (data) => wafPoliciesApi.updateLogConf(clusterId, name, data),
     onSuccess: () => {
       notify({ title: 'Log Profile Updated', severity: 'success' });
@@ -126,7 +127,7 @@ export function useUpdateWafLogConf(clusterId: number, name: string) {
 
 export function useDeleteWafLogConf(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<{ message: string }, Error, { name: string; namespace: string }>({
+  return useAppMutation<{ message: string }, Error, { name: string; namespace: string }>({
     mutationFn: ({ name, namespace }) => wafPoliciesApi.deleteLogConf(clusterId, name, { namespace }),
     onSuccess: (_data, variables) => {
       notify({ title: 'Log Profile Deleted', message: variables.name, severity: 'success' });
@@ -151,7 +152,7 @@ export function useWafSignatures(clusterId: number, namespace: string, options?:
 
 export function useUpsertWafSignatures(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<unknown, Error, WafSignaturesUpdateRequest>({
+  return useAppMutation<unknown, Error, WafSignaturesUpdateRequest>({
     mutationFn: (data) => wafPoliciesApi.upsertSignatures(clusterId, data),
     onSuccess: (_data, variables) => {
       notify({ title: 'Signature Settings Saved', severity: 'success' });
@@ -163,7 +164,7 @@ export function useUpsertWafSignatures(clusterId: number) {
 
 export function useDeleteWafSignatures(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<{ message: string }, Error, { namespace: string }>({
+  return useAppMutation<{ message: string }, Error, { namespace: string }>({
     mutationFn: ({ namespace }) => wafPoliciesApi.deleteSignatures(clusterId, namespace),
     onSuccess: (_data, variables) => {
       notify({ title: 'Signature Settings Deleted', message: 'APSignatures CR removed from cluster', severity: 'success' });
@@ -175,7 +176,7 @@ export function useDeleteWafSignatures(clusterId: number) {
 
 export function useRecompileWafPolicy(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<{ message: string }, Error, { name: string; namespace: string }>({
+  return useAppMutation<{ message: string }, Error, { name: string; namespace: string }>({
     mutationFn: ({ name, namespace }) => wafPoliciesApi.recompilePolicy(clusterId, name, namespace),
     onSuccess: (_data, variables) => {
       notify({ title: 'Recompile Triggered', message: `${variables.name} — compiler will rebuild the bundle`, severity: 'success' });
@@ -200,7 +201,7 @@ export function useWafUserSigs(clusterId: number, namespace?: string, options?: 
 
 export function useCreateWafUserSig(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<unknown, Error, WafUserSigCreateRequest>({
+  return useAppMutation<unknown, Error, WafUserSigCreateRequest>({
     mutationFn: (data) => wafPoliciesApi.createUserSig(clusterId, data),
     onSuccess: () => {
       notify({ title: 'User Signature Created', severity: 'success' });
@@ -212,7 +213,7 @@ export function useCreateWafUserSig(clusterId: number) {
 
 export function useUpdateWafUserSig(clusterId: number, name: string) {
   const queryClient = useQueryClient();
-  return useMutation<APUserSigResource, Error, WafUserSigUpdateRequest>({
+  return useAppMutation<APUserSigResource, Error, WafUserSigUpdateRequest>({
     mutationFn: (data) => wafPoliciesApi.updateUserSig(clusterId, name, data),
     onSuccess: () => {
       notify({ title: 'User Signature Updated', severity: 'success' });
@@ -224,7 +225,7 @@ export function useUpdateWafUserSig(clusterId: number, name: string) {
 
 export function useDeleteWafUserSig(clusterId: number) {
   const queryClient = useQueryClient();
-  return useMutation<{ message: string }, Error, { name: string; namespace: string }>({
+  return useAppMutation<{ message: string }, Error, { name: string; namespace: string }>({
     mutationFn: ({ name, namespace }) => wafPoliciesApi.deleteUserSig(clusterId, name, { namespace }),
     onSuccess: (_data, variables) => {
       notify({ title: 'User Signature Deleted', message: variables.name, severity: 'success' });

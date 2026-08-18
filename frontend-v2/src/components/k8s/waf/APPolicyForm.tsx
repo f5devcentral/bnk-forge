@@ -97,7 +97,7 @@ function FieldRow({ label, hint, required, children, span2 }: {
 }) {
   return (
     <div className={cn('space-y-1.5', span2 && 'col-span-2')}>
-      <Label className="text-xs">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</Label>
+      <Label className="text-xs">{label}{required && <span className="text-destructive ml-0.5">*</span>}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
@@ -122,7 +122,7 @@ function TagInput({ values, onChange, placeholder, suggestions }: {
     <div className="space-y-1.5">
       <div className="flex flex-wrap gap-1 min-h-8 p-1.5 rounded-md border border-input bg-background">
         {values.map(v => (
-          <span key={v} className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
+          <span key={v} className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs bg-primary/10 dark:bg-primary/20/50 text-primary dark:text-primary/70">
             {v}
             <button type="button" onClick={() => remove(v)} className="ml-0.5 opacity-60 hover:opacity-100"><X className="h-2.5 w-2.5" /></button>
           </span>
@@ -182,12 +182,12 @@ function ToggleList({ values, onChange, known, mode, hint }: {
                   <label className="flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" checked={!!entry.alarm}
                       onChange={e => update(entry.name, 'alarm', e.target.checked)} className="h-3.5 w-3.5" />
-                    <span className="text-amber-600">alarm</span>
+                    <span className="text-warning">alarm</span>
                   </label>
                   <label className="flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" checked={!!entry.block}
                       onChange={e => update(entry.name, 'block', e.target.checked)} className="h-3.5 w-3.5" />
-                    <span className="text-red-600">block</span>
+                    <span className="text-destructive">block</span>
                   </label>
                 </>
               ) : (
@@ -197,7 +197,7 @@ function ToggleList({ values, onChange, known, mode, hint }: {
                   <span>enabled</span>
                 </label>
               )}
-              <button type="button" onClick={() => remove(entry.name)} className="text-muted-foreground hover:text-red-500">
+              <button type="button" onClick={() => remove(entry.name)} className="text-muted-foreground hover:text-destructive">
                 <Trash2 className="h-3 w-3" />
               </button>
             </div>
@@ -260,7 +260,7 @@ function SigSetEditor({ values, onChange }: { values: SigSetEntry[]; onChange: (
                   <SelectItem value="ignore" className="text-xs">ignore</SelectItem>
                 </SelectContent>
               </Select>
-              <button type="button" onClick={() => remove(entry.name)} className="text-muted-foreground hover:text-red-500">
+              <button type="button" onClick={() => remove(entry.name)} className="text-muted-foreground hover:text-destructive">
                 <Trash2 className="h-3 w-3" />
               </button>
             </div>
@@ -306,7 +306,7 @@ function KVListEditor({ values, onChange, schema, hint }: {
       {values.map((row, i) => (
         <div key={i} className="rounded-md border border-input p-2 space-y-2 relative">
           <button type="button" onClick={() => remove(i)}
-            className="absolute top-1.5 right-1.5 text-muted-foreground hover:text-red-500">
+            className="absolute top-1.5 right-1.5 text-muted-foreground hover:text-destructive">
             <X className="h-3.5 w-3.5" />
           </button>
           <div className="grid grid-cols-2 gap-2 pr-5">
@@ -362,7 +362,7 @@ function IpListEditor({ values, onChange, type }: {
           <Badge variant="outline" className="text-[10px] font-mono">{v}</Badge>
           <span className="flex-1" />
           <button type="button" onClick={() => onChange(values.filter(x => x !== v))}
-            className="text-muted-foreground hover:text-red-500"><Trash2 className="h-3 w-3" /></button>
+            className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3 w-3" /></button>
         </div>
       ))}
       <div className="flex gap-1.5">
@@ -421,8 +421,8 @@ function CoreTab({ p, set, crName, setCrName, crNameError, nameConflict, apiVers
     <div className="grid grid-cols-2 gap-4">
       {/* API version selector only shown on create — apiVersion is immutable on existing CRs */}
       {!isEdit && (
-        <div className="col-span-2 flex items-start gap-3 rounded-md border border-slate-200 dark:border-zinc-700 p-3 bg-slate-50 dark:bg-zinc-900/50">
-          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
+        <div className="col-span-2 flex items-start gap-3 rounded-md border border-border dark:border-border p-3 bg-muted/50 dark:bg-card/50">
+          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
           <div className="flex-1 space-y-2">
             <div className="flex items-center gap-3">
               <span className="text-xs font-medium">API Version:</span>
@@ -430,11 +430,11 @@ function CoreTab({ p, set, crName, setCrName, crNameError, nameConflict, apiVers
                 {(['v1', 'v1beta1'] as const).map(v => (
                   <button key={v} type="button" onClick={() => setApiVersion(v)}
                     className={cn('px-2.5 py-0.5 rounded text-xs font-mono border transition-colors',
-                      apiVersion === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 dark:border-zinc-600 text-slate-600 dark:text-zinc-400 hover:border-blue-400')}>{v}</button>
+                      apiVersion === v ? 'bg-primary text-white border-primary' : 'border-border dark:border-border text-muted-foreground dark:text-muted-foreground hover:border-primary/40')}>{v}</button>
                 ))}
               </div>
-              {apiVersion === 'v1' && <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-500/20">recommended</Badge>}
-              {apiVersion === 'v1beta1' && <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20">not default storage</Badge>}
+              {apiVersion === 'v1' && <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/50/20">recommended</Badge>}
+              {apiVersion === 'v1beta1' && <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/50/20">not default storage</Badge>}
             </div>
             <p className="text-xs text-muted-foreground">
               <strong>v1</strong> is the storage version (recommended). v1beta1 is served but not stored by default.
@@ -455,9 +455,9 @@ function CoreTab({ p, set, crName, setCrName, crNameError, nameConflict, apiVers
         ) : (
           <>
             <Input value={crName} onChange={e => setCrName(e.target.value)} placeholder="my-waf-policy"
-              className={crNameError || nameConflict ? 'border-red-500' : ''} />
-            {crNameError && <p className="text-xs text-red-500 flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
-            {nameConflict && !crNameError && <p className="text-xs text-red-500 mt-1">A policy with this name already exists.</p>}
+              className={crNameError || nameConflict ? 'border-destructive/50' : ''} />
+            {crNameError && <p className="text-xs text-destructive flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
+            {nameConflict && !crNameError && <p className="text-xs text-destructive mt-1">A policy with this name already exists.</p>}
           </>
         )}
       </FieldRow>
@@ -465,7 +465,7 @@ function CoreTab({ p, set, crName, setCrName, crNameError, nameConflict, apiVers
       <FieldRow label="Policy Name (spec.policy.name)" required hint="Internal name compiled into the bundle. Normally matches the CR name.">
         <Input value={String(p.name ?? crName)} onChange={e => set({ name: e.target.value })} placeholder={crName || 'my-waf-policy'} />
         {policyNameDiverged && (
-          <p className="text-xs text-amber-500 flex items-center gap-1 mt-1">
+          <p className="text-xs text-warning flex items-center gap-1 mt-1">
             <AlertTriangle className="h-3 w-3" />
             Policy name differs from CR name. The compiler uses this name internally; keeping them in sync is recommended.
           </p>
@@ -481,7 +481,7 @@ function CoreTab({ p, set, crName, setCrName, crNameError, nameConflict, apiVers
             <SelectItem value="monitoring">monitoring — log all requests (verbose)</SelectItem>
           </SelectContent>
         </Select>
-        <p className={cn('text-xs mt-0.5', p['enforcement-mode'] !== 'blocking' ? 'text-amber-500' : 'text-emerald-600')}>
+        <p className={cn('text-xs mt-0.5', p['enforcement-mode'] !== 'blocking' ? 'text-warning' : 'text-success')}>
           {p['enforcement-mode'] !== 'blocking' ? '⚠️ Traffic will NOT be blocked — use for testing only.' : '✅ Policy will block violating requests.'}
         </p>
       </FieldRow>
@@ -546,9 +546,9 @@ function BlockingTab({ p, set }: { p: Record<string, unknown>; set: (patch: Part
 
   return (
     <div className="space-y-5">
-      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900')}>
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
-        <span className="text-blue-800 dark:text-blue-300">
+      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-primary/10 border-primary/20 dark:bg-primary/20/20 dark:border-primary/20')}>
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+        <span className="text-primary dark:text-primary/70">
           Blocking settings override the default alarm/block behaviour for individual violations and evasion techniques.
           Only add entries where you want non-default behaviour.{' '}
           <a href="https://docs.nginx.com/nginx-app-protect-waf/declarative-policy/policy/#blocking-settings" target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-0.5">NAP docs <ExternalLink className="h-3 w-3" /></a>.
@@ -866,9 +866,9 @@ function GeoTab({ p, set }: { p: Record<string, unknown>; set: (patch: Partial<R
 
   return (
     <div className="space-y-5">
-      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900')}>
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
-        <span className="text-blue-800 dark:text-blue-300">
+      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-primary/10 border-primary/20 dark:bg-primary/20/20 dark:border-primary/20')}>
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+        <span className="text-primary dark:text-primary/70">
           IP Intelligence requires a valid IP Intelligence subscription. Geo-blocking requires threat campaign signatures.
         </span>
       </div>
@@ -982,9 +982,9 @@ function ExternalRefsTab({ p, set, apiVersion }: { p: Record<string, unknown>; s
 
   return (
     <div className="space-y-4">
-      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900')}>
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
-        <span className="text-blue-800 dark:text-blue-300">
+      <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-primary/10 border-primary/20 dark:bg-primary/20/20 dark:border-primary/20')}>
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+        <span className="text-primary dark:text-primary/70">
           External references load policy sub-sections from remote URLs, overriding any inline definitions.
           Use these for shared policy fragments across multiple policies.
         </span>
@@ -998,7 +998,7 @@ function ExternalRefsTab({ p, set, apiVersion }: { p: Record<string, unknown>; s
               placeholder="https://example.com/policies/base-policy.json" />
           </FieldRow>
         ) : (
-          <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-700 dark:text-amber-300">
+          <div className="rounded-md border border-warning/20 dark:border-warning/20 bg-warning/10 dark:bg-warning/20/20 p-3 text-xs text-warning dark:text-warning/60">
             <strong>$ref</strong> and <strong>externalReferenceDetails</strong> are only available in <span className="font-mono">appprotect.f5.com/v1</span>.
             Switch to v1 in the Core tab to use these fields.
           </div>
@@ -1141,7 +1141,7 @@ export function APPolicyForm({ clusterId, namespace, existingItem, onClose }: AP
         spellCheck={false}
       />
       {jsonError && (
-        <p className="text-xs text-red-500 flex items-center gap-1">
+        <p className="text-xs text-destructive flex items-center gap-1">
           <AlertTriangle className="h-3 w-3" />{jsonError}
         </p>
       )}
@@ -1274,14 +1274,14 @@ export function APPolicyForm({ clusterId, namespace, existingItem, onClose }: AP
       }
       statusNote={
         compileState && compileState !== 'ready' && compileState !== 'invalid' ? (
-          <span className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1">
+          <span className="text-xs text-primary dark:text-primary/80 flex items-center gap-1">
             <RefreshCw className="h-3 w-3 animate-spin" />
             Compiling… bundle state: <span className="font-mono">{compileState}</span>. Sheet will close automatically when ready.
           </span>
         ) : compileState === 'ready' ? (
-          <span className="text-xs text-emerald-600">✅ Compiled successfully — closing…</span>
+          <span className="text-xs text-success">✅ Compiled successfully — closing…</span>
         ) : compileState === 'invalid' ? (
-          <span className="text-xs text-red-500">❌ Compilation failed — see error above</span>
+          <span className="text-xs text-destructive">❌ Compilation failed — see error above</span>
         ) : undefined
       }
     />

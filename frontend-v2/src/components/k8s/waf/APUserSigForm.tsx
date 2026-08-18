@@ -27,7 +27,7 @@ function FieldRow({ label, hint, required, children }: {
     <div className="space-y-1.5">
       <Label className="text-xs">
         {label}
-        {required && <span className="text-red-500 ml-0.5">*</span>}
+        {required && <span className="text-destructive ml-0.5">*</span>}
       </Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
@@ -156,9 +156,9 @@ export function APUserSigForm({ clusterId, namespace, existingItem, onClose }: A
             value={crName}
             onChange={e => setCrName(e.target.value)}
             placeholder="my-custom-sig"
-            className={crNameError ? 'border-red-500' : ''}
+            className={crNameError ? 'border-destructive/50' : ''}
           />
-          {crNameError && <p className="text-xs text-red-500 flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
+          {crNameError && <p className="text-xs text-destructive flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{crNameError}</p>}
         </FieldRow>
       )}
 
@@ -167,9 +167,9 @@ export function APUserSigForm({ clusterId, namespace, existingItem, onClose }: A
           value={tag}
           onChange={e => setTag(e.target.value)}
           placeholder="my-custom-tag"
-          className={tagError ? 'border-red-500' : ''}
+          className={tagError ? 'border-destructive/50' : ''}
         />
-        {tagError && <p className="text-xs text-red-500 flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{tagError}</p>}
+        {tagError && <p className="text-xs text-destructive flex items-center gap-1 mt-1"><AlertTriangle className="h-3 w-3" />{tagError}</p>}
       </FieldRow>
 
       <FieldRow label="Software Version" hint="Optional version identifier for this signature package. E.g. '1.2.0'">
@@ -181,14 +181,14 @@ export function APUserSigForm({ clusterId, namespace, existingItem, onClose }: A
       </FieldRow>
 
       <div className="col-span-2">
-        <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900')}>
-          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
-          <span className="text-blue-800 dark:text-blue-300">
+        <div className={cn('rounded-md border p-3 text-xs flex gap-2 bg-primary/10 border-primary/20 dark:bg-primary/20/20 dark:border-primary/20')}>
+          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+          <span className="text-primary dark:text-primary/70">
             <strong>How to use:</strong> After creating this APUserSig, reference it in your APPolicy by adding{' '}
-            <code className="bg-blue-100 dark:bg-zinc-700 px-1 rounded">
+            <code className="bg-primary/10 dark:bg-muted px-1 rounded">
               {`{"tag": "${tag || '<tag>'}"}`}
             </code>{' '}
-            to <code className="bg-blue-100 dark:bg-zinc-700 px-1 rounded">spec.policy['signature-requirements']</code>.
+            to <code className="bg-primary/10 dark:bg-muted px-1 rounded">spec.policy['signature-requirements']</code>.
           </span>
         </div>
       </div>
@@ -206,11 +206,11 @@ export function APUserSigForm({ clusterId, namespace, existingItem, onClose }: A
         </Button>
       </div>
       {signatures.map((sig, i) => (
-        <div key={i} className={cn('rounded-md border p-3 space-y-3', 'border-slate-200 dark:border-zinc-700')}>
+        <div key={i} className={cn('rounded-md border p-3 space-y-3', 'border-border dark:border-border')}>
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium">Signature #{i + 1}</p>
             {signatures.length > 1 && (
-              <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400 hover:text-red-600" onClick={() => removeSig(i)}>
+              <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive/80 hover:text-destructive" onClick={() => removeSig(i)}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -229,7 +229,7 @@ export function APUserSigForm({ clusterId, namespace, existingItem, onClose }: A
               </Select>
             </FieldRow>
             <div className="col-span-2 space-y-1.5">
-              <Label className="text-xs">Rule <span className="text-red-500">*</span></Label>
+              <Label className="text-xs">Rule <span className="text-destructive">*</span></Label>
               <Input
                 value={sig.rule ?? ''}
                 onChange={e => updateSig(i, { rule: e.target.value })}

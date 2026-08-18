@@ -60,7 +60,7 @@ function DraftsPanel({ kind, currentState, currentLabel, onRestoreDraft, onClose
   };
 
   return (
-    <div className="absolute top-full left-0 mt-1 z-50 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg w-80 p-3 space-y-3">
+    <div className="absolute top-full left-0 mt-1 z-50 rounded-lg border border-border dark:border-border bg-white dark:bg-card shadow-lg w-80 p-3 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold">Saved Drafts</p>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
@@ -81,7 +81,7 @@ function DraftsPanel({ kind, currentState, currentLabel, onRestoreDraft, onClose
       ) : (
         <div className="space-y-1 max-h-52 overflow-y-auto">
           {drafts.map(draft => (
-            <div key={draft.id} className="flex items-center gap-2 rounded-md border border-slate-100 dark:border-zinc-800 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-800/50">
+            <div key={draft.id} className="flex items-center gap-2 rounded-md border border-border/50 dark:border-border px-2 py-1.5 hover:bg-muted/50 dark:hover:bg-card/50">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">{draft.name || 'untitled'}</p>
                 <p className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -89,7 +89,7 @@ function DraftsPanel({ kind, currentState, currentLabel, onRestoreDraft, onClose
                 </p>
               </div>
               <Button size="sm" variant="ghost"
-                className={restoredId === draft.id ? 'h-6 text-xs px-2 shrink-0 text-emerald-600' : 'h-6 text-xs px-2 shrink-0'}
+                className={restoredId === draft.id ? 'h-6 text-xs px-2 shrink-0 text-success' : 'h-6 text-xs px-2 shrink-0'}
                 onClick={() => {
                   onRestoreDraft(draft);
                   setRestoredId(draft.id);
@@ -99,7 +99,7 @@ function DraftsPanel({ kind, currentState, currentLabel, onRestoreDraft, onClose
                 }}>
                 {restoredId === draft.id ? '✓ Restored' : 'Restore'}
               </Button>
-              <button onClick={() => handleDelete(draft.id)} className="text-muted-foreground hover:text-red-500 shrink-0">
+              <button onClick={() => handleDelete(draft.id)} className="text-muted-foreground hover:text-destructive shrink-0">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -134,7 +134,7 @@ function ImportPanel({ onImport, onClose }: { onImport: (r: Record<string, unkno
   };
 
   return (
-    <div className="absolute top-full left-0 mt-1 z-50 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg w-80 p-3 space-y-2">
+    <div className="absolute top-full left-0 mt-1 z-50 rounded-lg border border-border dark:border-border bg-white dark:bg-card shadow-lg w-80 p-3 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold">Import JSON</p>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
@@ -145,13 +145,13 @@ function ImportPanel({ onImport, onClose }: { onImport: (r: Record<string, unkno
         className="w-full h-28 rounded-md border border-input bg-background px-2 py-1.5 text-xs font-mono resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         placeholder='{"apiVersion":"appprotect.f5.com/v1","kind":"APPolicy",...}'
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => fileRef.current?.click()}>
           <Upload className="h-3 w-3" /> From file
         </Button>
         <input ref={fileRef} type="file" accept=".json,.yaml,.yml" className="hidden" onChange={handleFile} />
-        <Button size="sm" className="h-7 text-xs flex-1 bg-blue-600 hover:bg-blue-700" onClick={handleApply} disabled={!text.trim()}>
+        <Button size="sm" className="h-7 text-xs flex-1 bg-primary hover:bg-primary/90" onClick={handleApply} disabled={!text.trim()}>
           Apply to form
         </Button>
       </div>
@@ -176,7 +176,7 @@ export function WafFormToolbar({ kind, currentState, currentLabel, onClone, onRe
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900/50 px-2 py-1.5">
+      <div className="flex items-center gap-1.5 rounded-md border border-border dark:border-border bg-muted/50 dark:bg-card/50 px-2 py-1.5">
         {/* Clone from existing CR — shows namespace/name format */}
         {cloneSources.length > 0 && (
           <div className="flex items-center gap-1 mr-1">
@@ -205,7 +205,7 @@ export function WafFormToolbar({ kind, currentState, currentLabel, onClone, onRe
           <BookOpen className="h-3.5 w-3.5" />
           Drafts
           {draftCount > 0 && (
-            <Badge variant="outline" className="text-[10px] h-4 px-1 ml-0.5 bg-blue-500/10 text-blue-600 border-blue-500/20">{draftCount}</Badge>
+            <Badge variant="outline" className="text-[10px] h-4 px-1 ml-0.5 bg-primary/10 text-primary border-primary/50/20">{draftCount}</Badge>
           )}
         </Button>
 

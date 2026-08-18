@@ -17,26 +17,26 @@ import type { K8sResource, K8sCondition } from '@/types';
 export function getConditionIcon(status: string) {
   switch (status?.toLowerCase()) {
     case 'true':
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      return <CheckCircle2 className="h-4 w-4 text-success" />;
     case 'false':
-      return <XCircle className="h-4 w-4 text-red-500" />;
+      return <XCircle className="h-4 w-4 text-destructive" />;
     case 'unknown':
-      return <AlertCircle className="h-4 w-4 text-yellow-500" />;
+      return <AlertCircle className="h-4 w-4 text-warning" />;
     default:
-      return <Clock className="h-4 w-4 text-slate-500" />;
+      return <Clock className="h-4 w-4 text-muted-foreground" />;
   }
 }
 
 export function getConditionColor(status: string) {
   switch (status?.toLowerCase()) {
     case 'true':
-      return 'text-green-500';
+      return 'text-success';
     case 'false':
-      return 'text-red-500';
+      return 'text-destructive';
     case 'unknown':
-      return 'text-yellow-500';
+      return 'text-warning';
     default:
-      return 'text-slate-500';
+      return 'text-muted-foreground';
   }
 }
 
@@ -49,13 +49,13 @@ export function InfoRow({ label, value, isDark, mono = false }: { label: string;
   if (value === undefined || value === null || value === '') return null;
   return (
     <div className="flex justify-between items-start gap-2">
-      <span className="text-slate-500 shrink-0">{label}:</span>
+      <span className="text-muted-foreground shrink-0">{label}:</span>
       {mono ? (
-        <code className={cn('font-mono text-right break-all min-w-0', isDark ? 'text-slate-300' : 'text-slate-700')}>
+        <code className={cn('font-mono text-right break-all min-w-0', isDark ? 'text-muted-foreground/70' : 'text-foreground/80')}>
           {String(value)}
         </code>
       ) : (
-        <span className={cn('text-right break-words min-w-0', isDark ? 'text-slate-300' : 'text-slate-700')}>
+        <span className={cn('text-right break-words min-w-0', isDark ? 'text-muted-foreground/70' : 'text-foreground/80')}>
           {String(value)}
         </span>
       )}
@@ -65,7 +65,7 @@ export function InfoRow({ label, value, isDark, mono = false }: { label: string;
 
 export function Section({ title, isDark, children }: { title: string; isDark?: boolean; children: React.ReactNode }) {
   return (
-    <div className={cn('p-3 rounded-lg', isDark ? 'bg-slate-800/50' : 'bg-slate-50')}>
+    <div className={cn('p-3 rounded-lg', isDark ? 'bg-card/50' : 'bg-muted/50')}>
       <h4 className="text-xs font-semibold mb-2">{title}</h4>
       <div className="space-y-1.5 text-xs">
         {children}
@@ -77,9 +77,9 @@ export function Section({ title, isDark, children }: { title: string; isDark?: b
 export function ConditionsTab({ conditions, isDark }: { conditions: K8sCondition[]; isDark?: boolean }) {
   if (!conditions || conditions.length === 0) {
     return (
-      <div className={cn('p-6 text-center rounded-lg', isDark ? 'bg-slate-800/50' : 'bg-slate-50')}>
+      <div className={cn('p-6 text-center rounded-lg', isDark ? 'bg-card/50' : 'bg-muted/50')}>
         <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-        <p className="text-xs text-slate-500">No status conditions available</p>
+        <p className="text-xs text-muted-foreground">No status conditions available</p>
       </div>
     );
   }
@@ -90,7 +90,7 @@ export function ConditionsTab({ conditions, isDark }: { conditions: K8sCondition
           key={idx}
           className={cn(
             'p-3 rounded-lg border',
-            isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'
+            isDark ? 'bg-card/50 border-border' : 'bg-muted/50 border-border'
           )}
         >
           <div className="flex items-center gap-2 mb-2">
@@ -101,20 +101,20 @@ export function ConditionsTab({ conditions, isDark }: { conditions: K8sCondition
           </div>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-slate-500">Status:</span>
+              <span className="text-muted-foreground">Status:</span>
               <span className={cn('font-medium', getConditionColor(condition.status))}>
                 {condition.status}
               </span>
             </div>
             {condition.reason && (
               <div className="flex justify-between">
-                <span className="text-slate-500">Reason:</span>
-                <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{condition.reason}</span>
+                <span className="text-muted-foreground">Reason:</span>
+                <span className={isDark ? 'text-muted-foreground/70' : 'text-foreground/80'}>{condition.reason}</span>
               </div>
             )}
             {condition.message && (
               <div className="mt-2">
-                <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>
+                <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
                   {condition.message}
                 </p>
               </div>

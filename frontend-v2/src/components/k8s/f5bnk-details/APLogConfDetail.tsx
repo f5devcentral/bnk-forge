@@ -14,10 +14,10 @@ import { InfoRow, Section, type DetailPanelProps } from './shared';
 
 function getBundleColor(state: BundleState | undefined) {
   switch (state) {
-    case 'ready':      return 'bg-green-500/10 text-green-600 border-green-500/20';
-    case 'invalid':    return 'bg-red-500/10 text-red-600 border-red-500/20';
-    case 'processing': return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
-    default:           return 'bg-slate-500/10 text-slate-600 border-slate-500/20';
+    case 'ready':      return 'bg-success/10 text-success border-success/50/20';
+    case 'invalid':    return 'bg-destructive/10 text-destructive border-destructive/50/20';
+    case 'processing': return 'bg-primary/10 text-primary border-primary/50/20';
+    default:           return 'bg-muted-foreground/20/10 text-muted-foreground border-muted-foreground/30/20';
   }
 }
 
@@ -42,12 +42,12 @@ export function APLogConfDetail({ resource }: DetailPanelProps) {
 
   return (
     <div className="space-y-0">
-      <div className="flex border-b border-slate-200 dark:border-zinc-800">
+      <div className="flex border-b border-border dark:border-border">
         {(['overview', 'status'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn('px-4 py-2 text-xs font-medium border-b-2 transition-colors',
-              tab === t ? 'border-blue-600 text-zinc-900 dark:text-white'
-                        : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400')}>
+              tab === t ? 'border-primary text-foreground dark:text-white'
+                        : 'border-transparent text-muted-foreground hover:text-foreground/80 dark:text-muted-foreground')}>
             {t === 'overview' ? 'Overview' : 'Bundle Status'}
           </button>
         ))}
@@ -65,9 +65,9 @@ export function APLogConfDetail({ resource }: DetailPanelProps) {
             </div>
 
             {showJson && (
-              <div className="rounded-lg border relative border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950">
+              <div className="rounded-lg border relative border-border dark:border-border bg-muted/50 dark:bg-card">
                 <Button variant="ghost" size="sm" className="absolute top-1.5 right-1.5 h-6 w-6 p-0" onClick={copyJson}>
-                  {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                  {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
                 </Button>
                 <pre className="p-3 text-xs overflow-auto max-h-[280px] pr-8 font-mono"><code>{specJson}</code></pre>
               </div>

@@ -11,14 +11,14 @@ import { InfoRow, Section, type DetailPanelProps } from './shared';
 function getBundleStateColor(state: BundleState | undefined) {
   switch (state) {
     case 'ready':
-      return 'bg-green-500/10 text-green-600 border-green-500/20';
+      return 'bg-success/10 text-success border-success/50/20';
     case 'invalid':
-      return 'bg-red-500/10 text-red-600 border-red-500/20';
+      return 'bg-destructive/10 text-destructive border-destructive/50/20';
     case 'processing':
-      return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
+      return 'bg-primary/10 text-primary border-primary/50/20';
     case 'pending':
     default:
-      return 'bg-slate-500/10 text-slate-600 border-slate-500/20';
+      return 'bg-muted-foreground/20/10 text-muted-foreground border-muted-foreground/30/20';
   }
 }
 
@@ -58,9 +58,9 @@ export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) 
           </div>
 
           {showJson && (
-            <div className={cn('rounded-lg border relative', isDark ? 'border-zinc-800 bg-zinc-950' : 'border-slate-200 bg-slate-50')}>
+            <div className={cn('rounded-lg border relative', isDark ? 'border-border bg-card' : 'border-border bg-muted/50')}>
               <Button variant="ghost" size="sm" className="absolute top-1.5 right-1.5 h-6 w-6 p-0" onClick={copyJson}>
-                {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
               </Button>
               <pre className="p-3 text-xs overflow-auto max-h-[320px] pr-8"><code>{policyJson}</code></pre>
             </div>
@@ -107,7 +107,7 @@ export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) 
         <TabsContent value="status" className="space-y-3">
           <Section title="Compilation Bundle" isDark={isDark}>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-slate-500 text-xs">State</span>
+              <span className="text-muted-foreground text-xs">State</span>
               <Badge variant="outline" className={cn('text-[10px]', getBundleStateColor(bundle?.state))}>
                 {bundle?.state ?? 'unknown'}
               </Badge>
@@ -131,9 +131,9 @@ export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) 
             </Section>
           )}
           {!spec.policy && (
-            <div className={cn('p-6 text-center rounded-lg', isDark ? 'bg-slate-800/50' : 'bg-slate-50')}>
+            <div className={cn('p-6 text-center rounded-lg', isDark ? 'bg-card/50' : 'bg-muted/50')}>
               <Shield className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs text-slate-500">No inline policy defined</p>
+              <p className="text-xs text-muted-foreground">No inline policy defined</p>
             </div>
           )}
         </TabsContent>

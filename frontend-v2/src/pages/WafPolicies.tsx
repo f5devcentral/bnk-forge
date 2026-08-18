@@ -44,11 +44,11 @@ function RefreshButton({ refetch, isLoading }: { refetch: () => void; isLoading?
   return (
     <Button
       variant="ghost" size="sm"
-      className={cn('h-8 w-8 p-0 transition-colors', flash && !isLoading ? 'text-emerald-500' : '')}
+      className={cn('h-8 w-8 p-0 transition-colors', flash && !isLoading ? 'text-success' : '')}
       onClick={handleClick}
       title="Refresh from cluster"
     >
-      <RotateCcw className={cn('h-3.5 w-3.5 transition-transform', isLoading ? 'animate-spin text-blue-500' : '')} />
+      <RotateCcw className={cn('h-3.5 w-3.5 transition-transform', isLoading ? 'animate-spin text-primary' : '')} />
     </Button>
   );
 }
@@ -94,7 +94,7 @@ function extractApiError(e: unknown): string {
 
 function InlineError({ message }: { message: string }) {
   return (
-    <div className="flex items-start gap-1.5 rounded-md border border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-900/20 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+    <div className="flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 dark:border-destructive/20 dark:bg-destructive/20/20 px-3 py-2 text-xs text-destructive dark:text-destructive/80">
       <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
       <span>{message}</span>
     </div>
@@ -103,10 +103,10 @@ function InlineError({ message }: { message: string }) {
 
 function getBundleStateBadgeClass(state: BundleState | undefined) {
   switch (state) {
-    case 'ready':       return 'bg-green-500/10 text-green-600 border-green-500/20';
-    case 'invalid':     return 'bg-red-500/10 text-red-600 border-red-500/20';
-    case 'processing':  return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
-    default:            return 'bg-slate-500/10 text-slate-600 border-slate-500/20';
+    case 'ready':       return 'bg-success/10 text-success border-success/50/20';
+    case 'invalid':     return 'bg-destructive/10 text-destructive border-destructive/50/20';
+    case 'processing':  return 'bg-primary/10 text-primary border-primary/50/20';
+    default:            return 'bg-muted-foreground/20/10 text-muted-foreground border-muted-foreground/30/20';
   }
 }
 
@@ -159,7 +159,7 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>
+        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
           APLogConf CRs define WAF security event log format. Create them first — they can be reused across multiple policies.
         </p>
         <div className="flex gap-2">
@@ -171,7 +171,7 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
       </div>
 
       {showCreate && (
-        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-zinc-800' : 'border-slate-200')}>
+        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-border' : 'border-border')}>
           <APLogConfForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
         </div>
       )}
@@ -204,13 +204,13 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
                 <TableCell className="text-xs">{formatAge(lc.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit" onClick={(e) => { e.stopPropagation(); setEditingItem(lc); }}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary" title="Edit" onClick={(e) => { e.stopPropagation(); setEditingItem(lc); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON" onClick={(e) => { e.stopPropagation(); exportCR(lc, lc.metadata.name, 'APLogConf'); }}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-success" title="Export JSON" onClick={(e) => { e.stopPropagation(); exportCR(lc, lc.metadata.name, 'APLogConf'); }}>
                       <Download className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete" onClick={(e) => { e.stopPropagation(); setDeletingItem(lc); }}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" title="Delete" onClick={(e) => { e.stopPropagation(); setDeletingItem(lc); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -280,7 +280,7 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>
+        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
           APPolicy CRs define WAF rules. Click a row to inspect bundle status.
         </p>
         <div className="flex gap-2">
@@ -292,15 +292,15 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
       </div>
 
       {showWizard && (
-        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-zinc-800' : 'border-slate-200')}>
+        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-border' : 'border-border')}>
           <APPolicyForm clusterId={clusterId} namespace={namespace} onClose={() => setShowWizard(false)} />
         </div>
       )}
 
       {isLoading && <SkeletonTable rows={4} columns={5} />}
       {error && (
-        <div className={cn('rounded-lg border p-4 text-center', isDark ? 'border-red-500/30 bg-red-500/5' : 'border-red-200 bg-red-50')}>
-          <p className="text-sm text-red-600 dark:text-red-400">Failed to load policies</p>
+        <div className={cn('rounded-lg border p-4 text-center', isDark ? 'border-destructive/50/30 bg-destructive/5' : 'border-destructive/20 bg-destructive/10')}>
+          <p className="text-sm text-destructive dark:text-destructive/80">Failed to load policies</p>
         </div>
       )}
       {!isLoading && !error && policies.length === 0 && !showWizard && (
@@ -332,20 +332,20 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
                 <TableCell className="text-xs">{formatAge(p.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary" title="Edit"
                       onClick={(e) => { e.stopPropagation(); setEditingPolicy(p); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-amber-500" title="Force Recompile — trigger a new compilation cycle"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-warning" title="Force Recompile — trigger a new compilation cycle"
                       disabled={recompile.isPending}
                       onClick={(e) => { e.stopPropagation(); recompile.mutate({ name: p.metadata.name, namespace: p.metadata.namespace ?? namespace }); }}>
                       <RefreshCcw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-success" title="Export JSON"
                       onClick={(e) => { e.stopPropagation(); exportCR(p, p.metadata.name, 'APPolicy'); }}>
                       <Download className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" title="Delete"
                       onClick={(e) => { e.stopPropagation(); setDeletingPolicy(p); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -442,22 +442,22 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
   return (
     <div className="space-y-4 max-w-xl">
       {/* What is this? */}
-      <div className={cn('rounded-md border p-3 text-xs flex gap-2', isDark ? 'border-zinc-700 bg-zinc-900/50' : 'border-blue-100 bg-blue-50')}>
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
-        <div className={isDark ? 'text-zinc-300' : 'text-blue-900'}>
+      <div className={cn('rounded-md border p-3 text-xs flex gap-2', isDark ? 'border-border bg-card/50' : 'border-primary/10 bg-primary/10')}>
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+        <div className={isDark ? 'text-foreground/80' : 'text-primary'}>
           <strong>APSignatures</strong> is a <strong>single resource per namespace</strong> (named{' '}
           <span className="font-mono">apsignatures</span>). It controls which version of the NGINX App Protect
           signature packages the Policy Controller downloads and embeds when compiling any policy in this namespace.
           Changing a revision here triggers recompilation of <em>all</em> policies in <em>{namespace}</em>.
           <br /><br />
-          <strong>Revision format:</strong> use <code className="px-1 rounded bg-blue-100 dark:bg-zinc-700">latest</code> for the newest
+          <strong>Revision format:</strong> use <code className="px-1 rounded bg-primary/10 dark:bg-muted">latest</code> for the newest
           available package, or a specific date-based tag like{' '}
-          <code className="px-1 rounded bg-blue-100 dark:bg-zinc-700">2026.07.31</code> to pin to a known-good version.
+          <code className="px-1 rounded bg-primary/10 dark:bg-muted">2026.07.31</code> to pin to a known-good version.
         </div>
       </div>
 
       <div className="flex items-center justify-between">
-        <h4 className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-zinc-900')}>Signature Package Versions</h4>
+        <h4 className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-foreground')}>Signature Package Versions</h4>
         <RefreshButton refetch={refetch} isLoading={isLoading} />
       </div>
 
@@ -467,18 +467,18 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
         <>
           {/* Signature download failure + fix instructions */}
           {installState === 'failure' && (
-            <div className={cn('rounded-md border p-3 space-y-2', isDark ? 'border-red-900 bg-red-900/20' : 'border-red-200 bg-red-50')}>
+            <div className={cn('rounded-md border p-3 space-y-2', isDark ? 'border-destructive/20 bg-destructive/20/20' : 'border-destructive/20 bg-destructive/10')}>
               <div className="flex items-start gap-1.5">
-                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-500" />
-                <div className="text-xs text-red-600 dark:text-red-400">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-destructive" />
+                <div className="text-xs text-destructive dark:text-destructive/80">
                   <strong>Signature download failed.</strong> The Policy Controller cannot pull packages from the NGINX repository.
                   {sigErrors && <p className="mt-1 font-mono text-[11px] break-all">{sigErrors}</p>}
                 </div>
               </div>
-              <div className={cn('text-xs rounded p-2 space-y-1', isDark ? 'bg-zinc-900 text-zinc-300' : 'bg-white text-slate-700')}>
+              <div className={cn('text-xs rounded p-2 space-y-1', isDark ? 'bg-card text-foreground/80' : 'bg-white text-foreground/80')}>
                 <p className="font-semibold">How to fix: create the NGINX repo secret</p>
                 <p>You need your F5/NGINX entitlement certificate and key. Run on the cluster:</p>
-                <pre className={cn('mt-1 p-2 rounded text-[11px] overflow-x-auto', isDark ? 'bg-zinc-800' : 'bg-slate-100')}>
+                <pre className={cn('mt-1 p-2 rounded text-[11px] overflow-x-auto', isDark ? 'bg-card' : 'bg-muted')}>
 {`kubectl create secret generic nginx-repo-secret \\
   --from-file=nginx-repo.crt=/path/to/nginx-repo.crt \\
   --from-file=nginx-repo.key=/path/to/nginx-repo.key \\
@@ -491,8 +491,8 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
 
           {installState === 'success' && (
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-500/20">Installed</Badge>
-              <span className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>Signature packages are downloaded and available for compilation.</span>
+              <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/50/20">Installed</Badge>
+              <span className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>Signature packages are downloaded and available for compilation.</span>
             </div>
           )}
 
@@ -516,18 +516,18 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
 
           {saveError && <InlineError message={saveError} />}
           <div className="flex flex-wrap gap-2 pt-1">
-            <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={upsert.isPending}>
+            <Button size="sm" className="gap-1.5 bg-primary hover:bg-primary/90" onClick={handleSave} disabled={upsert.isPending}>
               <RefreshCw className="h-3.5 w-3.5" /> Apply &amp; Recompile All Policies
             </Button>
             <Button size="sm" variant="ghost" onClick={() => { setAttack(existing?.spec?.['attack-signatures']?.revision ?? 'latest'); setBot(existing?.spec?.['bot-signatures']?.revision ?? 'latest'); setThreat(existing?.spec?.['threat-campaigns']?.revision ?? 'latest'); setSaveError(null); }}>Reset</Button>
             {existing && (
-              <Button size="sm" variant="ghost" className="gap-1.5 text-emerald-600 hover:text-emerald-700"
+              <Button size="sm" variant="ghost" className="gap-1.5 text-success hover:text-success"
                 onClick={() => exportCR(sigData, 'apsignatures', 'APSignatures')} title="Export as JSON">
                 <Download className="h-3.5 w-3.5" /> Export JSON
               </Button>
             )}
             {existing && (
-              <Button size="sm" variant="ghost" className="gap-1.5 text-red-500 hover:text-red-600"
+              <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:text-destructive"
                 onClick={() => setConfirmDelete(true)} title="Delete the APSignatures CR from this namespace">
                 <Trash2 className="h-3.5 w-3.5" /> Delete CR
               </Button>
@@ -565,7 +565,7 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>
+        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
           APUserSig CRs define custom attack signatures embedded into compiled policies via <code>signature-requirements[].tag</code>. Click a row to inspect.
         </p>
         <Button size="sm" className="gap-1.5" onClick={() => setShowCreate(!showCreate)}>
@@ -574,7 +574,7 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
       </div>
 
       {showCreate && (
-        <div className={cn('rounded-lg border', isDark ? 'border-zinc-800 bg-zinc-900/50' : 'border-slate-200 bg-white')}>
+        <div className={cn('rounded-lg border', isDark ? 'border-border bg-card/50' : 'border-border bg-white')}>
           <APUserSigForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
         </div>
       )}
@@ -603,24 +603,24 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
                 <TableCell className="text-xs">{(us.spec?.signatures ?? []).length}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className={cn('text-[10px]',
-                    us.status?.installationState === 'success' ? 'bg-green-500/10 text-green-600 border-green-500/20'
-                    : us.status?.installationState === 'failure' ? 'bg-red-500/10 text-red-600 border-red-500/20'
-                    : 'bg-slate-500/10 text-slate-600 border-slate-500/20')}>
+                    us.status?.installationState === 'success' ? 'bg-success/10 text-success border-success/50/20'
+                    : us.status?.installationState === 'failure' ? 'bg-destructive/10 text-destructive border-destructive/50/20'
+                    : 'bg-muted-foreground/20/10 text-muted-foreground border-muted-foreground/30/20')}>
                     {us.status?.installationState ?? 'unknown'}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs">{formatAge(us.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary" title="Edit"
                       onClick={(e) => { e.stopPropagation(); setEditingItem(us); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-success" title="Export JSON"
                       onClick={(e) => { e.stopPropagation(); exportCR(us, us.metadata.name, 'APUserSig'); }}>
                       <Download className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" title="Delete"
                       onClick={(e) => { e.stopPropagation(); setDeletingItem(us); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -702,7 +702,7 @@ export default function WafPolicies() {
           <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
             <Shield className="h-5 w-5" /> WAF Policies
           </h2>
-          <p className={cn('text-sm', isDark ? 'text-zinc-400' : 'text-slate-500')}>
+          <p className={cn('text-sm', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
             Manage all 4 App Protect WAF CRDs. Requires the nap-policy-operator PLM chart installed on the target cluster.
           </p>
         </div>
@@ -710,7 +710,7 @@ export default function WafPolicies() {
         {/* Cluster + Namespace pickers */}
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={cn('text-xs shrink-0', isDark ? 'text-zinc-400' : 'text-slate-500')}>Cluster:</span>
+            <span className={cn('text-xs shrink-0', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>Cluster:</span>
             <Select value={clusterId ? String(clusterId) : undefined} onValueChange={(v) => setSelectedCluster(Number(v))}>
               <SelectTrigger className="w-56 h-9"><SelectValue placeholder="Select a cluster" /></SelectTrigger>
               <SelectContent>
@@ -719,7 +719,7 @@ export default function WafPolicies() {
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            <span className={cn('text-xs shrink-0', isDark ? 'text-zinc-400' : 'text-slate-500')}>Namespace:</span>
+            <span className={cn('text-xs shrink-0', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>Namespace:</span>
             {clusterId
               ? <NamespacePicker clusterId={clusterId} value={namespace} onChange={setNamespace} />
               : <Input value={namespace} onChange={(e) => setNamespace(e.target.value)} className="w-36 h-9 text-sm" placeholder="default" />
@@ -728,7 +728,7 @@ export default function WafPolicies() {
         </div>
 
         {/* Tabs */}
-        <div className={cn('flex gap-1 p-1 rounded-lg border flex-wrap', isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-zinc-100 border-zinc-200')}>
+        <div className={cn('flex gap-1 p-1 rounded-lg border flex-wrap', isDark ? 'bg-card/50 border-border' : 'bg-muted border-border/50')}>
           {TABS.map((t) => {
             const Icon = t.icon;
             return (
@@ -737,8 +737,8 @@ export default function WafPolicies() {
                 className={cn(
                   'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
                   activeTab === t.key
-                    ? isDark ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm'
-                    : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'
+                    ? isDark ? 'bg-card text-white shadow-sm' : 'bg-white text-foreground shadow-sm'
+                    : isDark ? 'text-muted-foreground hover:text-foreground/90' : 'text-muted-foreground hover:text-foreground/80'
                 )}
                 onClick={() => setActiveTab(t.key)}
               >
@@ -749,7 +749,7 @@ export default function WafPolicies() {
         </div>
 
         {/* Active tab description */}
-        <p className={cn('text-xs -mt-2', isDark ? 'text-zinc-500' : 'text-slate-400')}>
+        <p className={cn('text-xs -mt-2', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
           {TABS.find((t) => t.key === activeTab)?.description}
         </p>
 

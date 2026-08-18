@@ -122,18 +122,18 @@ function StepIndicator({
               onClick={() => onStepClick(step.key)}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors',
-                isActive   ? 'bg-blue-600 text-white'
-                : isDone   ? isDark ? 'bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50'
-                                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                           : isDark ? 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
-                                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                isActive   ? 'bg-primary text-white'
+                : isDone   ? isDark ? 'bg-success/20/30 text-success/80 hover:bg-success/20/50'
+                                    : 'bg-success/10 text-success hover:bg-success/10'
+                           : isDark ? 'bg-card text-muted-foreground hover:bg-muted'
+                                    : 'bg-muted text-muted-foreground hover:bg-muted'
               )}
             >
               {isDone ? <Check className="h-3 w-3" /> : <Icon className="h-3 w-3" />}
               {step.label}
             </button>
             {i < STEPS.length - 1 && (
-              <ChevronRight className={cn('h-3.5 w-3.5 mx-0.5', isDark ? 'text-zinc-700' : 'text-slate-300')} />
+              <ChevronRight className={cn('h-3.5 w-3.5 mx-0.5', isDark ? 'text-foreground/80' : 'text-muted-foreground/70')} />
             )}
           </div>
         );
@@ -159,7 +159,7 @@ function BasicsStep({
   return (
     <div className="space-y-4 max-w-md">
       <div className="space-y-1.5">
-        <Label htmlFor="waf-name">Policy Name <span className="text-red-500">*</span></Label>
+        <Label htmlFor="waf-name">Policy Name <span className="text-destructive">*</span></Label>
         <Input
           id="waf-name"
           value={state.name}
@@ -168,12 +168,12 @@ function BasicsStep({
             onChange({ name: n, policyJsonText: '{\n  "name": "' + (n || 'my-policy') + '"\n}' });
           }}
           placeholder="my-waf-policy"
-          className={nameError || nameConflict ? 'border-red-500 focus-visible:ring-red-500' : ''}
+          className={nameError || nameConflict ? 'border-destructive/50 focus-visible:ring-destructive' : ''}
         />
         {nameError ? (
-          <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{nameError}</p>
+          <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{nameError}</p>
         ) : nameConflict ? (
-          <p className="text-xs text-red-500 flex items-center gap-1">
+          <p className="text-xs text-destructive flex items-center gap-1">
             <AlertTriangle className="h-3 w-3" />
             A policy with this name already exists in namespace &quot;{state.namespace}&quot;.
           </p>
@@ -282,7 +282,7 @@ function LoggingStep({
                   </SelectContent>
                 </Select>
               ) : (
-                <p className="text-xs text-amber-500">
+                <p className="text-xs text-warning">
                   No APLogConf resources found in &quot;{state.namespace}&quot;. Switch to &quot;Create new&quot; to make one.
                 </p>
               )}
@@ -290,7 +290,7 @@ function LoggingStep({
           )}
 
           {logging.mode === 'create' && (
-            <div className="space-y-4 pl-3 border-l-2 border-slate-200 dark:border-zinc-700">
+            <div className="space-y-4 pl-3 border-l-2 border-border dark:border-border">
               <div className="space-y-1.5">
                 <Label>Format</Label>
                 <Select value={logging.format} onValueChange={(v) => setLogging({ format: v as APLogConfFormat })}>
@@ -302,7 +302,7 @@ function LoggingStep({
               </div>
               {logging.format === 'user-defined' && (
                 <div className="space-y-1.5">
-                  <Label>Format String <span className="text-red-500">*</span></Label>
+                  <Label>Format String <span className="text-destructive">*</span></Label>
                   <Input
                     value={logging.formatString}
                     onChange={(e) => setLogging({ formatString: e.target.value })}
@@ -364,8 +364,8 @@ function ReviewStep({ state, isDark }: { state: WafWizardState; isDark: boolean 
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-zinc-900')}>Review</h4>
-          <p className={cn('text-xs mt-0.5', isDark ? 'text-zinc-400' : 'text-zinc-500')}>
+          <h4 className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-foreground')}>Review</h4>
+          <p className={cn('text-xs mt-0.5', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
             APPolicy will be created{logNote}.
           </p>
         </div>
@@ -373,11 +373,11 @@ function ReviewStep({ state, isDark }: { state: WafWizardState; isDark: boolean 
           variant="outline" size="sm" className="h-7 text-xs gap-1.5"
           onClick={() => { navigator.clipboard.writeText(preview); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
         >
-          {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+          {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
           {copied ? 'Copied!' : 'Copy JSON'}
         </Button>
       </div>
-      <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-zinc-800 bg-zinc-950' : 'border-slate-200 bg-slate-50')}>
+      <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-border bg-card' : 'border-border bg-muted/50')}>
         <pre className="p-4 text-xs overflow-auto max-h-[380px]"><code>{preview}</code></pre>
       </div>
     </div>
@@ -478,17 +478,17 @@ export function WafPolicyWizard({ clusterId, onClose }: WafPolicyWizardProps) {
       </div>
 
       {currentStepErrors.length > 0 && (
-        <div className={cn('flex flex-wrap gap-2 text-xs', isDark ? 'text-zinc-500' : 'text-slate-400')}>
+        <div className={cn('flex flex-wrap gap-2 text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
           {currentStepErrors.map((err) => (
             <span key={err} className="flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3 text-amber-500" />{err}
+              <AlertTriangle className="h-3 w-3 text-warning" />{err}
             </span>
           ))}
         </div>
       )}
 
       {submitError && (
-        <div className="rounded-md border border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-900/20 px-3 py-2 text-xs text-red-600 dark:text-red-400 flex items-start gap-1.5">
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 dark:border-destructive/20 dark:bg-destructive/20/20 px-3 py-2 text-xs text-destructive dark:text-destructive/80 flex items-start gap-1.5">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{submitError}
         </div>
       )}
@@ -506,7 +506,7 @@ export function WafPolicyWizard({ clusterId, onClose }: WafPolicyWizardProps) {
           {step === 'review' ? (
             <Button
               size="sm"
-              className="h-8 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700"
+              className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90"
               onClick={handleCreate}
               disabled={!allValid || isSubmitting}
             >
@@ -515,7 +515,7 @@ export function WafPolicyWizard({ clusterId, onClose }: WafPolicyWizardProps) {
           ) : (
             <Button
               size="sm"
-              className="h-8 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700"
+              className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90"
               onClick={goNext}
               disabled={!canGoForward || !currentStepValid}
             >

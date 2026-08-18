@@ -50,7 +50,7 @@ export function WafWizardFrame({
       {/* Tab bar */}
       <div className={cn(
         'flex gap-0.5 border-b flex-wrap',
-        isDark ? 'border-zinc-800 bg-zinc-900/30' : 'border-slate-200 bg-slate-50'
+        isDark ? 'border-border bg-card/30' : 'border-border bg-muted/50'
       )}>
         {tabs.map(tab => {
           const errors = tab.validate();
@@ -64,17 +64,17 @@ export function WafWizardFrame({
                 'relative flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap',
                 isActive
                   ? isDark
-                    ? 'border-blue-500 text-white bg-zinc-900'
-                    : 'border-blue-600 text-zinc-900 bg-white'
+                    ? 'border-primary/50 text-white bg-card'
+                    : 'border-primary text-foreground bg-white'
                   : isDark
-                    ? 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:bg-white'
+                    ? 'border-transparent text-muted-foreground hover:text-foreground/90 hover:bg-card/50'
+                    : 'border-transparent text-muted-foreground hover:text-foreground/80 hover:bg-white'
               )}
             >
               {tab.label}
               {/* Red dot = tab has unfilled required fields */}
               {hasErrors && (
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" title={errors.join('; ')} />
+                <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" title={errors.join('; ')} />
               )}
             </button>
           );
@@ -89,11 +89,11 @@ export function WafWizardFrame({
       {/* Footer */}
       <div className={cn(
         'border-t px-4 py-3 flex items-center justify-between gap-3',
-        isDark ? 'border-zinc-800 bg-zinc-900/30' : 'border-slate-200 bg-slate-50'
+        isDark ? 'border-border bg-card/30' : 'border-border bg-muted/50'
       )}>
         <div className="flex-1">
           {submitError && (
-            <div className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <div className="flex items-start gap-1.5 text-xs text-destructive dark:text-destructive/80">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <span>{submitError}</span>
             </div>
@@ -101,7 +101,7 @@ export function WafWizardFrame({
           {statusNote}
           {allErrors.length > 0 && !submitError && (
             <p className="text-xs text-muted-foreground">
-              {allErrors.length} required field{allErrors.length > 1 ? 's' : ''} still needed (tabs with <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mx-0.5 align-middle" /> dots).
+              {allErrors.length} required field{allErrors.length > 1 ? 's' : ''} still needed (tabs with <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive mx-0.5 align-middle" /> dots).
             </p>
           )}
         </div>
@@ -109,7 +109,7 @@ export function WafWizardFrame({
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>Cancel</Button>
           <Button
             size="sm"
-            className="bg-blue-600 hover:bg-blue-700 min-w-24"
+            className="bg-primary hover:bg-primary/90 min-w-24"
             onClick={onSubmit}
             disabled={allErrors.length > 0 || isPending}
           >
