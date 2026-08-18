@@ -31,6 +31,7 @@ from models import (
 from models.enums import ModuleStatus, StackInstanceStatus, TaskStatus
 from modules import get_module_registry
 from services.base_service import BaseService
+from services.module_resolution import _map_order, resolve_module_row
 from services.module_capabilities import serialize_engine_metadata
 from services.workspace_manager import WorkspaceManager
 from utils.security import is_sensitive_input
@@ -167,9 +168,10 @@ class StackService(BaseService):
                     ModuleLibrary.path.in_(module_paths),
                     ModuleLibrary.is_active,
                 )
-                # D-033: multiple version rows may share a path — iterate so the
-                # preferred row (is_latest, newest id) lands last and wins the map.
-                .order_by(ModuleLibrary.is_latest.asc(), ModuleLibrary.id.asc())
+                # D-033: multiple version rows may share a path. Ordering lives in
+                # services.module_resolution so this map cannot drift away from
+                # what stack deploy resolves (#90 F8).
+                .order_by(*_map_order())
                 .all()
             )
             modules_by_path = {row.path: row for row in module_rows if isinstance(row.path, str)}
@@ -320,10 +322,7 @@ class StackService(BaseService):
             module_name = module_def.get("name", module_path)
             stack_variables = module_def.get("variables", {})
 
-            library_module = self.db.query(ModuleLibrary).filter(
-                ModuleLibrary.path == module_path,
-                ModuleLibrary.is_active,
-            ).order_by(ModuleLibrary.is_latest.desc(), ModuleLibrary.id.desc()).first()
+            library_module = resolve_module_row(self.db, module_path)
 
             if not library_module:
                 logger.warning(f"Module '{module_path}' not found in library, skipping input analysis")

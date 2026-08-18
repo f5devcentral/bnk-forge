@@ -826,19 +826,11 @@ class StackDeploymentService:
         Uses the same query (active rows, newest sync wins) that the deploy path
         uses so the preflight and the apply agree on what "present" means.
         """
-        return (
-            self.db.query(ModuleLibrary)
-            .filter(
-                ModuleLibrary.path == module_path,
-                ModuleLibrary.is_active,
-            )
-            .order_by(
-                ModuleLibrary.is_latest.desc(),
-                ModuleLibrary.last_synced.desc().nullslast(),
-                ModuleLibrary.id.desc(),
-            )
-            .first()
-        )
+        # Canonical ordering lives in services.module_resolution so the
+        # secret-policy check and the stack map resolve the same row (#90 F8).
+        from services.module_resolution import resolve_module_row
+
+        return resolve_module_row(self.db, module_path)
 
     def verify_template_modules_present(
         self,

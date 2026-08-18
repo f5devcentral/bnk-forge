@@ -760,11 +760,12 @@ def get_required_secrets(
         # preferred row (is_latest, newest id) lands last and wins the map,
         # matching the version stack deploy resolves.
         module_paths = [m.get("path") for m in (template.modules or []) if m.get("path")]
-        lib_modules = db.query(ModuleLibrary).filter(
-            ModuleLibrary.path.in_(module_paths),
-            ModuleLibrary.is_active
-        ).order_by(ModuleLibrary.is_latest.asc(), ModuleLibrary.id.asc()).all()
-        lib_modules_by_path = {m.path: m for m in lib_modules}
+        # Shared resolver: this map must agree row-for-row with what stack deploy
+        # resolves, or the secret-policy check validates a different module's
+        # schema than the one that actually deploys (#90 F8).
+        from services.module_resolution import resolve_module_rows_by_path
+
+        lib_modules_by_path = resolve_module_rows_by_path(db, module_paths)
 
         # Keep stack-level secret policy aligned with stack deploy prerequisite checks.
         policy_service = StackDeploymentService(db)
