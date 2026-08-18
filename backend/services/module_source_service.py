@@ -591,14 +591,49 @@ class ModuleSourceService:
         self.db.refresh(source)
 
         if source.source_type == 'git':
+            # The initial sync is best-effort: a bad manifest or an unreachable
+            # remote must not lose the source row the caller just created.
+            #
+            # Catching the exception unwinds the Python stack but does NOT reset
+            # the SQLAlchemy session. _auto_sync_blueprints_for_git_source flushes
+            # BlueprintRelease rows on this same session, so a failed insert left
+            # it in PendingRollback -- and the route's db.commit() then raised
+            # PendingRollbackError, which surfaced as a 500 that masked the real
+            # cause (logged only at WARNING). See #9.
+            #
+            # A SAVEPOINT scopes the damage: rolling it back discards the failed
+            # sync writes and leaves the outer transaction -- including the
+            # ModuleSource insert above -- valid and committable.
+            savepoint = self.db.begin_nested()
             try:
                 from services.module_sync_service import ModuleSyncService
 
                 ModuleSyncService(self.db).sync_git_source(source)
                 self._auto_sync_blueprints_for_git_source(source)
+                savepoint.commit()
                 self.db.refresh(source)
             except Exception as exc:
-                logger.warning("Initial sync failed for new module source %s: %s", source.name, exc)
+                # Always roll back to the SAVEPOINT, never the whole session.
+                # After a failed flush SQLAlchemy reports the nested transaction
+                # as not is_active, but rollback() is still the correct recovery
+                # and is what restores the session -- checking is_active first
+                # and falling through to self.db.rollback() would discard the
+                # ModuleSource insert as well, which is the row we are trying to
+                # keep. The outer rollback stays only as a last resort for the
+                # case where sync_git_source committed and released the
+                # savepoint out from under us.
+                try:
+                    savepoint.rollback()
+                except Exception:
+                    self.db.rollback()
+                # Record the cause where the caller can actually see it. The
+                # source is still created; sync_status/sync_error say why it is
+                # empty, instead of the client getting an opaque 500.
+                logger.exception(
+                    "Initial sync failed for new module source %s: %s", source.name, exc
+                )
+                source.sync_status = 'failed'
+                source.sync_error = f"Initial sync failed: {exc}"[:2000]
 
         logger.info(f"Created module source: {source.name} ({source.source_type})")
         return self._serialize_source(source)

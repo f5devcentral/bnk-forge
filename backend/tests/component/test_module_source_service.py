@@ -159,6 +159,59 @@ class TestCreateSource:
         assert args[0].url == "https://github.com/example/repo.git"
         assert kwargs == {"sync_related_modules": False}
 
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_create_survives_failed_initial_sync_and_leaves_session_committable(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """#9: a failing initial sync must not poison the session.
+
+        _auto_sync_blueprints_for_git_source flushes on the *same* session. When
+        one of those writes failed, catching the exception unwound the Python
+        stack but left SQLAlchemy in PendingRollback -- so the route's
+        db.commit() raised PendingRollbackError, surfaced as a 500 that hid the
+        real cause. The savepoint must contain that damage.
+        """
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        # Fail the way the real bug did: a flush error inside the blueprint sync,
+        # which is what poisons the session (not a plain Python exception).
+        def _explode(source, **kwargs):
+            db.add(ModuleLibrary())  # NOT NULL violations on flush
+            db.flush()
+
+        mock_blueprint_sync_cls.return_value.sync_git_source.side_effect = _explode
+
+        svc = ModuleSourceService(db)
+        result = svc.create_source(_source_data())
+
+        # The source still exists ...
+        assert result["name"] == "new-source"
+        # ... the failure is reported instead of being swallowed to a warning ...
+        assert result["sync_status"] == "failed"
+        assert result["sync_error"]
+        # ... and the session is usable, which is the actual bug.
+        db.commit()
+        assert db.query(ModuleSource).filter_by(name="new-source").one().sync_status == "failed"
+
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_create_records_sync_error_text(self, mock_sync_class, mock_blueprint_sync_cls, db):
+        """The real cause must reach the caller, not just the log."""
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        mock_blueprint_sync_cls.return_value.sync_git_source.side_effect = RuntimeError(
+            "manifest.yaml is not valid YAML"
+        )
+
+        result = ModuleSourceService(db).create_source(_source_data())
+
+        assert result["sync_status"] == "failed"
+        assert "manifest.yaml is not valid YAML" in result["sync_error"]
+        db.commit()
+
     @patch("services.module_sync_service.ModuleSyncService")
     def test_create_registry_source_does_not_run_initial_git_sync(self, mock_sync_class, db):
         svc = ModuleSourceService(db)
