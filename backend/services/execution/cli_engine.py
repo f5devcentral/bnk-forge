@@ -281,6 +281,30 @@ class BnkctlEngine(DeploymentEngine):
             cluster_yaml_path.write_text(yaml.safe_dump(ctx.variables, default_flow_style=False))
         return cluster_yaml_path
 
+    @staticmethod
+    def _applied_cluster_name(cfg_path: Path) -> str | None:
+        """Read metadata.name from an applied cluster.yaml.
+
+        Used on the destroy path so log lines (and any {name} placeholder a tool
+        descriptor uses) describe the cluster actually being torn down, rather
+        than whatever the project form currently says. Best-effort: a malformed
+        file must not block a destroy, since the config reaches the tool by path
+        regardless.
+        """
+        import yaml
+
+        try:
+            doc = yaml.safe_load(cfg_path.read_text()) or {}
+        except Exception:
+            logger.warning("Could not parse applied cluster.yaml at %s", cfg_path)
+            return None
+        if not isinstance(doc, dict):
+            return None
+        metadata = doc.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("name"):
+            return str(metadata["name"])
+        return None
+
     def _build_env(self, ctx: ModuleContext) -> dict[str, str]:
         """Merge process env with per-project cloud credentials.
 
@@ -807,8 +831,31 @@ class BnkctlEngine(DeploymentEngine):
             descriptor = self._get_descriptor(ctx)
             resolved = shutil.which(descriptor.binary_path) or descriptor.binary_path
             workspace = self._workspace_dir(ctx)
-            cfg_path = self._render_cluster_yaml(ctx, workspace)
-            cluster_name = ctx.variables.get("name", str(ctx.project_id))
+            # Destroy from the APPLIED config, never a re-render of current form
+            # variables. The workspace cluster.yaml was written at apply time and
+            # sits beside the tool's own .awsbnkctl/<name>/state.env, so it is the
+            # config the live cluster was actually built from. Re-rendering here
+            # (the old behaviour) meant that editing cluster_name after apply made
+            # `down` target a cluster that never existed -- reporting success while
+            # the real EKS cluster stayed up and unmanaged. Refusing is strictly
+            # safer than guessing; same stance as _destroy_usecases below.
+            cfg_path = workspace / "cluster.yaml"
+            if not cfg_path.exists():
+                return OperationResult(
+                    success=False,
+                    duration_seconds=time.monotonic() - started,
+                    error_message=(
+                        f"cluster.yaml not found in workspace {workspace} — refusing to "
+                        "destroy. The applied configuration is what identifies the live "
+                        "cluster; re-rendering it from the current project form could "
+                        "target the wrong cluster and orphan the real one. Restore the "
+                        "workspace (or tear the cluster down with awsbnkctl directly) "
+                        "and retry."
+                    ),
+                )
+            cluster_name = self._applied_cluster_name(cfg_path) or ctx.variables.get(
+                "name", str(ctx.project_id)
+            )
 
             args = [resolved] + self._fmt_args(
                 descriptor.destroy_args_template,
