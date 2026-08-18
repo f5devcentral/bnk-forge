@@ -288,6 +288,45 @@ def upsert_waf_signatures(
     return result.get("resource", result)
 
 
+@router.delete(
+    "/k8s/clusters/{cluster_id}/waf/signatures",
+)
+@handle_route_errors("delete WAF signatures")
+def delete_waf_signatures(
+    cluster_id: int,
+    namespace: str,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
+    k8s_service = KubernetesService(db)
+    return k8s_service.delete_resource(cluster_id, "apsignatures", APSIGNATURES_NAME, namespace)
+
+
+@router.post(
+    "/k8s/clusters/{cluster_id}/waf/policies/{name}/recompile",
+)
+@handle_route_errors("force recompile WAF policy")
+def recompile_waf_policy(
+    cluster_id: int,
+    name: str,
+    namespace: str,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
+    """Force recompile by bumping a metadata annotation (triggers reconcile loop)."""
+    import time
+    k8s_service = KubernetesService(db)
+    existing = _find_by_name(k8s_service.get_resources(cluster_id, "appolicy", namespace), name)
+    if not existing:
+        raise NotFoundError("waf_policy", name)
+    resource_version = existing.get("metadata", {}).get("resourceVersion")
+    spec = existing.get("spec", {})
+    # Rebuild with same spec — touch triggers the controller reconcile loop
+    resource_yaml = _build_resource_yaml("APPolicy", name, namespace, spec, resource_version)
+    result = k8s_service.update_resource(cluster_id, "appolicy", name, resource_yaml, namespace)
+    return {"message": f"Recompile triggered for {name}", "resource": result.get("resource", result)}
+
+
 # ============================================================================
 # APUserSig
 # ============================================================================

@@ -70,6 +70,12 @@ export const wafPoliciesApi = {
   upsertSignatures: (clusterId: number, data: WafSignaturesUpdateRequest) =>
     apiClient.put<APSignaturesResource>(`/api/k8s/clusters/${clusterId}/waf/signatures`, data).then((res) => res.data),
 
+  deleteSignatures: (clusterId: number, namespace: string) =>
+    apiClient.delete<{ message: string }>(`/api/k8s/clusters/${clusterId}/waf/signatures`, { params: { namespace } }).then((res) => res.data),
+
+  recompilePolicy: (clusterId: number, name: string, namespace: string) =>
+    apiClient.post<{ message: string }>(`/api/k8s/clusters/${clusterId}/waf/policies/${name}/recompile`, null, { params: { namespace } }).then((res) => res.data),
+
   // APUserSig
   listUserSigs: (clusterId: number, params?: { namespace?: string }) =>
     apiClient

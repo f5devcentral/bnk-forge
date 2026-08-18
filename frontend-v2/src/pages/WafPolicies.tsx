@@ -26,69 +26,60 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { DestructiveConfirmDialog } from '@/components/ui/destructive-confirm-dialog';
-import { Plus, Shield, Trash2, FileText, Key, RefreshCw, PenLine, Pencil, AlertTriangle, Copy, Check, RotateCcw, FileCode2 } from 'lucide-react';
+import { Plus, Shield, Trash2, FileText, Key, RefreshCw, PenLine, Pencil, AlertTriangle, RotateCcw, Info, Download, RefreshCcw } from 'lucide-react';
+
+// Refresh button — spins while loading, then pulses green briefly on success
+function RefreshButton({ refetch, isLoading }: { refetch: () => void; isLoading?: boolean }) {
+  const [flash, setFlash] = useState(false);
+  const handleClick = () => {
+    refetch();
+    setFlash(true);
+    setTimeout(() => setFlash(false), 800);
+  };
+  return (
+    <Button
+      variant="ghost" size="sm"
+      className={cn('h-8 w-8 p-0 transition-colors', flash && !isLoading ? 'text-emerald-500' : '')}
+      onClick={handleClick}
+      title="Refresh from cluster"
+    >
+      <RotateCcw className={cn('h-3.5 w-3.5 transition-transform', isLoading ? 'animate-spin text-blue-500' : '')} />
+    </Button>
+  );
+}
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useClusterNamespaces } from '@/hooks/useK8sResources';
 import {
-  useWafPolicies, useDeleteWafPolicy, useUpdateWafPolicy,
-  useWafLogConfs, useCreateWafLogConf, useUpdateWafLogConf, useDeleteWafLogConf,
-  useWafSignatures, useUpsertWafSignatures,
-  useWafUserSigs, useCreateWafUserSig, useUpdateWafUserSig, useDeleteWafUserSig,
+  useWafPolicies, useDeleteWafPolicy, useRecompileWafPolicy,
+  useWafLogConfs, useDeleteWafLogConf,
+  useWafSignatures, useUpsertWafSignatures, useDeleteWafSignatures,
+  useWafUserSigs, useDeleteWafUserSig,
 } from '@/hooks/useWafPolicies';
-import { WafPolicyWizard } from '@/components/k8s/WafPolicyWizard';
 import { WafPolicyDetail } from '@/components/k8s/f5bnk-details/WafPolicyDetail';
+import { APLogConfDetail } from '@/components/k8s/f5bnk-details/APLogConfDetail';
+import { APUserSigDetail } from '@/components/k8s/f5bnk-details/APUserSigDetail';
+import { APPolicyForm } from '@/components/k8s/waf/APPolicyForm';
+import { APLogConfForm } from '@/components/k8s/waf/APLogConfForm';
+import { APUserSigForm } from '@/components/k8s/waf/APUserSigForm';
 import { formatAge } from '@/lib/time-utils';
 import type {
   APPolicyResource, APLogConfResource, APUserSigResource, BundleState,
-  APLogConfFormat, APLogConfRequestType,
 } from '@/types';
 
 type PageTab = 'log-profiles' | 'policies' | 'signatures' | 'user-sigs';
 
-const REQUEST_TYPES: APLogConfRequestType[] = ['illegal', 'blocked', 'all'];
-
-// RFC 1123 DNS label: lowercase alphanumeric or '-', no leading/trailing '-', max 63 chars
-const RFC1123_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
-function validateK8sName(name: string): string | null {
-  if (!name) return 'Name is required.';
-  if (name.length > 63) return 'Name must be ≤ 63 characters.';
-  if (!RFC1123_RE.test(name)) return 'Must be lowercase alphanumeric with hyphens; cannot start or end with a hyphen.';
-  return null;
-}
-
-// APLogConf max_message_size: \d+k where 1–64
-const MSG_SIZE_RE = /^([1-9]|[1-5][0-9]|6[0-4])k$/;
-function validateMaxMsgSize(v: string): string | null {
-  if (!v || v === '10k') return null; // default
-  if (!MSG_SIZE_RE.test(v)) return 'Must be 1k–64k (e.g. "16k")';
-  return null;
-}
-
-// max_request_size: a positive integer, Nk, or "any"
-const REQ_SIZE_RE = /^(any|[1-9][0-9]*(k)?)$/;
-function validateMaxReqSize(v: string): string | null {
-  if (!v || v === 'any') return null;
-  if (!REQ_SIZE_RE.test(v)) return 'Must be a number, "Nk", or "any"';
-  return null;
-}
-
-function yamlFromSpec(name: string, namespace: string, kind: string, spec: Record<string, unknown>): string {
-  const lines = [
-    `apiVersion: appprotect.f5.com/v1`,
-    `kind: ${kind}`,
-    `metadata:`,
-    `  name: ${name}`,
-    `  namespace: ${namespace}`,
-    `spec:`,
-    ...JSON.stringify(spec, null, 2).split('\n').slice(1, -1).map(l => '  ' + l),
-  ];
-  return lines.join('\n');
+// Download a CR as formatted JSON file for backup / GitOps use
+function exportCR(resource: unknown, name: string, kind: string) {
+  const blob = new Blob([JSON.stringify(resource, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${kind.toLowerCase()}-${name}.json`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Extract the most useful message from an Axios/API error
@@ -152,251 +143,18 @@ function NamespacePicker({
 
 // ── Shared: Log Profile form fields (reused by create panel and edit sheet) ──
 
-interface LogProfileFormProps {
-  name: string;
-  onNameChange?: (v: string) => void;
-  nameError?: string | null;
-  format: APLogConfFormat;
-  onFormatChange: (v: APLogConfFormat) => void;
-  formatString: string;
-  onFormatStringChange: (v: string) => void;
-  requestType: APLogConfRequestType;
-  onRequestTypeChange: (v: APLogConfRequestType) => void;
-  maxMsg: string;
-  onMaxMsgChange: (v: string) => void;
-  maxReq: string;
-  onMaxReqChange: (v: string) => void;
-  /** When true the name field is hidden (for edit sheet where name is immutable). */
-  hideNameField?: boolean;
-}
-
-const REQUEST_TYPE_HINTS: Record<string, string> = {
-  illegal: 'Log only requests that violate the security policy',
-  blocked: 'Log only requests that were blocked',
-  all: 'Log all requests (high volume — use with care)',
-};
-
-function LogProfileFormFields({ name, onNameChange, nameError, format, onFormatChange, formatString, onFormatStringChange, requestType, onRequestTypeChange, maxMsg, onMaxMsgChange, maxReq, onMaxReqChange, hideNameField }: LogProfileFormProps) {
-  const msgSizeError = validateMaxMsgSize(maxMsg);
-  const reqSizeError = validateMaxReqSize(maxReq);
-  const formatStringMissing = format === 'user-defined' && !formatString.trim();
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-w-xl">
-      {!hideNameField && (
-        <div className="space-y-1.5">
-          <Label>Name <span className="text-red-500">*</span></Label>
-          <Input
-            value={name}
-            onChange={(e) => onNameChange?.(e.target.value)}
-            placeholder="my-log-profile"
-            className={nameError ? 'border-red-500 focus-visible:ring-red-500' : ''}
-          />
-          {nameError
-            ? <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{nameError}</p>
-            : <p className="text-xs text-muted-foreground">Lowercase alphanumeric with hyphens (RFC 1123).</p>
-          }
-        </div>
-      )}
-      <div className="space-y-1.5">
-        <Label>Format</Label>
-        <Select value={format} onValueChange={(v) => onFormatChange(v as APLogConfFormat)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="default">default — NAP JSON</SelectItem>
-            <SelectItem value="splunk">splunk — Splunk key=value</SelectItem>
-            <SelectItem value="arcsight">arcsight — ArcSight CEF</SelectItem>
-            <SelectItem value="user-defined">user-defined — custom format string</SelectItem>
-            <SelectItem value="grpc">grpc — gRPC streaming</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      {format === 'user-defined' && (
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label>Format String <span className="text-red-500">*</span></Label>
-          <Input
-            value={formatString}
-            onChange={(e) => onFormatStringChange(e.target.value)}
-            placeholder="%date_time,%blocking_exception_reason,%dest_port,%ip_client"
-            className={formatStringMissing ? 'border-red-500' : ''}
-          />
-          {formatStringMissing
-            ? <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Format string is required for user-defined format.</p>
-            : <p className="text-xs text-muted-foreground">Comma-separated NAP log field names prefixed with %.</p>
-          }
-        </div>
-      )}
-      <div className="space-y-1.5">
-        <Label>Request Type Filter</Label>
-        <Select value={requestType} onValueChange={(v) => onRequestTypeChange(v as APLogConfRequestType)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {REQUEST_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                <div>
-                  <div className="font-medium">{t}</div>
-                  <div className="text-xs text-muted-foreground">{REQUEST_TYPE_HINTS[t]}</div>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">{REQUEST_TYPE_HINTS[requestType]}</p>
-      </div>
-      <div className="space-y-1.5">
-        <Label>Max Message Size</Label>
-        <Input
-          value={maxMsg}
-          onChange={(e) => onMaxMsgChange(e.target.value)}
-          placeholder="10k"
-          className={msgSizeError ? 'border-red-500' : ''}
-        />
-        {msgSizeError
-          ? <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{msgSizeError}</p>
-          : <p className="text-xs text-muted-foreground">Max size of a single log message: 1k–64k</p>
-        }
-      </div>
-      <div className="space-y-1.5">
-        <Label>Max Request Size</Label>
-        <Input
-          value={maxReq}
-          onChange={(e) => onMaxReqChange(e.target.value)}
-          placeholder="any"
-          className={reqSizeError ? 'border-red-500' : ''}
-        />
-        {reqSizeError
-          ? <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{reqSizeError}</p>
-          : <p className="text-xs text-muted-foreground">Max logged request body size: number, &quot;Nk&quot;, or &quot;any&quot;</p>
-        }
-      </div>
-    </div>
-  );
-}
-
-/** Returns true when the log profile form has blocking errors that should prevent submission */
-function hasLogProfileFormErrors(format: APLogConfFormat, formatString: string, maxMsg: string, maxReq: string): boolean {
-  if (format === 'user-defined' && !formatString.trim()) return true;
-  if (validateMaxMsgSize(maxMsg)) return true;
-  if (validateMaxReqSize(maxReq)) return true;
-  return false;
-}
 
 // ── Edit sheet: APLogConf ──────────────────────────────────────────────────
 
-function EditLogProfileSheet({
-  clusterId, namespace, item, onClose,
-}: { clusterId: number; namespace: string; item: APLogConfResource; onClose: () => void }) {
-  const content = item.spec?.content as { format?: APLogConfFormat; format_string?: string; max_message_size?: string; max_request_size?: string } | undefined;
-  const filter = item.spec?.filter;
-  const [format, setFormat]           = useState<APLogConfFormat>(content?.format ?? 'default');
-  const [formatString, setFormatString] = useState(content?.format_string ?? '');
-  const [requestType, setRequestType] = useState<APLogConfRequestType>(filter?.request_type ?? 'illegal');
-  const [maxMsg, setMaxMsg]           = useState(content?.max_message_size ?? '10k');
-  const [maxReq, setMaxReq]           = useState(content?.max_request_size ?? 'any');
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const update = useUpdateWafLogConf(clusterId, item.metadata.name);
-
-  const [yamlOpen, setYamlOpen] = useState(false);
-  const yamlPreview = yamlFromSpec(item.metadata.name, item.metadata.namespace ?? namespace, 'APLogConf', item.spec as Record<string, unknown> ?? {});
-
-  const handleSave = async () => {
-    setSubmitError(null);
-    try {
-      await update.mutateAsync({
-        namespace: item.metadata.namespace ?? namespace,
-        spec: {
-          content: {
-            format,
-            ...(format === 'user-defined' && formatString ? { format_string: formatString } : {}),
-            max_message_size: maxMsg,
-            max_request_size: maxReq,
-          },
-          filter: { request_type: requestType },
-        },
-      });
-      onClose();
-    } catch (e) {
-      setSubmitError(extractApiError(e));
-    }
-  };
-
-  return (
-    <div className="space-y-4 mt-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">Editing <span className="font-mono font-medium">{item.metadata.name}</span>. Name is immutable.</p>
-        <Button variant="ghost" size="sm" className="h-6 text-xs gap-1" onClick={() => setYamlOpen(!yamlOpen)}>
-          <FileCode2 className="h-3 w-3" /> {yamlOpen ? 'Hide YAML' : 'View YAML'}
-        </Button>
-      </div>
-      {yamlOpen && (
-        <pre className="rounded border bg-zinc-950 text-zinc-300 p-3 text-[11px] font-mono overflow-x-auto max-h-48">{yamlPreview}</pre>
-      )}
-      <LogProfileFormFields
-        name={item.metadata.name}
-        hideNameField
-        format={format} onFormatChange={setFormat}
-        formatString={formatString} onFormatStringChange={setFormatString}
-        requestType={requestType} onRequestTypeChange={setRequestType}
-        maxMsg={maxMsg} onMaxMsgChange={setMaxMsg}
-        maxReq={maxReq} onMaxReqChange={setMaxReq}
-      />
-      {submitError && <InlineError message={submitError} />}
-      <div className="flex gap-2">
-        <Button
-          size="sm" className="bg-blue-600 hover:bg-blue-700"
-          onClick={handleSave}
-          disabled={hasLogProfileFormErrors(format, formatString, maxMsg, maxReq) || update.isPending}
-        >Save</Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
-      </div>
-    </div>
-  );
-}
-
 function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; namespace: string; isDark: boolean }) {
   const [showCreate, setShowCreate] = useState(false);
+  const [viewingItem, setViewingItem]   = useState<APLogConfResource | null>(null);
   const [editingItem, setEditingItem]   = useState<APLogConfResource | null>(null);
   const [deletingItem, setDeletingItem] = useState<APLogConfResource | null>(null);
 
-  // Create form state
-  const [lcName, setLcName] = useState('');
-  const [lcFormat, setLcFormat] = useState<APLogConfFormat>('default');
-  const [lcFormatString, setLcFormatString] = useState('');
-  const [lcRequestType, setLcRequestType] = useState<APLogConfRequestType>('illegal');
-  const [lcMaxMsg, setLcMaxMsg] = useState('10k');
-  const [lcMaxReq, setLcMaxReq] = useState('any');
-  const [lcCreateError, setLcCreateError] = useState<string | null>(null);
-
-  const lcNameError = lcName ? validateK8sName(lcName) : null;
-
-  const { data, isLoading } = useWafLogConfs(clusterId, namespace, { enabled: !!clusterId });
+  const { data, isLoading, refetch: refetchLogConfs } = useWafLogConfs(clusterId, namespace, { enabled: !!clusterId });
   const logConfs = useMemo(() => data?.log_confs ?? [], [data]);
-  const create = useCreateWafLogConf(clusterId);
   const deleteLc = useDeleteWafLogConf(clusterId);
-
-  const handleCreate = async () => {
-    const nameErr = validateK8sName(lcName);
-    if (nameErr) { setLcCreateError(nameErr); return; }
-    setLcCreateError(null);
-    try {
-      const spec: Record<string, unknown> = {
-        content: {
-          format: lcFormat,
-          ...(lcFormat === 'user-defined' && lcFormatString ? { format_string: lcFormatString } : {}),
-          max_message_size: lcMaxMsg,
-          max_request_size: lcMaxReq,
-        },
-        filter: { request_type: lcRequestType },
-      };
-      await create.mutateAsync({ name: lcName.trim(), namespace, spec });
-      setLcName(''); setLcFormat('default'); setLcFormatString(''); setLcMaxMsg('10k'); setLcMaxReq('any');
-      setShowCreate(false);
-    } catch (e) {
-      setLcCreateError(extractApiError(e));
-    }
-  };
-
-  const { refetch: refetchLogConfs } = useWafLogConfs(clusterId, namespace, { enabled: !!clusterId });
 
   return (
     <div className="space-y-4">
@@ -405,36 +163,16 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
           APLogConf CRs define WAF security event log format. Create them first — they can be reused across multiple policies.
         </p>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={() => refetchLogConfs()} title="Refresh from cluster">
-            <RotateCcw className="h-3.5 w-3.5" />
-          </Button>
+          <RefreshButton refetch={refetchLogConfs} isLoading={isLoading} />
           <Button size="sm" className="gap-1.5" onClick={() => setShowCreate(!showCreate)}>
-            <Plus className="h-4 w-4" /> Create Log Profile
+            <Plus className="h-4 w-4" /> {showCreate ? 'Cancel' : 'Create Log Profile'}
           </Button>
         </div>
       </div>
 
       {showCreate && (
-        <div className={cn('rounded-lg border p-4 space-y-3', isDark ? 'border-zinc-800 bg-zinc-900/50' : 'border-slate-200 bg-white')}>
-          <p className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-zinc-900')}>New Log Profile</p>
-          <LogProfileFormFields
-            name={lcName} onNameChange={(v) => { setLcName(v); setLcCreateError(null); }}
-            nameError={lcNameError}
-            format={lcFormat} onFormatChange={setLcFormat}
-            formatString={lcFormatString} onFormatStringChange={setLcFormatString}
-            requestType={lcRequestType} onRequestTypeChange={setLcRequestType}
-            maxMsg={lcMaxMsg} onMaxMsgChange={setLcMaxMsg}
-            maxReq={lcMaxReq} onMaxReqChange={setLcMaxReq}
-          />
-          {lcCreateError && <InlineError message={lcCreateError} />}
-          <div className="flex gap-2">
-            <Button
-              size="sm" className="bg-blue-600 hover:bg-blue-700"
-              onClick={handleCreate}
-              disabled={!!lcNameError || !lcName.trim() || hasLogProfileFormErrors(lcFormat, lcFormatString, lcMaxMsg, lcMaxReq) || create.isPending}
-            >Create</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setShowCreate(false); setLcCreateError(null); }}>Cancel</Button>
-          </div>
+        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-zinc-800' : 'border-slate-200')}>
+          <APLogConfForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
         </div>
       )}
 
@@ -455,7 +193,7 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
           </TableHeader>
           <TableBody>
             {logConfs.map((lc: APLogConfResource) => (
-              <TableRow key={`${lc.metadata.namespace}/${lc.metadata.name}`}>
+              <TableRow key={`${lc.metadata.namespace}/${lc.metadata.name}`} className="cursor-pointer" onClick={() => setViewingItem(lc)}>
                 <TableCell className="font-medium">{lc.metadata.name}</TableCell>
                 <TableCell className="text-xs">{(lc.spec?.content as { format?: string } | undefined)?.format ?? '—'}</TableCell>
                 <TableCell>
@@ -466,10 +204,13 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
                 <TableCell className="text-xs">{formatAge(lc.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" onClick={() => setEditingItem(lc)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit" onClick={(e) => { e.stopPropagation(); setEditingItem(lc); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" onClick={() => setDeletingItem(lc)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON" onClick={(e) => { e.stopPropagation(); exportCR(lc, lc.metadata.name, 'APLogConf'); }}>
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete" onClick={(e) => { e.stopPropagation(); setDeletingItem(lc); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -480,16 +221,24 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
         </Table>
       )}
 
-      {/* Edit sheet — key forces remount so useState re-initialises from latest item */}
+      {/* Detail sheet */}
+      <Sheet open={!!viewingItem} onOpenChange={(open) => !open && setViewingItem(null)}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto p-0">
+          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>{viewingItem?.metadata.name}</SheetTitle></SheetHeader>
+          {viewingItem && <APLogConfDetail resource={viewingItem} />}
+        </SheetContent>
+      </Sheet>
+
+      {/* Edit sheet */}
       <Sheet open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
-        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-          <SheetHeader><SheetTitle>Edit Log Profile — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
+        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto p-0">
+          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>Edit Log Profile — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
           {editingItem && (
-            <EditLogProfileSheet
-              key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid ?? editingItem.metadata.creationTimestamp}`}
+            <APLogConfForm
+              key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid}`}
               clusterId={clusterId}
               namespace={namespace}
-              item={editingItem}
+              existingItem={editingItem}
               onClose={() => setEditingItem(null)}
             />
           )}
@@ -512,64 +261,6 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
   );
 }
 
-// ── Edit sheet: APPolicy JSON editor ──────────────────────────────────────
-
-function EditPolicySheet({
-  clusterId, namespace, item, onClose,
-}: { clusterId: number; namespace: string; item: APPolicyResource; onClose: () => void }) {
-  const [jsonText, setJsonText] = useState(() => {
-    try { return JSON.stringify(item.spec ?? {}, null, 2); } catch { return '{}'; }
-  });
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const update = useUpdateWafPolicy(clusterId, item.metadata.name);
-
-  const handleSave = async () => {
-    let spec: Record<string, unknown>;
-    try {
-      spec = JSON.parse(jsonText) as Record<string, unknown>;
-      setJsonError(null);
-    } catch (e) {
-      setJsonError(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-    try {
-      await update.mutateAsync({ namespace: item.metadata.namespace ?? namespace, spec });
-      onClose();
-    } catch (e) {
-      setJsonError(extractApiError(e));
-    }
-  };
-
-  return (
-    <div className="space-y-3 mt-2">
-      <p className="text-xs text-muted-foreground">
-        Editing <span className="font-mono font-medium">{item.metadata.name}</span>. Saving triggers recompile.
-      </p>
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label>Policy Spec (JSON)</Label>
-          <Button variant="ghost" size="sm" className="h-6 text-xs gap-1" onClick={() => { void navigator.clipboard.writeText(jsonText); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
-            {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-            {copied ? 'Copied' : 'Copy'}
-          </Button>
-        </div>
-        <Textarea
-          value={jsonText}
-          onChange={(e) => { setJsonText(e.target.value); setJsonError(null); }}
-          rows={22}
-          className="font-mono text-xs"
-        />
-        {jsonError && <InlineError message={jsonError} />}
-      </div>
-      <div className="flex gap-2">
-        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={update.isPending}>Save</Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
-      </div>
-    </div>
-  );
-}
 
 // ============================================================================
 // Tab 2: Policies (APPolicy) — references log profiles
@@ -584,6 +275,7 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
   const { data, isLoading, error, refetch } = useWafPolicies(clusterId, namespace, { enabled: !!clusterId });
   const policies = useMemo(() => data?.policies ?? [], [data]);
   const deletePolicy = useDeleteWafPolicy(clusterId);
+  const recompile = useRecompileWafPolicy(clusterId);
 
   return (
     <div className="space-y-4">
@@ -592,9 +284,7 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
           APPolicy CRs define WAF rules. Click a row to inspect bundle status.
         </p>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={() => refetch()} title="Refresh from cluster">
-            <RotateCcw className="h-3.5 w-3.5" />
-          </Button>
+          <RefreshButton refetch={refetch} isLoading={isLoading} />
           <Button size="sm" className="gap-1.5" onClick={() => setShowWizard(!showWizard)}>
             <Plus className="h-4 w-4" /> {showWizard ? 'Cancel' : 'Create Policy'}
           </Button>
@@ -602,8 +292,8 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
       </div>
 
       {showWizard && (
-        <div className={cn('rounded-lg border p-4', isDark ? 'border-zinc-800 bg-zinc-900/50' : 'border-slate-200 bg-white')}>
-          <WafPolicyWizard clusterId={clusterId} onClose={() => setShowWizard(false)} />
+        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-zinc-800' : 'border-slate-200')}>
+          <APPolicyForm clusterId={clusterId} namespace={namespace} onClose={() => setShowWizard(false)} />
         </div>
       )}
 
@@ -642,11 +332,20 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
                 <TableCell className="text-xs">{formatAge(p.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit"
                       onClick={(e) => { e.stopPropagation(); setEditingPolicy(p); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500"
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-amber-500" title="Force Recompile — trigger a new compilation cycle"
+                      disabled={recompile.isPending}
+                      onClick={(e) => { e.stopPropagation(); recompile.mutate({ name: p.metadata.name, namespace: p.metadata.namespace ?? namespace }); }}>
+                      <RefreshCcw className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON"
+                      onClick={(e) => { e.stopPropagation(); exportCR(p, p.metadata.name, 'APPolicy'); }}>
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete"
                       onClick={(e) => { e.stopPropagation(); setDeletingPolicy(p); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -662,20 +361,20 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
       <Sheet open={!!selectedPolicy} onOpenChange={(open) => !open && setSelectedPolicy(null)}>
         <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
           <SheetHeader><SheetTitle>{selectedPolicy?.metadata.name}</SheetTitle></SheetHeader>
-          {selectedPolicy && <div className="mt-4"><WafPolicyDetail resource={selectedPolicy} /></div>}
+          {selectedPolicy && <div className="mt-4"><WafPolicyDetail resource={selectedPolicy} isDark={isDark} /></div>}
         </SheetContent>
       </Sheet>
 
-      {/* Edit sheet — key forces remount on each open so JSON re-initialises */}
+      {/* Edit sheet */}
       <Sheet open={!!editingPolicy} onOpenChange={(open) => !open && setEditingPolicy(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader><SheetTitle>Edit Policy — {editingPolicy?.metadata.name}</SheetTitle></SheetHeader>
+        <SheetContent className="w-full sm:max-w-4xl overflow-y-auto p-0">
+          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>Edit Policy — {editingPolicy?.metadata.name}</SheetTitle></SheetHeader>
           {editingPolicy && (
-            <EditPolicySheet
-              key={`${editingPolicy.metadata.namespace}/${editingPolicy.metadata.name}/${editingPolicy.metadata.uid ?? editingPolicy.metadata.creationTimestamp}`}
+            <APPolicyForm
+              key={`${editingPolicy.metadata.namespace}/${editingPolicy.metadata.name}/${editingPolicy.metadata.uid}`}
               clusterId={clusterId}
               namespace={namespace}
-              item={editingPolicy}
+              existingItem={editingPolicy}
               onClose={() => setEditingPolicy(null)}
             />
           )}
@@ -705,16 +404,18 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
 function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: number; namespace: string; isDark: boolean }) {
   const { data: sigData, isLoading, refetch } = useWafSignatures(clusterId, namespace, { enabled: !!clusterId });
   const upsert = useUpsertWafSignatures(clusterId);
+  const deleteSig = useDeleteWafSignatures(clusterId);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  type SigData = { spec?: { 'attack-signatures'?: { revision?: string }; 'bot-signatures'?: { revision?: string }; 'threat-campaigns'?: { revision?: string } }; status?: { installationState?: string } } | null;
+  type SigStatus = { errors?: string; 'attack-signatures'?: { installedRevision?: string }; 'bot-signatures'?: { installedRevision?: string }; 'threat-campaigns'?: { installedRevision?: string }; installationState?: string };
+  type SigData = { spec?: { 'attack-signatures'?: { revision?: string }; 'bot-signatures'?: { revision?: string }; 'threat-campaigns'?: { revision?: string } }; status?: SigStatus } | null;
   const existing = sigData as SigData;
 
   const [attack, setAttack] = useState('latest');
   const [bot,    setBot]    = useState('latest');
   const [threat, setThreat] = useState('latest');
 
-  // Populate fields once the CR data arrives from the cluster
   useEffect(() => {
     if (!existing) return;
     setAttack(existing.spec?.['attack-signatures']?.revision ?? 'latest');
@@ -723,6 +424,7 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
   }, [existing]);
 
   const installState = existing?.status?.installationState;
+  const sigErrors    = existing?.status?.errors;
 
   const handleSave = async () => {
     setSaveError(null);
@@ -733,215 +435,147 @@ function SignatureSettingsTab({ clusterId, namespace, isDark }: { clusterId: num
     }
   };
 
+  const installedAttack = existing?.status?.['attack-signatures']?.installedRevision;
+  const installedBot    = existing?.status?.['bot-signatures']?.installedRevision;
+  const installedThreat = existing?.status?.['threat-campaigns']?.installedRevision;
+
   return (
-    <div className="space-y-4 max-w-md">
-      <div className="flex items-start justify-between">
-        <p className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>
-          APSignatures is a singleton per namespace. Controls which attack/bot/threat-campaign signature package
-          versions the Policy Controller embeds when compiling WAF policies.
-          <strong className="block mt-1 text-amber-500">Warning: changes here trigger recompilation of ALL policies in this namespace.</strong>
-        </p>
-        <Button variant="ghost" size="sm" className="h-7 shrink-0" onClick={() => refetch()}>
-          <RotateCcw className="h-3.5 w-3.5" />
-        </Button>
+    <div className="space-y-4 max-w-xl">
+      {/* What is this? */}
+      <div className={cn('rounded-md border p-3 text-xs flex gap-2', isDark ? 'border-zinc-700 bg-zinc-900/50' : 'border-blue-100 bg-blue-50')}>
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
+        <div className={isDark ? 'text-zinc-300' : 'text-blue-900'}>
+          <strong>APSignatures</strong> is a <strong>single resource per namespace</strong> (named{' '}
+          <span className="font-mono">apsignatures</span>). It controls which version of the NGINX App Protect
+          signature packages the Policy Controller downloads and embeds when compiling any policy in this namespace.
+          Changing a revision here triggers recompilation of <em>all</em> policies in <em>{namespace}</em>.
+          <br /><br />
+          <strong>Revision format:</strong> use <code className="px-1 rounded bg-blue-100 dark:bg-zinc-700">latest</code> for the newest
+          available package, or a specific date-based tag like{' '}
+          <code className="px-1 rounded bg-blue-100 dark:bg-zinc-700">2026.07.31</code> to pin to a known-good version.
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <h4 className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-zinc-900')}>Signature Package Versions</h4>
+        <RefreshButton refetch={refetch} isLoading={isLoading} />
       </div>
 
       {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
 
       {!isLoading && (
         <>
-          {installState && (
-            <div className="flex items-center gap-2">
-              <span className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>Installation state:</span>
-              <Badge variant="outline" className={cn('text-[10px]',
-                installState === 'success'   ? 'bg-green-500/10 text-green-600 border-green-500/20'
-                : installState === 'failure' ? 'bg-red-500/10 text-red-600 border-red-500/20'
-                                            : 'bg-slate-500/10 text-slate-600')}>
-                {installState}
-              </Badge>
-              {installState === 'failure' && (
-                <span className="text-xs text-amber-500">Requires a valid NGINX App Protect repository secret in the cluster.</span>
-              )}
+          {/* Signature download failure + fix instructions */}
+          {installState === 'failure' && (
+            <div className={cn('rounded-md border p-3 space-y-2', isDark ? 'border-red-900 bg-red-900/20' : 'border-red-200 bg-red-50')}>
+              <div className="flex items-start gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-500" />
+                <div className="text-xs text-red-600 dark:text-red-400">
+                  <strong>Signature download failed.</strong> The Policy Controller cannot pull packages from the NGINX repository.
+                  {sigErrors && <p className="mt-1 font-mono text-[11px] break-all">{sigErrors}</p>}
+                </div>
+              </div>
+              <div className={cn('text-xs rounded p-2 space-y-1', isDark ? 'bg-zinc-900 text-zinc-300' : 'bg-white text-slate-700')}>
+                <p className="font-semibold">How to fix: create the NGINX repo secret</p>
+                <p>You need your F5/NGINX entitlement certificate and key. Run on the cluster:</p>
+                <pre className={cn('mt-1 p-2 rounded text-[11px] overflow-x-auto', isDark ? 'bg-zinc-800' : 'bg-slate-100')}>
+{`kubectl create secret generic nginx-repo-secret \\
+  --from-file=nginx-repo.crt=/path/to/nginx-repo.crt \\
+  --from-file=nginx-repo.key=/path/to/nginx-repo.key \\
+  -n ${namespace}`}
+                </pre>
+                <p className="text-xs text-muted-foreground">Then ensure the waf-policy-controller Helm chart references this secret via <code>nginxRepoSecret</code>.</p>
+              </div>
             </div>
           )}
-          <div className="space-y-1.5">
-            <Label>Attack Signatures Revision</Label>
-            <Input value={attack} onChange={(e) => setAttack(e.target.value)} placeholder="latest" />
-            <p className="text-xs text-muted-foreground">e.g. &quot;latest&quot; or &quot;2024.09.14&quot;</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Bot Signatures Revision</Label>
-            <Input value={bot} onChange={(e) => setBot(e.target.value)} placeholder="latest" />
-            <p className="text-xs text-muted-foreground">e.g. &quot;latest&quot; or &quot;2024.09.14&quot;</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Threat Campaigns Revision</Label>
-            <Input value={threat} onChange={(e) => setThreat(e.target.value)} placeholder="latest" />
-            <p className="text-xs text-muted-foreground">e.g. &quot;latest&quot; or &quot;2024.09.14&quot;</p>
-          </div>
+
+          {installState === 'success' && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-500/20">Installed</Badge>
+              <span className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>Signature packages are downloaded and available for compilation.</span>
+            </div>
+          )}
+
+          {/* Revision inputs with installed-version hint */}
+          {[
+            { label: 'Attack Signatures', key: 'attack' as const, value: attack, setter: setAttack, installed: installedAttack, hint: 'NAP attack pattern signatures (SQLi, XSS, RCE, etc.)' },
+            { label: 'Bot Signatures',    key: 'bot'    as const, value: bot,    setter: setBot,    installed: installedBot,    hint: 'Bot and crawler fingerprint signatures' },
+            { label: 'Threat Campaigns',  key: 'threat' as const, value: threat, setter: setThreat, installed: installedThreat, hint: 'Active threat campaign IOCs (IP/URI blocklists)' },
+          ].map(({ label, value, setter, installed, hint }) => (
+            <div key={label} className="space-y-1">
+              <Label>{label}</Label>
+              <Input value={value} onChange={(e) => setter(e.target.value)} placeholder="latest" />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">{hint}</p>
+                {installed && (
+                  <p className="text-xs text-muted-foreground">Installed: <span className="font-mono">{installed}</span></p>
+                )}
+              </div>
+            </div>
+          ))}
+
           {saveError && <InlineError message={saveError} />}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 pt-1">
             <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={upsert.isPending}>
-              <RefreshCw className="h-3.5 w-3.5" /> Save Signature Settings
+              <RefreshCw className="h-3.5 w-3.5" /> Apply &amp; Recompile All Policies
             </Button>
             <Button size="sm" variant="ghost" onClick={() => { setAttack(existing?.spec?.['attack-signatures']?.revision ?? 'latest'); setBot(existing?.spec?.['bot-signatures']?.revision ?? 'latest'); setThreat(existing?.spec?.['threat-campaigns']?.revision ?? 'latest'); setSaveError(null); }}>Reset</Button>
+            {existing && (
+              <Button size="sm" variant="ghost" className="gap-1.5 text-emerald-600 hover:text-emerald-700"
+                onClick={() => exportCR(sigData, 'apsignatures', 'APSignatures')} title="Export as JSON">
+                <Download className="h-3.5 w-3.5" /> Export JSON
+              </Button>
+            )}
+            {existing && (
+              <Button size="sm" variant="ghost" className="gap-1.5 text-red-500 hover:text-red-600"
+                onClick={() => setConfirmDelete(true)} title="Delete the APSignatures CR from this namespace">
+                <Trash2 className="h-3.5 w-3.5" /> Delete CR
+              </Button>
+            )}
           </div>
+          <DestructiveConfirmDialog
+            open={confirmDelete}
+            onOpenChange={(open) => !open && setConfirmDelete(false)}
+            title='Delete APSignatures "apsignatures"?'
+            description={`Removes the APSignatures CR from namespace "${namespace}". All policies in this namespace will lose their signature package reference and may need to be recompiled after a new APSignatures CR is created.`}
+            confirmText="apsignatures"
+            isPending={deleteSig.isPending}
+            onConfirm={() => deleteSig.mutate({ namespace }, { onSuccess: () => setConfirmDelete(false) })}
+          />
         </>
       )}
     </div>
   );
-}
-
-// ── Edit sheet: APUserSig ─────────────────────────────────────────────────
-
-function EditUserSigSheet({
-  clusterId, namespace, item, onClose,
-}: { clusterId: number; namespace: string; item: APUserSigResource; onClose: () => void }) {
-  const [sigTag, setSigTag]         = useState(item.spec?.tag ?? '');
-  const [sigVersion, setSigVersion] = useState(item.spec?.softwareVersion ?? '');
-  const firstRule = item.spec?.signatures?.[0];
-  const [sigRule, setSigRule] = useState(firstRule?.rule ?? '');
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const update = useUpdateWafUserSig(clusterId, item.metadata.name);
-
-  const handleSave = async () => {
-    setSubmitError(null);
-    try {
-      await update.mutateAsync({
-        namespace: item.metadata.namespace ?? namespace,
-        spec: {
-          tag: sigTag.trim(),
-          softwareVersion: sigVersion.trim() || undefined,
-          signatures: sigRule.trim()
-            ? [{ ...(firstRule ?? {}), name: item.metadata.name, rule: sigRule.trim(), signatureType: firstRule?.signatureType ?? 'request', risk: firstRule?.risk ?? 'medium', accuracy: firstRule?.accuracy ?? 'medium' }]
-            : (item.spec?.signatures ?? []),
-        },
-      });
-      onClose();
-    } catch (e) {
-      setSubmitError(extractApiError(e));
-    }
-  };
-
-  return (
-    <div className="space-y-4 mt-2">
-      <p className="text-xs text-muted-foreground">Editing <span className="font-mono font-medium">{item.metadata.name}</span>. Name is immutable.</p>
-      <div className="space-y-1.5">
-        <Label>Tag <span className="text-red-500">*</span></Label>
-        <Input value={sigTag} onChange={(e) => setSigTag(e.target.value)} placeholder="my-custom-tag" />
-        <p className="text-xs text-muted-foreground">Referenced in policy JSON via signature-requirements[].tag</p>
-      </div>
-      <div className="space-y-1.5">
-        <Label>Software Version</Label>
-        <Input value={sigVersion} onChange={(e) => setSigVersion(e.target.value)} placeholder="1.0.0" />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Signature Rule (first rule)</Label>
-        <Input value={sigRule} onChange={(e) => setSigRule(e.target.value)} placeholder='content:"attack-pattern"; nocase;' />
-        <p className="text-xs text-muted-foreground">Editing the first rule only. Use kubectl for multi-rule configurations.</p>
-      </div>
-      {submitError && <InlineError message={submitError} />}
-      <div className="flex gap-2">
-        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={!sigTag.trim() || update.isPending}>Save</Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
-      </div>
-    </div>
-  );
-}
-
 // ============================================================================
 // Tab 4: User Signatures (APUserSig) — custom attack signatures
 // ============================================================================
 
+} // end SignatureSettingsTab
+
 function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; namespace: string; isDark: boolean }) {
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate]     = useState(false);
+  const [viewingItem, setViewingItem]   = useState<APUserSigResource | null>(null);
   const [editingItem, setEditingItem]   = useState<APUserSigResource | null>(null);
   const [deletingItem, setDeletingItem] = useState<APUserSigResource | null>(null);
 
-  const [sigName, setSigName]   = useState('');
-  const [sigTag, setSigTag]     = useState('');
-  const [sigVersion, setSigVersion] = useState('');
-  const [sigRule, setSigRule]   = useState('');
-  const [sigCreateError, setSigCreateError] = useState<string | null>(null);
-
-  const sigNameError = sigName ? validateK8sName(sigName) : null;
-
   const { data, isLoading } = useWafUserSigs(clusterId, namespace, { enabled: !!clusterId });
   const userSigs = useMemo(() => data?.user_sigs ?? [], [data]);
-  const create   = useCreateWafUserSig(clusterId);
   const deleteSig = useDeleteWafUserSig(clusterId);
-
-  const handleCreate = async () => {
-    const nameErr = validateK8sName(sigName);
-    if (nameErr) { setSigCreateError(nameErr); return; }
-    if (!sigTag.trim()) { setSigCreateError('Tag is required.'); return; }
-    setSigCreateError(null);
-    try {
-      await create.mutateAsync({
-        name: sigName.trim(),
-        namespace,
-        spec: {
-          tag: sigTag.trim(),
-          softwareVersion: sigVersion.trim() || undefined,
-          signatures: sigRule.trim() ? [{ name: sigName.trim(), rule: sigRule.trim(), signatureType: 'request', risk: 'medium', accuracy: 'medium' }] : [],
-        },
-      });
-      setSigName(''); setSigTag(''); setSigVersion(''); setSigRule('');
-      setShowCreate(false);
-    } catch (e) {
-      setSigCreateError(extractApiError(e));
-    }
-  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className={cn('text-xs', isDark ? 'text-zinc-400' : 'text-slate-500')}>
-          APUserSig CRs define custom attack signatures. They are embedded into compiled policies that reference them via <code>signature-requirements[].tag</code> in the policy JSON.
+          APUserSig CRs define custom attack signatures embedded into compiled policies via <code>signature-requirements[].tag</code>. Click a row to inspect.
         </p>
         <Button size="sm" className="gap-1.5" onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4" /> Create User Signature
+          <Plus className="h-4 w-4" /> {showCreate ? 'Cancel' : 'Create User Signature'}
         </Button>
       </div>
 
       {showCreate && (
-        <div className={cn('rounded-lg border p-4 space-y-3', isDark ? 'border-zinc-800 bg-zinc-900/50' : 'border-slate-200 bg-white')}>
-          <p className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-zinc-900')}>New User Signature</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-w-xl">
-            <div className="space-y-1.5">
-              <Label>Name <span className="text-red-500">*</span></Label>
-              <Input
-                value={sigName}
-                onChange={(e) => { setSigName(e.target.value); setSigCreateError(null); }}
-                placeholder="my-custom-sig"
-                className={sigNameError ? 'border-red-500' : ''}
-              />
-              {sigNameError
-                ? <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{sigNameError}</p>
-                : <p className="text-xs text-muted-foreground">Lowercase alphanumeric with hyphens (RFC 1123)</p>
-              }
-            </div>
-            <div className="space-y-1.5">
-              <Label>Tag <span className="text-red-500">*</span></Label>
-              <Input value={sigTag} onChange={(e) => setSigTag(e.target.value)} placeholder="my-custom-tag" />
-              <p className="text-xs text-muted-foreground">Referenced in policy JSON via signature-requirements[].tag</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Software Version</Label>
-              <Input value={sigVersion} onChange={(e) => setSigVersion(e.target.value)} placeholder="1.0.0" />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Signature Rule (optional)</Label>
-              <Input value={sigRule} onChange={(e) => setSigRule(e.target.value)} placeholder='content:"attack-pattern"; nocase;' />
-              <p className="text-xs text-muted-foreground">NAP signature rule syntax. Leave empty to add rules later by editing the CR.</p>
-            </div>
-          </div>
-          {sigCreateError && <InlineError message={sigCreateError} />}
-          <div className="flex gap-2">
-            <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={handleCreate} disabled={!!sigNameError || !sigName.trim() || !sigTag.trim() || create.isPending}>Create</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setShowCreate(false); setSigCreateError(null); }}>Cancel</Button>
-          </div>
+        <div className={cn('rounded-lg border', isDark ? 'border-zinc-800 bg-zinc-900/50' : 'border-slate-200 bg-white')}>
+          <APUserSigForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
         </div>
       )}
 
@@ -963,7 +597,7 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
           </TableHeader>
           <TableBody>
             {userSigs.map((us: APUserSigResource) => (
-              <TableRow key={`${us.metadata.namespace}/${us.metadata.name}`}>
+              <TableRow key={`${us.metadata.namespace}/${us.metadata.name}`} className="cursor-pointer" onClick={() => setViewingItem(us)}>
                 <TableCell className="font-medium">{us.metadata.name}</TableCell>
                 <TableCell className="text-xs font-mono">{us.spec?.tag ?? '—'}</TableCell>
                 <TableCell className="text-xs">{(us.spec?.signatures ?? []).length}</TableCell>
@@ -978,10 +612,16 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
                 <TableCell className="text-xs">{formatAge(us.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" onClick={() => setEditingItem(us)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-500" title="Edit"
+                      onClick={(e) => { e.stopPropagation(); setEditingItem(us); }}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" onClick={() => setDeletingItem(us)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-emerald-600" title="Export JSON"
+                      onClick={(e) => { e.stopPropagation(); exportCR(us, us.metadata.name, 'APUserSig'); }}>
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:text-red-500" title="Delete"
+                      onClick={(e) => { e.stopPropagation(); setDeletingItem(us); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -992,16 +632,24 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
         </Table>
       )}
 
-      {/* Edit sheet — key forces remount so state re-initialises from latest item */}
+      {/* Detail (view) sheet */}
+      <Sheet open={!!viewingItem} onOpenChange={(open) => !open && setViewingItem(null)}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader><SheetTitle>{viewingItem?.metadata.name}</SheetTitle></SheetHeader>
+          {viewingItem && <div className="mt-4"><APUserSigDetail resource={viewingItem} /></div>}
+        </SheetContent>
+      </Sheet>
+
+      {/* Edit sheet */}
       <Sheet open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
-        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-          <SheetHeader><SheetTitle>Edit User Signature — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto p-0">
+          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>Edit User Signature — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
           {editingItem && (
-            <EditUserSigSheet
-              key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid ?? editingItem.metadata.creationTimestamp}`}
+            <APUserSigForm
+              key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid}`}
               clusterId={clusterId}
               namespace={namespace}
-              item={editingItem}
+              existingItem={editingItem}
               onClose={() => setEditingItem(null)}
             />
           )}

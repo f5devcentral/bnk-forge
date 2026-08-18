@@ -61,9 +61,9 @@ export function DestructiveConfirmDialog({
 
   const isDanger = variant === 'danger';
   const WarningIcon = isDanger ? XCircle : AlertTriangle;
-  const iconColor = isDanger ? 'text-destructive' : 'text-warning';
-  const bgColor = isDanger ? 'bg-destructive/10 border-destructive/20' : 'bg-warning/10 border-warning/20';
-  const textColor = isDanger ? 'text-destructive' : 'text-warning';
+  const iconColor = isDanger ? 'text-red-500' : 'text-orange-500';
+  const bgColor = isDanger ? 'bg-red-500/10 border-red-500/20' : 'bg-orange-500/10 border-orange-500/20';
+  const textColor = isDanger ? 'text-red-700 dark:text-red-400' : 'text-orange-700 dark:text-orange-400';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -120,8 +120,9 @@ export function DestructiveConfirmDialog({
               placeholder={`Type "${confirmText}" here`}
               className={cn(
                 'font-mono',
-                isValid && 'border-success focus-visible:ring-success'
+                isValid && 'border-green-500 focus-visible:ring-green-500'
               )}
+              autoFocus
               autoComplete="off"
               disabled={isPending}
             />

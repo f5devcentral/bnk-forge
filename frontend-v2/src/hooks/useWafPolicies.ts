@@ -28,11 +28,12 @@ import type {
 // APPolicy — list / single (with bundle-state polling) / create / update / delete
 // ---------------------------------------------------------------------------
 
-export function useWafPolicies(clusterId: number, namespace?: string, options?: { enabled?: boolean }) {
+export function useWafPolicies(clusterId: number, namespace?: string, options?: { enabled?: boolean; autoRefresh?: boolean }) {
   return useQuery({
     queryKey: queryKeys.k8s.clusters.wafPolicies(clusterId, namespace),
     queryFn: () => wafPoliciesApi.listPolicies(clusterId, { namespace }),
     enabled: options?.enabled !== false && !!clusterId,
+    refetchInterval: options?.autoRefresh !== false ? 10_000 : false,
   });
 }
 
@@ -90,11 +91,12 @@ export function useDeleteWafPolicy(clusterId: number) {
 // APLogConf
 // ---------------------------------------------------------------------------
 
-export function useWafLogConfs(clusterId: number, namespace?: string, options?: { enabled?: boolean }) {
+export function useWafLogConfs(clusterId: number, namespace?: string, options?: { enabled?: boolean; autoRefresh?: boolean }) {
   return useQuery({
     queryKey: queryKeys.k8s.clusters.wafLogConfs(clusterId, namespace),
     queryFn: () => wafPoliciesApi.listLogConfs(clusterId, { namespace }),
     enabled: options?.enabled !== false && !!clusterId,
+    refetchInterval: options?.autoRefresh !== false ? 10_000 : false,
   });
 }
 
@@ -138,11 +140,12 @@ export function useDeleteWafLogConf(clusterId: number) {
 // APSignatures — singleton per namespace
 // ---------------------------------------------------------------------------
 
-export function useWafSignatures(clusterId: number, namespace: string, options?: { enabled?: boolean }) {
+export function useWafSignatures(clusterId: number, namespace: string, options?: { enabled?: boolean; autoRefresh?: boolean }) {
   return useQuery({
     queryKey: queryKeys.k8s.clusters.wafSignatures(clusterId, namespace),
     queryFn: () => wafPoliciesApi.getSignatures(clusterId, { namespace }),
     enabled: options?.enabled !== false && !!clusterId && !!namespace,
+    refetchInterval: options?.autoRefresh !== false ? 10_000 : false,
   });
 }
 
@@ -158,15 +161,40 @@ export function useUpsertWafSignatures(clusterId: number) {
   });
 }
 
+export function useDeleteWafSignatures(clusterId: number) {
+  const queryClient = useQueryClient();
+  return useMutation<{ message: string }, Error, { namespace: string }>({
+    mutationFn: ({ namespace }) => wafPoliciesApi.deleteSignatures(clusterId, namespace),
+    onSuccess: (_data, variables) => {
+      notify({ title: 'Signature Settings Deleted', message: 'APSignatures CR removed from cluster', severity: 'success' });
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.wafSignatures(clusterId, variables.namespace) });
+    },
+    onError: (error) => notifyError(error, 'deleting signature settings'),
+  });
+}
+
+export function useRecompileWafPolicy(clusterId: number) {
+  const queryClient = useQueryClient();
+  return useMutation<{ message: string }, Error, { name: string; namespace: string }>({
+    mutationFn: ({ name, namespace }) => wafPoliciesApi.recompilePolicy(clusterId, name, namespace),
+    onSuccess: (_data, variables) => {
+      notify({ title: 'Recompile Triggered', message: `${variables.name} — compiler will rebuild the bundle`, severity: 'success' });
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.wafPolicies(clusterId) });
+    },
+    onError: (error) => notifyError(error, 'triggering recompile'),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // APUserSig
 // ---------------------------------------------------------------------------
 
-export function useWafUserSigs(clusterId: number, namespace?: string, options?: { enabled?: boolean }) {
+export function useWafUserSigs(clusterId: number, namespace?: string, options?: { enabled?: boolean; autoRefresh?: boolean }) {
   return useQuery({
     queryKey: queryKeys.k8s.clusters.wafUserSigs(clusterId, namespace),
     queryFn: () => wafPoliciesApi.listUserSigs(clusterId, { namespace }),
     enabled: options?.enabled !== false && !!clusterId,
+    refetchInterval: options?.autoRefresh !== false ? 10_000 : false,
   });
 }
 
