@@ -15,6 +15,14 @@
 !install.sh
 !uninstall.sh
 !nginx/
-!nginx/*.conf
+# Named explicitly rather than `nginx/*.conf`. Both files are produced by the
+# `dist` target (Makefile: cp proxy/nginx.local.conf, cp frontend-v2/...), so
+# this directory holds derived artifacts that happen to be committed. A glob
+# would auto-track any future .conf appearing here -- generated, stray, or
+# local-only -- which is what the leading `*` exists to prevent.
+# The trade is that the list must stay deliberate: if you add a conf to the
+# `dist` target, add it here too or it will not be tracked.
+!nginx/frontend.local.conf
+!nginx/proxy.local.conf
 !secrets/
 !secrets/.gitkeep
