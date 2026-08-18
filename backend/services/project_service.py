@@ -88,6 +88,26 @@ def _freeze_encryption_passphrase_before_rename(db: Session, project: "Project")
 # ProjectService (IMP-002)
 # ============================================================
 
+def summarize_module_state(deployed_count: int | None, failed_count: int | None) -> str:
+    """One field a client can poll for teardown completion.
+
+    "clean" / "in_progress" / "failed".
+
+    deployed_count alone cannot distinguish a finished teardown from a wholly
+    failed one: a destroy_failed module reports deployed_count=0, failed_count=1,
+    so it leaves deployed_count entirely and looks identical to success. A
+    teardown script that polled deployed_count == 0 therefore proceeded to
+    DELETE the project while a ROKS cluster was still live (issue #125).
+
+    Callers should treat anything other than "clean" as "not finished".
+    """
+    if (failed_count or 0) > 0:
+        return "failed"
+    if (deployed_count or 0) > 0:
+        return "in_progress"
+    return "clean"
+
+
 class ProjectService(BaseService):
     """Encapsulates all project business logic.
 
@@ -131,6 +151,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count,
             "deployed_count": project.deployed_count,
             "failed_count": project.failed_count,
+            "module_state": summarize_module_state(project.deployed_count, project.failed_count),
             "cluster_count": len(project.k8s_clusters) if project.k8s_clusters else 0,
             "owner": project.owner,
             "team": project.team,
@@ -269,6 +290,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count or 0,
             "deployed_count": project.deployed_count or 0,
             "failed_count": project.failed_count or 0,
+            "module_state": summarize_module_state(project.deployed_count, project.failed_count),
             "owner": project.owner,
             "team": project.team,
             "visibility": project.visibility,
@@ -694,6 +716,49 @@ class ProjectService(BaseService):
                 "project",
                 f"Cannot delete: operations in progress on modules: {', '.join(locked_modules)}. "
                 f"Use force=true to override the live-holder gate.",
+            )
+
+        # Refuse to delete a project whose modules may still own cloud resources.
+        #
+        # Forge holds the ONLY record of what a module built, so deleting the
+        # project orphans those resources with no retry path — the cluster keeps
+        # billing and nothing in Forge points at it. Reported on 3.1.6: a
+        # destroy-all returned non-zero, DELETE succeeded 22 seconds later, and a
+        # live ROKS cluster plus its VPC, three subnets and three public gateways
+        # had to be removed by hand (issue #125).
+        #
+        # NO_INFRA_STATUSES is the existing definition of "this module has
+        # nothing left to destroy"; anything else — applied, applying,
+        # destroying, apply_failed, destroy_failed — may still own something.
+        #
+        # force=true remains available: deliberately abandoning resources is a
+        # legitimate operation. It just must not be the default, because a
+        # project that still owns resources is recoverable and a deleted one is
+        # not.
+        from tasks.parallel_tasks import NO_INFRA_STATUSES
+
+        undestroyed = [
+            m for m in self.db.query(ProjectModule)
+            .filter(ProjectModule.project_id == project_id).all()
+            if (m.status or "") not in NO_INFRA_STATUSES
+        ]
+        if undestroyed and not force:
+            raise ConflictError(
+                "project",
+                f"Cannot delete: {len(undestroyed)} module(s) are not destroyed and may "
+                f"still own cloud resources. Destroy them first, or pass force=true to "
+                f"delete the project and abandon those resources.",
+                details={
+                    "requires_force": True,
+                    "undestroyed_modules": [
+                        {
+                            "id": m.id,
+                            "name": (m.library_module.name if m.library_module else m.path_in_project),
+                            "status": m.status,
+                        }
+                        for m in undestroyed
+                    ],
+                },
             )
 
         # Clean up persistent workspaces for all modules in the project (WORK-006)

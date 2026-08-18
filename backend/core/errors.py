@@ -77,12 +77,15 @@ class ForbiddenError(AppError):
 class ConflictError(AppError):
     """Resource conflict (409)"""
 
-    def __init__(self, resource: str, message: str):
+    def __init__(self, resource: str, message: str, details: dict | None = None):
+        # `details` is optional and merged over the resource key, so a caller can
+        # return the specific conflicting objects (e.g. which modules are still
+        # undestroyed) rather than only a message the client has to parse.
         super().__init__(
             code=f"{resource.upper()}_CONFLICT",
             message=message,
             status_code=409,
-            details={"resource": resource},
+            details={"resource": resource, **(details or {})},
         )
 
 

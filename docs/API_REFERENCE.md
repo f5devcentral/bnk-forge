@@ -124,7 +124,7 @@ Some endpoints use ownership checks instead of role checks:
 | GET | `/api/projects/{project_id}` | viewer | — | `ProjectDetailResponse` | Get project detail |
 | PUT | `/api/projects/{project_id}` | owner | `ProjectUpdate` | `ProjectMutationResponse` | Update project |
 | PUT | `/api/projects/{project_id}/dependencies` | owner | `list[ProjectDependencyItem]` | `ProjectDependenciesResponse` | Set cross-project deps |
-| DELETE | `/api/projects/{project_id}` | owner | — | `SuccessResponse` | Delete project (query: `force`) |
+| DELETE | `/api/projects/{project_id}` | owner | — | `SuccessResponse` | Delete project. **409** when any module still owns cloud resources (query: `force=true` to abandon them deliberately) |
 | POST | `/api/projects/{project_id}/activate` | owner | — | `ProjectMutationResponse` | Set as active project |
 | POST | `/api/projects/{project_id}/transfer` | owner | `TransferOwnershipRequest` | `TransferOwnershipResponse` | Transfer ownership |
 
