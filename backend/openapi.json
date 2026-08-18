@@ -6075,6 +6075,133 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/waf/security-logs": {
+      "get": {
+        "summary": "Get Waf Security Logs",
+        "description": "Resolve the syslog endpoint for the given CR and return recent security log entries.\n\nResolution chain:\n  APPolicy  \u2192 SecPolicy (items[].kind=F5BigWebSecurityProfile) \u2192 F5BigLogProfile \u2192 F5BigHslPub\n  F5VirtualServer \u2192 SecPolicy (targetRef) \u2192 F5BigLogProfile \u2192 F5BigHslPub",
+        "operationId": "get_waf_security_logs_api_k8s_clusters__cluster_id__waf_security_logs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "cr_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "'appolicy' or 'f5virtualserver'",
+              "title": "Cr Kind"
+            },
+            "description": "'appolicy' or 'f5virtualserver'"
+          },
+          {
+            "name": "cr_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cr Name"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome Filter"
+            }
+          },
+          {
+            "name": "attack_type_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attack Type Filter"
+            }
+          },
+          {
+            "name": "vs_name_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vs Name Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/bare-metal/hosts": {
       "get": {
         "tags": [

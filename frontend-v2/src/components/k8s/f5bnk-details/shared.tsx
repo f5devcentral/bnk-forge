@@ -43,6 +43,7 @@ export function getConditionColor(status: string) {
 export interface DetailPanelProps {
   resource: K8sResource;
   isDark?: boolean;
+  clusterId?: number;
 }
 
 export function InfoRow({ label, value, isDark, mono = false }: { label: string; value: string | number | boolean | null | undefined; isDark?: boolean; mono?: boolean }) {

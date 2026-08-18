@@ -6,6 +6,7 @@ import { Shield, Code2, X, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatAge } from '@/lib/time-utils';
 import type { APPolicyResource, BundleState } from '@/types';
+import { SecurityLogsTab } from '@/components/k8s/waf/SecurityLogsTab';
 import { InfoRow, Section, type DetailPanelProps } from './shared';
 
 function getBundleStateColor(state: BundleState | undefined) {
@@ -22,7 +23,7 @@ function getBundleStateColor(state: BundleState | undefined) {
   }
 }
 
-export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) {
+export function WafPolicyDetail({ resource, isDark = false, clusterId }: DetailPanelProps) {
   const policy = resource as APPolicyResource;
   const spec = policy.spec || {};
   const status = policy.status || {};
@@ -42,9 +43,10 @@ export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) 
   return (
     <div className="space-y-4">
       <Tabs defaultValue="summary" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="status">Bundle Status</TabsTrigger>
+          <TabsTrigger value="logs">Security Logs</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="space-y-3">
@@ -135,6 +137,19 @@ export function WafPolicyDetail({ resource, isDark = false }: DetailPanelProps) 
               <Shield className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs text-muted-foreground">No inline policy defined</p>
             </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="logs" className="p-0">
+          {clusterId ? (
+            <SecurityLogsTab
+              clusterId={clusterId}
+              namespace={policy.metadata?.namespace ?? 'default'}
+              crKind="appolicy"
+              crName={policy.metadata?.name ?? ''}
+            />
+          ) : (
+            <p className="p-4 text-xs text-muted-foreground">Cluster context unavailable for log retrieval.</p>
           )}
         </TabsContent>
       </Tabs>

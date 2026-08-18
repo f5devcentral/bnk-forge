@@ -2063,6 +2063,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/waf/security-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Waf Security Logs
+         * @description Resolve the syslog endpoint for the given CR and return recent security log entries.
+         *
+         *     Resolution chain:
+         *       APPolicy  → SecPolicy (items[].kind=F5BigWebSecurityProfile) → F5BigLogProfile → F5BigHslPub
+         *       F5VirtualServer → SecPolicy (targetRef) → F5BigLogProfile → F5BigHslPub
+         */
+        get: operations["get_waf_security_logs_api_k8s_clusters__cluster_id__waf_security_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/bare-metal/hosts": {
         parameters: {
             query?: never;
@@ -25777,6 +25801,46 @@ export interface operations {
             path: {
                 cluster_id: number;
                 name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_waf_security_logs_api_k8s_clusters__cluster_id__waf_security_logs_get: {
+        parameters: {
+            query: {
+                namespace: string;
+                /** @description 'appolicy' or 'f5virtualserver' */
+                cr_kind: string;
+                cr_name: string;
+                limit?: number;
+                outcome_filter?: string | null;
+                attack_type_filter?: string | null;
+                vs_name_filter?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
             };
             cookie?: never;
         };

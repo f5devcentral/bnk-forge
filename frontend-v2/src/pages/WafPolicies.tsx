@@ -361,7 +361,7 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
       <Sheet open={!!selectedPolicy} onOpenChange={(open) => !open && setSelectedPolicy(null)}>
         <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
           <SheetHeader><SheetTitle>{selectedPolicy?.metadata.name}</SheetTitle></SheetHeader>
-          {selectedPolicy && <div className="mt-4"><WafPolicyDetail resource={selectedPolicy} isDark={isDark} /></div>}
+          {selectedPolicy && <div className="mt-4"><WafPolicyDetail resource={selectedPolicy} isDark={isDark} clusterId={clusterId} /></div>}
         </SheetContent>
       </Sheet>
 
