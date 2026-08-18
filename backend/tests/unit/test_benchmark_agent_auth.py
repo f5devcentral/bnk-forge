@@ -198,14 +198,67 @@ class TestWSTokenValidationLogic:
         # WS handler logic: int(token_agent_id) != path_agent_id → reject
         assert int(token_agent_id) != path_agent_id
 
-    def test_no_agent_id_claim_is_accepted(self):
-        """Token without agent_id claim → no restriction (any agent allowed)."""
-        from services.auth_service import create_access_token, decode_token
+    def test_no_agent_id_claim_is_rejected(self):
+        """Token without agent_id claim → rejected when agent auth is required (#41 F5).
+
+        This previously asserted the opposite: a claimless token skipped the
+        binding check, so any valid token -- a viewer's included -- could connect
+        as any agent_id. Authentication is not identity.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
 
         token = create_access_token(data={"sub": "agent", "role": "admin"})
-        payload = decode_token(token)
-        # None means skip the agent_id check in the WS handler
-        assert payload.get("agent_id") is None
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_matching_agent_id_claim_authorizes_through_helper(self):
+        """The bound case still connects — the gate must not be a blanket deny."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 7})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 7) is None
+
+    def test_mismatched_agent_id_claim_rejected_through_helper(self):
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 99})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_non_numeric_agent_id_claim_rejected(self):
+        """A claim that cannot be compared must fail closed, not raise."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(
+            data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"}
+        )
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
 
     def test_matching_agent_id_passes(self):
         """Token with agent_id=7 and path agent_id=7 → accepted."""
