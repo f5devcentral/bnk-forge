@@ -5159,6 +5159,922 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/waf/policies": {
+      "get": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "List Waf Policies",
+        "operationId": "list_waf_policies_api_k8s_clusters__cluster_id__waf_policies_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Create Waf Policy",
+        "operationId": "create_waf_policy_api_k8s_clusters__cluster_id__waf_policies_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafPolicyCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/policies/{name}": {
+      "get": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Get Waf Policy",
+        "operationId": "get_waf_policy_api_k8s_clusters__cluster_id__waf_policies__name__get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Update Waf Policy",
+        "operationId": "update_waf_policy_api_k8s_clusters__cluster_id__waf_policies__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafPolicyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Delete Waf Policy",
+        "operationId": "delete_waf_policy_api_k8s_clusters__cluster_id__waf_policies__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/logconfs": {
+      "get": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "List Waf Logconfs",
+        "operationId": "list_waf_logconfs_api_k8s_clusters__cluster_id__waf_logconfs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Create Waf Logconf",
+        "operationId": "create_waf_logconf_api_k8s_clusters__cluster_id__waf_logconfs_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafLogConfCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/logconfs/{name}": {
+      "put": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Update Waf Logconf",
+        "operationId": "update_waf_logconf_api_k8s_clusters__cluster_id__waf_logconfs__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafPolicyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Delete Waf Logconf",
+        "operationId": "delete_waf_logconf_api_k8s_clusters__cluster_id__waf_logconfs__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/signatures": {
+      "get": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Get Waf Signatures",
+        "operationId": "get_waf_signatures_api_k8s_clusters__cluster_id__waf_signatures_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Upsert Waf Signatures",
+        "operationId": "upsert_waf_signatures_api_k8s_clusters__cluster_id__waf_signatures_put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafSignaturesUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Delete Waf Signatures",
+        "operationId": "delete_waf_signatures_api_k8s_clusters__cluster_id__waf_signatures_delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/policies/{name}/recompile": {
+      "post": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Recompile Waf Policy",
+        "description": "Force recompile by bumping a metadata annotation (triggers reconcile loop).",
+        "operationId": "recompile_waf_policy_api_k8s_clusters__cluster_id__waf_policies__name__recompile_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/usersigs": {
+      "get": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "List Waf Usersigs",
+        "operationId": "list_waf_usersigs_api_k8s_clusters__cluster_id__waf_usersigs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Create Waf Usersig",
+        "operationId": "create_waf_usersig_api_k8s_clusters__cluster_id__waf_usersigs_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafUserSigCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/usersigs/{name}": {
+      "put": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Update Waf Usersig",
+        "operationId": "update_waf_usersig_api_k8s_clusters__cluster_id__waf_usersigs__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafPolicyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-policies"
+        ],
+        "summary": "Delete Waf Usersig",
+        "operationId": "delete_waf_usersig_api_k8s_clusters__cluster_id__waf_usersigs__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/bare-metal/hosts": {
       "get": {
         "tags": [
@@ -58644,6 +59560,116 @@
           "assigned_label_keys"
         ],
         "title": "VocabularyResponse"
+      },
+      "WafLogConfCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "spec"
+        ],
+        "title": "WafLogConfCreateRequest"
+      },
+      "WafPolicyCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "spec"
+        ],
+        "title": "WafPolicyCreateRequest"
+      },
+      "WafPolicyUpdateRequest": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          }
+        },
+        "type": "object",
+        "required": [
+          "namespace",
+          "spec"
+        ],
+        "title": "WafPolicyUpdateRequest"
+      },
+      "WafSignaturesUpdateRequest": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          }
+        },
+        "type": "object",
+        "required": [
+          "namespace",
+          "spec"
+        ],
+        "title": "WafSignaturesUpdateRequest"
+      },
+      "WafUserSigCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "spec"
+        ],
+        "title": "WafUserSigCreateRequest"
       },
       "routes__bare_metal_hosts__DiscoveryTriggerResponse": {
         "properties": {

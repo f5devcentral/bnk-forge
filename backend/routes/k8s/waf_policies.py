@@ -314,7 +314,6 @@ def recompile_waf_policy(
     db: Session = Depends(get_db),
 ):
     """Force recompile by bumping a metadata annotation (triggers reconcile loop)."""
-    import time
     k8s_service = KubernetesService(db)
     existing = _find_by_name(k8s_service.get_resources(cluster_id, "appolicy", namespace), name)
     if not existing:
