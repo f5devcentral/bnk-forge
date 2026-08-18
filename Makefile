@@ -83,7 +83,7 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
         test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
-        test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
+        test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
@@ -579,7 +579,19 @@ test-contracts: $(BACKEND_PREREQ)
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/contract/ -v --tb=short $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
-test-integration-full: SUITE = integration
+# The default marker set: pyproject's addopts carry -m 'not full', so this is
+# every integration test EXCEPT the full-marked ones. test-integration-full is
+# its exact complement -- run both to cover tests/integration/ completely.
+test-integration: SUITE = integration
+test-integration: $(BACKEND_PREREQ)
+	@echo ""
+	@echo "=== Integration Tests (default marker set) ==="
+	@cd backend && $(BACKEND_VENV) \
+	  $(PYTEST_BASE) tests/integration/ --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
+
+# SUITE is integration-full, not integration: the artifact filenames are derived
+# from it, and CI now runs both targets in one job.
+test-integration-full: SUITE = integration-full
 test-integration-full: $(BACKEND_PREREQ)
 	@echo ""
 	@echo "=== Full-Mode Integration Tests (requires running Docker stack) ==="
@@ -943,6 +955,7 @@ help:
 	@echo "  make test-operator         Run operator tests only (pytest)"
 	@echo "  make test-contracts        Run golden contract tests (response shape verification)"
 	@echo "  make test-db               Run DB migration validation tests"
+	@echo "  make test-integration    Run integration tests (default marker set)"
 	@echo "  make test-integration-full Run full-mode integration tests (requires Docker stack)"
 	@echo "  make test-e2e              Run Tier 1 E2E tests (requires running stack)"
 	@echo "  make test-e2e-tier2        Run Tier 2 E2E tests (requires stack + AWS creds)"
