@@ -579,15 +579,17 @@ test-contracts: $(BACKEND_PREREQ)
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/contract/ -v --tb=short $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
-# The default marker set: pyproject's addopts carry -m 'not full', so this is
-# every integration test EXCEPT the full-marked ones. test-integration-full is
-# its exact complement -- run both to cover tests/integration/ completely.
+# Exact complement of test-integration-full: together they cover every test in
+# tests/integration/. The selector is spelled out rather than inherited from
+# pyproject's addopts (-m 'not full') on purpose -- that implicit coupling is
+# what let the two targets stop being complements without anyone noticing
+# (#130). Change one selector, change the other.
 test-integration: SUITE = integration
 test-integration: $(BACKEND_PREREQ)
 	@echo ""
-	@echo "=== Integration Tests (default marker set) ==="
+	@echo "=== Integration Tests (non-full marker set) ==="
 	@cd backend && $(BACKEND_VENV) \
-	  $(PYTEST_BASE) tests/integration/ --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
+	  $(PYTEST_BASE) tests/integration/ -m 'not full' --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
 # SUITE is integration-full, not integration: the artifact filenames are derived
 # from it, and CI now runs both targets in one job.
