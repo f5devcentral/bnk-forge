@@ -19310,6 +19310,11 @@ export interface components {
              * @default 0
              */
             failed_count: number;
+            /**
+             * Module State
+             * @default clean
+             */
+            module_state: string;
             /** Owner */
             owner?: string | null;
             /** Team */
@@ -19545,6 +19550,11 @@ export interface components {
              * @default 0
              */
             failed_count: number | null;
+            /**
+             * Module State
+             * @default clean
+             */
+            module_state: string;
             /**
              * Cluster Count
              * @default 0

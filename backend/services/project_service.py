@@ -683,6 +683,57 @@ class ProjectService(BaseService):
         """
         project = self._get_project(project_id)
 
+        # Refuse to delete a project whose modules may still own cloud resources.
+        #
+        # Forge holds the ONLY record of what a module built, so deleting the
+        # project orphans those resources with no retry path — the cluster keeps
+        # billing and nothing in Forge points at it. Reported on 3.1.6: a
+        # destroy-all returned non-zero, DELETE succeeded 22 seconds later, and a
+        # live ROKS cluster plus its VPC, three subnets and three public gateways
+        # had to be removed by hand (issue #125).
+        #
+        # NO_INFRA_STATUSES is the existing definition of "this module has
+        # nothing left to destroy"; anything else — applied, applying,
+        # destroying, apply_failed, destroy_failed — may still own something.
+        #
+        # This runs FIRST, ahead of the active-project and live-lock gates, and
+        # that ordering is load-bearing. The only-project gate below refuses with
+        # "use force=true to delete it anyway" — advice about project count, not
+        # about infrastructure. A user who follows it passes the one flag that
+        # also disarms this gate, which is precisely how #125 happened. Checking
+        # infra first means force=true is only ever suggested to someone whose
+        # modules are already destroyed.
+        #
+        # force=true remains available: deliberately abandoning resources is a
+        # legitimate operation. It just must not be the default, because a
+        # project that still owns resources is recoverable and a deleted one is
+        # not.
+        from tasks.parallel_tasks import NO_INFRA_STATUSES
+
+        undestroyed = [
+            m for m in self.db.query(ProjectModule)
+            .filter(ProjectModule.project_id == project_id).all()
+            if (m.status or "") not in NO_INFRA_STATUSES
+        ]
+        if undestroyed and not force:
+            raise ConflictError(
+                "project",
+                f"Cannot delete: {len(undestroyed)} module(s) are not destroyed and may "
+                f"still own cloud resources. Destroy them first, or pass force=true to "
+                f"delete the project and abandon those resources.",
+                details={
+                    "requires_force": True,
+                    "undestroyed_modules": [
+                        {
+                            "id": m.id,
+                            "name": (m.library_module.name if m.library_module else m.path_in_project),
+                            "status": m.status,
+                        }
+                        for m in undestroyed
+                    ],
+                },
+            )
+
         # Check if this is the only project
         total_projects = self.db.query(Project).count()
 
@@ -716,49 +767,6 @@ class ProjectService(BaseService):
                 "project",
                 f"Cannot delete: operations in progress on modules: {', '.join(locked_modules)}. "
                 f"Use force=true to override the live-holder gate.",
-            )
-
-        # Refuse to delete a project whose modules may still own cloud resources.
-        #
-        # Forge holds the ONLY record of what a module built, so deleting the
-        # project orphans those resources with no retry path — the cluster keeps
-        # billing and nothing in Forge points at it. Reported on 3.1.6: a
-        # destroy-all returned non-zero, DELETE succeeded 22 seconds later, and a
-        # live ROKS cluster plus its VPC, three subnets and three public gateways
-        # had to be removed by hand (issue #125).
-        #
-        # NO_INFRA_STATUSES is the existing definition of "this module has
-        # nothing left to destroy"; anything else — applied, applying,
-        # destroying, apply_failed, destroy_failed — may still own something.
-        #
-        # force=true remains available: deliberately abandoning resources is a
-        # legitimate operation. It just must not be the default, because a
-        # project that still owns resources is recoverable and a deleted one is
-        # not.
-        from tasks.parallel_tasks import NO_INFRA_STATUSES
-
-        undestroyed = [
-            m for m in self.db.query(ProjectModule)
-            .filter(ProjectModule.project_id == project_id).all()
-            if (m.status or "") not in NO_INFRA_STATUSES
-        ]
-        if undestroyed and not force:
-            raise ConflictError(
-                "project",
-                f"Cannot delete: {len(undestroyed)} module(s) are not destroyed and may "
-                f"still own cloud resources. Destroy them first, or pass force=true to "
-                f"delete the project and abandon those resources.",
-                details={
-                    "requires_force": True,
-                    "undestroyed_modules": [
-                        {
-                            "id": m.id,
-                            "name": (m.library_module.name if m.library_module else m.path_in_project),
-                            "status": m.status,
-                        }
-                        for m in undestroyed
-                    ],
-                },
             )
 
         # Clean up persistent workspaces for all modules in the project (WORK-006)

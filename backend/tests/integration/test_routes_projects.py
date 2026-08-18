@@ -403,3 +403,91 @@ class TestProjectActivate:
 
         db.refresh(sample_project)
         assert sample_project.is_active is True
+
+
+class TestProjectDeleteGuardOverHTTP:
+    """The teardown guard and module_state at the route boundary.
+
+    Service-level tests cannot see these: FastAPI filters every response
+    through its response_model, so a field the service emits but the schema
+    does not declare is silently dropped before it reaches a client.
+    """
+
+    def _applied_module(self, db, project, library):
+        from models import ProjectModule
+
+        mod = ProjectModule(
+            project_id=project.id,
+            module_library_id=library.id,
+            path_in_project="infra/live",
+            status="applied",
+        )
+        db.add(mod)
+        db.commit()
+        return mod
+
+    def test_module_state_reaches_client_on_detail(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """GET /{id} carries a COMPUTED module_state.
+
+        Asserting "clean" here would be vacuous: it is also the schema default,
+        so it passes even if the service stops emitting the field. Drive a
+        non-default value instead.
+        """
+        sample_project.deployed_count = 2
+        sample_project.failed_count = 0
+        db.commit()
+
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.status_code == 200
+        assert response.json()["module_state"] == "in_progress"
+
+        sample_project.failed_count = 1
+        db.commit()
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.json()["module_state"] == "failed"
+
+    def test_module_state_reaches_client_on_list(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """GET / carries a COMPUTED module_state on each item."""
+        sample_project.deployed_count = 1
+        sample_project.failed_count = 0
+        db.commit()
+
+        response = client.get("/api/projects", headers=admin_headers)
+        assert response.status_code == 200
+        items = response.json()["projects"]
+        mine = [i for i in items if i["id"] == sample_project.id]
+        assert mine, "expected the sample project in the listing"
+        assert mine[0]["module_state"] == "in_progress"
+
+    def test_delete_blocked_with_409_when_module_still_owns_infra(
+        self, client, admin_headers, sample_user, sample_module, db
+    ):
+        """An applied module blocks deletion with an actionable 409."""
+        project = sample_module["project"]
+        self._applied_module(db, project, sample_module["library"])
+
+        response = client.delete(f"/api/projects/{project.id}", headers=admin_headers)
+        assert response.status_code == 409
+
+        err = response.json()["error"]
+        assert err["details"]["requires_force"] is True
+        undestroyed = err["details"]["undestroyed_modules"]
+        assert [m["status"] for m in undestroyed] == ["applied"]
+        assert db.query(Project).filter(Project.id == project.id).first() is not None
+
+    def test_delete_allowed_with_force(
+        self, client, admin_headers, sample_user, sample_module, db
+    ):
+        """force=true is the documented override and still deletes."""
+        project = sample_module["project"]
+        self._applied_module(db, project, sample_module["library"])
+
+        response = client.delete(
+            f"/api/projects/{project.id}?force=true", headers=admin_headers
+        )
+        assert response.status_code == 200
+        assert db.query(Project).filter(Project.id == project.id).first() is None

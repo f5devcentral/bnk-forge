@@ -118,10 +118,10 @@ Some endpoints use ownership checks instead of role checks:
 
 | Method | Path | Auth | Request Body | Response Model | Description |
 |--------|------|------|-------------|----------------|-------------|
-| GET | `/api/projects` | viewer | — | `ProjectListResponse` | List all projects |
+| GET | `/api/projects` | viewer | — | `ProjectListResponse` | List all projects. Each item carries `module_state` (`clean`/`in_progress`/`failed`) |
 | POST | `/api/projects` | operator | `ProjectCreate` | `ProjectMutationResponse` | Create a project |
 | GET | `/api/projects/active` | viewer | — | `ActiveProjectResponse` | Get active project |
-| GET | `/api/projects/{project_id}` | viewer | — | `ProjectDetailResponse` | Get project detail |
+| GET | `/api/projects/{project_id}` | viewer | — | `ProjectDetailResponse` | Get project detail. `module_state` is the single field to poll for teardown completion — `clean` means no module still owns cloud resources |
 | PUT | `/api/projects/{project_id}` | owner | `ProjectUpdate` | `ProjectMutationResponse` | Update project |
 | PUT | `/api/projects/{project_id}/dependencies` | owner | `list[ProjectDependencyItem]` | `ProjectDependenciesResponse` | Set cross-project deps |
 | DELETE | `/api/projects/{project_id}` | owner | — | `SuccessResponse` | Delete project. **409** when any module still owns cloud resources (query: `force=true` to abandon them deliberately) |

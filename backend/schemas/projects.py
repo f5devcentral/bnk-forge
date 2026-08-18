@@ -176,6 +176,8 @@ class ProjectListItem(BaseModel):
     module_count: int | None = 0
     deployed_count: int | None = 0
     failed_count: int | None = 0
+    # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
+    module_state: str = "clean"
     cluster_count: int = 0
     owner: str | None = None
     team: str | None = None
@@ -234,6 +236,8 @@ class ProjectDetailResponse(BaseModel):
     module_count: int = 0
     deployed_count: int = 0
     failed_count: int = 0
+    # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
+    module_state: str = "clean"
     owner: str | None = None
     team: str | None = None
     visibility: str | None = "private"

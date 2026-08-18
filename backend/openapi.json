@@ -51520,6 +51520,11 @@
             "title": "Failed Count",
             "default": 0
           },
+          "module_state": {
+            "type": "string",
+            "title": "Module State",
+            "default": "clean"
+          },
           "owner": {
             "anyOf": [
               {
@@ -52434,6 +52439,11 @@
             ],
             "title": "Failed Count",
             "default": 0
+          },
+          "module_state": {
+            "type": "string",
+            "title": "Module State",
+            "default": "clean"
           },
           "cluster_count": {
             "type": "integer",

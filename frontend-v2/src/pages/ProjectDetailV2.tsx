@@ -406,9 +406,13 @@ export default function ProjectDetailV2() {
       // Brief pause so user sees "Done" before navigating away
       await new Promise((r) => setTimeout(r, 800));
       navigate('/projects');
-    } catch (_error) {
+    } catch {
+      // useDeleteProject() is a useAppMutation, whose default onError already
+      // runs the error through notify/parseApiError. Raising a second, fixed
+      // string here produced a duplicate toast that also masked the server's
+      // text — including the 409 from the undestroyed-modules guard, which
+      // names the blocking modules and the force=true override.
       setIsDeleting(false);
-      notify.error('Failed to delete project', undefined, { category: 'system' });
     }
   };
 
