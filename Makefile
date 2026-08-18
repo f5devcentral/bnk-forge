@@ -1009,6 +1009,8 @@ dist:
 	echo "=== Updating dist/VERSION ==="; \
 	cp VERSION dist/VERSION; \
 	echo "=== Updating dist/nginx configs ==="; \
+	: "Adding a conf here? dist/.gitignore lists the tracked ones by name;"; \
+	: "a file not listed there stays untracked and misses a fresh clone."; \
 	cp proxy/nginx.local.conf dist/nginx/proxy.local.conf; \
 	cp frontend-v2/nginx.local.conf dist/nginx/frontend.local.conf; \
 	echo "=== Bundling install guide ==="; \
