@@ -42,11 +42,28 @@ export function SSOAuthDialog({
   const isPollingRef = useRef(false);
   const pollFailuresRef = useRef(0);
 
+  // Track mount state so an in-flight initiate/poll request cannot setState
+  // after the dialog is unmounted -- e.g. the user opens and immediately closes
+  // it while authenticateTemplateSSO is still pending. React tolerates that
+  // silently in the browser, but it is a genuine leak of a stale update, and
+  // under vitest the environment is already torn down by the time the promise
+  // settles ("ReferenceError: window is not defined" from dispatchSetState).
+  // The polling effect below already guards itself with a `cancelled` flag;
+  // this gives initiateSSO the same protection.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const initiateSSO = useCallback(async () => {
     try {
       setError('');
       pollFailuresRef.current = 0;
       const response = await api.authenticateTemplateSSO(templateId);
+      if (!isMountedRef.current) return;
 
       setDeviceCode(response.data.device_code);
       setUserCode(response.data.user_code);
@@ -56,6 +73,7 @@ export function SSOAuthDialog({
       setPollInterval(response.data.interval);
       setStep('waiting');
     } catch (err: unknown) {
+      if (!isMountedRef.current) return;
       const message = isAxiosError(err)
         ? err.response?.data?.error?.message || err.response?.data?.detail || 'Failed to initiate SSO authentication'
         : 'Failed to initiate SSO authentication';
@@ -74,6 +92,7 @@ export function SSOAuthDialog({
 
     try {
       const response = await api.pollTemplateSSO(templateId, deviceCode);
+      if (!isMountedRef.current) return;
 
       // Check if still pending (HTTP 202 returns pending: true)
       if (response.pending) {
@@ -90,10 +109,11 @@ export function SSOAuthDialog({
 
       // Close dialog after a moment
       setTimeout(() => {
-        onOpenChange(false);
+        if (isMountedRef.current) onOpenChange(false);
       }, 2000);
     } catch (err: unknown) {
       isPollingRef.current = false;
+      if (!isMountedRef.current) return;
 
       // If 202 status, it's still pending (shouldn't happen since 202 is success, but be safe)
       if (isAxiosError(err) && err.response?.status === 202) {
