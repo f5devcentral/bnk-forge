@@ -239,6 +239,73 @@ def seed_auth_step():
         logger.warning("  Authentication DISABLED (REQUIRE_AUTH=false)")
 
 
+def mint_builtin_agent_token_step():
+    """Write a bootstrap token for the built-in forge-agent (#148).
+
+    Agent-facing endpoints require an agent-class bearer token, so the built-in
+    agent -- which ships in docker-compose.yml with no operator-provisioned
+    token -- needs one it can find. It registers BEFORE it has an agent_id, so
+    an agent_id-bound token from _mint_agent_token cannot exist yet; this
+    token deliberately carries role=agent and NO agent_id. That lets it
+    register and connect the WS as a claimless agent, and nothing more.
+
+    Written to its own file (not the JWT/encryption keys) so the agent
+    container can mount exactly this and nothing else. The file is stable
+    across restarts: it is regenerated only when missing or no longer valid
+    for the current JWT_SECRET_KEY, so a running agent keeps working across
+    backend restarts.
+
+    Only meaningful when BENCHMARK_AGENT_AUTH_REQUIRED is on; when it is off,
+    the endpoints are open and the file is harmless.
+    """
+    import os
+    from datetime import timedelta
+
+    from core.config import _KEYS_DIR
+    from core.errors import UnauthorizedError
+    from services.auth_service import create_access_token, decode_token
+
+    path = os.path.join(_KEYS_DIR, "builtin_agent.token")
+
+    existing = None
+    try:
+        with open(path) as f:
+            existing = f.read().strip() or None
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("  Could not read %s: %s", path, exc)
+
+    if existing:
+        try:
+            decode_token(existing)
+            logger.info("  Built-in agent bootstrap token present and valid")
+            return
+        except UnauthorizedError:
+            logger.info("  Built-in agent bootstrap token stale (secret rotated?) — reissuing")
+
+    token = create_access_token(
+        {"sub": "forge-builtin-agent", "role": "agent"},
+        expires_delta=timedelta(days=365),
+    )
+    try:
+        os.makedirs(_KEYS_DIR, exist_ok=True)
+        # 0644, not 0600: the agent container runs as uid 1001 (Dockerfile.agent)
+        # and the backend as another uid, and the file crosses between them via
+        # the compose mount. World-read is the mechanism, not an accident -- the
+        # token is deliberately narrow (role=agent, no agent_id) so this exposure
+        # buys register + claimless WS and nothing else. Never widen its claims.
+        with open(path, "w", opener=lambda p, f: os.open(p, f, 0o644)) as f:
+            f.write(token)
+        logger.info("  Wrote built-in agent bootstrap token to %s", path)
+    except OSError as exc:
+        logger.warning(
+            "  Could not write built-in agent bootstrap token (%s); the built-in "
+            "agent will fail to register while BENCHMARK_AGENT_AUTH_REQUIRED is on",
+            exc,
+        )
+
+
 def assert_lock_columns_step():
     """Assert that all whitelisted entity tables have the four lock columns.
 

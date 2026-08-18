@@ -702,8 +702,17 @@ def main():
         "--token",
         default=os.environ.get("AGENT_TOKEN", ""),
         help=(
-            "JWT bearer token. Env: AGENT_TOKEN. "
-            "Optional — only required when BENCHMARK_AGENT_AUTH_REQUIRED is enabled on the server."
+            "JWT bearer token. Env: AGENT_TOKEN. Required by default "
+            "(BENCHMARK_AGENT_AUTH_REQUIRED is on); falls back to --token-file."
+        ),
+    )
+    parser.add_argument(
+        "--token-file",
+        default=os.environ.get("AGENT_TOKEN_FILE", ""),
+        help=(
+            "Path to a file holding the bearer token. Env: AGENT_TOKEN_FILE. "
+            "The built-in agent uses this to pick up the bootstrap token the "
+            "backend mints at startup; used only when --token/AGENT_TOKEN is empty."
         ),
     )
     parser.add_argument(
@@ -733,8 +742,30 @@ def main():
     if not args.forge_url:
         log.error("FORGE_URL / --forge-url is required")
         sys.exit(1)
+    if not args.token and args.token_file:
+        # The backend writes this file at startup and depends_on service_healthy
+        # orders us after it -- but be tolerant of a slow first boot, since a
+        # missing token means every register attempt 401s and we'd crash-loop.
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                with open(args.token_file) as f:
+                    args.token = f.read().strip()
+                if args.token:
+                    log.info("Loaded bearer token from %s", args.token_file)
+                    break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                log.warning("Token file %s not readable after 60s — continuing without a token", args.token_file)
+                break
+            time.sleep(2)
     if not args.token:
-        log.info("No token set — relying on open agent endpoints (BENCHMARK_AGENT_AUTH_REQUIRED is off)")
+        log.warning(
+            "No token set — agent endpoints require one by default "
+            "(BENCHMARK_AGENT_AUTH_REQUIRED). Register will fail unless the server "
+            "has it disabled. Set AGENT_TOKEN or AGENT_TOKEN_FILE."
+        )
 
     agent = ForgeAgent(
         args.forge_url,

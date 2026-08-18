@@ -129,6 +129,70 @@ class TestAgentAuthFlagOn:
             )
         assert resp.status_code not in (400, 401)
 
+    def _headers_for(self, **claims) -> dict:
+        from services.auth_service import create_access_token
+        return {"Authorization": f"Bearer {create_access_token(claims)}"}
+
+    def test_register_rejects_viewer_token(self, client):
+        """#148: authentication is not write intent. A viewer token decodes fine
+        but grants no right to register agents or push results."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="viewer-user", role="viewer"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_register_accepts_agent_role_token(self, client):
+        """The bootstrap token: role=agent, NO agent_id. Must be able to register."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="forge-builtin-agent", role="agent"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_accepts_operator_token(self, client):
+        """The documented human curl flow keeps working with an operator token."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="op", role="operator"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_rejects_token_with_no_role(self, client):
+        """A token with no role claim must fail closed, not fall through."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="roleless"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_default_is_secure(self):
+        """#148: a default deployment must not accept unauthenticated writes."""
+        from core.config import Settings
+        assert Settings().BENCHMARK_AGENT_AUTH_REQUIRED is True
+
     def test_ingest_rejects_missing_bearer(self, client):
         """Flag on + no Authorization → 400 AGENT_AUTH_REQUIRED.
 

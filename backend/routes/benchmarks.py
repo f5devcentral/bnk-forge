@@ -84,14 +84,28 @@ ws_router = APIRouter()
 # Agent auth helpers — flag-gated (BENCHMARK_AGENT_AUTH_REQUIRED)
 # ============================================================================
 
-def _require_agent_bearer(request: Request) -> None:
-    """When BENCHMARK_AGENT_AUTH_REQUIRED is ON, validate the bearer token.
+# Roles whose tokens may write to the agent-facing endpoints. `agent` is the
+# claim _mint_agent_token and the bootstrap token carry; operator/admin keeps
+# the documented human curl flow (`curl -X POST .../results/aiperf` with a user
+# token) working. A viewer token authenticates a person but grants no write
+# intent, so it is rejected here even though it decodes cleanly.
+_AGENT_WRITE_ROLES = frozenset({"agent", "operator", "admin"})
 
-    Raises BadRequestError (→ 401) if the token is missing or invalid.
-    When the flag is OFF this is a no-op, preserving the open curl flow.
+
+def _require_agent_bearer(request: Request) -> dict:
+    """Gate the agent-facing mutating endpoints (register / ingest).
+
+    Requires a valid bearer token whose role may write here (#148, the F6 half
+    of #41). Previously any valid token was accepted -- a viewer's included --
+    and, because BENCHMARK_AGENT_AUTH_REQUIRED defaulted to False, on a default
+    deployment no token was required at all.
+
+    Returns the decoded payload so callers can bind on its claims. When the flag
+    is OFF this returns {} without checking, preserving the open curl flow for
+    trusted networks that opt out explicitly.
     """
     if not settings.BENCHMARK_AGENT_AUTH_REQUIRED:
-        return
+        return {}
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise BadRequestError("Bearer token required", code="AGENT_AUTH_REQUIRED")
@@ -99,9 +113,16 @@ def _require_agent_bearer(request: Request) -> None:
     from core.errors import UnauthorizedError
     from services.auth_service import decode_token
     try:
-        decode_token(token)
+        payload = decode_token(token)
     except UnauthorizedError as exc:
         raise BadRequestError(str(exc), code="AGENT_AUTH_INVALID")
+    role = str(payload.get("role") or "")
+    if role not in _AGENT_WRITE_ROLES:
+        raise BadRequestError(
+            f"Token role '{role or 'none'}' may not write to agent endpoints",
+            code="AGENT_AUTH_FORBIDDEN",
+        )
+    return payload
 
 
 # ============================================================================

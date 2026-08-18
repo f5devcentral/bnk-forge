@@ -501,8 +501,22 @@ services:
       FORGE_URL: http://localhost:8000
       AGENT_NAME: ${FORGE_AGENT_NAME:-forge-local}
       AGENT_TOKEN: ${FORGE_AGENT_TOKEN:-}
+      # Bootstrap token the backend mints at startup (#148). Used only when
+      # AGENT_TOKEN is empty, so an operator-provided token still wins.
+      AGENT_TOKEN_FILE: /run/forge/builtin_agent.token
       # Leave blank to let the agent resolve its own IP via socket
       AGENT_ADVERTISE_IP: ${FORGE_AGENT_ADVERTISE_IP:-}
+    volumes:
+      # Mount ONLY the bootstrap token out of the keys volume -- never the volume
+      # root, which also holds jwt_secret.key and encryption.key. The token is
+      # deliberately narrow (role=agent, no agent_id): it can register and open
+      # a claimless WS, nothing more.
+      - type: volume
+        source: bnk-forge-keys
+        target: /run/forge/builtin_agent.token
+        read_only: true
+        volume:
+          subpath: builtin_agent.token
     depends_on:
       backend:
         condition: service_healthy
