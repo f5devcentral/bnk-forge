@@ -125,6 +125,9 @@ services:
       - module_catalog:/tmp/bnk-forge-modules
       - bnk-forge-data:/app/projects
       - bnk-forge-keys:/app/keys
+      # Bootstrap token for the built-in forge-agent, minted at startup (#148).
+      # Its own volume so the agent can be handed this file and nothing else.
+      - bnk-forge-agent-token:/app/agent-token
       - state_data:/app/state
       - helm_cache:/home/bnkforge/.cache/helm
       - helm_config:/home/bnkforge/.config/helm
@@ -501,8 +504,21 @@ services:
       FORGE_URL: http://localhost:8000
       AGENT_NAME: ${FORGE_AGENT_NAME:-forge-local}
       AGENT_TOKEN: ${FORGE_AGENT_TOKEN:-}
+      # Bootstrap token the backend mints at startup (#148). Used only when
+      # AGENT_TOKEN is empty, so an operator-provided token still wins.
+      AGENT_TOKEN_FILE: /run/forge/builtin_agent.token
       # Leave blank to let the agent resolve its own IP via socket
       AGENT_ADVERTISE_IP: ${FORGE_AGENT_ADVERTISE_IP:-}
+    volumes:
+      # A DEDICATED volume holding only the bootstrap token -- never the keys
+      # volume, which also holds jwt_secret.key and encryption.key. (A volume
+      # `subpath` into the keys volume was tried and rejected: Docker refuses to
+      # create a container whose subpath does not exist yet, which is exactly
+      # the state on a cold first boot before the backend has written anything.
+      # A separate named volume is created empty and needs no ordering.) The
+      # token is deliberately narrow (role=agent, no agent_id): it can register
+      # and open a claimless WS, nothing more.
+      - bnk-forge-agent-token:/run/forge:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -614,6 +630,9 @@ volumes:
   bnk-forge-data:
     driver: local
   bnk-forge-keys:
+    driver: local
+  # Holds ONLY builtin_agent.token. Backend writes, forge-agent reads (ro).
+  bnk-forge-agent-token:
     driver: local
   state_data:
     driver: local

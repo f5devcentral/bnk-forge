@@ -2353,21 +2353,39 @@ class TestAgentWebSocketAuth:
     def test_valid_token_accepts(self, client, all_test_users, db):
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "testoperator", "role": "operator"})
         agent = _make_agent(db, name="ws-okauth-agent", status="connected")
+        # An agent-bound token, as _mint_agent_token issues. Since #142 (and
+        # BENCHMARK_AGENT_AUTH_REQUIRED now defaulting on, #148) the WS is
+        # identity-bound: the agent_id claim is mandatory and must match the path.
+        token = create_access_token(data={"sub": "ws-okauth-agent", "role": "agent", "agent_id": agent.id})
         with client.websocket_connect(f"/ws/benchmarks/agents/{agent.id}?token={token}") as ws:
             ws.send_json({"type": "heartbeat", "status": "connected"})
             # No exception means the handshake + accept succeeded.
+
+    def test_claimless_operator_token_rejected_on_ws(self, client, all_test_users, db):
+        """A human's operator token authenticates a person, not an agent. Since the
+        WS is identity-bound it must be refused (close 4401) -- an operator token
+        must not be able to connect as an arbitrary agent."""
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "testoperator", "role": "operator"})
+        agent = _make_agent(db, name="ws-human-token-agent", status="connected")
+        with pytest.raises(Exception):
+            with client.websocket_connect(f"/ws/benchmarks/agents/{agent.id}?token={token}"):
+                pass
 
     def test_run_completed_from_wrong_agent_isIgnored(self, client, all_test_users, db):
         # Run is owned by agent A; agent B (authenticated) tries to report its result.
         # The ownership guard must skip the mutation — run stays RUNNING, not COMPLETED.
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "testoperator", "role": "operator"})
         owner = _make_agent(db, name="ws-owner-agent", status="connected")
         attacker = _make_agent(db, name="ws-attacker-agent", status="connected")
         run = _make_run(db, status="running", agent_id=owner.id)
+        # The attacker holds a token legitimately bound to ITS OWN id -- so it
+        # passes the identity binding and reaches the ownership guard. That is
+        # what makes this a spoof test rather than an identity-mismatch test.
+        token = create_access_token(data={"sub": "ws-attacker-agent", "role": "agent", "agent_id": attacker.id})
 
         with client.websocket_connect(f"/ws/benchmarks/agents/{attacker.id}?token={token}") as ws:
             ws.send_json({

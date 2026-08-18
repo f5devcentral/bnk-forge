@@ -107,7 +107,13 @@ class Settings(BaseSettings):
     # When True: register + ingest require a valid bearer token; WS validates ?token= and
     # checks the agent_id claim matches the path. The built-in forge-agent always sends a
     # token so flipping this flag on is a no-op for it.
-    BENCHMARK_AGENT_AUTH_REQUIRED: bool = False
+    # Secure by default (#148). The agent-facing endpoints -- POST
+    # /api/benchmarks/results, /results/aiperf and /agents -- mutate
+    # control-plane state; with this off they accept unauthenticated writes.
+    # The built-in forge-agent gets a bootstrap token minted at startup
+    # (mint_builtin_agent_token_step) so a default deployment keeps working.
+    # Set to false explicitly to restore the open curl flow on a trusted network.
+    BENCHMARK_AGENT_AUTH_REQUIRED: bool = True
 
     # External URL that remote benchmark agents use to reach Forge.
     # Must be set before SSH-provisioning a managed agent host.

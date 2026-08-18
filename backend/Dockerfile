@@ -119,7 +119,7 @@ COPY backend/*.py ./
 # Create required directories and set ownership to bnkforge user
 # /app/bfb-cache is pre-created so the named Docker volume inherits
 # correct ownership on first mount (otherwise it initializes as root).
-RUN mkdir -p /tmp/bnk-forge-logs /tmp/bnk-forge-modules /app/state /app/helm_charts /app/projects /app/keys /app/workspaces /app/bfb-cache /app/provider-cache && \
+RUN mkdir -p /tmp/bnk-forge-logs /tmp/bnk-forge-modules /app/state /app/helm_charts /app/projects /app/keys /app/agent-token /app/workspaces /app/bfb-cache /app/provider-cache && \
     chown -R bnkforge:bnkforge /app /tmp/bnk-forge-logs /tmp/bnk-forge-modules
 
 # Shared OpenTofu provider cache path (mounted from compose volume at runtime)

@@ -158,7 +158,7 @@ _install-start: ensure-artifact-network
 	@echo ""
 	@echo "Fixing volume permissions..."
 	@PROJECT=$$(basename "$(CURDIR)"); \
-	for v in bnk-forge-data bnk-forge-keys state_data helm_cache helm_config helm_charts workspace_data; do \
+	for v in bnk-forge-data bnk-forge-keys bnk-forge-agent-token state_data helm_cache helm_config helm_charts workspace_data; do \
 	  docker volume create \
 	    --label com.docker.compose.project=$${PROJECT} \
 	    --label com.docker.compose.volume=$${v} \
@@ -167,15 +167,16 @@ _install-start: ensure-artifact-network
 	docker run --rm \
 	  -v "$${PROJECT}_bnk-forge-data:/app/projects" \
 	  -v "$${PROJECT}_bnk-forge-keys:/app/keys" \
+	  -v "$${PROJECT}_bnk-forge-agent-token:/app/agent-token" \
 	  -v "$${PROJECT}_state_data:/app/state" \
 	  -v "$${PROJECT}_helm_cache:/home/bnkforge/.cache/helm" \
 	  -v "$${PROJECT}_helm_config:/home/bnkforge/.config/helm" \
 	  -v "$${PROJECT}_helm_charts:/app/helm_charts" \
 	  -v "$${PROJECT}_workspace_data:/app/workspaces" \
 	  alpine:latest sh -c " \
-	    mkdir -p /app/projects /app/keys /app/state /app/helm_charts /app/workspaces \
+	    mkdir -p /app/projects /app/keys /app/agent-token /app/state /app/helm_charts /app/workspaces \
 	      /home/bnkforge/.cache/helm /home/bnkforge/.config/helm && \
-	    chown -R 1000:1000 /app/projects /app/keys /app/state /app/helm_charts \
+	    chown -R 1000:1000 /app/projects /app/keys /app/agent-token /app/state /app/helm_charts \
 	      /app/workspaces /home/bnkforge" \
 	  2>/dev/null && echo "  ✓ Volume permissions configured" \
 	  || echo "  ⚠  Could not pre-configure permissions"
