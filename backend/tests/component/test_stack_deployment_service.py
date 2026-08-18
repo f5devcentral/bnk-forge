@@ -1568,6 +1568,97 @@ class TestDestroyStack:
         assert success is False
         assert "operation in progress" in msg
 
+    def test_destroy_does_not_orphan_an_interrupted_apply(
+        self, db, make_project, make_stack_template, make_stack_instance, make_module_library
+    ):
+        """#30: a module whose apply worker died must be DESTROYED, not deleted.
+
+        `tofu apply` creates IAM roles, VPCs and the like well before it
+        finishes, so a module that reached `applying` may own cloud resources
+        even with no terminal task on record. BUG-008 recovery used to reset it
+        to not_initialized, which routed it into the delete-directly branch --
+        the row vanished with no destroy attempt, the resources outlived
+        Forge's knowledge of them, and the next deploy hit EntityAlreadyExists.
+        """
+        p = make_project()
+        lib = make_module_library(name="iam", path="bnk/iam")
+        t = make_stack_template()
+        si = make_stack_instance(project=p, template=t, status=StackInstanceStatus.DEPLOYED)
+        pm = ProjectModule(
+            project_id=p.id, module_library_id=lib.id,
+            path_in_project=f"stack-{si.id}/bnk/iam",
+            status=ModuleStatus.APPLYING, stack_instance_id=si.id,
+        )
+        db.add(pm)
+        db.flush()
+        # No Task row at all: the worker died before recording anything.
+        db.refresh(si)
+        svc = StackDeploymentService(db)
+
+        with patch.object(svc, '_dispatch_first_destroy_wave_stack', return_value="mock-task-id") as mock_wave:
+            success, msg = svc.destroy_stack(si)
+
+        assert success is True
+        db.refresh(pm)
+        # Recovered to a destroy-ELIGIBLE state, not a delete-eligible one.
+        assert pm.status == ModuleStatus.APPLY_FAILED
+        assert "may exist" in (pm.deployment_error or "").lower() or "destroy will be attempted" in (pm.deployment_error or "")
+        # And it was queued for a real destroy rather than deleted.
+        mock_wave.assert_called_once()
+        assert "1 modules" in msg
+        assert db.query(ProjectModule).filter_by(id=pm.id).count() == 1
+
+    def test_destroy_does_not_orphan_an_interrupted_destroy(
+        self, db, make_project, make_stack_template, make_stack_instance, make_module_library
+    ):
+        """Symmetric: a module interrupted mid-destroy still owns whatever was not torn down."""
+        p = make_project()
+        lib = make_module_library(name="iam", path="bnk/iam")
+        t = make_stack_template()
+        si = make_stack_instance(project=p, template=t, status=StackInstanceStatus.DEPLOYED)
+        pm = ProjectModule(
+            project_id=p.id, module_library_id=lib.id,
+            path_in_project=f"stack-{si.id}/bnk/iam",
+            status=ModuleStatus.DESTROYING, stack_instance_id=si.id,
+        )
+        db.add(pm)
+        db.flush()
+        db.refresh(si)
+        svc = StackDeploymentService(db)
+
+        with patch.object(svc, '_dispatch_first_destroy_wave_stack', return_value="mock-task-id") as mock_wave:
+            success, _ = svc.destroy_stack(si)
+
+        assert success is True
+        db.refresh(pm)
+        assert pm.status == ModuleStatus.DESTROY_FAILED
+        mock_wave.assert_called_once()
+
+    def test_interrupted_init_or_plan_is_still_safe_to_delete(
+        self, db, make_project, make_stack_template, make_stack_instance, make_module_library
+    ):
+        """Nothing is applied during init/plan, so nothing can be orphaned. Keep the fast path."""
+        p = make_project()
+        lib = make_module_library(name="vpc", path="bnk/vpc")
+        t = make_stack_template()
+        si = make_stack_instance(project=p, template=t, status=StackInstanceStatus.DEPLOYED)
+        pm = ProjectModule(
+            project_id=p.id, module_library_id=lib.id,
+            path_in_project=f"stack-{si.id}/bnk/vpc",
+            status=ModuleStatus.PLANNING, stack_instance_id=si.id,
+        )
+        db.add(pm)
+        db.flush()
+        db.refresh(si)
+        svc = StackDeploymentService(db)
+
+        with patch.object(svc, '_dispatch_first_destroy_wave_stack') as mock_wave:
+            success, msg = svc.destroy_stack(si)
+
+        assert success is True
+        mock_wave.assert_not_called()
+        assert db.query(ProjectModule).filter_by(id=pm.id).count() == 0
+
     def test_destroy_handles_dispatch_failure(
         self, db, make_project, make_stack_template, make_stack_instance, make_module_library
     ):
