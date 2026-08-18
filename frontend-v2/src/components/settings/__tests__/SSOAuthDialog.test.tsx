@@ -61,6 +61,36 @@ describe('SSOAuthDialog', () => {
     expect(screen.getByText('Initiating SSO flow...')).toBeInTheDocument();
   });
 
+  it('reaches the waiting state with the device code when initiation succeeds', async () => {
+    // Guards against the mount-guard over-reaching: a normally mounted dialog
+    // must still apply the initiate response and move to 'waiting'.
+    server.use(
+      http.post(INITIATE, () =>
+        HttpResponse.json({
+          success: true,
+          message: 'ok',
+          data: {
+            user_code: 'ABCD-1234',
+            verification_uri: 'https://device.sso.example.com/',
+            verification_uri_complete: 'https://device.sso.example.com/?user_code=ABCD-1234',
+            expires_in: 600,
+            interval: 5,
+            device_code: 'dev-code-xyz',
+          },
+        }),
+      ),
+      // Keep the poll pending so the test observes the waiting UI, not a transition.
+      http.post('*/api/credential-templates/:id/poll-sso', () => neverSettles()),
+    );
+
+    render(<SSOAuthDialog {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('ABCD-1234')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Initiating SSO flow...')).not.toBeInTheDocument();
+  });
+
   it('shows error state when SSO initiation fails', async () => {
     server.use(
       http.post('*/api/credential-templates/:id/authenticate-sso', () =>

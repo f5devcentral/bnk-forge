@@ -92,7 +92,12 @@ export function SSOAuthDialog({
 
     try {
       const response = await api.pollTemplateSSO(templateId, deviceCode);
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) {
+        // Every other exit from this try/catch clears the in-flight flag;
+        // keep that invariant on the unmount path too.
+        isPollingRef.current = false;
+        return;
+      }
 
       // Check if still pending (HTTP 202 returns pending: true)
       if (response.pending) {
