@@ -797,6 +797,11 @@ jobs:
       - name: Run integration tests
         run: |
           if [ -n "$(find backend/tests/integration -name 'test_*.py' 2>/dev/null)" ]; then
+            # Both targets, because they are exact complements: pyproject's
+            # addopts carry -m 'not full' and test-integration-full passes
+            # -m full. Running only the latter (as this job used to) left 746
+            # of 952 integration tests unexecuted on every branch — see #130.
+            make test-integration
             make test-integration-full
           else
             echo "No integration tests found yet — skipping"
@@ -809,6 +814,8 @@ jobs:
           path: |
             backend/coverage-integration.xml
             backend/junit-integration.xml
+            backend/coverage-integration-full.xml
+            backend/junit-integration-full.xml
           retention-days: 3
           if-no-files-found: ignore
 
