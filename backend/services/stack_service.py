@@ -31,8 +31,8 @@ from models import (
 from models.enums import ModuleStatus, StackInstanceStatus, TaskStatus
 from modules import get_module_registry
 from services.base_service import BaseService
-from services.module_resolution import _map_order, resolve_module_row
 from services.module_capabilities import serialize_engine_metadata
+from services.module_resolution import _map_order, resolve_module_row
 from services.workspace_manager import WorkspaceManager
 from utils.security import is_sensitive_input
 

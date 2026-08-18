@@ -20,8 +20,8 @@ from models import (
 from models.enums import StackInstanceStatus
 from schemas.projects import ProjectCreate
 from services.blueprint_catalog_common import _resolve_category
-from services.module_resolution import warn_on_cross_source_ambiguity
 from services.execution.k8s_catalog_payload import _render_template_obj
+from services.module_resolution import warn_on_cross_source_ambiguity
 from services.module_version_query import available_module_versions
 from services.project_module_service import ProjectModuleService
 from services.project_service import ProjectService
