@@ -156,6 +156,53 @@ class TestEngineDestroyUsesAppliedConfig:
         # Nothing was written in place of the missing config.
         assert not (tmp_path / "99" / "awsbnkctl" / "cluster.yaml").exists()
 
+    def test_explicit_cluster_yaml_restores_a_lost_workspace(self, tmp_path):
+        """An operator can hand the applied config back when the workspace is gone.
+
+        Safe only because the destroy context no longer renders one: with
+        for_destroy=True nothing populates cluster_yaml from the project form, so
+        a value here was set deliberately on the module.
+        """
+        engine = self._engine(tmp_path)
+        ctx = self._ctx(project_id=77)
+        ctx.variables["cluster_yaml"] = APPLIED_YAML
+
+        captured: dict = {}
+
+        def _fake_run(ctx_, args, env, cwd, on_output=None):
+            captured["args"] = args
+            return 0, "destroyed"
+
+        with (
+            patch.object(engine, "_run_streaming_with_ctx", side_effect=_fake_run),
+            patch.object(engine, "_update_stage"),
+            patch("services.execution.cli_engine.shutil.which", return_value="/usr/local/bin/awsbnkctl"),
+        ):
+            result = engine.destroy(ctx)
+
+        assert result.success is True
+        cfg = tmp_path / "77" / "awsbnkctl" / "cluster.yaml"
+        assert cfg.read_text() == APPLIED_YAML
+        assert str(cfg) in captured["args"]
+
+    def test_form_variables_alone_still_refuse(self, tmp_path):
+        """The #82 guarantee: form vars must never be turned into a destroy config."""
+        engine = self._engine(tmp_path)
+        ctx = self._ctx(project_id=78)
+        # Exactly what the old code would have rendered from -- and no cluster_yaml.
+        ctx.variables["cluster_name"] = "renamed-after-apply"
+
+        with (
+            patch.object(engine, "_run_streaming_with_ctx") as mock_run,
+            patch.object(engine, "_update_stage"),
+            patch("services.execution.cli_engine.shutil.which", return_value="/usr/local/bin/awsbnkctl"),
+        ):
+            result = engine.destroy(ctx)
+
+        assert result.success is False
+        mock_run.assert_not_called()
+        assert not (tmp_path / "78" / "awsbnkctl" / "cluster.yaml").exists()
+
     def test_applied_cluster_name_read_from_config(self, tmp_path):
         from services.execution.cli_engine import BnkctlEngine
 

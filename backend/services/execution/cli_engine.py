@@ -841,6 +841,22 @@ class BnkctlEngine(DeploymentEngine):
             # safer than guessing; same stance as _destroy_usecases below.
             cfg_path = workspace / "cluster.yaml"
             if not cfg_path.exists():
+                # Recovery path: an EXPLICIT cluster_yaml in variables is an
+                # operator handing us the applied config back after the workspace
+                # was lost. Safe to honour precisely because the destroy context
+                # no longer renders one -- _build_cli_context(for_destroy=True)
+                # skips the render, so anything here was set deliberately on the
+                # module rather than drifting in from the current project form.
+                explicit = ctx.variables.get("cluster_yaml")
+                if explicit:
+                    workspace.mkdir(parents=True, exist_ok=True)
+                    cfg_path.write_text(explicit)
+                    logger.info(
+                        "Restored cluster.yaml for module %s from an explicit "
+                        "cluster_yaml variable before destroy",
+                        ctx.module_id,
+                    )
+            if not cfg_path.exists():
                 return OperationResult(
                     success=False,
                     duration_seconds=time.monotonic() - started,
