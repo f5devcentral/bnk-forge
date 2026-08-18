@@ -65,15 +65,19 @@ def warn_on_cross_source_ambiguity(rows: list[ModuleLibrary], path: str) -> None
     """
     source_ids = {r.module_source_id for r in rows if r.module_source_id is not None}
     if len(source_ids) > 1:
-        logger.warning(
-            "Cross-source module ambiguity for path %r: matched by %d module sources "
-            "(ids %s). Blueprint pins carry no source, so the binding is decided by "
-            "is_latest/last_synced/id. Deactivate the duplicate source, or make the "
-            "paths distinct, to make this deterministic.",
-            path,
-            len(source_ids),
-            sorted(source_ids),
-        )
+        _log_cross_source_ambiguity(path, source_ids)
+
+
+def _log_cross_source_ambiguity(path: str, source_ids) -> None:
+    logger.warning(
+        "Cross-source module ambiguity for path %r: matched by %d module sources "
+        "(ids %s). Blueprint pins carry no source, so the binding is decided by "
+        "is_latest/last_synced/id. Deactivate the duplicate source, or make the "
+        "paths distinct, to make this deterministic.",
+        path,
+        len(set(source_ids)),
+        sorted(set(source_ids)),
+    )
 
 
 def resolve_module_row(
@@ -84,13 +88,22 @@ def resolve_module_row(
         ModuleLibrary.path == module_path,
         ModuleLibrary.is_active,
     )
+    row = query.order_by(*_row_order()).first()
+    if row is None:
+        return None
     if warn_ambiguous:
-        rows = query.order_by(*_row_order()).all()
-        if not rows:
-            return None
-        warn_on_cross_source_ambiguity(rows, module_path)
-        return rows[0]
-    return query.order_by(*_row_order()).first()
+        # Detect ambiguity with a distinct-source-id probe rather than by
+        # hydrating every matching row. Under the D-033 multi-version catalog a
+        # path can have many active versions, and this sits on the deploy path --
+        # the winner is still fetched with LIMIT 1.
+        source_ids = [
+            sid
+            for (sid,) in query.with_entities(ModuleLibrary.module_source_id).distinct().all()
+            if sid is not None
+        ]
+        if len(source_ids) > 1:
+            _log_cross_source_ambiguity(module_path, source_ids)
+    return row
 
 
 def resolve_module_rows_by_path(
