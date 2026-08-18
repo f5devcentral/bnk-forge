@@ -172,6 +172,42 @@ async def test_proxy_gates_destructive_and_leaves_others_alone() -> None:
     assert allowed["success"] is True
 
 
+@pytest.mark.asyncio
+async def test_gate_survives_the_instrumentation_wrapper(caplog: pytest.LogCaptureFixture) -> None:
+    """FastMCP introspects the OUTER callable, so the gate must survive both wraps.
+
+    require_confirmation sets __signature__ on its wrapper; instrument_tool then
+    wraps that with functools.wraps, which sets __wrapped__ but not __signature__.
+    inspect.signature must therefore follow the chain and still surface `confirm`
+    -- otherwise the parameter never reaches the published tool schema and an
+    agent has no way to satisfy the gate.
+    """
+    from bnk_forge_mcp.observability import instrument_tool
+
+    async def delete_project(project_id: int, force: bool = False) -> str:
+        """Delete a project."""
+        return json.dumps({"success": True})
+
+    gated = require_confirmation(delete_project, "delete_project")
+    final = instrument_tool(
+        "iac_operations", gated, risk_class="destructive", auth_expectation="admin"
+    )
+
+    sig = inspect.signature(final)
+    assert "confirm" in sig.parameters
+    assert sig.parameters["confirm"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert final.__name__ == "delete_project"
+    # The description an agent reads must carry the requirement.
+    assert "confirm=True" in (final.__doc__ or "")
+
+    # And a blocked call is still classified as a failure by the outer telemetry,
+    # not silently logged as a success.
+    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    await final(88)
+    assert '"error_class":"confirmation_required"' in caplog.text
+    assert '"success":false' in caplog.text
+
+
 def test_every_catalogued_destructive_tool_is_covered() -> None:
     """The gate keys off the catalog, so coverage is whatever the catalog marks."""
     destructive = [
