@@ -191,7 +191,12 @@ class WaitDPUReadyModule(SSHModule):
 
         from services.bare_metal.ssh_session import SSHSession
 
-        dpu_ip: str = str(variables.get("dpu_ip") or "192.168.100.2")
+        # Prefer the address actually baked into bf.conf. `dpu_ip` comes from
+        # flash-dpu, but a re-run or a partial chain can leave it unset, and the
+        # 192.168.100.2 literal is only correct for the pool's FIRST /30 (#118).
+        dpu_ip: str = str(
+            variables.get("dpu_ip") or variables.get("dpu_tmfifo_ip") or "192.168.100.2"
+        )
         max_wait: int = int(variables.get("max_wait_seconds") or 900)
         poll_interval: int = 10
 

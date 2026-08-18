@@ -367,6 +367,13 @@ def _inject_rendered_bf_conf(
     rendered = render_bf_conf(bf_template, ctx)
     variables["rendered_bf_conf"] = rendered
 
+    # The address actually baked into the DPU. flash-dpu used to report a module
+    # constant (192.168.100.2) to wait/validate/setup while bf.conf got the
+    # cluster-scoped IPAM /30, so every DPU past the pool's first /30 was probed
+    # at an address nothing listens on (#118). Taken from the same RenderContext
+    # that produced the bf.conf, so the reported and baked addresses cannot drift.
+    variables["dpu_tmfifo_ip"] = ctx.host.tmfifo_dpu_ip.split("/")[0]
+
     # Also expose the structured VLAN list so downstream modules (notably
     # bare-metal/setup-dpu-networking on the dual_dpu_obmc path) can
     # render the symmetric host-side netplan: matching VLAN sub-interfaces

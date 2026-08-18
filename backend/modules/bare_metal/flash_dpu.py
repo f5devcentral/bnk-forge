@@ -196,10 +196,13 @@ class FlashDPUModule(SSHModule):
             resource_name="",
             static_value=True,
         ),
+        # NOT static: the reported address must be the one baked into bf.conf.
+        # A static DPU_IP here sent wait/validate/setup-dpu-networking to
+        # 192.168.100.2 while the DPU came up on its allocated IPAM /30 (#118).
         "dpu_ip": OutputSpec(
             resource_kind="",
             resource_name="",
-            static_value=DPU_IP,
+            static_value=None,
         ),
         "rshim_source": OutputSpec(
             resource_kind="",
@@ -1163,8 +1166,14 @@ class FlashDPUModule(SSHModule):
 
         total = time.monotonic() - t0
         on_output(f"[flash-dpu] Complete ({total:.1f}s total)")
+        # Report the address this DPU was actually flashed with. variables
+        # carries it alongside rendered_bf_conf, both derived from the same
+        # RenderContext, so they cannot disagree. DPU_IP remains the fallback for
+        # the single-DPU / no-IPAM case, where it is also what bf.conf got.
+        reported_ip = variables.get("dpu_tmfifo_ip") or DPU_IP
+        on_output(f"[flash-dpu] dpu_ip reported downstream: {reported_ip}")
         return {
             "flash_completed": True,
-            "dpu_ip": DPU_IP,
+            "dpu_ip": reported_ip,
             "execution_duration_seconds": round(total, 1),
         }
