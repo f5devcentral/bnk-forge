@@ -105,9 +105,14 @@ services:
     network_mode: !reset null
     networks:
       - bnk-local
+    # Host 80/443 -> container 8080/8443. The proxy image is
+    # nginxinc/nginx-unprivileged running as uid 101, which cannot bind
+    # privileged ports, so the container side must stay unprivileged --
+    # matching proxy/nginx.local.conf, which `make dist` copies to
+    # nginx/proxy.local.conf. See #134.
     ports:
-      - "443:443"
-      - "80:80"
+      - "443:8443"
+      - "80:8080"
     volumes:
       - ./nginx/proxy.local.conf:/etc/nginx/conf.d/nginx.conf:ro
 

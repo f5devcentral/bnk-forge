@@ -332,7 +332,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -fk https://localhost:443/api/system/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fk https://localhost:8443/api/system/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
