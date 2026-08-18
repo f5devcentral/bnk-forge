@@ -69,7 +69,12 @@ class ValidateDPUReadyModule(SSHModule):
     def execute(self, session: Any, variables: dict[str, Any], on_output: Any) -> dict[str, Any]:
         """Validate DPU readiness with 9 checks across host and DPU."""
         t0 = time.monotonic()
-        dpu_ip = variables.get("dpu_ip", "192.168.100.2")
+        # Prefer the address actually baked into bf.conf. `dpu_ip` comes from
+        # flash-dpu, but a re-run or a partial chain can leave it unset, and the
+        # 192.168.100.2 literal is only correct for the pool's FIRST /30 (#118).
+        dpu_ip = (
+            variables.get("dpu_ip") or variables.get("dpu_tmfifo_ip") or "192.168.100.2"
+        )
         hugepages_min = int(variables.get("hugepages_minimum", "8192"))
         results: dict[str, str] = {}
 
