@@ -610,18 +610,26 @@ class ModuleSourceService:
 
                 ModuleSyncService(self.db).sync_git_source(source)
                 self._auto_sync_blueprints_for_git_source(source)
-                savepoint.commit()
+                # ModuleSyncService.sync_git_source commits internally (it owns
+                # its own sync_status bookkeeping), and Session.commit() commits
+                # the OUTERMOST transaction -- which closes this savepoint.
+                # Committing a closed savepoint raises ResourceClosedError, and
+                # that would land in the except below and mark a perfectly
+                # successful sync as failed. Only commit one we still own.
+                if savepoint.is_active:
+                    savepoint.commit()
                 self.db.refresh(source)
             except Exception as exc:
-                # Always roll back to the SAVEPOINT, never the whole session.
-                # After a failed flush SQLAlchemy reports the nested transaction
-                # as not is_active, but rollback() is still the correct recovery
-                # and is what restores the session -- checking is_active first
-                # and falling through to self.db.rollback() would discard the
-                # ModuleSource insert as well, which is the row we are trying to
-                # keep. The outer rollback stays only as a last resort for the
-                # case where sync_git_source committed and released the
-                # savepoint out from under us.
+                # Always roll back to the SAVEPOINT, never straight to the
+                # session. After a failed flush SQLAlchemy reports the nested
+                # transaction as not is_active, but rollback() is still the
+                # correct recovery -- checking is_active first and falling
+                # through to self.db.rollback() would discard the ModuleSource
+                # insert as well, which is the row we are trying to keep. The
+                # outer rollback stays only as a last resort for the case where
+                # an inner commit released the savepoint out from under us; the
+                # source is already durable by then, because sync_git_source
+                # commits before it can fail.
                 try:
                     savepoint.rollback()
                 except Exception:

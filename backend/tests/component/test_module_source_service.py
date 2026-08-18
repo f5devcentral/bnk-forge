@@ -197,6 +197,41 @@ class TestCreateSource:
 
     @patch("services.module_source_service.BlueprintSyncService")
     @patch("services.module_sync_service.ModuleSyncService")
+    def test_successful_sync_that_commits_internally_is_not_marked_failed(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """The real ModuleSyncService commits inside the savepoint.
+
+        sync_git_source owns its own sync_status bookkeeping and calls
+        db.commit(); Session.commit() commits the OUTERMOST transaction, which
+        closes the savepoint. Committing a closed savepoint raises
+        ResourceClosedError -- which would be caught by the failure handler and
+        mark a perfectly successful sync as failed. Mocked sync services never
+        commit, so this path is invisible unless the mock does what the real
+        thing does.
+        """
+        def _sync_and_commit(src):
+            src.sync_status = "success"
+            db.commit()
+            return {"modules_found": 1, "modules_created": 1, "modules_updated": 0, "errors": []}
+
+        mock_sync_class.return_value.sync_git_source.side_effect = _sync_and_commit
+        mock_blueprint_sync_cls.return_value.sync_git_source.return_value = {
+            "blueprints_found": 0, "releases_created": 0, "releases_existing": 0,
+            "releases_invalid": 0, "errors": [],
+        }
+
+        result = ModuleSourceService(db).create_source(_source_data())
+
+        assert result["sync_status"] != "failed", (
+            "a successful sync was reported as failed — the savepoint was closed by "
+            "the inner commit and committing it raised"
+        )
+        assert not result.get("sync_error")
+        db.commit()
+
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
     def test_create_records_sync_error_text(self, mock_sync_class, mock_blueprint_sync_cls, db):
         """The real cause must reach the caller, not just the log."""
         mock_sync_class.return_value.sync_git_source.return_value = {
