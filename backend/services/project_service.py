@@ -16,6 +16,7 @@ at module level for backward compatibility.
 """
 
 import logging
+from collections.abc import Iterable
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload, subqueryload
@@ -88,24 +89,44 @@ def _freeze_encryption_passphrase_before_rename(db: Session, project: "Project")
 # ProjectService (IMP-002)
 # ============================================================
 
-def summarize_module_state(deployed_count: int | None, failed_count: int | None) -> str:
+from tasks.parallel_tasks import NO_INFRA_STATUSES  # noqa: E402  (module status vocabulary)
+
+# A module that still owns infrastructure AND has failed. Kept separate from
+# NO_INFRA_STATUSES because init_failed/plan_failed are failures that own
+# nothing -- they belong to "clean", not to "failed".
+INFRA_FAILED_STATUSES = frozenset({
+    "failed",
+    "apply_failed",
+    "destroy_failed",
+})
+
+
+def summarize_module_state(module_statuses: Iterable[str | None]) -> str:
     """One field a client can poll for teardown completion.
 
-    "clean" / "in_progress" / "failed".
+    "clean" / "in_progress" / "failed", derived from the SAME predicate the
+    DELETE gate uses -- module statuses against NO_INFRA_STATUSES -- so that:
 
-    deployed_count alone cannot distinguish a finished teardown from a wholly
-    failed one: a destroy_failed module reports deployed_count=0, failed_count=1,
-    so it leaves deployed_count entirely and looks identical to success. A
-    teardown script that polled deployed_count == 0 therefore proceeded to
-    DELETE the project while a ROKS cluster was still live (issue #125).
+        module_state == "clean"  <=>  DELETE succeeds without force=true
+
+    That equivalence is the point. This field previously came from the stored
+    deployed_count / failed_count columns, which bucket by a different rule:
+    deployed_count counts only "applied" and failed_count counts the five
+    *_failed statuses, so neither counts "applying" or "destroying". A module
+    mid-teardown therefore reported "clean" while the gate refused with 409 --
+    a polling client would read "clean" and proceed to DELETE, which is issue
+    #125 again under a new field name. Deriving both from NO_INFRA_STATUSES
+    means a status added there lands in the gate and this field at once.
 
     Callers should treat anything other than "clean" as "not finished".
     """
-    if (failed_count or 0) > 0:
+    owning = [(status or "") for status in module_statuses
+              if (status or "") not in NO_INFRA_STATUSES]
+    if not owning:
+        return "clean"
+    if any(status in INFRA_FAILED_STATUSES for status in owning):
         return "failed"
-    if (deployed_count or 0) > 0:
-        return "in_progress"
-    return "clean"
+    return "in_progress"
 
 
 class ProjectService(BaseService):
@@ -151,7 +172,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count,
             "deployed_count": project.deployed_count,
             "failed_count": project.failed_count,
-            "module_state": summarize_module_state(project.deployed_count, project.failed_count),
+            "module_state": summarize_module_state(m.status for m in project.project_modules),
             "cluster_count": len(project.k8s_clusters) if project.k8s_clusters else 0,
             "owner": project.owner,
             "team": project.team,
@@ -290,7 +311,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count or 0,
             "deployed_count": project.deployed_count or 0,
             "failed_count": project.failed_count or 0,
-            "module_state": summarize_module_state(project.deployed_count, project.failed_count),
+            "module_state": summarize_module_state(m.status for m in project.project_modules),
             "owner": project.owner,
             "team": project.team,
             "visibility": project.visibility,
@@ -367,6 +388,9 @@ class ProjectService(BaseService):
                 CloudCredentialTemplate.ibmcloud_resource_group,
             ),
             subqueryload(Project.k8s_clusters),
+            # module_state is derived from module statuses; without this the list
+            # endpoint would lazy-load modules once per project.
+            subqueryload(Project.project_modules).load_only(ProjectModule.status),
             joinedload(Project.user).load_only(User.id, User.username),  # MU-001
         ).order_by(Project.name).all()
 
@@ -708,8 +732,6 @@ class ProjectService(BaseService):
         # legitimate operation. It just must not be the default, because a
         # project that still owns resources is recoverable and a deleted one is
         # not.
-        from tasks.parallel_tasks import NO_INFRA_STATUSES
-
         undestroyed = [
             m for m in self.db.query(ProjectModule)
             .filter(ProjectModule.project_id == project_id).all()

@@ -81,6 +81,11 @@ class ConflictError(AppError):
         # `details` is optional and merged over the resource key, so a caller can
         # return the specific conflicting objects (e.g. which modules are still
         # undestroyed) rather than only a message the client has to parse.
+        #
+        # Merge order: `details` wins. Passing details={"resource": ...} therefore
+        # overrides the value derived from the `resource` argument -- deliberate,
+        # so a caller can name the conflicting resource more precisely, but worth
+        # knowing before you pass that key by accident.
         super().__init__(
             code=f"{resource.upper()}_CONFLICT",
             message=message,

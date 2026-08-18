@@ -19312,7 +19312,7 @@ export interface components {
             failed_count: number;
             /**
              * Module State
-             * @default clean
+             * @default unknown
              */
             module_state: string;
             /** Owner */
@@ -19552,7 +19552,7 @@ export interface components {
             failed_count: number | null;
             /**
              * Module State
-             * @default clean
+             * @default unknown
              */
             module_state: string;
             /**

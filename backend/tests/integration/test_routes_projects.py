@@ -435,25 +435,39 @@ class TestProjectDeleteGuardOverHTTP:
         so it passes even if the service stops emitting the field. Drive a
         non-default value instead.
         """
-        sample_project.deployed_count = 2
-        sample_project.failed_count = 0
+        from models import ProjectModule
+        from tests.factories import ModuleLibraryFactory
+
+        lib = ModuleLibraryFactory(db, name="state-lib", category="networking")
+        mod = ProjectModule(project_id=sample_project.id, module_library_id=lib.id,
+                            path_in_project="infra/state", status="applied")
+        db.add(mod)
         db.commit()
 
         response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
         assert response.status_code == 200
         assert response.json()["module_state"] == "in_progress"
 
-        sample_project.failed_count = 1
+        mod.status = "destroy_failed"
         db.commit()
         response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
         assert response.json()["module_state"] == "failed"
+
+        mod.status = "destroyed"
+        db.commit()
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.json()["module_state"] == "clean"
 
     def test_module_state_reaches_client_on_list(
         self, client, admin_headers, sample_user, sample_project, db
     ):
         """GET / carries a COMPUTED module_state on each item."""
-        sample_project.deployed_count = 1
-        sample_project.failed_count = 0
+        from models import ProjectModule
+        from tests.factories import ModuleLibraryFactory
+
+        lib = ModuleLibraryFactory(db, name="list-state-lib", category="networking")
+        db.add(ProjectModule(project_id=sample_project.id, module_library_id=lib.id,
+                             path_in_project="infra/list-state", status="applied"))
         db.commit()
 
         response = client.get("/api/projects", headers=admin_headers)

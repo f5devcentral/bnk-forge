@@ -177,7 +177,10 @@ class ProjectListItem(BaseModel):
     deployed_count: int | None = 0
     failed_count: int | None = 0
     # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
-    module_state: str = "clean"
+    # Defaults to "unknown", not "clean": callers are told to treat anything other
+    # than "clean" as unfinished, so a serializer that forgets this field must fail
+    # safe rather than report a teardown complete.
+    module_state: str = "unknown"
     cluster_count: int = 0
     owner: str | None = None
     team: str | None = None
@@ -237,7 +240,10 @@ class ProjectDetailResponse(BaseModel):
     deployed_count: int = 0
     failed_count: int = 0
     # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
-    module_state: str = "clean"
+    # Defaults to "unknown", not "clean": callers are told to treat anything other
+    # than "clean" as unfinished, so a serializer that forgets this field must fail
+    # safe rather than report a teardown complete.
+    module_state: str = "unknown"
     owner: str | None = None
     team: str | None = None
     visibility: str | None = "private"

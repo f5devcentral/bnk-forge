@@ -51523,7 +51523,7 @@
           "module_state": {
             "type": "string",
             "title": "Module State",
-            "default": "clean"
+            "default": "unknown"
           },
           "owner": {
             "anyOf": [
@@ -52443,7 +52443,7 @@
           "module_state": {
             "type": "string",
             "title": "Module State",
-            "default": "clean"
+            "default": "unknown"
           },
           "cluster_count": {
             "type": "integer",
