@@ -1389,8 +1389,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
 
     Two orthogonal layers are honored:
       - BENCHMARK_AGENT_AUTH_REQUIRED (agent-specific, second layer): when ON a
-        token is mandatory, must be valid, and its ``agent_id`` claim must match
-        the path agent_id — rejection closes 4401.
+        token is mandatory, must be valid, and must carry an ``agent_id`` claim
+        matching the path agent_id — rejection closes 4401. A token with no
+        agent_id claim is rejected: it authenticates a caller but does not
+        identify an agent.
       - REQUIRE_AUTH (global JWT, M2): when ON a valid token is required —
         rejection closes 4001. When OFF the connection is accepted (local
         no-auth deployments), mirroring AuthMiddleware.
@@ -1417,8 +1419,26 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         except UnauthorizedError:
             logger.warning("Agent %d WS rejected: invalid token", agent_id)
             return 4401
+        # Identity binding (#41 F5). A token WITHOUT an agent_id claim used to
+        # skip this check entirely, so any valid token -- a viewer's included --
+        # could connect as any agent_id and send heartbeat/progress or flip agent
+        # status. Authentication is not identity: when agent auth is required the
+        # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
-        if token_agent_id is not None and int(token_agent_id) != agent_id:
+        if token_agent_id is None:
+            logger.warning(
+                "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
+                agent_id,
+            )
+            return 4401
+        try:
+            claim_matches = int(token_agent_id) == agent_id
+        except (TypeError, ValueError):
+            logger.warning(
+                "Agent %d WS rejected: non-numeric agent_id claim %r", agent_id, token_agent_id
+            )
+            return 4401
+        if not claim_matches:
             logger.warning(
                 "Agent %d WS rejected: token agent_id=%s does not match path", agent_id, token_agent_id
             )
