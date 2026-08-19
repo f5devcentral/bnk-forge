@@ -84,21 +84,79 @@ def get_deployment_logs(
     # Execute query
     logs = query.all()
 
-    logger.info(f"Retrieved {len(logs)} logs for module {module_id} (level={level}, limit={limit})")
+    if logs:
+        logger.info(f"Retrieved {len(logs)} logs for module {module_id} (level={level}, limit={limit})")
+        return {
+            "module_id": module_id,
+            "module_name": module.library_module.name,
+            "total_logs": len(logs),
+            "source": "deployment_log",
+            "task_id": None,
+            "logs": [
+                {
+                    "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    "level": log.level,
+                    "message": log.message
+                }
+                for log in logs
+            ]
+        }
 
-    # Format response
+    # No DeploymentLog rows. That is the NORMAL case, not an empty history:
+    # every engine (opentofu, container, ansible, ssh, cli, kubernetes, tmos)
+    # streams its step output into Task.logs, and only the retry path ever
+    # writes DeploymentLog. Returning 200 {"logs": []} here read as "this
+    # step produced no output" and sent operators to `docker logs` on the
+    # host (#154). Fall back to the module's most recent task and say so.
+    from models import Task as TaskModel
+
+    task = (
+        db.query(TaskModel)
+        .filter(TaskModel.module_id == module_id)
+        .order_by(TaskModel.id.desc())
+        .first()
+    )
+    if task is None or not task.logs:
+        return {
+            "module_id": module_id,
+            "module_name": module.library_module.name,
+            "total_logs": 0,
+            "source": "none",
+            "task_id": task.id if task else None,
+            "logs": [],
+            "hint": (
+                "No output recorded for this module yet. Step output is stored per "
+                "task: GET /api/tasks?module_id=<id> lists them, GET /api/tasks/{id} "
+                "returns the full log."
+            ),
+        }
+
+    lines = task.logs.splitlines()
+    if level and level != "all":
+        # Task logs are free text; apply a best-effort level filter on the
+        # engine's own markers so the parameter keeps meaning on this path.
+        markers = {
+            "error": ("ERROR", "✗", "error:", "--- ERROR ---"),
+            "warning": ("WARN", "WARNING", "⚠"),
+            "success": ("✓", "SUCCESS", "Complete"),
+            "info": (),
+        }
+        wanted = markers.get(level, ())
+        if wanted:
+            lines = [ln for ln in lines if any(m in ln for m in wanted)]
+    lines = lines[-limit:]
+
+    logger.info(
+        f"No DeploymentLog rows for module {module_id}; served {len(lines)} lines "
+        f"from task {task.id}"
+    )
     return {
         "module_id": module_id,
         "module_name": module.library_module.name,
-        "total_logs": len(logs),
-        "logs": [
-            {
-                "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "level": log.level,
-                "message": log.message
-            }
-            for log in logs
-        ]
+        "total_logs": len(lines),
+        "source": "task",
+        "task_id": task.id,
+        "logs": [{"timestamp": None, "level": "info", "message": ln} for ln in lines],
     }
 
 
@@ -153,6 +211,11 @@ def get_deployment_history(
         "deployments": [
             {
                 "id": dep.id,
+                # The handle for this run's output: GET /api/tasks/{task_id}.
+                # `id` is the deployment row, NOT the task -- an easy thing to
+                # mistake for the log handle (#154). Older rows predate the
+                # meta_data backfill and report null.
+                "task_id": (dep.meta_data or {}).get("task_id"),
                 "action": dep.action,
                 "status": dep.status,
                 "triggered_by": dep.triggered_by,

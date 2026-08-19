@@ -55,6 +55,79 @@ class TestGetDeploymentLogs:
         assert data["logs"][0]["level"] == "info"
         assert data["logs"][0]["message"] == "Apply started"
 
+    def test_logs_fall_back_to_task_logs_when_no_deployment_log_rows(
+        self, client, admin_headers, sample_module, db
+    ):
+        """#154: every engine writes its step output to Task.logs, and only the
+        retry path writes DeploymentLog. So a module that just applied with real
+        output used to get 200 {"logs": []} from this endpoint -- indistinguishable
+        from "this step produced no output". Serve the task logs, and say so."""
+        from models import Task
+
+        mod = sample_module["module"]
+        task = Task(
+            project_id=mod.project_id, module_id=mod.id, task_type="apply",
+            status="completed", triggered_by="user", celery_task_id="cel-154",
+            logs="[00:01:32] $ docker run ghcr.io/x/runner roksbnkctl cleanup --dry-run\n"
+                 "[00:01:33] → Scanning for f5orph-* resources in regions: us-east\n"
+                 "[00:01:42] ✓ No orphaned resources found.",
+        )
+        db.add(task)
+        db.commit()
+
+        data = client.get(f"/api/project-modules/{mod.id}/logs", headers=admin_headers).json()
+
+        assert data["source"] == "task"
+        assert data["task_id"] == task.id
+        assert data["total_logs"] == 3
+        assert "No orphaned resources found" in data["logs"][-1]["message"]
+
+    def test_logs_prefer_deployment_log_rows_when_present(
+        self, client, admin_headers, sample_module, db
+    ):
+        """DeploymentLog rows still win when they exist (the retry path)."""
+        from models import Task
+
+        mod = sample_module["module"]
+        db.add(DeploymentLog(module_id=mod.id, level="warning",
+                             message="Deployment retry (apply) queued", timestamp=datetime.now(UTC)))
+        db.add(Task(project_id=mod.project_id, module_id=mod.id, task_type="apply",
+                    status="completed", triggered_by="user", celery_task_id="cel-154b",
+                    logs="task output that must NOT be served here"))
+        db.commit()
+
+        data = client.get(f"/api/project-modules/{mod.id}/logs", headers=admin_headers).json()
+
+        assert data["source"] == "deployment_log"
+        assert data["logs"][0]["message"] == "Deployment retry (apply) queued"
+
+    def test_logs_with_nothing_at_all_carries_a_hint(
+        self, client, admin_headers, sample_module
+    ):
+        """A genuinely empty module still returns 200, but is no longer silent
+        about where output WOULD be."""
+        mod = sample_module["module"]
+        data = client.get(f"/api/project-modules/{mod.id}/logs", headers=admin_headers).json()
+
+        assert data["total_logs"] == 0
+        assert data["source"] == "none"
+        assert "/api/tasks" in data["hint"]
+
+    def test_logs_task_fallback_honours_limit(
+        self, client, admin_headers, sample_module, db
+    ):
+        from models import Task
+
+        mod = sample_module["module"]
+        db.add(Task(project_id=mod.project_id, module_id=mod.id, task_type="apply",
+                    status="completed", triggered_by="user", celery_task_id="cel-154c",
+                    logs="\n".join(f"line {i}" for i in range(50))))
+        db.commit()
+
+        data = client.get(f"/api/project-modules/{mod.id}/logs?limit=5", headers=admin_headers).json()
+        assert data["total_logs"] == 5
+        assert data["logs"][-1]["message"] == "line 49"  # the tail, like a log should be
+
     def test_get_deployment_logs_module_not_found(
         self, client, admin_headers, sample_user
     ):
@@ -97,6 +170,27 @@ class TestGetDeploymentHistory:
         assert data["deployments"][0]["action"] == "apply"
         assert data["deployments"][0]["status"] == "success"
         assert data["deployments"][0]["resources_to_add"] == 3
+
+    def test_deployment_rows_expose_task_id(
+        self, client, admin_headers, sample_module, db
+    ):
+        """#154: `id` on a deployment row looked like the log handle but was
+        not. Rows written by create_deployment_record carry the task id in
+        meta_data; the route exposes it as task_id."""
+        mod = sample_module["module"]
+        db.add(Deployment(module_id=mod.id, action="apply", status="success",
+                          triggered_by="user", started_at=datetime.now(UTC),
+                          meta_data={"task_id": 4242, "celery_task_id": "cel-4242"}))
+        # A pre-#154 row with no meta_data must not break the listing.
+        db.add(Deployment(module_id=mod.id, action="plan", status="success",
+                          triggered_by="user", started_at=datetime.now(UTC)))
+        db.commit()
+
+        rows = client.get(f"/api/project-modules/{mod.id}/deployments",
+                          headers=admin_headers).json()["deployments"]
+        by_action = {r["action"]: r for r in rows}
+        assert by_action["apply"]["task_id"] == 4242
+        assert by_action["plan"]["task_id"] is None
 
     def test_get_deployment_history_filter_by_action(
         self, client, admin_headers, sample_module, db
