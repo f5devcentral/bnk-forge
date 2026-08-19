@@ -353,15 +353,22 @@ def materialize_secret_files(
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         # Create 0600 from the start rather than write-then-chmod, so the
         # content is never briefly readable by other uids. O_CREAT's mode does
-        # not apply to an existing file, so chmod after covers a re-run over a
-        # file created before this code (or with a different umask).
+        # not apply to an existing file, so the fchmod below covers a re-run
+        # over a file created before this code (or with a different umask).
         # O_NOFOLLOW closes the race between the islink check above and this
         # open: a symlink planted in between fails the open (ELOOP) instead of
         # being followed.
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
         with os.fdopen(os.open(dest, flags, 0o600), "wb") as handle:
             handle.write(content)
-        os.chmod(dest, 0o600)
+            # fchmod on the open descriptor, NOT os.chmod(dest) after close.
+            # chmod by path follows symlinks, so a co-tenant swapping `dest`
+            # for a symlink between our close and the chmod would get an
+            # arbitrary reachable file chmod'd to 0600 (perm clobber, no
+            # content exposure -- within the documented F3 co-tenancy, but
+            # free to close). fchmod acts on the exact inode we opened with
+            # O_NOFOLLOW, so there is no path re-resolution to race (#94 N1).
+            os.fchmod(handle.fileno(), 0o600)
         written.append(rel_path)
         logger.info(
             "Materialized secret '%s' for project %s at workspace path %s",

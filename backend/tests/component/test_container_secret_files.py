@@ -270,6 +270,56 @@ def test_materialize_overwrites_stale_content_and_mode(db, make_project, tmp_pat
     assert oct(os.stat(dest).st_mode & 0o777) == "0o600"
 
 
+def test_materialize_sets_mode_on_the_open_descriptor_not_the_path(
+    db, make_project, tmp_path, monkeypatch
+):
+    """#94 N1: the 0600 must be applied via fchmod on the fd we opened with
+    O_NOFOLLOW, never via os.chmod(path) after close.
+
+    chmod by path re-resolves the name and follows symlinks, so a co-tenant
+    swapping the destination for a symlink between our close and the chmod
+    would get an arbitrary reachable file chmod'd. fchmod acts on the exact
+    inode already open -- no re-resolution, nothing to race. Pin the
+    mechanism: os.chmod must not be called on the destination at all.
+    """
+    import os as _os
+
+    project = make_project()
+    db.commit()
+    _file_secret(db, project.id, "far_tarball", b"payload")
+
+    path_chmods: list[str] = []
+    real_chmod = _os.chmod
+
+    def _spy_chmod(path, mode, *a, **kw):
+        path_chmods.append(str(path))
+        return real_chmod(path, mode, *a, **kw)
+
+    fchmods: list[int] = []
+    real_fchmod = _os.fchmod
+
+    def _spy_fchmod(fd, mode):
+        fchmods.append(mode)
+        return real_fchmod(fd, mode)
+
+    monkeypatch.setattr("services.execution.container_run_secrets.os.chmod", _spy_chmod)
+    monkeypatch.setattr("services.execution.container_run_secrets.os.fchmod", _spy_fchmod)
+
+    materialize_secret_files(
+        db, project.id,
+        _artifact([{"secret_name": "far_tarball", "path": "poc/keys/f5-far.tgz"}]),
+        str(tmp_path),
+    )
+
+    dest = tmp_path / "poc" / "keys" / "f5-far.tgz"
+    assert oct(_os.stat(dest).st_mode & 0o777) == "0o600"
+    assert fchmods == [0o600], "mode must be applied via fchmod on the open descriptor"
+    assert not any(p.endswith("f5-far.tgz") for p in path_chmods), (
+        "os.chmod(path) was called on the destination -- that follows symlinks and "
+        "reopens the race fchmod exists to close (#94 N1)"
+    )
+
+
 def test_materialize_noop_without_secret_files(db, make_project, tmp_path):
     project = make_project()
     db.commit()
