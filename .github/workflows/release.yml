@@ -293,11 +293,17 @@ jobs:
 
           if [ -n "$LAST_FINAL" ]; then
             COMMIT_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | head -40)
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
           else
             COMMIT_LOG=$(git log --pretty=format:"- %s" | head -40)
+            BREAKING=""
           fi
 
-          printf '%s\n\n%s' "$NOTES" "$COMMIT_LOG" > /tmp/rc_notes.md
+          if [ -n "$BREAKING" ]; then
+            printf '%s\n\n%s\n\n%s' "$NOTES" "$BREAKING" "$COMMIT_LOG" > /tmp/rc_notes.md
+          else
+            printf '%s\n\n%s' "$NOTES" "$COMMIT_LOG" > /tmp/rc_notes.md
+          fi
           echo "notes_file=/tmp/rc_notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub pre-release
@@ -364,9 +370,11 @@ jobs:
           if [ -n "$LAST_FINAL" ]; then
             COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
               | grep -v "^- release: " | head -50)
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
           else
             COMMITS=$(git log --pretty=format:"- %s" \
               | grep -v "^- release: " | head -50)
+            BREAKING=""
           fi
 
           # Build the entry in a temp file rather than interpolating COMMITS
@@ -379,6 +387,10 @@ jobs:
           {
             echo "## v${NEW} (${DATE}) — ${BUMP} bump"
             echo ""
+            if [ -n "$BREAKING" ]; then
+              echo "$BREAKING"
+              echo ""
+            fi
             echo "$COMMITS"
           } > "$ENTRY_FILE"
 
@@ -433,16 +445,22 @@ jobs:
           if [ -n "$LAST_FINAL" ]; then
             COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
               | grep -v "^- release: " | head -50)
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
           else
             COMMITS=$(git log --pretty=format:"- %s" \
               | grep -v "^- release: " | head -50)
+            BREAKING=""
           fi
 
-          cat > /tmp/release_notes.md <<NOTESEOF
-          ## v${NEW} — ${BUMP} bump
-
-          ${COMMITS}
-          NOTESEOF
+          {
+            echo "## v${NEW} — ${BUMP} bump"
+            echo ""
+            if [ -n "$BREAKING" ]; then
+              echo "$BREAKING"
+              echo ""
+            fi
+            echo "$COMMITS"
+          } > /tmp/release_notes.md
 
           echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 

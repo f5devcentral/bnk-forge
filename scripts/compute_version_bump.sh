@@ -88,15 +88,6 @@ else
   SINCE_TAG=$(last_final_tag)
 fi
 
-if [[ -z "$SINCE_TAG" ]]; then
-  # No prior final tag — scan all commits. Whether this is actually safe is
-  # decided by the baseline resolution below (it requires an explicit
-  # --baseline in this case rather than silently proceeding).
-  COMMITS=$(git log --pretty=format:"%s" 2>/dev/null || true)
-else
-  COMMITS=$(git log "${SINCE_TAG}..HEAD" --pretty=format:"%s" 2>/dev/null || true)
-fi
-
 if [[ -n "$BASELINE_OVERRIDE" ]]; then
   BASELINE="$BASELINE_OVERRIDE"
 elif [[ -n "$SINCE_TAG" ]]; then
@@ -109,23 +100,39 @@ else
 fi
 
 # ── Determine bump type ───────────────────────────────────────────────────────
+# Conventional-commits: a breaking change is declared EITHER as `type!:` in the
+# subject OR as a `BREAKING CHANGE` footer, which by definition lives in the
+# body. The subject determines feat/fix. So we must read the body, not just the
+# subject (%s) -- reading %s alone made the footer branch unreachable and shipped
+# footer-declared breaking changes as patches (PR #177 review).
 BUMP_TYPE="patch"
 
-while IFS= read -r subject; do
-  [[ -z "$subject" ]] && continue
+if [[ -z "$SINCE_TAG" ]]; then
+  RANGE_HASHES=$(git log --pretty=format:"%H" 2>/dev/null || true)
+else
+  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --pretty=format:"%H" 2>/dev/null || true)
+fi
 
-  # BREAKING CHANGE in footer (multi-line) or ! in type
-  if echo "$subject" | grep -qiE '(\bBREAKING[[:space:]]+CHANGE\b|^[a-z]+(\([^)]*\))?!:)'; then
+while IFS= read -r sha; do
+  [[ -z "$sha" ]] && continue
+  subject=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
+  body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
+
+  # Major: `type!:` in the subject, OR a BREAKING CHANGE / BREAKING-CHANGE marker
+  # anywhere in the message (footer or deliberate prose).
+  if echo "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+     || printf '%s\n%s\n' "$subject" "$body" | grep -qE '\bBREAKING[[:space:] -]+CHANGE\b'; then
     BUMP_TYPE="major"
     break
   fi
 
+  # Minor: feat: in the subject (type is declared in the subject, never the body).
   if [[ "$BUMP_TYPE" != "major" ]]; then
     if echo "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
       BUMP_TYPE="minor"
     fi
   fi
-done <<< "$COMMITS"
+done <<< "$RANGE_HASHES"
 
 # ── Compute target version ────────────────────────────────────────────────────
 TARGET_VERSION=$(bump_version "$BASELINE" "$BUMP_TYPE")
