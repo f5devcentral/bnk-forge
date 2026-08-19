@@ -160,19 +160,30 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     local tmpdir
     tmpdir=$(mktemp -d)
     git init -q "$tmpdir"
+    # Self-contained identity so the self-test runs anywhere (fresh runners,
+    # no global git config).
+    git -C "$tmpdir" config user.email "selftest@bnk-forge.local"
+    git -C "$tmpdir" config user.name "bnk-forge self-test"
     git -C "$tmpdir" commit --allow-empty -m "initial" -q
     if [[ -n "$since" ]]; then
       git -C "$tmpdir" tag "$since"
     fi
-    # Add fake commits
-    while IFS='|' read -r msg; do
-      [[ -z "$msg" ]] && continue
-      git -C "$tmpdir" commit --allow-empty -m "$msg" -q
+    # Add fake commits. An entry may carry a body via "subject~~BODY~~body"
+    # so tests can exercise a footer-declared BREAKING CHANGE (bodies, not
+    # subjects, are where the spec puts it). Entries are comma-separated, so
+    # test strings must not contain commas.
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      if [[ "$entry" == *"~~BODY~~"* ]]; then
+        git -C "$tmpdir" commit --allow-empty \
+          -m "${entry%%~~BODY~~*}" -m "${entry#*~~BODY~~}" -q
+      else
+        git -C "$tmpdir" commit --allow-empty -m "$entry" -q
+      fi
     done <<< "$(echo "$commits_str" | tr ',' '\n')"
 
+    # Run the version computer inside the temp repo so it scans the fake range.
     local result
-    result=$(bash "$(dirname "$0")/$(basename "$0")" --since-tag "${since:-}" --baseline "$baseline" 2>/dev/null || true)
-    # Override COMMITS via the temp repo by running in that dir
     result=$(cd "$tmpdir" && bash "$OLDPWD/$(dirname "$0")/$(basename "$0")" \
       ${since:+--since-tag "$since"} --baseline "$baseline" 2>/dev/null || true)
 
@@ -205,6 +216,16 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
 
   # Test 4: no commits → patch bump
   run_test "no commits → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" ""
+
+  # Test 5: BREAKING CHANGE footer in the BODY → major (the PR #177 bug: a
+  # fix-subject commit whose body declares the break must still bump major).
+  run_test "BREAKING CHANGE footer in body → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: harden non-root gate~~BODY~~BREAKING CHANGE: USER nonroot must become USER 65532"
+
+  # Test 6: lowercase "breaking change" in body prose must NOT trigger major
+  # (case-sensitive marker, so reading bodies can't false-positive on prose).
+  run_test "lowercase breaking change in body → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
+    "fix: tidy up~~BODY~~this is explicitly not a breaking change"
 
   echo "=== END SELF-TEST ==="
 fi
