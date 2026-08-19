@@ -259,8 +259,9 @@ export function DriftCheckHistory({ projectId, moduleId }: DriftCheckHistoryProp
           <DialogHeader>
             <DialogTitle>Drift Check Details</DialogTitle>
             <DialogDescription>
-              {selectedCheck?.module_name && `Module: ${selectedCheck.module_name} • `}
-              {selectedCheck?.created_at && formatTimeAgo(selectedCheck.created_at)}
+              {/* The panel below renders the module name as its own heading;
+                  keep only the timestamp here so each fact appears once. */}
+              {selectedCheck?.created_at && `Checked ${formatTimeAgo(selectedCheck.created_at)}`}
             </DialogDescription>
           </DialogHeader>
           {selectedCheck && (
@@ -277,6 +278,7 @@ export function DriftCheckHistory({ projectId, moduleId }: DriftCheckHistoryProp
                 projectId={projectId}
                 moduleId={selectedCheck.module_id}
                 onReconcile={() => setSelectedCheck(null)}
+                compact
               />
 
               {/* Error Message -- the panel does not render this; keep it. */}
