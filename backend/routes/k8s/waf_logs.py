@@ -15,6 +15,8 @@ from contextlib import suppress
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from kubernetes import client as k8s_client
+from kubernetes import stream
 from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
@@ -29,8 +31,11 @@ router = APIRouter(prefix="/api")
 # NAP default/splunk log fields we parse and surface
 _NAP_KV_RE = re.compile(r'(\w+)="([^"]*)"')
 
-# Syslog TCP read timeout — we read what's buffered then return
-_SOCKET_TIMEOUT_S = 5.0
+# Syslog receiver pod label and log directory (matches our fluentd deployment)
+_SYSLOG_POD_LABEL = "app=waf-syslog-receiver"
+_SYSLOG_LOG_DIR = "/var/log/waf-syslog"
+
+_SOCKET_TIMEOUT_S = 3.0
 _READ_CHUNK = 65536
 _MAX_LIMIT = 500
 
@@ -43,11 +48,62 @@ def _parse_nap_entry(raw: str) -> dict:
     return entry
 
 
+def _read_logs_from_pod(
+    k8s: KubernetesService,
+    cluster_id: int,
+    namespace: str,
+    limit: int,
+) -> tuple[list[dict], str | None]:
+    """
+    Read NAP security logs from the waf-syslog-receiver pod's log files via kubectl exec.
+    Uses the k8s Python client directly for core Pod API (not in the CRD registry).
+    Returns ([], None) when no receiver pod exists so caller can try TCP fallback.
+    """
+    try:
+        cluster = k8s.get_cluster(cluster_id)
+        api_client = k8s.load_kubeconfig(cluster)
+        core_v1 = k8s_client.CoreV1Api(api_client)
+
+        pod_list = core_v1.list_namespaced_pod(
+            namespace,
+            label_selector=_SYSLOG_POD_LABEL,
+        )
+        if not pod_list.items:
+            return [], None  # No receiver pod; caller will try TCP
+
+        pod_name = pod_list.items[0].metadata.name
+
+        # Discover the most recent log file with find (no shell available in container)
+        find_resp = stream.stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["find", _SYSLOG_LOG_DIR, "-name", "security.*.log", "-type", "f"],
+            stderr=True, stdin=False, stdout=True, tty=False,
+        )
+        # Sort candidates and pick the last (most recent by name, which is date-based)
+        candidates = sorted(ln.strip() for ln in find_resp.splitlines() if ln.strip())
+        log_file = candidates[-1] if candidates else f"{_SYSLOG_LOG_DIR}/security.log"
+
+        resp = stream.stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["tail", f"-n{limit}", log_file],
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False,
+        )
+        lines = [ln for ln in resp.splitlines() if ln.strip()]
+        return [_parse_nap_entry(ln) for ln in lines], None
+    except Exception as exc:
+        logger.debug("Could not read logs from pod: %s", exc, exc_info=True)
+        return [], None  # Caller will try TCP fallback
+
+
 def _read_syslog_tcp(host: str, port: int, limit: int) -> tuple[list[dict], str | None]:
-    """
-    Connect to host:port via TCP, read buffered data, return parsed entries.
-    Returns (entries, error_message).  error_message is None on success.
-    """
+    """Connect to host:port via TCP, read buffered data, return parsed entries."""
     try:
         with socket.create_connection((host, port), timeout=_SOCKET_TIMEOUT_S) as sock:
             sock.settimeout(_SOCKET_TIMEOUT_S)
@@ -61,7 +117,6 @@ def _read_syslog_tcp(host: str, port: int, limit: int) -> tuple[list[dict], str 
 
         raw_data = b"".join(chunks).decode("utf-8", errors="replace")
         lines = [ln for ln in raw_data.splitlines() if ln.strip()]
-        # Keep the most recent `limit` lines
         lines = lines[-limit:]
         return [_parse_nap_entry(ln) for ln in lines], None
     except ConnectionRefusedError:
@@ -104,8 +159,8 @@ def _resolve_logprofile_endpoints(
         for profile in profiles:
             if profile.get("metadata", {}).get("name") == profile_name:
                 spec = profile.get("spec", {})
-                # publisher field appears under various log type sub-objects
-                pub_name = (
+                # Top-level publisher field (actual CRD schema)
+                pub_name = spec.get("publisher") or (
                     spec.get("applicationSecurity", {}).get("publisher")
                     or spec.get("network", {}).get("publisher")
                     or spec.get("botDefense", {}).get("publisher")
@@ -124,21 +179,24 @@ def _resolve_secpolicy_endpoints(
     namespace: str,
     secpolicy_name: str,
 ) -> list[str]:
-    """Walk SecPolicy → F5BigLogProfile ref → F5BigLogHslpub → endpoints."""
-    try:
-        policies = k8s.get_resources(cluster_id, "bnksecpolicy", namespace)
-        for pol in policies:
-            if pol.get("metadata", {}).get("name") == secpolicy_name:
-                for ref in pol.get("spec", {}).get("targetRefs", []):
-                    if ref.get("kind") in ("F5BigLogProfile", "F5BigLogprofile"):
-                        profile_ns = ref.get("namespace") or namespace
-                        endpoints = _resolve_logprofile_endpoints(
-                            k8s, cluster_id, profile_ns, ref["name"]
-                        )
-                        if endpoints:
-                            return endpoints
-    except Exception:
-        logger.debug("Could not fetch SecPolicy %s", secpolicy_name, exc_info=True)
+    """Walk SecPolicy extensionRefs → F5BigLogProfile → F5BigHslpub → endpoints."""
+    # Try both the CRD plural (secpolicies) and the registry key (bnksecpolicy)
+    for resource_key in ("secpolicies", "bnksecpolicy"):
+        try:
+            policies = k8s.get_resources(cluster_id, resource_key, namespace)
+            for pol in policies:
+                if pol.get("metadata", {}).get("name") == secpolicy_name:
+                    # extensionRefs contains F5BigLogProfile references
+                    for ref in pol.get("spec", {}).get("extensionRefs", []):
+                        if ref.get("kind") == "F5BigLogProfile":
+                            profile_ns = ref.get("namespace") or namespace
+                            endpoints = _resolve_logprofile_endpoints(
+                                k8s, cluster_id, profile_ns, ref["name"]
+                            )
+                            if endpoints:
+                                return endpoints
+        except Exception:
+            logger.debug("Could not fetch %s %s", resource_key, secpolicy_name, exc_info=True)
     return []
 
 
@@ -149,25 +207,62 @@ def _resolve_endpoints_for_policy(
     policy_name: str,
 ) -> list[str]:
     """
-    Given an APPolicy name, find all SecPolicies that reference it (via
-    F5BigWebSecurityProfile annotations) then resolve their HSL endpoints.
-    Falls back to checking all SecPolicies in the namespace.
+    Given an APPolicy name, find syslog endpoints by walking:
+      1. SecPolicies whose targetRefs include this APPolicy → extensionRefs → F5BigLogProfile → F5BigHslpub
+      2. All SecPolicies in namespace (fallback when targetRefs use Gateway-level refs)
     """
     endpoints: list[str] = []
-    try:
-        sec_policies = k8s.get_resources(cluster_id, "bnksecpolicy", namespace)
-        for pol in sec_policies:
-            spec = pol.get("spec", {})
-            # SecPolicy embeds WAF policy ref in items[].kind == F5BigWebSecurityProfile
-            for item in spec.get("items", []):
-                if item.get("kind") in ("F5BigWebSecurityProfile", "APPolicy"):
-                    ref_name = item.get("name", "")
-                    if ref_name == policy_name or not ref_name:
-                        pol_name = pol["metadata"]["name"]
-                        ep = _resolve_secpolicy_endpoints(k8s, cluster_id, namespace, pol_name)
-                        endpoints.extend(ep)
-    except Exception:
-        logger.debug("Could not resolve endpoints for APPolicy %s", policy_name, exc_info=True)
+    matched_secpolicies: set[str] = set()
+
+    for resource_key in ("secpolicies", "bnksecpolicy"):
+        try:
+            sec_policies = k8s.get_resources(cluster_id, resource_key, namespace)
+            for pol in sec_policies:
+                pol_name = pol["metadata"]["name"]
+                spec = pol.get("spec", {})
+                # Check targetRefs for direct APPolicy reference
+                for ref in spec.get("targetRefs", []):
+                    if ref.get("kind") == "APPolicy" and ref.get("name") == policy_name:
+                        matched_secpolicies.add(pol_name)
+                # Also check legacy items[] structure
+                for item in spec.get("items", []):
+                    if item.get("kind") in ("F5BigWebSecurityProfile", "APPolicy"):
+                        ref_name = item.get("name", "")
+                        if ref_name == policy_name or not ref_name:
+                            matched_secpolicies.add(pol_name)
+        except Exception:
+            logger.debug("Could not list %s resources", resource_key, exc_info=True)
+
+    # Resolve endpoints from matched SecPolicies
+    for pol_name in matched_secpolicies:
+        ep = _resolve_secpolicy_endpoints(k8s, cluster_id, namespace, pol_name)
+        endpoints.extend(ep)
+
+    if not endpoints:
+        # Fallback: scan all SecPolicies in namespace (covers Gateway-level targetRefs)
+        for resource_key in ("secpolicies", "bnksecpolicy"):
+            try:
+                sec_policies = k8s.get_resources(cluster_id, resource_key, namespace)
+                for pol in sec_policies:
+                    pol_name = pol["metadata"]["name"]
+                    ep = _resolve_secpolicy_endpoints(k8s, cluster_id, namespace, pol_name)
+                    endpoints.extend(ep)
+            except Exception:
+                logger.debug("Could not scan %s resources", resource_key, exc_info=True)
+
+    if not endpoints:
+        # Last resort: any F5BigLogProfile in namespace with a publisher resolves to an endpoint.
+        # This covers deployments where log profile is configured independently of a SecPolicy.
+        try:
+            profiles = k8s.get_resources(cluster_id, "f5biglogprofile", namespace)
+            for profile in profiles:
+                pub_name = profile.get("spec", {}).get("publisher", "")
+                if pub_name:
+                    ep = _resolve_hslpub_endpoints(k8s, cluster_id, namespace, pub_name)
+                    endpoints.extend(ep)
+        except Exception:
+            logger.debug("Could not scan F5BigLogProfile resources", exc_info=True)
+
     return list(dict.fromkeys(endpoints))  # deduplicate preserving order
 
 
@@ -245,7 +340,10 @@ def get_waf_security_logs(
             "warning": f"Could not parse syslog endpoint address: {host_port!r}",
         }
 
-    entries, error = _read_syslog_tcp(host, port, limit)
+    # Try pod exec first (reads persisted log file); fall back to live TCP stream
+    entries, error = _read_logs_from_pod(k8s, cluster_id, namespace, limit)
+    if not entries:
+        entries, error = _read_syslog_tcp(host, port, limit)
 
     # Filter by cr_name using the NAP policy_name / vs_name fields
     if cr_kind == "appolicy":
