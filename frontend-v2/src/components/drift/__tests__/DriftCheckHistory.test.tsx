@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@/test/test-utils';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { DriftCheckHistory } from '../DriftCheckHistory';
@@ -60,6 +61,47 @@ describe('DriftCheckHistory', () => {
     await waitFor(() => {
       expect(screen.getByText('~1')).toBeInTheDocument();
     });
+  });
+
+  it('opens the drifted check and offers a working Reconcile action (#70)', async () => {
+    // DriftDetailPanel carried the Reconcile button but was mounted nowhere;
+    // the details dialog hand-rolled a read-only subset. Clicking a drifted
+    // row must now surface Reconcile, and Reconcile must apply THAT module.
+    let applied: { moduleId: string; body: unknown } | null = null;
+    server.use(
+      http.post('*/api/project-modules/:moduleId/apply', async ({ request, params }) => {
+        applied = { moduleId: String(params.moduleId), body: await request.json() };
+        return HttpResponse.json({ task_id: 77, message: 'queued' });
+      }),
+      http.get('*/api/tasks/:id', () => HttpResponse.json({ id: 77, status: 'queued', task_type: 'apply' })),
+    );
+    const user = userEvent.setup();
+    render(<DriftCheckHistory projectId={1} />);
+
+    await user.click(await screen.findByText('vpc-module'));
+
+    const reconcile = await screen.findByRole('button', { name: /reconcile/i });
+    expect(reconcile).toBeEnabled();
+    await user.click(reconcile);
+
+    await waitFor(() => {
+      expect(applied).not.toBeNull();
+    });
+    expect(applied!.moduleId).toBe('10');            // the drifted check's module, not another
+    expect(applied!.body).toEqual({ auto_approve: true });
+  });
+
+  it('still shows a failed check\'s error in the dialog', async () => {
+    // The panel does not render error_message; the dialog keeps that alert.
+    server.use(
+      http.get('*/api/projects/:projectId/drift/checks', () =>
+        HttpResponse.json([{ ...mockChecks[0], id: 3, status: 'failed', drift_detected: false,
+                             error_message: 'tofu plan exited 1: provider auth expired' }])),
+    );
+    const user = userEvent.setup();
+    render(<DriftCheckHistory projectId={1} />);
+    await user.click(await screen.findByText('vpc-module'));
+    expect(await screen.findByText(/provider auth expired/)).toBeInTheDocument();
   });
 
   it('shows empty state when no checks exist', async () => {
