@@ -86,6 +86,27 @@ class ReachabilityRegistry:
     # Registration / lifecycle
     # ------------------------------------------------------------------
 
+    def reset_breaker_state(self) -> None:
+        """Drop all per-target state: breakers, last snapshots, names, last-success.
+
+        For test isolation (#55). The registry is a process-global singleton
+        keyed by ``(target_type, target_id)``, so a breaker tripped OPEN by one
+        test -- a probe against cluster 1 in an integration test, say -- stays
+        open for every later test that reuses that id, and their mocked logic
+        short-circuits on BreakerOpenError before it runs. CI never saw it
+        because it runs the suites in separate processes; a monolithic
+        ``pytest tests/`` did.
+
+        Deliberately leaves ``_probes`` and the configured session factory
+        alone: those are app wiring set once at startup, and tests that call
+        probes rely on them being registered. Only the mutable per-target
+        state that leaks between tests is cleared.
+        """
+        self._breakers.clear()
+        self._latest.clear()
+        self._target_names.clear()
+        self._last_success_wall.clear()
+
     def register(self, probe: Probe) -> None:
         if not probe.target_type:
             raise ValueError("Probe.target_type must be set")
