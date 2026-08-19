@@ -176,6 +176,11 @@ class ProjectListItem(BaseModel):
     module_count: int | None = 0
     deployed_count: int | None = 0
     failed_count: int | None = 0
+    # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
+    # Defaults to "unknown", not "clean": callers are told to treat anything other
+    # than "clean" as unfinished, so a serializer that forgets this field must fail
+    # safe rather than report a teardown complete.
+    module_state: str = "unknown"
     cluster_count: int = 0
     owner: str | None = None
     team: str | None = None
@@ -234,6 +239,11 @@ class ProjectDetailResponse(BaseModel):
     module_count: int = 0
     deployed_count: int = 0
     failed_count: int = 0
+    # Single pollable field for teardown completion: "clean" | "in_progress" | "failed".
+    # Defaults to "unknown", not "clean": callers are told to treat anything other
+    # than "clean" as unfinished, so a serializer that forgets this field must fail
+    # safe rather than report a teardown complete.
+    module_state: str = "unknown"
     owner: str | None = None
     team: str | None = None
     visibility: str | None = "private"
@@ -464,6 +474,26 @@ class ModuleActionSubmitResponse(BaseModel):
     task_id: int
     celery_task_id: str | None = None
     status: str
+
+
+class DeploymentOutputResponse(BaseModel):
+    """Response for GET /api/project-modules/{id}/deployments/{deployment_id}/output.
+
+    The captured stdout/stderr of a deployment run. Without this the only place a
+    failed module's step output existed was the UI's log viewer, so a headless or
+    CI-driven deploy had no way to find out why it failed (issue #526).
+    """
+    module_id: int
+    deployment_id: int
+    action: str
+    status: str
+    exit_code: int | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    stdout: str
+    stderr: str
+    truncated: bool = False
 
 
 class ModuleReportFile(BaseModel):

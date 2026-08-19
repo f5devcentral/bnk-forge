@@ -9,10 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from kubernetes.client.rest import ApiException
 
 from services.config_export_service import (
     _clean_resource,
     _flatten_resources,
+    apply_resources,
     config_to_yaml,
     diff_configs,
     export_cluster_config,
@@ -199,3 +201,78 @@ class TestExportClusterConfig:
 
         assert "modules/vpc" in result["module_config"]
         assert result["module_config"]["modules/vpc"]["variables"] == {"cidr": "10.0.0.0/16"}
+
+
+# ---------------------------------------------------------------------------
+# apply_resources — extracted from the /bnk/import route (D-034 P0 seam)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyResources:
+    """Shared server-side-apply write path — used by both /bnk/import and use-case apply."""
+
+    def _gateway(self, name="gw1", namespace="ns1"):
+        return {
+            "kind": "Gateway",
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {},
+        }
+
+    def test_applies_namespaced_resource(self, db):
+        custom_api = MagicMock()
+        resources = {"gateway_api": [self._gateway()]}
+
+        results = apply_resources(db, 1, custom_api, resources)
+
+        assert results["applied"] == [{"kind": "Gateway", "name": "gw1", "namespace": "ns1"}]
+        assert results["failed"] == []
+        assert results["skipped"] == []
+        custom_api.patch_namespaced_custom_object.assert_called_once_with(
+            group="gateway.networking.k8s.io", version="v1", namespace="ns1",
+            plural="gateways", name="gw1", body=self._gateway(),
+            field_manager="bnk-forge", force=True,
+        )
+
+    def test_applies_cluster_scoped_resource(self, db):
+        custom_api = MagicMock()
+        resource = self._gateway(namespace="")
+        resource["metadata"].pop("namespace")
+        resources = {"gateway_api": [resource]}
+
+        results = apply_resources(db, 1, custom_api, resources)
+
+        assert results["applied"] == [{"kind": "Gateway", "name": "gw1", "namespace": ""}]
+        custom_api.patch_cluster_custom_object.assert_called_once()
+
+    def test_core_api_resource_skipped(self, db):
+        custom_api = MagicMock()
+        resources = {"core": [{"kind": "ConfigMap", "apiVersion": "v1", "metadata": {"name": "cm1"}}]}
+
+        results = apply_resources(db, 1, custom_api, resources)
+
+        assert results["skipped"] == [{
+            "kind": "ConfigMap", "name": "cm1", "namespace": "",
+            "reason": "Core API import not supported",
+        }]
+
+    def test_404_apply_error_is_skipped(self, db):
+        custom_api = MagicMock()
+        custom_api.patch_namespaced_custom_object.side_effect = ApiException(status=404, reason="Not Found")
+        resources = {"gateway_api": [self._gateway()]}
+
+        results = apply_resources(db, 1, custom_api, resources)
+
+        assert len(results["skipped"]) == 1
+        assert results["skipped"][0]["reason"] == "CRD not installed: Gateway"
+        assert results["applied"] == []
+
+    def test_non_404_apply_error_is_failed(self, db):
+        custom_api = MagicMock()
+        custom_api.patch_namespaced_custom_object.side_effect = ApiException(status=500, reason="server error")
+        resources = {"gateway_api": [self._gateway()]}
+
+        results = apply_resources(db, 1, custom_api, resources)
+
+        assert len(results["failed"]) == 1
+        assert results["failed"][0]["error"] == "server error"

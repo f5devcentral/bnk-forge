@@ -31,6 +31,22 @@ def service(db: Session) -> BluefieldImageService:
     return BluefieldImageService(db)
 
 
+@pytest.fixture(autouse=True)
+def _default_head_ok(monkeypatch):
+    """Block real HTTP calls in unit tests by defaulting HEAD to HTTP 200.
+
+    Tests in TestUrlValidationWarnings override this per test with an explicit
+    monkeypatch.setattr — the last setattr wins within the same fixture scope.
+    """
+    class _Ok:
+        status_code = 200
+
+    monkeypatch.setattr(
+        "services.bluefield_image_service.requests.head",
+        lambda url, **_kw: _Ok(),
+    )
+
+
 class TestCreate:
     def test_creates_image_with_doca_identity(self, service: BluefieldImageService, db: Session):
         img = service.create_image(
@@ -224,3 +240,126 @@ class TestDelete:
     def test_delete_missing_raises(self, service: BluefieldImageService):
         with pytest.raises(NotFoundError):
             service.delete_image(999)
+
+
+class TestUrlValidationWarnings:
+    """Bug 3 — URL reachability is checked on create/update; failures are non-blocking warnings."""
+
+    def _make_fake_head(self, status_code: int):
+        class _Resp:
+            pass
+        resp = _Resp()
+        resp.status_code = status_code  # type: ignore[attr-defined]
+        return lambda url, **_kw: resp
+
+    def test_createWithUnreachableUrl_succeedsWithWarning(
+        self, service: BluefieldImageService, db: Session, monkeypatch
+    ):
+        """create_image with a 404 BFB URL must save the row and surface a warning."""
+        monkeypatch.setattr(
+            "services.bluefield_image_service.requests.head",
+            self._make_fake_head(404),
+        )
+        img = service.create_image(BluefieldSoftwareImageCreate(
+            doca_version="3.9.0",
+            host_os="ubuntu",
+            host_arch="arm64",
+            image_filename="test.bfb",
+            base_url="https://example.com/BFBs/Ubuntu24.04/",
+        ))
+        db.commit()
+
+        assert img.id is not None, "Row must be saved even when URL returns 404"
+        assert hasattr(img, "url_warnings"), "url_warnings attribute must be set"
+        assert len(img.url_warnings) > 0, "At least one warning expected for HTTP 404"
+        assert any("404" in w for w in img.url_warnings), (
+            f"Warning must mention HTTP 404; got: {img.url_warnings}"
+        )
+
+    def test_createWithNetworkError_succeedsWithWarning(
+        self, service: BluefieldImageService, db: Session, monkeypatch
+    ):
+        """Network errors during HEAD check are caught and surfaced as warnings."""
+        import requests as _requests
+
+        def _raise(url, **_kw):
+            raise _requests.ConnectionError("unreachable")
+
+        monkeypatch.setattr("services.bluefield_image_service.requests.head", _raise)
+        img = service.create_image(BluefieldSoftwareImageCreate(
+            doca_version="3.9.1",
+            host_os="ubuntu",
+            host_arch="arm64",
+            image_filename="test.bfb",
+            base_url="https://airgapped.internal/BFBs/",
+        ))
+        db.commit()
+
+        assert img.id is not None, "Row must be saved even when URL is unreachable"
+        assert len(img.url_warnings) > 0, "Network error must produce a warning"
+
+    def test_createWithOkUrl_hasNoWarnings(
+        self, service: BluefieldImageService, db: Session, monkeypatch
+    ):
+        """HTTP 200 responses produce no warnings."""
+        monkeypatch.setattr(
+            "services.bluefield_image_service.requests.head",
+            self._make_fake_head(200),
+        )
+        img = service.create_image(BluefieldSoftwareImageCreate(
+            doca_version="3.9.2",
+            host_os="ubuntu",
+            host_arch="arm64",
+            image_filename="valid.bfb",
+            base_url="https://example.com/BFBs/Ubuntu24.04/",
+        ))
+        db.commit()
+
+        assert img.url_warnings == [], f"No warnings expected for HTTP 200; got: {img.url_warnings}"
+
+    def test_createWithoutUrls_hasNoWarnings(
+        self, service: BluefieldImageService, db: Session, monkeypatch
+    ):
+        """Rows without image_filename/base_url/doca_host_url skip URL checks."""
+        called = []
+        monkeypatch.setattr(
+            "services.bluefield_image_service.requests.head",
+            lambda url, **_kw: called.append(url),
+        )
+        img = service.create_image(BluefieldSoftwareImageCreate(
+            doca_version="3.9.3",
+            host_os="ubuntu",
+            host_arch="arm64",
+        ))
+        db.commit()
+
+        assert called == [], "HEAD must not be called when no URLs are present"
+        assert img.url_warnings == []
+
+    def test_updateWithUnreachableUrl_succeedsWithWarning(
+        self, service: BluefieldImageService, db: Session, monkeypatch
+    ):
+        """update_image with a bad URL must save the update and surface a warning."""
+        monkeypatch.setattr(
+            "services.bluefield_image_service.requests.head",
+            self._make_fake_head(200),
+        )
+        img = service.create_image(BluefieldSoftwareImageCreate(
+            doca_version="3.9.4", host_os="ubuntu", host_arch="arm64",
+        ))
+        db.commit()
+
+        # Now update with a bad URL
+        monkeypatch.setattr(
+            "services.bluefield_image_service.requests.head",
+            self._make_fake_head(404),
+        )
+        updated = service.update_image(img.id, BluefieldSoftwareImageUpdate(
+            image_filename="bad.bfb",
+            base_url="https://example.com/bad/",
+        ))
+        db.commit()
+
+        assert updated.id == img.id
+        assert len(updated.url_warnings) > 0
+        assert any("404" in w for w in updated.url_warnings)

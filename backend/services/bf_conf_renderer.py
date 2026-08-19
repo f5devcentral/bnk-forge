@@ -162,24 +162,34 @@ def _rshim_index(rshim_device: str | None) -> int:
     return idx
 
 
-def derive_tmfifo_dpu_ip(rshim_device: str | None) -> str:
-    """Compute the DPU-side tmfifo_net0 address (CIDR) for a given rshimN.
+def derive_tmfifo_dpu_ip(rshim_device: str | None, dpu: Dpu | None = None) -> str:
+    """Compute the DPU-side tmfifo_net0 address (CIDR) for a given rshimN or persisted Dpu.
 
-    The rshim daemon assigns each DPU its own /30 in 192.168.X.0/30:
-        rshim0 → 192.168.100.0/30 (host .1, DPU .2)
-        rshim1 → 192.168.101.0/30
-        rshim2 → 192.168.102.0/30
-        …
+    If dpu.dpu_tmfifo_ip is persisted (from cluster-scoped tmfifo IPAM) AND the
+    DPU is still a cluster member (kubernetes_cluster_id is not None), uses it.
+    Otherwise falls back to host-local formula:
+        rshim0 → 192.168.100.2/30
+        rshim1 → 192.168.101.2/30
 
-    Falls back to 192.168.100.2/30 (the historical single-DPU value) when
-    the rshim index can't be parsed — matches what bf.conf flashed before
-    this change.
+    The cluster_id guard is the belt-and-braces half of A (ADR-424 cold audit):
+    after cluster-delete, ondelete=SET NULL clears kubernetes_cluster_id but
+    a stale dpu_tmfifo_ip can survive. Checking cluster membership here ensures
+    a re-flash always bakes the correct local /30 rather than the orphaned one.
     """
+    if dpu is not None:
+        dpu_ip = getattr(dpu, "dpu_tmfifo_ip", None)
+        # Only trust the persisted IP when the DPU is still a cluster member.
+        if dpu_ip and getattr(dpu, "kubernetes_cluster_id", None) is not None:
+            return f"{dpu_ip}/30"
     return f"192.168.{100 + _rshim_index(rshim_device)}.2/30"
 
 
-def derive_tmfifo_dpu_host(rshim_device: str | None) -> str:
+def derive_tmfifo_dpu_host(rshim_device: str | None, dpu: Dpu | None = None) -> str:
     """Bare DPU-side tmfifo IP (no /CIDR), suitable for SSH targets."""
+    if dpu is not None:
+        dpu_ip = getattr(dpu, "dpu_tmfifo_ip", None)
+        if dpu_ip and getattr(dpu, "kubernetes_cluster_id", None) is not None:
+            return dpu_ip
     return f"192.168.{100 + _rshim_index(rshim_device)}.2"
 
 
@@ -316,7 +326,7 @@ def build_render_context(
                 ssh_credential.name, exc,
             )
 
-    tmfifo_dpu_ip = derive_tmfifo_dpu_ip(getattr(dpu, "rshim_device", None))
+    tmfifo_dpu_ip = derive_tmfifo_dpu_ip(getattr(dpu, "rshim_device", None), dpu=dpu)
 
     return RenderContext(
         bfb_hostname=hostname,

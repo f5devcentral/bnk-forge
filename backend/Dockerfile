@@ -75,7 +75,7 @@ WORKDIR /app
 #
 FROM base AS dependencies
 ARG BUILD_DEV=false
-COPY requirements.txt requirements-dev.txt ./
+COPY backend/requirements.txt backend/requirements-dev.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$BUILD_DEV" = "true" ]; then \
       pip install --prefix=/install -r requirements-dev.txt; \
@@ -95,31 +95,38 @@ FROM base AS app-base
 COPY --from=dependencies /install /usr/local
 
 # Copy application code (ordered by change frequency — least-changing first)
-COPY alembic.ini ./
-COPY alembic/ ./alembic/
-COPY data/ ./data/
-COPY core/ ./core/
-COPY models/ ./models/
-COPY schemas/ ./schemas/
-COPY utils/ ./utils/
-COPY modules/ ./modules/
-COPY services/ ./services/
-COPY routes/ ./routes/
-COPY tasks/ ./tasks/
+# The repo-root VERSION file. core/config.py._read_version_file() has always
+# looked for /app/VERSION; nothing copied it, so settings.VERSION fell back to
+# "0.0.0" in every backend image — visible on /api, in the OpenAPI title and in
+# the X-BNK-Forge-Version header. This is why the build context is the repo root
+# rather than ./backend: VERSION lives above backend/ and cannot be reached from
+# a context rooted inside it. The frontend image already builds this way.
+COPY VERSION ./VERSION
+COPY backend/alembic.ini ./
+COPY backend/alembic/ ./alembic/
+COPY backend/data/ ./data/
+COPY backend/core/ ./core/
+COPY backend/models/ ./models/
+COPY backend/schemas/ ./schemas/
+COPY backend/utils/ ./utils/
+COPY backend/modules/ ./modules/
+COPY backend/services/ ./services/
+COPY backend/routes/ ./routes/
+COPY backend/tasks/ ./tasks/
 # Python entry points change most often — copy last for best cache hits
-COPY *.py ./
+COPY backend/*.py ./
 
 # Create required directories and set ownership to bnkforge user
 # /app/bfb-cache is pre-created so the named Docker volume inherits
 # correct ownership on first mount (otherwise it initializes as root).
-RUN mkdir -p /tmp/bnk-forge-logs /tmp/bnk-forge-modules /app/state /app/helm_charts /app/projects /app/keys /app/workspaces /app/bfb-cache /app/provider-cache && \
+RUN mkdir -p /tmp/bnk-forge-logs /tmp/bnk-forge-modules /app/state /app/helm_charts /app/projects /app/keys /app/agent-token /app/workspaces /app/bfb-cache /app/provider-cache && \
     chown -R bnkforge:bnkforge /app /tmp/bnk-forge-logs /tmp/bnk-forge-modules
 
 # Shared OpenTofu provider cache path (mounted from compose volume at runtime)
 ENV TF_PLUGIN_CACHE_DIR=/app/provider-cache
 
 # Copy entrypoint script (handles DB migrations for API, skips for celery)
-COPY entrypoint.sh /entrypoint.sh
+COPY backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
@@ -157,6 +164,12 @@ ENV KUBECTL_SHA256_arm64=86fa465134c54de6202d89d41eb89504810236cc968e1402a31f367
 ENV LLMTOP_VERSION=0.2.0
 ENV LLMTOP_SHA256_amd64=2f2e043d5aa33a923ab7ce2921a92e9780dc1ec2241efcc20462cf5c673e8ec7
 ENV LLMTOP_SHA256_arm64=6c2560827e9a1a810d472ae21b5a41b450e93e20ba46d2657403da873090c4ab
+# oras — OCI registry client used by ReleaseSource live-fetch (ADR-494).
+# Needed in both api (synchronous uvicorn endpoint) and worker stages.
+# SHA256 values verified against upstream oras_1.2.2_checksums.txt (confirmed match).
+ENV ORAS_VERSION=1.2.2
+ENV ORAS_SHA256_amd64=bff970346470e5ef888e9f2c0bf7f8ee47283f5a45207d6e7a037da1fb0eae0d
+ENV ORAS_SHA256_arm64=edd7195cbb8ba56c29ede413eefa10c8026201d63326017cd315841b4063aa56
 
 # System packages needed for tool downloads
 # IMPORTANT: Terraform local-exec provisioners default to /bin/sh.
@@ -184,26 +197,44 @@ RUN curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://awscli.ama
     && ./aws/install \
     && rm -rf aws awscliv2.zip
 
-# OPT-001: Download OpenTofu + Helm + kubectl in a single layer
-# This is the heaviest download (~200MB) — cached unless versions change.
-# Retries make transient CDN/TLS disconnects non-fatal during image builds.
-RUN curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.zip" -o tofu.zip \
-    && EXPECTED=$(eval echo \$OPENTOFU_SHA256_${TARGETARCH}) \
-    && echo "${EXPECTED}  tofu.zip" | sha256sum -c - \
-    && unzip tofu.zip && mv tofu /usr/local/bin/ && chmod +x /usr/local/bin/tofu && rm tofu.zip \
-    && curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o helm.tar.gz \
+# OPT-001: Download infrastructure CLI tools.
+# GitHub URLs (tofu, llmtop, oras) use ADD — Docker-daemon fetch via host cert store,
+# DLP-safe per F5 KB57735. get.helm.sh and dl.k8s.io are not TLS-intercepted;
+# curl is fine for those.
+
+# tofu — github.com: ADD (DLP-safe)
+ADD "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.zip" /tmp/tofu.zip
+RUN EXPECTED=$(eval echo \$OPENTOFU_SHA256_${TARGETARCH}) \
+    && echo "${EXPECTED}  /tmp/tofu.zip" | sha256sum -c - \
+    && unzip /tmp/tofu.zip tofu -d /tmp \
+    && mv /tmp/tofu /usr/local/bin/ && chmod +x /usr/local/bin/tofu \
+    && rm /tmp/tofu.zip
+
+# helm — get.helm.sh + kubectl — dl.k8s.io: curl (not TLS-intercepted)
+RUN curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o /tmp/helm.tar.gz \
     && EXPECTED=$(eval echo \$HELM_SHA256_${TARGETARCH}) \
-    && echo "${EXPECTED}  helm.tar.gz" | sha256sum -c - \
-    && tar -zxvf helm.tar.gz && mv linux-${TARGETARCH}/helm /usr/local/bin/ && chmod +x /usr/local/bin/helm && rm -rf linux-${TARGETARCH} helm.tar.gz \
+    && echo "${EXPECTED}  /tmp/helm.tar.gz" | sha256sum -c - \
+    && tar -zxvf /tmp/helm.tar.gz -C /tmp && mv /tmp/linux-${TARGETARCH}/helm /usr/local/bin/ && chmod +x /usr/local/bin/helm && rm -rf /tmp/linux-${TARGETARCH} /tmp/helm.tar.gz \
     && curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" -o /usr/local/bin/kubectl \
     && EXPECTED=$(eval echo \$KUBECTL_SHA256_${TARGETARCH}) \
     && echo "${EXPECTED}  /usr/local/bin/kubectl" | sha256sum -c - \
-    && chmod +x /usr/local/bin/kubectl \
-    && curl --retry 3 --retry-delay 2 --retry-connrefused -fsSL "https://github.com/InfraWhisperer/llmtop/releases/download/v${LLMTOP_VERSION}/llmtop_${LLMTOP_VERSION}_linux_${TARGETARCH}.tar.gz" -o llmtop.tar.gz \
-    && EXPECTED=$(eval echo \$LLMTOP_SHA256_${TARGETARCH}) \
-    && echo "${EXPECTED}  llmtop.tar.gz" | sha256sum -c - \
-    && tar -zxf llmtop.tar.gz llmtop && mv llmtop /usr/local/bin/ && chmod +x /usr/local/bin/llmtop \
-    && rm -f llmtop.tar.gz
+    && chmod +x /usr/local/bin/kubectl
+
+# llmtop — github.com: ADD (DLP-safe)
+ADD "https://github.com/InfraWhisperer/llmtop/releases/download/v${LLMTOP_VERSION}/llmtop_${LLMTOP_VERSION}_linux_${TARGETARCH}.tar.gz" /tmp/llmtop.tar.gz
+RUN EXPECTED=$(eval echo \$LLMTOP_SHA256_${TARGETARCH}) \
+    && echo "${EXPECTED}  /tmp/llmtop.tar.gz" | sha256sum -c - \
+    && tar -zxf /tmp/llmtop.tar.gz -C /tmp llmtop \
+    && mv /tmp/llmtop /usr/local/bin/ && chmod +x /usr/local/bin/llmtop \
+    && rm /tmp/llmtop.tar.gz
+
+# oras — github.com: ADD (DLP-safe)
+ADD "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${TARGETARCH}.tar.gz" /tmp/oras.tar.gz
+RUN EXPECTED=$(eval echo \$ORAS_SHA256_${TARGETARCH}) \
+    && echo "${EXPECTED}  /tmp/oras.tar.gz" | sha256sum -c - \
+    && tar -zxf /tmp/oras.tar.gz -C /tmp oras \
+    && mv /tmp/oras /usr/local/bin/ && chmod +x /usr/local/bin/oras \
+    && rm /tmp/oras.tar.gz
 
 # Infracost (OPTIONAL — deprecated in v2)
 ARG INSTALL_INFRACOST=false
@@ -242,9 +273,11 @@ RUN apt-get purge -y --auto-remove unzip && rm -rf /var/lib/apt/lists/*
 #
 FROM app-base AS api
 
-# OPT-001: Copy helm + kubectl from tooling-deps (code-change-independent cache)
+# OPT-001: Copy helm + kubectl + oras from tooling-deps (code-change-independent cache)
+# oras is needed here: GET /{id}/tags and POST /{id}/tags:pull run in uvicorn, not Celery.
 COPY --from=tooling-deps /usr/local/bin/helm    /usr/local/bin/helm
 COPY --from=tooling-deps /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=tooling-deps /usr/local/bin/oras    /usr/local/bin/oras
 
 # Create helm cache/config dirs for bnkforge user
 RUN mkdir -p /home/bnkforge/.cache/helm /home/bnkforge/.config/helm && \
@@ -273,6 +306,7 @@ COPY --from=tooling-deps /usr/local/bin/tofu       /usr/local/bin/tofu
 COPY --from=tooling-deps /usr/local/bin/helm       /usr/local/bin/helm
 COPY --from=tooling-deps /usr/local/bin/kubectl    /usr/local/bin/kubectl
 COPY --from=tooling-deps /usr/local/bin/llmtop     /usr/local/bin/llmtop
+COPY --from=tooling-deps /usr/local/bin/oras       /usr/local/bin/oras
 # AWS CLI v2: copy the full install tree then recreate the symlinks.
 # The installer places the runtime at /usr/local/aws-cli/v2/current/ and
 # creates symlinks at /usr/local/bin/{aws,aws_completer}. COPY --from
@@ -325,7 +359,7 @@ CMD ["celery", "-A", "celery_app", "beat", "--loglevel=info"]
 # Size: ~400MB (base + dev deps).
 #
 FROM base AS test
-COPY requirements.txt requirements-dev.txt ./
+COPY backend/requirements.txt backend/requirements-dev.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements-dev.txt
 WORKDIR /app

@@ -4,6 +4,11 @@ A clear and concise description of the changes in this Pull Request.
 
 Fixes / Implements: #[Issue Number]
 
+<!-- Use "Fixes #N" (or Closes/Resolves) when this PR should CLOSE the issue on
+     merge to staging -- the auto-close Action matches those keywords, including
+     in the "Fixes / Implements: #N" form above. Use "Refs #N" for a partial fix
+     that must leave the issue open. "Implements: #N" alone does not close. -->
+
 ---
 
 ## Architectural Decision Record (ADR)

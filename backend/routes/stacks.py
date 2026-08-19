@@ -6,7 +6,8 @@ Thin HTTP handlers delegating to StackService.
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
@@ -35,6 +36,11 @@ from services.stack_service import StackService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stacks", tags=["stacks"])
+
+
+class DeployStackRequest(BaseModel):
+    """Optional body for stack deploy / run-deploy. Carries BNK release override for bare-metal blueprints."""
+    deployable_release_id: int | None = None
 
 
 # ============================================================================
@@ -183,18 +189,31 @@ def get_stack_instance(project_id: int, stack_id: int, db: Session = Depends(get
 
 
 @router.post("/projects/{project_id}/stacks/{stack_id}/deploy")
-def deploy_stack(project_id: int, stack_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)):
-    """Start stack deployment."""
+@handle_route_errors("start stack deployment")
+def deploy_stack(
+    project_id: int,
+    stack_id: int,
+    body: DeployStackRequest = Body(default=DeployStackRequest()),
+    user: User = Depends(require_project_owner),
+    db: Session = Depends(get_db),
+):
+    """Start stack deployment. Accepts optional deployable_release_id for BNK/bare-metal blueprints."""
     svc = StackService(db)
-    return svc.deploy_stack(project_id, stack_id)
+    return svc.deploy_stack(project_id, stack_id, deployable_release_id=body.deployable_release_id)
 
 
 @router.post("/projects/{project_id}/stacks/{stack_id}/run-deploy")
 @handle_route_errors("run stack deployment")
-def run_stack_deployment(project_id: int, stack_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)):
-    """Deploy all stack modules (init + apply)."""
+def run_stack_deployment(
+    project_id: int,
+    stack_id: int,
+    body: DeployStackRequest = Body(default=DeployStackRequest()),
+    user: User = Depends(require_project_owner),
+    db: Session = Depends(get_db),
+):
+    """Deploy all stack modules (init + apply). Accepts optional deployable_release_id for BNK/bare-metal blueprints."""
     svc = StackService(db)
-    result = svc.run_deploy(project_id, stack_id)
+    result = svc.run_deploy(project_id, stack_id, deployable_release_id=body.deployable_release_id)
     db.commit()
     return result
 

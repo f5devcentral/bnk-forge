@@ -336,6 +336,22 @@ jobs:
       - name: Run artifact_network.sh pure-logic self-test
         run: bash scripts/artifact_network.sh --self-test
 
+  # ── Pre-merge alembic collision check (ADR-478 follow-up) ────────────────
+  # Detects revision-id duplicates and multi-head collisions between this
+  # branch's migrations and origin/staging — the blind spot that would
+  # otherwise only surface as a deep CI failure after push.
+  migration-collision-check:
+    name: "P1 · Migration Collision Check (vs staging)"
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch staging so origin/staging is resolvable
+        run: git fetch --no-tags --depth=200 origin staging
+      - name: Check for alembic head/dup-id collision with origin/staging
+        run: make check-migrations
+
   # ══════════════════════════════════════════════════════════════════════════
   # PHASE 2: Component + Legacy Tests (~90s) — needs Phase 1
   # ══════════════════════════════════════════════════════════════════════════
@@ -545,6 +561,195 @@ jobs:
           print('No ORM-vs-DB drift on real Postgres')
           "
 
+  migration-upgrade-from-release:
+    name: "P2 · Migration Upgrade From Released Version (Postgres)"
+    needs: [changes, lint-backend, typecheck-backend, openapi-check, unit-tests-backend]
+    if: |
+      always() &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    # Two things no other job covers.
+    #
+    # 1. The customer upgrade path. migration-roundtrip provisions with
+    #    init_db.py (create_all + stamp head) and then runs `alembic upgrade
+    #    head` — a no-op, because it was just stamped AT head. This job
+    #    provisions the way the OLDEST SUPPORTED release did and upgrades
+    #    forward, so the chain is actually executed against a real installed
+    #    schema.
+    #
+    # 2. Whether create_all and the migration chain still agree. init_db.py
+    #    stamps head while create_all builds whatever the ORM declares in that
+    #    build; any disagreement is frozen into every install made from it, in
+    #    one of two directions — an ORM object no migration creates (built by
+    #    create_all, collides when a later release replays the migration above
+    #    the stamp), or a migration object the ORM does not declare (never built
+    #    and never will be, because the stamp claims its revision ran).
+    #
+    #    That disagreement is a property of a single COMMIT, not of an upgrade
+    #    path: at any release tag the ORM and the chain are in step, so no
+    #    choice of starting tag can find it. It is found by building both
+    #    schemas at this commit and diffing them, which is what the parity step
+    #    below does. The chain cannot be replayed from an empty database (its
+    #    base revision is an ALTER TABLE presupposing a v1 schema — see
+    #    init_db.py), so the chain side is built by provisioning at the floor
+    #    and upgrading, which reaches the same place.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bnkforge
+          POSTGRES_PASSWORD: bnkforge
+          POSTGRES_DB: bnkforge_upgrade_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bnkforge"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # The chain side: provisioned at the floor release, then upgraded to HEAD.
+      DATABASE_URL: "postgresql+psycopg2://bnkforge:bnkforge@localhost:5432/bnkforge_upgrade_ci"
+      # The ORM side: create_all at HEAD, i.e. what a fresh install gets today.
+      ORM_DATABASE_URL: "postgresql+psycopg2://bnkforge:bnkforge@localhost:5432/bnkforge_orm_ci"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: "Resolve the upgrade floor"
+        id: prev
+        run: |
+          set -euo pipefail
+          # The OLDEST release we support upgrading from, pinned in
+          # MIN_UPGRADE_FROM. Deliberately not "the newest tag": that is always
+          # about one release back, so the window it exercises is one release
+          # wide and contains no accumulated drift. Raise this only when a
+          # release genuinely stops being supported as an upgrade source.
+          ref="$(tr -d '[:space:]' < MIN_UPGRADE_FROM)"
+          if ! git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
+            echo "::error::MIN_UPGRADE_FROM names '$ref', which is not a commit in this repo"
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Upgrade floor: $ref"
+
+      - name: "Create the ORM-side database"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          url = os.environ["DATABASE_URL"].rsplit("/", 1)[0] + "/postgres"
+          e = create_engine(url, isolation_level="AUTOCOMMIT")
+          with e.connect() as c:
+              c.execute(text("CREATE DATABASE bnkforge_orm_ci"))
+          PY
+
+      - name: "Provision the database the way the floor release did"
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/prev-release "${{ steps.prev.outputs.ref }}"
+          cd /tmp/prev-release/backend
+          # Run THAT release's init_db.py — create_all from THAT ORM, stamp THAT
+          # head — using this job's dependencies. What is under test is the ORM
+          # and init_db logic in that checkout, not its pinned library versions,
+          # and installing the old pins over this environment would leave the
+          # upgrade and the assertions below running new code against old
+          # dependencies. No `|| true` here: if this cannot run, the job has
+          # nothing to say and must fail loudly rather than silently continue.
+          #
+          # Known fragility, accepted deliberately: the floor's models are
+          # imported under CURRENT pins, so the gap widens every time a
+          # dependency moves. v3.0.1 pins cryptography 44 and staging is on 50 —
+          # six majors — and it holds only because the floor tree touches just
+          # Fernet, hazmat.primitives.serialization and Ed25519PrivateKey, all
+          # unchanged across that range. When it does bite, it bites as a
+          # MANDATORY gate failing hard on a commit that changed nothing
+          # relevant. The fix then is to raise MIN_UPGRADE_FROM to a release
+          # whose models import cleanly, not to add `|| true` here: a floor that
+          # cannot be provisioned is a floor that is no longer supported as an
+          # upgrade source, and that is a decision to take explicitly.
+          python init_db.py
+
+      - name: "Record the stamp the release left"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from sqlalchemy import create_engine, text
+          import os
+          e = create_engine(os.environ["DATABASE_URL"])
+          with e.connect() as c:
+              print("provisioned at revision:", c.execute(text("select version_num from alembic_version")).scalar())
+          PY
+
+      - name: "Upgrade to HEAD — the customer path"
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: "Assert zero ORM-vs-DB drift after the upgrade"
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -c "
+          import sys
+          from sqlalchemy import create_engine
+          from core.config import settings
+          from startup_steps import _detect_missing_schema
+          engine = create_engine(settings.DATABASE_URL)
+          with engine.connect() as conn:
+              missing = _detect_missing_schema(conn)
+          if missing:
+              print('Upgrading from the floor release left the DB missing what the ORM expects:')
+              for m in missing:
+                  print('  - ' + m)
+              print()
+              print('An object whose migration sits BELOW the stamp init_db wrote will never')
+              print('be created by any upgrade. Add it to the heal migration (v2_152).')
+              sys.exit(1)
+          print('No ORM-vs-DB drift after upgrading from the floor release')
+          "
+
+      - name: "Provision the ORM side — create_all at HEAD"
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ env.ORM_DATABASE_URL }}
+        run: python init_db.py
+
+      - name: "Assert create_all and the migration chain agree"
+        run: python scripts/check-schema-parity.py "$ORM_DATABASE_URL" "$DATABASE_URL"
+
+      # Targeted regression tests for revisions whose behaviour depends on WHICH
+      # provisioning path built the database. The parity check above catches the
+      # same class, but only as a whole-schema diff after a full upgrade — these
+      # name the specific invariant and fail with a message that says what broke.
+      - name: "Migration regression tests (Postgres)"
+        working-directory: backend
+        env:
+          TEST_POSTGRES_URL: ${{ env.ORM_DATABASE_URL }}
+          BNK_REQUIRE_MIGRATION_TESTS: "1"
+        run: |
+          # Assert the precondition rather than letting the tests skip.
+          # Actions substitutes an unresolvable env.X with the EMPTY STRING and
+          # says nothing, so a rename of ORM_DATABASE_URL would leave this step
+          # green while asserting nothing — and the gate treats `skipped` as
+          # acceptable. That is the "gate exists but never executes" class this
+          # very job was added to catch.
+          if [ -z "$TEST_POSTGRES_URL" ]; then
+            echo "::error::TEST_POSTGRES_URL is empty — the migration regression tests would silently skip"
+            exit 1
+          fi
+          python -m pytest tests/migrations/ -v
+
   frontend-build:
     name: "P2 · Build · Frontend"
     needs: [changes, lint-frontend, typecheck-frontend, unit-tests-frontend]
@@ -592,6 +797,11 @@ jobs:
       - name: Run integration tests
         run: |
           if [ -n "$(find backend/tests/integration -name 'test_*.py' 2>/dev/null)" ]; then
+            # Both targets, because they are exact complements: pyproject's
+            # addopts carry -m 'not full' and test-integration-full passes
+            # -m full. Running only the latter (as this job used to) left 746
+            # of 952 integration tests unexecuted on every branch — see #130.
+            make test-integration
             make test-integration-full
           else
             echo "No integration tests found yet — skipping"
@@ -604,6 +814,8 @@ jobs:
           path: |
             backend/coverage-integration.xml
             backend/junit-integration.xml
+            backend/coverage-integration-full.xml
+            backend/junit-integration-full.xml
           retention-days: 3
           if-no-files-found: ignore
 
@@ -658,7 +870,8 @@ jobs:
       - name: Build API image (slim)
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
+          file: backend/Dockerfile
           target: api
           tags: bnk-forge-api:latest
           load: true
@@ -667,7 +880,8 @@ jobs:
       - name: Build Worker image (full tooling)
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
+          file: backend/Dockerfile
           target: worker
           tags: bnk-forge-worker:latest
           load: true
@@ -676,12 +890,40 @@ jobs:
       - name: Build Beat image (slim)
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
+          file: backend/Dockerfile
           target: beat
           tags: bnk-forge-beat:latest
           load: true
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
+
+      # The images are already built and loaded above, so this costs a few
+      # seconds. It exists because settings.VERSION silently fell back to
+      # "0.0.0" for the entire life of these images: core/config.py reads
+      # /app/VERSION, nothing copied it, and no unit test could ever see that —
+      # from a source checkout the same function resolves the repo-root file, so
+      # the bug exists ONLY inside an image.
+      #
+      # It also gates the build wiring itself: a target whose context or
+      # dockerfile is wrong cannot build, so it cannot pass this. Two build
+      # paths were missed when the context was re-rooted; this is what catches
+      # the third.
+      - name: Assert VERSION is baked into the backend images
+        run: |
+          set -euo pipefail
+          expected="$(cat VERSION)"
+          failed=0
+          for img in bnk-forge-api bnk-forge-worker bnk-forge-beat; do
+            actual="$(docker run --rm --entrypoint "" "$img:latest" cat /app/VERSION 2>/dev/null || echo '')"
+            if [ "$actual" = "$expected" ]; then
+              echo "  OK    $img reports $actual"
+            else
+              echo "::error::$img reports '$actual', expected '$expected' — settings.VERSION will fall back to 0.0.0, which surfaces on /api, the OpenAPI title and the X-BNK-Forge-Version header"
+              failed=1
+            fi
+          done
+          [ "$failed" -eq 0 ]
       - name: Build Frontend image
         uses: docker/build-push-action@v6
         with:
@@ -830,12 +1072,14 @@ jobs:
       - unit-tests-operator
       - contract-tests
       - artifact-network-self-test
+      - migration-collision-check
       # Phase 2
       - component-tests-backend
       - legacy-tests-backend
       - proxy-validation
       - db-migration-check
       - migration-roundtrip
+      - migration-upgrade-from-release
       - frontend-build
       # Phase 3
       - integration-tests-backend
@@ -861,11 +1105,13 @@ jobs:
             "unit-tests-operator:${{ needs.unit-tests-operator.result }}" \
             "contract-tests:${{ needs.contract-tests.result }}" \
             "artifact-network-self-test:${{ needs.artifact-network-self-test.result }}" \
+            "migration-collision-check:${{ needs.migration-collision-check.result }}" \
             "component-tests:${{ needs.component-tests-backend.result }}" \
             "legacy-tests:${{ needs.legacy-tests-backend.result }}" \
             "proxy-validation:${{ needs.proxy-validation.result }}" \
             "db-migration:${{ needs.db-migration-check.result }}" \
             "migration-roundtrip:${{ needs.migration-roundtrip.result }}" \
+            "migration-upgrade-from-release:${{ needs.migration-upgrade-from-release.result }}" \
             "frontend-build:${{ needs.frontend-build.result }}" \
             "integration-tests:${{ needs.integration-tests-backend.result }}" \
             "security-audit:${{ needs.security-audit.result }}" \

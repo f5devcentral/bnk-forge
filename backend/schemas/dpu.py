@@ -52,6 +52,9 @@ class BluefieldSoftwareImageResponse(BaseModel):
     doca_host_url: str | None
     is_default: bool
     notes: str | None
+    # Non-empty only on create/update responses when URL reachability check
+    # found a problem. Empty list on GET responses (check is not re-run).
+    url_warnings: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -465,6 +468,13 @@ class DpuResponse(BaseModel):
     # number (when known). Computed server-side so the UI shows exactly
     # what gets flashed without duplicating the rules client-side.
     bfb_hostname: str | None = None
+
+    # ADR-424: BNK cluster membership + persisted tmfifo /30 allocation.
+    # Surfaced so the member dialog can seed selections from real membership
+    # and disable DPUs already bound to a different cluster.
+    kubernetes_cluster_id: int | None = None
+    host_tmfifo_ip: str | None = None
+    dpu_tmfifo_ip: str | None = None
 
     created_at: datetime
     updated_at: datetime

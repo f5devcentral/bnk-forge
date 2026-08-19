@@ -30,6 +30,7 @@ import { ClusterStatusBadge } from '@/components/ui/ClusterStatusBadge';
 
 import { ClusterConfigDialog } from './ClusterConfigDialog';
 import { ClusterPrerequisitesDialog } from './ClusterPrerequisitesDialog';
+import { BnkClusterMemberDialog } from './BnkClusterMemberDialog';
 import type { K8sCluster, ClusterConnectivityResult } from '@/types';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -55,6 +56,7 @@ import {
   Terminal,
   Plug,
   Unplug,
+  Network,
 } from 'lucide-react';
 
 interface K8sClusterListProps {
@@ -121,6 +123,8 @@ export function K8sClusterList({
   const [clusterToDelete, setClusterToDelete] = useState<K8sCluster | null>(null);
   const [prereqDialogOpen, setPrereqDialogOpen] = useState(false);
   const [prereqCluster, setPrereqCluster] = useState<K8sCluster | null>(null);
+  const [bnkMemberDialogOpen, setBnkMemberDialogOpen] = useState(false);
+  const [bnkClusterTarget, setBnkClusterTarget] = useState<K8sCluster | null>(null);
   const [isDetectingSSH, setIsDetectingSSH] = useState(false);
   const clusterSummaryDescription = targetPlatformProfile === 'ocp'
     ? 'Monitor resources across OpenShift/OKD and other Kubernetes clusters. Runtime support semantics follow detected platform context.'
@@ -391,6 +395,15 @@ export function K8sClusterList({
                       Prerequisite checks
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      onClick={() => {
+                        setBnkClusterTarget(cluster);
+                        setBnkMemberDialogOpen(true);
+                      }}
+                    >
+                      <Network className="mr-2 h-4 w-4 text-primary" />
+                      BNK Orchestration (ADR-424)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => handleDeleteClick(cluster)}
                       className="text-destructive"
                     >
@@ -407,6 +420,12 @@ export function K8sClusterList({
                 {cluster.version && (
                   <Badge variant="secondary" className="text-xs">
                     v{cluster.version}
+                  </Badge>
+                )}
+                {cluster.bnk_config && (
+                  <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20 flex items-center gap-1">
+                    <Network className="h-3 w-3" />
+                    BNK Pool: {cluster.bnk_config.tmfifo_pool_cidr}
                   </Badge>
                 )}
                 {targetPlatformProfile && targetPlatformProfile !== 'unknown' && cluster.detected_platform_profile && cluster.detected_platform_profile !== 'unknown' && targetPlatformProfile !== cluster.detected_platform_profile && cluster.platform_capabilities && Object.values(cluster.platform_capabilities).some((v) => v !== null && v !== undefined) && (
@@ -541,6 +560,18 @@ export function K8sClusterList({
         cluster={prereqCluster}
         onOpenChange={setPrereqDialogOpen}
       />
+
+      {/* BNK Multi-Host & DPU Member Dialog (ADR-424) */}
+      {bnkClusterTarget && (
+        <BnkClusterMemberDialog
+          open={bnkMemberDialogOpen}
+          onOpenChange={setBnkMemberDialogOpen}
+          clusterId={bnkClusterTarget.id}
+          projectId={projectId}
+          clusterName={bnkClusterTarget.name}
+          currentConfig={bnkClusterTarget.bnk_config}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

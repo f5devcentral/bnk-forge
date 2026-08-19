@@ -1,2 +1,28 @@
 *
 !.gitignore
+
+# Release artifacts that are deliberately TRACKED. dist/ is otherwise a build
+# output dir, so everything above is ignored — but these are the shipped
+# installer and its templates, referenced by README.md, the Makefile,
+# .github/workflows/release.yml and scripts/ibm_cloud_bnk_forge.sh.
+# They were previously kept only by `git add -f`, which does not survive an
+# export built from the working tree.
+!.env.example
+!README.md
+!VERSION
+!docker-compose.yml
+!docker-compose.local.yml
+!install.sh
+!uninstall.sh
+!nginx/
+# Named explicitly rather than `nginx/*.conf`. Both files are produced by the
+# `dist` target (Makefile: cp proxy/nginx.local.conf, cp frontend-v2/...), so
+# this directory holds derived artifacts that happen to be committed. A glob
+# would auto-track any future .conf appearing here -- generated, stray, or
+# local-only -- which is what the leading `*` exists to prevent.
+# The trade is that the list must stay deliberate: if you add a conf to the
+# `dist` target, add it here too or it will not be tracked.
+!nginx/frontend.local.conf
+!nginx/proxy.local.conf
+!secrets/
+!secrets/.gitkeep

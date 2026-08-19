@@ -4,7 +4,7 @@
  * Shows full template details, prerequisites, modules, and deployment options.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -31,7 +31,7 @@ import {
 import { SectionCard } from '@/components/ui/section-card';
 import { useStackTemplate, useStackPreview } from '@/hooks/useStacks';
 import { useSyncModuleLibrary } from '@/hooks/useModules';
-import { useBareMetalHosts } from '@/hooks/useBareMetal';
+import { useBareMetalHosts, useDeployableReleases } from '@/hooks/useBareMetal';
 import { useQueryClient, useQuery, keepPreviousData } from '@tanstack/react-query';
 import { stackKeys } from '@/hooks/useStacks';
 import { isAxiosError } from 'axios';
@@ -57,6 +57,9 @@ import {
   ChevronDown,
   Loader2,
   RefreshCw,
+  CircuitBoard,
+  Cpu,
+  Network,
 } from 'lucide-react';
 import type { StackTemplateModule, StackInputDefinition, StackPrerequisitesCheck, StackPrerequisite, Project, BareMetalHost } from '@/types';
 import { notify } from '@/lib/notify';
@@ -72,6 +75,8 @@ interface StackDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (projectId: number) => void;
+  initialProjectId?: number;
+  initialVariables?: Record<string, unknown>;
 }
 
 const categoryConfig: Record<string, { icon: typeof Server }> = {
@@ -231,7 +236,14 @@ function LargeContentInput({
   );
 }
 
-export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: StackDetailDialogProps) {
+export function StackDetailDialog({
+  slug,
+  open,
+  onOpenChange,
+  onSuccess,
+  initialProjectId,
+  initialVariables,
+}: StackDetailDialogProps) {
   // isDark removed — tokens handle theming (D-020)
   const navigate = useNavigate();
   const [deployMode, setDeployMode] = useState<'new' | 'existing'>('new');
@@ -243,7 +255,32 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
   const [userInputs, setUserInputs] = useState<Record<string, Record<string, string>>>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [selectedBareMetalHostId, setSelectedBareMetalHostId] = useState<string>('');
+  const [selectedReleaseId, setSelectedReleaseId] = useState<number | null>(null);
   const [customInputMode, setCustomInputMode] = useState<Set<string>>(new Set());
+
+  // Support pre-selecting project and initial variable overrides when launched from context
+  useEffect(() => {
+    if (open && initialProjectId) {
+      setDeployMode('existing');
+      setSelectedProjectId(initialProjectId);
+    }
+  }, [open, initialProjectId]);
+
+  useEffect(() => {
+    if (open && initialVariables && Object.keys(initialVariables).length > 0) {
+      if (initialVariables.bare_metal_host_id || initialVariables.control_plane_host_id) {
+        setSelectedBareMetalHostId(String(initialVariables.bare_metal_host_id || initialVariables.control_plane_host_id));
+      }
+      const formatted: Record<string, string> = {};
+      for (const [k, v] of Object.entries(initialVariables)) {
+        formatted[k] = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+      }
+      setUserInputs(prev => ({
+        ...prev,
+        '_global': { ...(prev['_global'] || {}), ...formatted },
+      }));
+    }
+  }, [open, initialVariables]);
   // Sections are expanded by default; this set holds paths the user has
   // explicitly collapsed. Defaulting to expanded means inherited values and
   // validation hints are visible on first open without requiring a click.
@@ -408,6 +445,18 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
     enabled: deployMode === 'existing' && !!selectedProjectId && !!slug && open,
   });
 
+  // Whether all required secrets are satisfied: pre-existing+valid in store, or entered inline.
+  // Also gates on blocking preflight failures (e.g. loopback cluster endpoint).
+  // Used for both button gating and the handleDeploy guard.
+  // Fail CLOSED: undefined (query not yet resolved or 5xx) → false, keeping the deploy button
+  // disabled until the server has confirmed which secrets are already present.
+  const areSecretsSatisfied = !!prerequisitesCheck && (
+    prerequisitesCheck.required_secrets.every(
+      s => (s.exists && s.valid !== false) || !!userInputs['_global']?.[s.name]
+    ) &&
+    !(prerequisitesCheck.preflight_checks || []).some(c => c.status === 'fail' && c.blocking)
+  );
+
   // S19-001: Extract project_secret prerequisites from template for "new project" mode
   const secretPrerequisites = template?.prerequisites?.filter(
     (p) => p.type === 'project_secret' && p.name
@@ -475,6 +524,50 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
   const { data: bareMetalHosts } = useBareMetalHosts(
     isBareMetalTemplate && selectedProjectId ? selectedProjectId : 0
   );
+  // ADR-478 P1b: fetch deployable releases — bare-metal blueprints only.
+  // enabled=false for non-BM templates so generic stacks are unaffected.
+  const { data: deployableReleases } = useDeployableReleases();
+
+  // Parse multi-host cluster configuration from initialVariables or userInputs
+  const multiHostConfig = useMemo(() => {
+    const vars = initialVariables || userInputs['_global'];
+    if (!vars) return null;
+
+    const controlPlaneHostId = (vars as Record<string, unknown>).control_plane_host_id || (vars as Record<string, unknown>).bare_metal_host_id;
+    let workerHostIds = (vars as Record<string, unknown>).worker_host_ids;
+    let dpuSelections = (vars as Record<string, unknown>).dpu_selections;
+    const tmfifoPoolCidr = (vars as Record<string, unknown>).tmfifo_pool_cidr;
+    const topology = (vars as Record<string, unknown>).topology;
+
+    if (typeof workerHostIds === 'string') {
+      try { workerHostIds = JSON.parse(workerHostIds); } catch { /* keep raw */ }
+    }
+    if (typeof dpuSelections === 'string') {
+      try { dpuSelections = JSON.parse(dpuSelections); } catch { /* keep raw */ }
+    }
+
+    if (!controlPlaneHostId && (!workerHostIds || (Array.isArray(workerHostIds) && workerHostIds.length === 0))) {
+      return null;
+    }
+
+    return {
+      controlPlaneHostId: controlPlaneHostId ? Number(controlPlaneHostId) : null,
+      workerHostIds: Array.isArray(workerHostIds) ? workerHostIds.map(Number) : [],
+      dpuSelections: typeof dpuSelections === 'object' && dpuSelections ? (dpuSelections as Record<string | number, string>) : {},
+      tmfifoPoolCidr: String(tmfifoPoolCidr || ''),
+      topology: String(topology || 'Multi-Host DPU Cluster'),
+    };
+  }, [initialVariables, userInputs]);
+
+  const getHostDisplayName = (hostId: number | string | undefined | null) => {
+    if (!hostId) return 'N/A';
+    const numericId = typeof hostId === 'string' ? parseInt(hostId, 10) : hostId;
+    const match = bareMetalHosts?.find((h: BareMetalHost) => h.id === numericId);
+    if (match) {
+      return `${match.hostname || match.name || match.host_ip} (${match.host_ip})`;
+    }
+    return `Host #${hostId}`;
+  };
 
   const category = categoryConfig[template?.category?.toLowerCase() || 'infrastructure'] || categoryConfig.infrastructure;
   const CategoryIcon = category.icon;
@@ -514,6 +607,7 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
       setUserInputs({});
       setValidationErrors({});
       setSelectedBareMetalHostId('');
+      setSelectedReleaseId(null);
       setCustomInputMode(new Set());
       setCollapsedModuleSections(new Set());
       setAwsRegion('');
@@ -584,10 +678,10 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
       return;
     }
 
-    if (deployMode === 'existing' && prerequisitesCheck && !prerequisitesCheck.all_satisfied) {
+    if (deployMode === 'existing' && !areSecretsSatisfied) {
       notify.error(
-        'Blueprint prerequisites not satisfied',
-        'Fix missing or invalid secrets in Project Secrets before deploying.'
+        'Blueprint prerequisites missing',
+        'Please enter missing secrets in the fields above or configure them in Project Secrets.'
       );
       return;
     }
@@ -677,15 +771,14 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
       }
     }
 
-    // Validate bare-metal host selection
-    if (isBareMetalTemplate && !selectedBareMetalHostId) {
+    // Validate bare-metal host selection (if not multi-host initialVariables flow)
+    if (isBareMetalTemplate && !selectedBareMetalHostId && !initialVariables) {
       notify.error('Host required', 'Please select a bare-metal host for deployment.');
       return;
     }
 
-    // Inject bare-metal host ID as a stack-level variable
-    if (isBareMetalTemplate && selectedBareMetalHostId) {
-      // Add to every bare-metal module path so variable_assembler can resolve the host
+    // Inject bare-metal host ID and multi-host variables as stack-level module variables
+    if (isBareMetalTemplate && (selectedBareMetalHostId || initialVariables)) {
       const bareMetalModulePaths = (template?.modules || [])
         .filter((m: { path: string }) => m.path.startsWith('bare-metal/'))
         .map((m: { path: string }) => m.path);
@@ -693,7 +786,14 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
         if (!finalInputs[modPath]) {
           finalInputs[modPath] = {};
         }
-        finalInputs[modPath]['bare_metal_host_id'] = selectedBareMetalHostId;
+        if (selectedBareMetalHostId) {
+          finalInputs[modPath]['bare_metal_host_id'] = selectedBareMetalHostId;
+        }
+        if (initialVariables) {
+          for (const [k, v] of Object.entries(initialVariables)) {
+            finalInputs[modPath][k] = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+          }
+        }
       }
     }
 
@@ -732,6 +832,27 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
         targetProjectId = projectId;
       }
 
+      // Persist any inline-typed secrets to the encrypted project store before creating
+      // the stack instance. Secrets are then referenced by name at runtime and are never
+      // stored as plaintext module variables.
+      if (prerequisitesCheck) {
+        for (const secret of prerequisitesCheck.required_secrets) {
+          const inlineValue = userInputs['_global']?.[secret.name];
+          if (!secret.exists && inlineValue) {
+            try {
+              await api.createValueSecret(projectId, { name: secret.name, value: inlineValue });
+            } catch (err) {
+              // If this secret was already persisted (e.g. from a prior partial deploy
+              // attempt before a later secret failed), treat "already exists" as satisfied.
+              const isDuplicate = isAxiosError(err) && err.response?.status === 400 &&
+                typeof err.response?.data?.error?.message === 'string' &&
+                err.response.data.error.message.toLowerCase().includes('already exists');
+              if (!isDuplicate) throw err;
+            }
+          }
+        }
+      }
+
       // Step 2: Create stack instance with user-provided variables (including auto-populated)
       // Variables are stored as { "module/path": { "var_name": "value" } }
       const stackInstance = await api.createStackInstance(projectId, {
@@ -740,8 +861,16 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
         variables: finalInputs,
       });
 
-      // Step 3: Prepare the stack (creates modules in 'pending' status)
-      await api.deployStack(projectId, stackInstance.id);
+      // Step 3: Prepare the stack (creates modules in 'pending' status).
+      // ADR-478 P1b: pass chosen BNK release for bare-metal blueprints so the backend
+      // stamps host.version_profile_id before module execution reads it.
+      await api.deployStack(
+        projectId,
+        stackInstance.id,
+        isBareMetalTemplate && selectedReleaseId != null
+          ? { deployable_release_id: selectedReleaseId }
+          : undefined,
+      );
 
       notify.success(
         `Blueprint "${template.name}" ready!`,
@@ -769,6 +898,7 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
       setCredentialTemplateId(undefined);
       setUserInputs({});
       setSelectedBareMetalHostId('');
+      setSelectedReleaseId(null);
       
       // Callback for navigation (handled by parent)
       onSuccess?.(projectId);
@@ -1211,74 +1341,116 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
                 </SectionCard>
               )}
 
-              {/* S19-001: Required Secrets Warning */}
+              {/* S19-001: Required Secrets Warning & Inline Configuration */}
               {/* Show for existing project: live prerequisite check */}
               {deployMode === 'existing' && selectedProjectId && prerequisitesCheck && prerequisitesCheck.required_secrets.length > 0 && (
                 <SectionCard title="Required secrets" compact>
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant={prerequisitesCheck.all_satisfied ? 'success' : 'destructive'} className="text-[10px]">
-                        {prerequisitesCheck.all_satisfied
-                          ? 'All configured'
-                          : `${prerequisitesCheck.missing_secrets.length} missing`}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-foreground">Project Secrets Status</span>
+                      <Badge
+                        variant={areSecretsSatisfied ? 'success' : 'warning'}
+                        className="text-[10px]"
+                      >
+                        {areSecretsSatisfied
+                          ? 'All Configured'
+                          : `${prerequisitesCheck.missing_secrets.length} Missing in Project`}
                       </Badge>
                     </div>
-                    <div className="space-y-1.5">
-                      {prerequisitesCheck.required_secrets.map((secret) => (
-                        <div key={secret.name} className="flex items-center gap-2">
-                          {secret.exists ? (
-                            <CheckCircle className="h-3 w-3 text-success flex-shrink-0" />
-                          ) : (
-                            <AlertCircle className="h-3 w-3 text-destructive flex-shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <span className="text-xs font-medium text-foreground">
-                              {secret.name}
-                            </span>
+
+                    <div className="space-y-2">
+                      {prerequisitesCheck.required_secrets.map((secret) => {
+                        const isConfiguredInline = !!userInputs['_global']?.[secret.name];
+                        const isSatisfied = secret.exists || isConfiguredInline;
+
+                        return (
+                          <div key={secret.name} className="p-2.5 rounded border border-border bg-muted/20 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {isSatisfied ? (
+                                  <CheckCircle className="h-3.5 w-3.5 text-success flex-shrink-0" />
+                                ) : (
+                                  <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
+                                )}
+                                <span className="text-xs font-semibold text-foreground truncate">{secret.name}</span>
+                              </div>
+                              {secret.exists ? (
+                                <Badge variant="outline" className="text-[10px] text-success border-success/30 flex-shrink-0">
+                                  Stored in Project
+                                </Badge>
+                              ) : isConfiguredInline ? (
+                                <Badge variant="outline" className="text-[10px] text-info border-info/30 flex-shrink-0">
+                                  Set in Blueprint
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30 flex-shrink-0">
+                                  Missing
+                                </Badge>
+                              )}
+                            </div>
+
                             {secret.description && (
-                              <p className="text-xs text-muted-foreground truncate">{secret.description}</p>
+                              <p className="text-xs text-muted-foreground">{secret.description}</p>
                             )}
-                            {secret.exists && secret.valid === false && secret.validation_error && (
-                              <p className="text-xs text-destructive">
-                                Invalid: {secret.validation_error}
+
+                            {secret.valid === false && secret.validation_error && (
+                              <p className="text-xs text-destructive flex items-center gap-1">
+                                <AlertCircle className="h-3 w-3" />
+                                {secret.validation_error}
                               </p>
                             )}
-                            {secret.exists && secret.valid && secret.validated_source && (
-                              <p className="text-xs text-muted-foreground">
-                                Validated from {secret.validated_source.replace('_', ' ')}
-                              </p>
+
+                            {secret.exists && secret.valid === false && selectedProjectId && (
+                              <div className="pt-1">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    onOpenChange(false);
+                                    navigate(`/projects/${selectedProjectId}?tab=secrets`);
+                                  }}
+                                  className="h-7 text-xs"
+                                >
+                                  Open Project Secrets
+                                </Button>
+                              </div>
+                            )}
+
+                            {!secret.exists && (
+                              <div className="pt-1 space-y-1">
+                                <Input
+                                  type="password"
+                                  placeholder={`Enter ${secret.name}...`}
+                                  value={userInputs['_global']?.[secret.name] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setUserInputs(prev => ({
+                                      ...prev,
+                                      '_global': {
+                                        ...(prev['_global'] || {}),
+                                        [secret.name]: val,
+                                      }
+                                    }));
+                                  }}
+                                  className="h-7 text-xs font-mono"
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                  Value will be saved encrypted to Project Secrets on deploy, then referenced by name.
+                                </p>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
+
                     {prerequisitesCheck.secret_source_policy && (
                       <p className="text-xs text-muted-foreground pt-1">
-                        Secret policy: project secrets are authoritative.
+                        Secret policy: project secrets are authoritative.{' '}
                         {prerequisitesCheck.secret_source_policy.global_cne_pull_secret_default_supported
-                          ? ' cne_pull_secret can fall back to encrypted System Defaults.'
-                          : ' cne_pull_secret has no global/system fallback in this flow.'}
+                          ? 'cne_pull_secret can fall back to encrypted System Defaults.'
+                          : 'cne_pull_secret has no global/system fallback in this flow.'}
                       </p>
-                    )}
-                    {!prerequisitesCheck.all_satisfied && (
-                      <div className="flex items-center justify-between gap-3 pt-1">
-                        <p className="text-xs text-muted-foreground">
-                          Configure missing/invalid secrets in Project Settings before deploying.
-                        </p>
-                        {selectedProjectId && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              onOpenChange(false);
-                              navigate(`/projects/${selectedProjectId}?tab=secrets`);
-                            }}
-                            className="h-7 text-xs"
-                          >
-                            Open Project Secrets
-                          </Button>
-                        )}
-                      </div>
                     )}
                   </div>
                 </SectionCard>
@@ -1304,35 +1476,118 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
                 </Alert>
               )}
 
-              {/* Bare-Metal Host Selection */}
+              {/* Bare-Metal Host / Multi-Host Cluster Topology */}
               {isBareMetalTemplate && deployMode === 'existing' && selectedProjectId && (
-                <SectionCard title="Bare-metal host" compact>
+                <SectionCard title="Bare-metal deployment configuration" compact className="space-y-3">
+                  {multiHostConfig && (multiHostConfig.controlPlaneHostId || multiHostConfig.workerHostIds.length > 0) ? (
+                    <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <CircuitBoard className="h-4 w-4 text-primary" />
+                          <span>Multi-Host Cluster Topology</span>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] font-mono border-primary/40 text-primary">
+                          {multiHostConfig.topology}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 rounded border border-border bg-background space-y-1">
+                          <span className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+                            <Server className="h-3 w-3 text-primary" /> Control Plane Host
+                          </span>
+                          <p className="font-semibold text-foreground truncate">
+                            {getHostDisplayName(multiHostConfig.controlPlaneHostId)}
+                          </p>
+                        </div>
+
+                        <div className="p-2 rounded border border-border bg-background space-y-1">
+                          <span className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+                            <Cpu className="h-3 w-3 text-info" /> Worker Hosts ({multiHostConfig.workerHostIds.length})
+                          </span>
+                          <p className="font-semibold text-foreground truncate">
+                            {multiHostConfig.workerHostIds.map((id: number) => getHostDisplayName(id)).join(', ') || 'None'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {Object.keys(multiHostConfig.dpuSelections).length > 0 && (
+                        <div className="p-2 rounded border border-border bg-background text-xs space-y-1">
+                          <span className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+                            <Network className="h-3 w-3 text-success" /> DPU Accelerator Mapping
+                          </span>
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {Object.entries(multiHostConfig.dpuSelections).map(([hId, dpu]) => (
+                              <Badge key={hId} variant="secondary" className="text-[10px] font-mono">
+                                {getHostDisplayName(hId)}: {String(dpu)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {multiHostConfig.tmfifoPoolCidr && (
+                        <div className="flex items-center justify-between text-xs px-1 text-muted-foreground">
+                          <span>tmfifo IPAM Pool:</span>
+                          <span className="font-mono text-foreground font-medium">{multiHostConfig.tmfifoPoolCidr}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Select Target Host</Label>
+                      <Select
+                        value={selectedBareMetalHostId}
+                        onValueChange={setSelectedBareMetalHostId}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder="Select a discovered host..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {bareMetalHosts && bareMetalHosts.length > 0 ? (
+                            bareMetalHosts.map((host: BareMetalHost) => (
+                              <SelectItem key={host.id} value={String(host.id)}>
+                                {host.hostname || host.host_ip}
+                                {' — '}
+                                {host.topology ? `topology: ${host.topology}` : 'Not discovered'}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="__none__" disabled>
+                              No hosts registered — go to Bare Metal tab first
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        The selected host must have SSH access configured and discovery completed.
+                      </p>
+                    </div>
+                  )}
+                </SectionCard>
+              )}
+
+              {/* ADR-478 P1b: BNK Release picker — bare-metal blueprints only */}
+              {isBareMetalTemplate && deployMode === 'existing' && selectedProjectId && (
+                <SectionCard title="BNK release" compact>
                   <div className="space-y-2">
                     <Select
-                      value={selectedBareMetalHostId}
-                      onValueChange={setSelectedBareMetalHostId}
+                      value={selectedReleaseId != null ? String(selectedReleaseId) : ''}
+                      onValueChange={(val) => setSelectedReleaseId(val ? Number(val) : null)}
                     >
                       <SelectTrigger className="h-8 text-sm">
-                        <SelectValue placeholder="Select a discovered host..." />
+                        <SelectValue placeholder="Default release (catalog default)" />
                       </SelectTrigger>
                       <SelectContent>
-                        {bareMetalHosts && bareMetalHosts.length > 0 ? (
-                          bareMetalHosts.map((host: BareMetalHost) => (
-                            <SelectItem key={host.id} value={String(host.id)}>
-                              {host.hostname || host.host_ip}
-                              {' — '}
-                              {host.topology ? `topology: ${host.topology}` : 'Not discovered'}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <SelectItem value="__none__" disabled>
-                            No hosts registered — go to Bare Metal tab first
+                        {(deployableReleases ?? []).filter((r) => r.is_active).map((r) => (
+                          <SelectItem key={r.id} value={String(r.id)}>
+                            {r.display_name}{r.is_default ? ' (default)' : ''}
                           </SelectItem>
-                        )}
+                        ))}
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      The selected host must have SSH access configured and discovery completed.
+                      Leave blank to use the catalog default. The selected release is stamped onto the host at deploy time.
                     </p>
                   </div>
                 </SectionCard>
@@ -1569,7 +1824,7 @@ export function StackDetailDialog({ slug, open, onOpenChange, onSuccess }: Stack
                   disabled={
                     (deployMode === 'new' && !projectName.trim()) ||
                     (deployMode === 'existing' && !selectedProjectId) ||
-                    (deployMode === 'existing' && !!prerequisitesCheck && !prerequisitesCheck.all_satisfied) ||
+                    (deployMode === 'existing' && !areSecretsSatisfied) ||
                     isDeploying ||
                     hasMissingCatalogModules
                   }

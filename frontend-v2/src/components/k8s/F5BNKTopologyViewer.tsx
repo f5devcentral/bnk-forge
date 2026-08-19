@@ -194,7 +194,16 @@ interface DataPlaneSnatPool {
 interface DataPlaneEgress {
   name: string;
   namespace: string;
-  sourceTranslation: Record<string, unknown>;
+  snatType: string;
+  egressSnatpool: string | null;
+  firewallEnforcedPolicy: string | null;
+  logProfile: string | null;
+  capturedNamespaces: string[];
+  vxlan: {
+    tmmInterfaceName: string;
+    nodeInterfaceName: string;
+  } | null;
+  ready: boolean;
 }
 
 interface DataPlaneHslPublisher {
@@ -1042,12 +1051,57 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                   defaultOpen={false}
                 >
                   {dataPlane!.egresses.map((eg) => (
-                    <TreeLeaf
-                      key={eg.name}
+                    <CollapsibleSection
+                      key={`${eg.namespace}/${eg.name}`}
+                      title={`${eg.name}${eg.namespace ? ` (${eg.namespace})` : ''}`}
                       icon={ArrowRightLeft}
-                      label={eg.name}
                       indent={1}
-                    />
+                      defaultOpen={false}
+                    >
+                      <TreeLeaf
+                        icon={ArrowRightLeft}
+                        label="SNAT Type"
+                        detail={eg.snatType}
+                        badges={[{
+                          text: eg.ready ? 'Programmed' : 'Pending',
+                          variant: eg.ready ? 'success' : 'warning',
+                        }]}
+                        indent={2}
+                      />
+                      {eg.capturedNamespaces.map((ns, i) => (
+                        <TreeLeaf
+                          key={i}
+                          icon={Network}
+                          label={ns}
+                          detail="Captured Namespace"
+                          indent={2}
+                        />
+                      ))}
+                      {eg.firewallEnforcedPolicy && (
+                        <TreeLeaf
+                          icon={Shield}
+                          label="Firewall Policy"
+                          detail={eg.firewallEnforcedPolicy}
+                          indent={2}
+                        />
+                      )}
+                      {eg.logProfile && (
+                        <TreeLeaf
+                          icon={FileText}
+                          label="Log Profile"
+                          detail={eg.logProfile}
+                          indent={2}
+                        />
+                      )}
+                      {eg.vxlan && (
+                        <TreeLeaf
+                          icon={Network}
+                          label="VXLAN Interface"
+                          detail={`${eg.vxlan.tmmInterfaceName} → ${eg.vxlan.nodeInterfaceName}`}
+                          indent={2}
+                        />
+                      )}
+                    </CollapsibleSection>
                   ))}
                 </CollapsibleSection>
               </div>

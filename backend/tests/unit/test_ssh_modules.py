@@ -1076,3 +1076,122 @@ class TestBfCfgSprint2Parity:
         assert "write_files" in parsed
         assert "runcmd" in parsed
         assert "chpasswd" in parsed
+
+
+# ── setup-dpu-networking: internet verification ───────────────────────
+
+
+class TestSetupDPUNetworkingVerification:
+    """BM-VER: _verify_dpu_internet_access is retry-tolerant and diagnostic."""
+
+    def _make_result(self, exit_code: int = 0, stdout: str = "", stderr: str = ""):
+        from unittest.mock import MagicMock
+        r = MagicMock()
+        r.exit_code = exit_code
+        r.stdout = stdout
+        r.stderr = stderr
+        return r
+
+    def _make_session(self, side_effects: list):
+        """Mock dpu_session where execute() returns side_effects in order."""
+        from unittest.mock import MagicMock
+        session = MagicMock()
+        session.execute.side_effect = side_effects
+        return session
+
+    def test_verify_passes_immediately_on_icmp(self):
+        """ICMP succeeds on attempt 1 — returns after a single execute call."""
+        mod = SetupDPUNetworkingModule()
+        session = self._make_session([
+            self._make_result(exit_code=0, stdout="1 packets transmitted, 1 received"),
+        ])
+        logs: list[str] = []
+        mod._verify_dpu_internet_access(session, logs.append, max_attempts=5, sleep_seconds=0)
+        assert session.execute.call_count == 1
+        assert any("ICMP 8.8.8.8 OK" in line for line in logs)
+
+    def test_verify_passes_on_second_attempt_after_arp_miss(self):
+        """ARP miss on attempt 1: ICMP + DNS both fail, then ICMP passes on attempt 2."""
+        mod = SetupDPUNetworkingModule()
+        session = self._make_session([
+            # attempt 1
+            self._make_result(exit_code=1, stdout="", stderr="Network unreachable"),
+            self._make_result(exit_code=1, stdout="DNS_FAILED"),
+            # attempt 2
+            self._make_result(exit_code=0, stdout="1 packets transmitted, 1 received"),
+        ])
+        logs: list[str] = []
+        mod._verify_dpu_internet_access(session, logs.append, max_attempts=5, sleep_seconds=0)
+        assert session.execute.call_count == 3
+        assert any("ICMP 8.8.8.8 OK" in line for line in logs)
+        assert any("retrying" in line for line in logs)
+
+    def test_verify_passes_via_dns_and_tcp_when_icmp_blocked(self):
+        """ICMP blocked by firewall: DNS + TCP succeed so verification passes."""
+        mod = SetupDPUNetworkingModule()
+        session = self._make_session([
+            self._make_result(exit_code=1, stdout=""),          # ICMP blocked
+            self._make_result(exit_code=0, stdout="DNS_OK"),    # DNS resolves
+            self._make_result(exit_code=0, stdout="TCP_OK"),    # TCP pkgs.k8s.io:443
+        ])
+        logs: list[str] = []
+        mod._verify_dpu_internet_access(session, logs.append, max_attempts=3, sleep_seconds=0)
+        assert any("DNS:" in line for line in logs)
+        assert any("TCP:" in line for line in logs)
+        assert any("verified" in line for line in logs)
+
+    def test_verify_raises_naming_dns_on_dns_failure(self):
+        """All attempts: ICMP fails + DNS fails → RuntimeError names DNS:pkgs.k8s.io."""
+        mod = SetupDPUNetworkingModule()
+        fail_icmp = self._make_result(exit_code=1, stdout="")
+        fail_dns = self._make_result(exit_code=1, stdout="DNS_FAILED")
+        session = self._make_session([fail_icmp, fail_dns] * 3)
+        logs: list[str] = []
+        with pytest.raises(RuntimeError) as exc_info:
+            mod._verify_dpu_internet_access(session, logs.append, max_attempts=3, sleep_seconds=0)
+        assert "DNS:pkgs.k8s.io" in str(exc_info.value)
+        assert "3 attempt" in str(exc_info.value)
+
+    def test_verify_raises_naming_tcp_endpoints_on_tcp_failure(self):
+        """DNS OK but both TCP endpoints fail → RuntimeError names both TCP checks."""
+        mod = SetupDPUNetworkingModule()
+        fail_icmp = self._make_result(exit_code=1, stdout="")
+        ok_dns = self._make_result(exit_code=0, stdout="DNS_OK")
+        fail_tcp = self._make_result(exit_code=1, stdout="TCP_FAILED")
+        # 2 attempts × (ICMP + DNS + 2 TCP endpoints) = 8 calls
+        session = self._make_session([fail_icmp, ok_dns, fail_tcp, fail_tcp] * 2)
+        logs: list[str] = []
+        with pytest.raises(RuntimeError) as exc_info:
+            mod._verify_dpu_internet_access(session, logs.append, max_attempts=2, sleep_seconds=0)
+        error_msg = str(exc_info.value)
+        assert "TCP:pkgs.k8s.io:443" in error_msg
+        assert "TCP:github.com:443" in error_msg
+
+    def test_verify_raises_after_all_retries_exhausted(self):
+        """Genuine failure: error message reports attempt count and check names."""
+        mod = SetupDPUNetworkingModule()
+        fail_icmp = self._make_result(exit_code=1, stdout="")
+        fail_dns = self._make_result(exit_code=1, stdout="DNS_FAILED")
+        session = self._make_session([fail_icmp, fail_dns] * 5)
+        logs: list[str] = []
+        with pytest.raises(RuntimeError) as exc_info:
+            mod._verify_dpu_internet_access(session, logs.append, max_attempts=5, sleep_seconds=0)
+        error_msg = str(exc_info.value)
+        assert "5 attempt" in error_msg
+        assert "ICMP:8.8.8.8" in error_msg
+        # Error is actionable — points at what to check
+        assert "iptables" in error_msg or "resolv.conf" in error_msg
+
+    def test_verify_second_tcp_endpoint_tried_on_first_failure(self):
+        """When pkgs.k8s.io:443 TCP fails, github.com:443 is attempted next."""
+        mod = SetupDPUNetworkingModule()
+        session = self._make_session([
+            self._make_result(exit_code=1, stdout=""),        # ICMP fail
+            self._make_result(exit_code=0, stdout="DNS_OK"),  # DNS OK
+            self._make_result(exit_code=1, stdout="TCP_FAILED"),  # pkgs.k8s.io:443 fail
+            self._make_result(exit_code=0, stdout="TCP_OK"),      # github.com:443 OK
+        ])
+        logs: list[str] = []
+        mod._verify_dpu_internet_access(session, logs.append, max_attempts=2, sleep_seconds=0)
+        assert session.execute.call_count == 4
+        assert any("github.com:443" in line for line in logs)

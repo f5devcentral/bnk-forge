@@ -572,11 +572,35 @@ class TestClusterDriftStatus:
         """Viewer can get drift status for modules deployed to a cluster."""
         cluster = make_k8s_cluster(project=sample_project, name="drift-status-cluster")
         mock_svc = MagicMock()
+        # Return value must match ClusterDriftStatusResponse (response_model filters strictly).
         mock_svc.get_cluster_drift_status.return_value = {
             "cluster_id": cluster.id,
-            "modules": [
-                {"module_id": 1, "drift_detected": False, "status": "clean"},
+            "project_id": sample_project.id,
+            "drift_enabled": False,
+            "total_modules": 1,
+            "modules_with_drift": 0,
+            "modules_ok": 0,
+            "modules_unchecked": 1,
+            "overall_status": "unchecked",
+            "module_statuses": [
+                {
+                    "module_id": 1,
+                    "module_name": "test-module",
+                    "module_path": "modules/test",
+                    "engine_type": "python",
+                    "status": "unchecked",
+                    "drift_detected": False,
+                    "drift_summary": None,
+                    "drift_details": None,
+                    "last_check_at": None,
+                    "check_id": None,
+                }
             ],
+            "release_drift": {
+                "status": "not_forge_deployed",
+                "deployed_release_id": None,
+                "running_release_id": None,
+            },
         }
         mock_svc_cls.return_value = mock_svc
 
@@ -587,5 +611,7 @@ class TestClusterDriftStatus:
         assert response.status_code == 200
         data = response.json()
         assert data["cluster_id"] == cluster.id
-        assert len(data["modules"]) == 1
+        assert data["total_modules"] == 1
+        assert len(data["module_statuses"]) == 1
+        assert data["release_drift"]["status"] == "not_forge_deployed"
         mock_svc.get_cluster_drift_status.assert_called_once_with(cluster.id)

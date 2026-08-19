@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from routes.module_sources import ModuleSourceResponse
+
 
 def _make_source_response(**overrides):
     """Build a sample ModuleSourceResponse-compatible dict."""
@@ -36,6 +38,12 @@ def _make_source_response(**overrides):
         "sync_error": None,
         "module_count": 0,
         "is_active": True,
+        # Both computed by ModuleSourceService._serialize_source() rather than
+        # stored on the model. Mirrored here so the mocked service returns what
+        # the real one does -- is_default is required by ModuleSourceResponse,
+        # and omitting it made every test using this helper 500.
+        "is_default": False,
+        "credential_recommendation": None,
         "auto_sync": False,
         "sync_interval_hours": 24,
         "description": "Test module source",
@@ -43,6 +51,11 @@ def _make_source_response(**overrides):
         "updated_at": datetime.now(UTC).isoformat(),
     }
     base.update(overrides)
+    # Fail here, in the helper, if the response schema gains a required field.
+    # These tests patch ModuleSourceService entirely, so a stale fixture is
+    # invisible until FastAPI rejects the response -- which is how is_default
+    # went unnoticed (#130).
+    ModuleSourceResponse.model_validate(base)
     return base
 
 

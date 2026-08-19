@@ -9,7 +9,7 @@ echo "================================================"
 # Docker volumes are created as root, but we run as bnkforge (uid 1000)
 # The Makefile install target handles permissions, but we also check here
 # in case the container is started directly
-DIRS_TO_CHECK="/app/state /app/keys /app/projects /app/workspaces /app/helm_charts /app/bfb-cache"
+DIRS_TO_CHECK="/app/state /app/keys /app/agent-token /app/projects /app/workspaces /app/helm_charts /app/bfb-cache"
 for dir in $DIRS_TO_CHECK; do
     if [ -d "$dir" ] && [ ! -w "$dir" ]; then
         echo "Warning: $dir is not writable by bnkforge user"

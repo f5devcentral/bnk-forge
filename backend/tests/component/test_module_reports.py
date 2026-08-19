@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from core.errors import AppError
+from core.errors import AppError, BadRequestError
 from services.module_metadata import InvalidMetadataSchemaError, ModuleMetadataValidator
 from services.module_reports_service import MAX_REPORT_FILE_BYTES, ModuleReportsService
 from services.workspace_manager import WorkspaceManager
@@ -243,3 +243,69 @@ class TestModuleReportsContent:
         os.makedirs(os.path.join(ws_root, "poc", "reports"), exist_ok=True)
         with pytest.raises(AppError):
             ModuleReportsService(db).read_content(module.id, "nope.md")
+
+
+@pytest.mark.component
+class TestReportsReadbackHardening:
+    """Deferred #468-review nits on the report readback surface (issue #470)."""
+
+    def test_rendered_dir_containing_dotdot_is_refused(self, db, monkeypatch, tmp_path):
+        """`dir` renders from an input, so a manifest-clean value can still climb.
+
+        realpath containment already held; the manifest-time validator rejects
+        `..` on the DECLARED value but nothing rejected it on the RENDERED one.
+        """
+        module, ws_root = _module_with_reports(
+            db, monkeypatch, tmp_path,
+            dir_value="{{inputs.subdir}}/reports",
+            variables={"subdir": "poc/.."},
+        )
+        # Put a file where the climb would land, so a pass here means real exposure.
+        _write(os.path.join(ws_root, "reports", "2026-07-18T06-00-00Z", "r.md"), "# leaked")
+
+        result = ModuleReportsService(db).list_runs(module.id)
+
+        assert result["runs"] == [], (
+            "a rendered reports dir containing '..' was accepted (issue #470)"
+        )
+
+    def test_plain_rendered_dir_still_works(self, db, monkeypatch, tmp_path):
+        """Contrast: templated dirs without a climb must keep working."""
+        module, ws_root = _module_with_reports(
+            db, monkeypatch, tmp_path,
+            dir_value="{{inputs.subdir}}/reports",
+            variables={"subdir": "poc"},
+        )
+        _write(os.path.join(ws_root, "poc", "reports", "2026-07-18T06-00-00Z", "r.md"), "# ok")
+
+        result = ModuleReportsService(db).list_runs(module.id)
+        assert [r["stamp"] for r in result["runs"]] == ["2026-07-18T06-00-00Z"]
+
+    def test_non_utf8_report_is_rejected_not_mojibake(self, db, monkeypatch, tmp_path):
+        """A binary/latin-1 file was served as errors='replace' garbage.
+
+        That reads as a corrupt report rather than as "this is not text".
+        """
+        module, ws_root = _module_with_reports(db, monkeypatch, tmp_path)
+        target = os.path.join(ws_root, "poc", "reports", "2026-07-18T06-00-00Z", "r.md")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(b"# Report\n\xff\xfe\x00binary\n")
+
+        with pytest.raises(BadRequestError, match="(?i)utf-8"):
+            ModuleReportsService(db).read_content(
+                module.id, "2026-07-18T06-00-00Z/r.md"
+            )
+
+    def test_utf8_report_still_reads(self, db, monkeypatch, tmp_path):
+        """Contrast: real UTF-8, including non-ASCII, must still be served."""
+        module, ws_root = _module_with_reports(db, monkeypatch, tmp_path)
+        _write(
+            os.path.join(ws_root, "poc", "reports", "2026-07-18T06-00-00Z", "r.md"),
+            "# Rapport — café ✅\n",
+        )
+
+        result = ModuleReportsService(db).read_content(
+            module.id, "2026-07-18T06-00-00Z/r.md"
+        )
+        assert "café ✅" in result["content"]

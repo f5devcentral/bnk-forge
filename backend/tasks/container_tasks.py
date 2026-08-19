@@ -119,7 +119,11 @@ def _resolve_runner(db, manifest: dict, project):
     )
 
 
-def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, ModuleContext]:
+def _build_engine_and_ctx(
+    db, module: ProjectModule, *, operation: str = "apply",
+    celery_task_id: str | None = None,
+    extra_variables: dict | None = None,
+) -> tuple[ContainerEngine, ModuleContext]:
     """Resolve manifest, substrate, pull secret, and build the engine + context."""
     from services.credentials_service import get_cloud_credentials_only
     from services.execution.container_run_secrets import (
@@ -173,6 +177,60 @@ def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, M
     # Effective form inputs for {{inputs.*}} templating: base variables overlaid
     # with variable_overrides (where blueprint-resolved form values are stored).
     effective_variables = {**(module.variables or {}), **(module.variable_overrides or {})}
+    # Inputs a pack declares `source: "module"` are resolved from the dependency's
+    # outputs, the same way every other engine resolves them. Without this the
+    # declaration is inert on this path — stored, never applied — and the step runs
+    # with the input unset, failing from inside the image in a way that names the
+    # input rather than the wiring that should have supplied it.
+    #
+    # Wired BEFORE the operator's own values are layered on, so an explicit form
+    # value still wins: a blueprint that hard-codes a registry host should not be
+    # overridden by a dependency that happens to publish one.
+    if library_module is not None:
+        # Imported here, not at module scope, matching how can_execute is pulled in
+        # below — variable_assembler reaches back into services/ and importing it
+        # eagerly from a tasks module risks a cycle.
+        from services.execution.variable_assembler import apply_dependency_output_wiring
+
+        # Not seeded with Layer 2.75's early transforms, and that is currently
+        # fine rather than a known hole: MODULE_TRANSFORMS is keyed on module
+        # path and every registered key is a Python-defined module
+        # (bare-metal/*, bnk/*, k8s/*). Container modules are artifacts selected
+        # by artifact kind, so none of them has an early transform to miss. If
+        # one ever gains a transform, this is the line that has to change.
+        #
+        # Seeded with what is already resolved, mirroring build_variables' Layer
+        # 2.6. The wiring decides whether a missing required dependency is fatal
+        # by checking whether the input is ALREADY present, so handing it an empty
+        # dict disables that check and makes this path stricter than every engine
+        # it is meant to match: a pack that wires from infra/aws/vpc raises here on
+        # bare metal, where that module does not exist, even though the operator
+        # supplied the value on the form. Layer 2.6 exists precisely to prevent
+        # that, and seeding is how this path inherits it.
+        wired: dict = dict(effective_variables)
+        apply_dependency_output_wiring(
+            db, module, library_module, wired, operation=operation
+        )
+        resolved = {k for k in wired if k not in effective_variables}
+        if resolved:
+            logger.info(
+                "Resolved %d input(s) from dependency wiring: %s",
+                len(resolved), ", ".join(sorted(resolved)),
+            )
+        # A dependency output that landed on a key the operator also set is
+        # discarded by the merge below. That is the intended precedence, but it
+        # is invisible to someone asking why their `from_output` "didn't apply",
+        # so say so once at debug level.
+        overridden = sorted(
+            k for k, v in wired.items()
+            if k in effective_variables and effective_variables[k] != v
+        )
+        if overridden:
+            logger.debug(
+                "Dependency output(s) overridden by the module's own values: %s",
+                ", ".join(overridden),
+            )
+        effective_variables = {**wired, **effective_variables}
     # Declared project secrets → workspace files (#442). After the form inputs
     # are known (paths may template {{inputs.*}}), before the engine runs, so a
     # missing secret fails fast naming it rather than surfacing as an opaque CLI
@@ -194,15 +252,76 @@ def _build_engine_and_ctx(db, module: ProjectModule) -> tuple[ContainerEngine, M
 
     engine = ContainerEngine(
         runner,
+        celery_task_id=celery_task_id,
         mount_path=mount_path,
         workspace_host_path=workspace_host,
         workspace_local_path=workspace_local,
         workspace_volume=workspace_volume,
         workspace_subpath=workspace_subpath,
         pull_authfile_json=pull_authfile,
-        secret_values=list(credentials_env.values()) + ([pull_authfile] if pull_authfile else []),
+        secret_values=(
+            list(credentials_env.values())
+            + ([pull_authfile] if pull_authfile else [])
+            # extra_variables carries invocation-time action inputs, which are
+            # NOT in module.variables — the engine is built before run_action
+            # merges them, so without this the declared-sensitive action input
+            # has no value for the redactor to match against.
+            + _sensitive_input_values(
+                manifest, {**effective_variables, **(extra_variables or {})}
+            )
+        ),
     )
     return engine, ctx
+
+
+def _sensitive_input_values(manifest: dict, variables: dict) -> list[str]:
+    """Values of manifest inputs marked (or inferred) sensitive.
+
+    The engine redacts these from streamed and captured log lines. Previously
+    only cloud-credential and pull values were redacted, but a step's argv is
+    echoed verbatim to the task log and the module-log WebSocket — so an
+    artifact declaring ``args: [..., "--token", "{{inputs.api_token}}"]`` leaked
+    that token in cleartext (issue #408.6). The shipped roksbnkctl artifact was
+    unaffected (its secret rides in a redacted ``-e`` env var), which is why this
+    stayed latent.
+    """
+    from utils.security import is_sensitive_input
+
+    values: list[str] = []
+    definitions: list[dict] = []
+
+    def _collect(block) -> None:
+        if isinstance(block, list):
+            definitions.extend(d for d in block if isinstance(d, dict))
+        elif isinstance(block, dict):
+            # Both shapes appear in the wild: a flat list, or required/optional
+            # groups.
+            for group in block.values():
+                if isinstance(group, list):
+                    definitions.extend(d for d in group if isinstance(d, dict))
+
+    _collect((manifest or {}).get("inputs"))
+
+    # Actions declare their OWN inputs, which run_action merges into the
+    # templating variables. Reading only the top-level block meant an action
+    # input marked sensitive never reached the redactor, so `--token
+    # {{inputs.api_token}}` was echoed verbatim into task.logs, the module-log
+    # WebSocket and OperationResult.stdout — the same leak class this function
+    # exists to close, on the sibling path.
+    actions = (manifest or {}).get("actions")
+    if isinstance(actions, dict):
+        for definition in actions.values():
+            if isinstance(definition, dict):
+                _collect(definition.get("inputs"))
+
+    for definition in definitions:
+        name = definition.get("name")
+        if not isinstance(name, str) or not is_sensitive_input(definition):
+            continue
+        value = (variables or {}).get(name)
+        if isinstance(value, str) and value:
+            values.append(value)
+    return values
 
 
 def _streaming_sink(task, db, header: str, lines: list[str], *, interval: float = 2.0):
@@ -373,7 +492,7 @@ def run_container_init(self, task_db_id: int, module_id: int, auto_apply: bool =
                 raise ValueError(f"Module {module_id} not found")
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 result = engine.init(ctx, on_output=lambda ln: lines.append(f"[{_ts()}] {ln}"))
 
@@ -447,7 +566,7 @@ def run_container_plan(self, task_db_id: int, module_id: int, **kwargs):
             _notify_task_started(task)
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 result = engine.plan(ctx, on_output=lambda ln: lines.append(f"[{_ts()}] {ln}"))
 
@@ -507,7 +626,7 @@ def run_container_apply(self, task_db_id: int, module_id: int, **kwargs):
                 raise ValueError(f"Dependencies not satisfied: {', '.join(missing)}")
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(db, module, celery_task_id=self.request.id)
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE APPLY ===\nModule: {ctx.path}"
                 sink = _streaming_sink(task, db, header, lines)
@@ -581,6 +700,14 @@ def run_container_action(self, task_db_id: int, module_id: int, action: str, act
 
             # Status gate: actions exercise a deployed module — a test against an
             # absent cluster fails fast with an actionable error.
+            #
+            # This gate is also why _build_engine_and_ctx below takes the default
+            # operation="apply" rather than something destroy-flavoured: D-034's
+            # contract is that an action exercises a deployed module WITHOUT
+            # changing it, and this check means its dependencies are up by
+            # definition. There is no action that can reach the dependency wiring
+            # with its deps already torn down, so the strict (non-destroy) branch
+            # is correct here, not just consistent with kubernetes_tasks.
             if module.status != "applied":
                 task.status = "failed"
                 task.error = (
@@ -635,7 +762,10 @@ def run_container_action(self, task_db_id: int, module_id: int, action: str, act
                     _publish_task_completion(task)
                     return {"success": False, "error": task.error}
 
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(
+                    db, module, celery_task_id=self.request.id,
+                    extra_variables=action_inputs,
+                )
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE ACTION '{action}' ===\nModule: {ctx.path}"
                 result = engine.run_action(
@@ -700,7 +830,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 db.commit()
                 _publish_task_completion(task)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
                 return {"status": "skipped", "module_id": module.id}
 
             task.status = "in_progress"
@@ -710,7 +840,9 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             _notify_task_started(task)
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                engine, ctx = _build_engine_and_ctx(db, module)
+                engine, ctx = _build_engine_and_ctx(
+                    db, module, operation="destroy", celery_task_id=self.request.id
+                )
                 lines: list[str] = []
                 header = f"=== CONTAINER ENGINE DESTROY ===\nModule: {ctx.path}"
                 sink = _streaming_sink(task, db, header, lines)
@@ -735,7 +867,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 db.commit()
                 create_deployment_record(db, task, module, "destroy", task.logs)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             if result.success:
                 _maybe_unregister_container_cluster(db, module)
@@ -755,7 +887,7 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("destroy trigger failed after container lock error: %s", trigger_err)
             raise
@@ -766,7 +898,44 @@ def run_container_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("destroy trigger failed after container exception: %s", trigger_err)
             raise
+
+
+@celery_app.task(name="tasks.container_tasks.kill_module_containers")
+def kill_module_containers(celery_task_ids: list[str]) -> dict:
+    """Kill the step containers owned by ``celery_task_ids``. Runs on the WORKER.
+
+    This exists because cancel is invoked from a FastAPI route — i.e. the
+    ``backend`` service, built from the ``api`` Dockerfile stage, which does NOT
+    copy the docker CLI (only the ``worker`` stage does) and is not given
+    DOCKER_HOST by compose. Calling the runner inline there raised
+    FileNotFoundError, which the old code swallowed into "0 containers killed",
+    so the user was told the operation stopped while the detached container kept
+    driving the vendor CLI against live infrastructure.
+
+    Same constraint the reaper already documents: only the celery services can
+    reach the docker endpoint.
+
+    Returns ``{"killed": [...], "reachable": bool, "error": str | None}`` so the
+    caller can tell "nothing was running" from "I could not look" — the module
+    lock must only be released on the former.
+    """
+    from services.execution.container_runner import (
+        ContainerKillUnavailableError,
+        DockerRunner,
+    )
+
+    runner = DockerRunner()
+    killed: list[str] = []
+    for task_id in celery_task_ids or []:
+        if not task_id:
+            continue
+        try:
+            killed.extend(runner.kill_task_containers(task_id))
+        except ContainerKillUnavailableError as exc:
+            logger.warning("kill_module_containers: %s", exc)
+            return {"killed": killed, "reachable": False, "error": str(exc)}
+    return {"killed": killed, "reachable": True, "error": None}

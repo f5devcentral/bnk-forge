@@ -691,6 +691,19 @@ class ReleaseSourceType(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# ReleaseSourceKind — the kind of a first-class ReleaseSource entity (ADR-494)
+# DISTINCT from ReleaseSourceType above, which tracks provenance of BnkRelease rows.
+# ---------------------------------------------------------------------------
+
+class ReleaseSourceKind(StrEnum):
+    """The transport kind of a ReleaseSource — where the Catalog syncs releases from."""
+
+    OCI = "oci"        # OCI registry (repo.f5.com or compatible)
+    MIRROR = "mirror"  # Air-gapped mirror / proxy registry
+    MANUAL = "manual"  # No sync; releases are hand-entered by an admin
+
+
+# ---------------------------------------------------------------------------
 # Module-level convenience constants
 # ---------------------------------------------------------------------------
 

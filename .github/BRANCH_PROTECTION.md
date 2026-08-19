@@ -75,7 +75,7 @@ Release: Version bump + tag + changelog          [manual, requires CI Gate]
 | `P2 · Proxy Config` | No (aggregated) | Nginx config via `make test-proxy` |
 | `P2 · DB Migrations` | No (aggregated) | Migration tests via `make test-db` |
 | `P2 · Build · Frontend` | No (aggregated) | Build check via `make build-frontend-check` |
-| `P3 · Integration Tests` | No (aggregated) | Integration tests via `make test-integration-full` |
+| `P3 · Integration Tests` | No (aggregated) | Integration tests via `make test-integration` + `make test-integration-full` (complementary marker sets — both are needed to cover `tests/integration/`) |
 | `P4 · Security Audit` | No (aggregated) | pip-audit + npm audit via `make security-audit` |
 | `P4 · Docker Build + Scan` | No (aggregated) | Docker build + Trivy scan |
 | `P5 · E2E Tests` | ❌ No | Manual/nightly only |

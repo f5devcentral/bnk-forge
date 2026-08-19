@@ -129,6 +129,70 @@ class TestAgentAuthFlagOn:
             )
         assert resp.status_code not in (400, 401)
 
+    def _headers_for(self, **claims) -> dict:
+        from services.auth_service import create_access_token
+        return {"Authorization": f"Bearer {create_access_token(claims)}"}
+
+    def test_register_rejects_viewer_token(self, client):
+        """#148: authentication is not write intent. A viewer token decodes fine
+        but grants no right to register agents or push results."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="viewer-user", role="viewer"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_register_accepts_agent_role_token(self, client):
+        """The bootstrap token: role=agent, NO agent_id. Must be able to register."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="forge-builtin-agent", role="agent"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_accepts_operator_token(self, client):
+        """The documented human curl flow keeps working with an operator token."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="op", role="operator"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_rejects_token_with_no_role(self, client):
+        """A token with no role claim must fail closed, not fall through."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="roleless"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_default_is_secure(self):
+        """#148: a default deployment must not accept unauthenticated writes."""
+        from core.config import Settings
+        assert Settings().BENCHMARK_AGENT_AUTH_REQUIRED is True
+
     def test_ingest_rejects_missing_bearer(self, client):
         """Flag on + no Authorization → 400 AGENT_AUTH_REQUIRED.
 
@@ -198,14 +262,105 @@ class TestWSTokenValidationLogic:
         # WS handler logic: int(token_agent_id) != path_agent_id → reject
         assert int(token_agent_id) != path_agent_id
 
-    def test_no_agent_id_claim_is_accepted(self):
-        """Token without agent_id claim → no restriction (any agent allowed)."""
-        from services.auth_service import create_access_token, decode_token
+    def test_no_agent_id_claim_is_rejected(self):
+        """Token without agent_id claim → rejected when agent auth is required (#41 F5).
+
+        This previously asserted the opposite: a claimless token skipped the
+        binding check, so any valid token -- a viewer's included -- could connect
+        as any agent_id. Authentication is not identity.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
 
         token = create_access_token(data={"sub": "agent", "role": "admin"})
-        payload = decode_token(token)
-        # None means skip the agent_id check in the WS handler
-        assert payload.get("agent_id") is None
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_matching_agent_id_claim_authorizes_through_helper(self):
+        """The bound case still connects — the gate must not be a blanket deny."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 7})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 7) is None
+
+    def test_mismatched_agent_id_claim_rejected_through_helper(self):
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 99})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_non_numeric_agent_id_claim_rejected(self):
+        """A claim that cannot be compared must fail closed, not raise."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(
+            data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"}
+        )
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_flag_off_still_admits_a_claimless_token(self):
+        """Regression guard: the built-in agent must keep working.
+
+        The stricter claim requirement is Layer 1 only. With
+        BENCHMARK_AGENT_AUTH_REQUIRED off, the built-in forge-agent -- which
+        ships with an empty AGENT_TOKEN and registers before it has an agent_id
+        -- must still connect, or this fix breaks every default install.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin"})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
+
+    def test_flag_off_still_admits_no_token_at_all(self):
+        """The built-in agent's default: AGENT_TOKEN empty."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+
+        ws = MagicMock()
+        ws.query_params = {}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
 
     def test_matching_agent_id_passes(self):
         """Token with agent_id=7 and path agent_id=7 → accepted."""

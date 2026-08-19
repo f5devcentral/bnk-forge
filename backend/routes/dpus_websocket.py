@@ -718,7 +718,7 @@ async def _run_ssh_os_inband(
 
             # Prefer whatever the probe captured; fall back to the per-DPU
             # tmfifo IP derived from the rshim index for multi-DPU hosts.
-            os_ip = dpu.dpu_os_ip or derive_tmfifo_dpu_host(dpu.rshim_device)
+            os_ip = dpu.dpu_os_ip or derive_tmfifo_dpu_host(dpu.rshim_device, dpu=dpu)
 
             host_client = open_inband_host_ssh(db, dpu)
             try:

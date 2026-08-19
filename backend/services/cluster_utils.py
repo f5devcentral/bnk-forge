@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 
 from core.encryption import decrypt_value
 from models import KubernetesCluster
-from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
+from services.kubeconfig_normalizer import (
+    NormalizationSource,
+    normalize_kubeconfig,
+    rewrite_kubeconfig_for_tunnel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,19 +187,10 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
     # Check if project uses SSH credential template — open tunnel if so
     tunnel_port = _maybe_open_ssh_tunnel(cluster)
     if tunnel_port:
-        import yaml as yaml_lib
-        kubeconfig_dict = yaml_lib.safe_load(kubeconfig_content)
-        for c in kubeconfig_dict.get('clusters', []):
-            # Use 127.0.0.1 explicitly, not "localhost" — the latter
-            # resolves to both ::1 and 127.0.0.1, and the tunnel listener
-            # binds to 0.0.0.0 (IPv4 only). httpx/kr8s try ::1 first and
-            # bail out with "All connection attempts failed" instead of
-            # falling back to the IPv4 address.
-            c['cluster']['server'] = f'https://127.0.0.1:{tunnel_port}'
-            c['cluster']['insecure-skip-tls-verify'] = True
-            c['cluster'].pop('certificate-authority-data', None)
-            c['cluster'].pop('certificate-authority', None)
-        kubeconfig_content = yaml_lib.dump(kubeconfig_dict, default_flow_style=False)
+        # Shared with config_writer (the OpenTofu path) so both tunnel consumers
+        # get the same rewrite -- verification ON via tls-server-name where the
+        # CA allows it, legacy skip only as a fallback (#7).
+        kubeconfig_content = rewrite_kubeconfig_for_tunnel(kubeconfig_content, tunnel_port)
 
     # For EKS/AWS clusters, set AWS credentials in environment
     # The kubeconfig's 'aws eks get-token' command will use these

@@ -23,6 +23,10 @@ from routes.k8s._shared import (
 )
 from schemas.k8s import (
     BatchConnectivityResponse,
+    BnkClusterConfigCreateRequest,
+    BnkClusterConfigSummary,
+    BnkClusterMemberAssignRequest,
+    BnkClusterMemberAssignResponse,
     ClusterConnectionTestResponse,
     ClusterConnectivityResponse,
     ClusterCreateResponse,
@@ -329,3 +333,63 @@ def get_adaptive_module_plan_from_scan(cluster_id: int, request: AdaptiveModuleR
     else:
         plan = selector.plan_for_template("f5-bnk-2.2", sizing_profile=request.sizing_profile)
     return plan.to_dict()
+
+
+@router.post(
+    "/k8s/clusters/{cluster_id}/bnk-config",
+    response_model=BnkClusterConfigSummary,
+)
+@handle_route_errors("configure BNK cluster settings")
+def configure_bnk_cluster(
+    cluster_id: int,
+    request: BnkClusterConfigCreateRequest,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
+    """Configure BNK cluster side-table options (tmfifo CIDR pool, join transport, CP host)."""
+    from services.bnk_cluster_service import BnkClusterService
+
+    service = BnkClusterService(db)
+    cfg = service.get_or_create_config(
+        cluster_id=cluster_id,
+        tmfifo_pool_cidr=request.tmfifo_pool_cidr,
+        join_transport=request.join_transport,
+        control_plane_host_id=request.control_plane_host_id,
+    )
+    db.commit()
+    db.refresh(cfg)
+    host_ids, dpu_ids = service.cluster_membership(cluster_id)
+    return BnkClusterConfigSummary(
+        id=cfg.id,
+        cluster_id=cfg.cluster_id,
+        tmfifo_pool_cidr=cfg.tmfifo_pool_cidr,
+        join_transport=cfg.join_transport,
+        control_plane_host_id=cfg.control_plane_host_id,
+        host_ids=host_ids,
+        dpu_ids=dpu_ids,
+    )
+
+
+@router.post(
+    "/k8s/clusters/{cluster_id}/bnk-members",
+    response_model=BnkClusterMemberAssignResponse,
+)
+@handle_route_errors("assign BNK cluster members")
+def assign_bnk_cluster_members(
+    cluster_id: int,
+    request: BnkClusterMemberAssignRequest,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
+    """Assign bare-metal hosts and DPUs to a BNK cluster and perform tmfifo IP allocations."""
+    from services.bnk_cluster_service import BnkClusterService
+
+    result = BnkClusterService(db).assign_members(
+        cluster_id=cluster_id,
+        control_plane_host_id=request.control_plane_host_id,
+        host_ids=request.host_ids,
+        dpu_ids=request.dpu_ids,
+        tmfifo_pool_cidr=request.tmfifo_pool_cidr,
+    )
+    db.commit()
+    return BnkClusterMemberAssignResponse(**result)

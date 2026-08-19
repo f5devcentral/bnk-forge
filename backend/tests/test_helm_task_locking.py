@@ -122,6 +122,91 @@ class TestHelmReleaseLockPg:
         assert "pg_advisory_unlock" in str(release_call[0][0])
         assert release_call[0][1] == {"key": expected_key}
 
+    def test_unlock_survives_aborted_transaction(self):
+        """#83: a failed statement in the body must not leak the advisory lock.
+
+        The pre-existing exception test used a plain RuntimeError against a
+        MagicMock db, so db.execute never actually failed -- which is exactly why
+        the leak went unnoticed. Here the unlock itself raises the way Postgres
+        behaves on an aborted transaction (InFailedSqlTransaction), and the lock
+        must still be released after a rollback.
+        """
+        mock_db = MagicMock()
+        expected_key = _helm_lock_key(5, "nginx")
+
+        calls: list[str] = []
+
+        def _execute(stmt, params=None):
+            text = str(stmt)
+            calls.append(text)
+            # acquire ok; first unlock attempt fails like an aborted txn does
+            if "pg_advisory_unlock" in text and calls.count("unlock-failed") == 0:
+                if not mock_db._rolled_back:
+                    raise RuntimeError(
+                        "current transaction is aborted, commands ignored until "
+                        "end of transaction block"
+                    )
+            return MagicMock()
+
+        mock_db._rolled_back = False
+
+        def _rollback():
+            mock_db._rolled_back = True
+
+        mock_db.execute.side_effect = _execute
+        mock_db.rollback.side_effect = _rollback
+
+        with patch("tasks.helm_tasks.DATABASE_URL", "postgresql://localhost/test"):
+            with pytest.raises(RuntimeError, match="body-error"):
+                with helm_release_lock(mock_db, 5, "nginx"):
+                    raise RuntimeError("body-error")
+
+        mock_db.rollback.assert_called_once()
+        unlock_calls = [
+            c for c in mock_db.execute.call_args_list
+            if "pg_advisory_unlock" in str(c[0][0])
+        ]
+        assert len(unlock_calls) == 2, "unlock was not retried after the rollback"
+        assert unlock_calls[-1][0][1] == {"key": expected_key}
+
+    def test_unrecoverable_unlock_is_logged_not_raised(self):
+        """An unrecoverable release must not mask the body's own exception.
+
+        The acquire must succeed here -- otherwise the test passes for the wrong
+        reason, never reaching the release path at all.
+        """
+        mock_db = MagicMock()
+
+        def _execute(stmt, params=None):
+            if "pg_advisory_unlock" in str(stmt):
+                raise RuntimeError("connection is dead")
+            return MagicMock()
+
+        mock_db.execute.side_effect = _execute
+        mock_db.rollback.side_effect = RuntimeError("connection is dead")
+
+        with patch("tasks.helm_tasks.DATABASE_URL", "postgresql://localhost/test"):
+            # The body's error surfaces, not the release failure.
+            with pytest.raises(ValueError, match="body-error"):
+                with helm_release_lock(mock_db, 5, "nginx"):
+                    raise ValueError("body-error")
+
+    def test_unrecoverable_unlock_on_success_path_does_not_raise(self):
+        """A clean body must not start failing because the release could not run."""
+        mock_db = MagicMock()
+
+        def _execute(stmt, params=None):
+            if "pg_advisory_unlock" in str(stmt):
+                raise RuntimeError("connection is dead")
+            return MagicMock()
+
+        mock_db.execute.side_effect = _execute
+        mock_db.rollback.side_effect = RuntimeError("connection is dead")
+
+        with patch("tasks.helm_tasks.DATABASE_URL", "postgresql://localhost/test"):
+            with helm_release_lock(mock_db, 5, "nginx"):
+                pass
+
     def test_different_releases_use_different_lock_keys(self):
         db_a = MagicMock()
         db_b = MagicMock()

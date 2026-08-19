@@ -1,10 +1,11 @@
 """
 SSH port of catalog module 20 — k8s/cert-manager (bare-metal/cert-manager).
 
-Installs cert-manager via Helm. Per the CONCRETE forge catalog (not the ADR's
-assumption), the chart is **Jetstack** ``oci://quay.io/jetstack/charts/cert-manager``
-v1.16.1 — that is the parity target. Maps poc-deployer install-host-k8s.sh
-(``helm install cert-manager``).
+Installs cert-manager via Helm. The chart is **Jetstack**
+``oci://quay.io/jetstack/charts/cert-manager``; the version is catalog-driven via
+``cert_manager_version`` from the assigned BnkDeployableRelease. No hardcoded default —
+a missing version raises at validate_inputs() (fail-fast). Maps poc-deployer
+install-host-k8s.sh (``helm install cert-manager``).
 
 Parity source: catalog_snapshot/k8s/cert-manager/{bnkforge.pack.json,values.yaml}.
 """
@@ -30,7 +31,7 @@ class CertManagerSSHModule(BnkSSHModule):
     # Helm config — matches catalog k8s/cert-manager entrypoints exactly.
     chart_ref = "oci://quay.io/jetstack/charts/cert-manager"
     release_name = "cert-manager"
-    chart_version = "v1.16.1"
+    chart_version = ""
     chart_version_var = "cert_manager_version"
     create_namespace = True
     namespace_var = "namespace"
@@ -41,7 +42,7 @@ class CertManagerSSHModule(BnkSSHModule):
         "bare_metal_host_id": InputSpec(name="bare_metal_host_id", source="host", required=True),
         "namespace": InputSpec(name="namespace", source="profile", default="cert-manager"),
         "release_name": InputSpec(name="release_name", source="profile", default="cert-manager"),
-        "cert_manager_version": InputSpec(name="cert_manager_version", source="profile", default="v1.16.1"),
+        "cert_manager_version": InputSpec(name="cert_manager_version", source="profile", required=True),
         "controller_replicas": InputSpec(name="controller_replicas", type="number", source="profile", default=1),
         "webhook_replicas": InputSpec(name="webhook_replicas", type="number", source="profile", default=1),
         "cainjector_replicas": InputSpec(name="cainjector_replicas", type="number", source="profile", default=1),

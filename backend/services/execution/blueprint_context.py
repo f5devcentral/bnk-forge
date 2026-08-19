@@ -50,12 +50,13 @@ class ProjectContext:
     dpu_external_vlan_ipv4: str | None = None          # e.g. "10.10.20.100"
     dpu_internal_vlan_ipv4: str | None = None
 
-    # From BnkVersionProfile
+    # From BnkDeployableRelease (formerly BnkVersionProfile)
     bnk_manifest_version: str | None = None
     flo_version: str | None = None
     cert_manager_version: str | None = None
     storage_class_type: str | None = None
     storage_provisioner: str | None = None
+    bnk_cr_kind: str | None = None
 
     # Derived flags
     is_bare_metal: bool = False
@@ -71,6 +72,7 @@ class ProjectContext:
             "dpu_external_vlan_ipv4", "dpu_internal_vlan_ipv4",
             "bnk_manifest_version", "flo_version", "cert_manager_version",
             "storage_class_type", "storage_provisioner",
+            "bnk_cr_kind",
             "is_bare_metal", "is_dpu_enabled",
         ):
             v = getattr(self, k)
@@ -125,15 +127,7 @@ def resolve_project_context(
             kwargs["cert_manager_version"] = vp.cert_manager_version
             kwargs["storage_class_type"] = vp.storage_class_type
             kwargs["storage_provisioner"] = vp.storage_provisioner
-
-    # 2b. Fill cert_manager_version with a safe default when not supplied by version profile.
-    # v1.16.1 was the pinned version aligned with BNK 2.2 (previously seeded via ExternalHelmChart,
-    # which was removed in D-028 P5).  The UX version-picker that previously let admins choose from
-    # ExternalHelmChart rows is a deferred follow-up tracked in the D-028 backlog — it will be
-    # relocated to BnkVersionProfile.  Until then this constant is the single source of truth.
-    DEFAULT_CERT_MANAGER_VERSION = "v1.16.1"
-    if not kwargs.get("cert_manager_version"):
-        kwargs["cert_manager_version"] = DEFAULT_CERT_MANAGER_VERSION
+            kwargs["bnk_cr_kind"] = vp.bnk_cr_kind
 
     # 3. Dpu record (matched by project + host IP, same pattern as _inject_rendered_bf_conf)
     if host:
@@ -381,6 +375,8 @@ def _transform_cneinstance(
         result["internal_nad_name"] = "sf-internal"
     if ctx.is_dpu_enabled and "deployment_size" not in variables:
         result["deployment_size"] = "Large"
+    if ctx.bnk_cr_kind and "bnk_cr_kind" not in variables:
+        result["bnk_cr_kind"] = ctx.bnk_cr_kind
     return result
 
 

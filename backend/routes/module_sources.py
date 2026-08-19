@@ -16,6 +16,7 @@ from core.errors import handle_route_errors
 from database import get_db
 from models import User
 from routes.auth import get_current_user, require_operator, require_viewer
+from schemas.catalog_prune import PruneRequest, PruneResponse
 from services.module_source_service import ModuleSourceService
 
 logger = logging.getLogger(__name__)
@@ -200,3 +201,41 @@ def validate_module_source_credentials(
     result = ModuleSourceService(db).validate_source_credentials(source_id, user_obj=user)
     db.commit()
     return result
+
+
+@router.post(
+    "/{source_id}/prune",
+    response_model=PruneResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("prune module source")
+def prune_module_source_versions(
+    source_id: int, request: PruneRequest, db: Session = Depends(get_db)
+):
+    """Retire superseded module versions for this source.
+
+    D-033 adds an immutable row per (source, path, version) and never removes
+    one, so a source under active development accumulates every version it has
+    ever had. Until now the only way back was to delete the source and
+    re-register it, which discards its configuration and every blueprint release
+    alongside it.
+
+    Deactivating (the default) hides a version and stops it competing for
+    is_latest while leaving the row resolvable for anything pinned to it.
+    `delete` removes rows outright, and only ever those nothing references —
+    a pinned version is deactivated instead, because a prune must not break a
+    running deployment.
+    """
+    from services.catalog_prune_service import prune_module_source
+
+    result = prune_module_source(
+        db,
+        source_id,
+        keep=request.keep,
+        delete=request.delete,
+        dry_run=request.dry_run,
+        include_in_use=request.include_in_use,
+    )
+    if not request.dry_run:
+        db.commit()
+    return result.as_dict()

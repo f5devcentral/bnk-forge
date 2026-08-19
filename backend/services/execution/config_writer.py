@@ -401,17 +401,15 @@ def _resolve_project_kubeconfig_path(project) -> str | None:
 
                 if tunnel_port:
                     try:
-                        import yaml as yaml_lib
-                        kc_dict = yaml_lib.safe_load(kubeconfig_content)
-                        for c in kc_dict.get("clusters", []):
-                            # 127.0.0.1 not "localhost" — see cluster_utils
-                            # comment: localhost resolves to ::1+127.0.0.1
-                            # and the tunnel listener is IPv4-only.
-                            c["cluster"]["server"] = f"https://127.0.0.1:{tunnel_port}"
-                            c["cluster"]["insecure-skip-tls-verify"] = True
-                            c["cluster"].pop("certificate-authority-data", None)
-                            c["cluster"].pop("certificate-authority", None)
-                        kubeconfig_content = yaml_lib.dump(kc_dict, default_flow_style=False)
+                        # Shared with cluster_utils (in-process clients) so the
+                        # Terraform kubernetes/helm providers get the same
+                        # rewrite: verification ON via tls-server-name where
+                        # the CA allows it, legacy skip only as a fallback (#7).
+                        from services.kubeconfig_normalizer import rewrite_kubeconfig_for_tunnel
+
+                        kubeconfig_content = rewrite_kubeconfig_for_tunnel(
+                            kubeconfig_content, tunnel_port
+                        )
                         logger.info(
                             "Rewrote kubeconfig server URL to "
                             "https://localhost:%d (SSH tunnel to cluster %s)",

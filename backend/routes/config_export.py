@@ -21,6 +21,7 @@ from models import KubernetesCluster, User
 from routes.auth import require_cluster_owner, require_operator, require_viewer
 from schemas.system import ConfigImportRequest
 from services.config_export_service import (
+    apply_resources,
     config_to_yaml,
     diff_configs,
     export_cluster_config,
@@ -144,7 +145,6 @@ def import_config(
     Use the deploy workflow for full module management.
     """
     from kubernetes import client as k8s_client
-    from kubernetes.client.rest import ApiException
 
     from models import KubernetesCluster
     from services.kubernetes_service import KubernetesService
@@ -164,80 +164,7 @@ def import_config(
     if not resources:
         raise BadRequestError("No resources in config to import", code="EMPTY_CONFIG")
 
-    results = {
-        "applied": [],
-        "failed": [],
-        "skipped": [],
-    }
-
-    for category, resource_list in resources.items():
-        for resource in resource_list:
-            kind = resource.get("kind", "Unknown")
-            name = resource.get("metadata", {}).get("name", "unknown")
-            ns = resource.get("metadata", {}).get("namespace", "")
-            api_version = resource.get("apiVersion", "v1")
-
-            try:
-                # Parse group/version from apiVersion
-                if "/" in api_version:
-                    group, version = api_version.rsplit("/", 1)
-                else:
-                    group, version = "", api_version
-
-                if not group:
-                    results["skipped"].append({
-                        "kind": kind, "name": name, "namespace": ns,
-                        "reason": "Core API import not supported",
-                    })
-                    continue
-
-                from services.execution.kubernetes_engine import KNOWN_PLURALS
-                from services.kubernetes._resources import resolve_plural_by_kind
-                plural = (
-                    resolve_plural_by_kind(db, cluster_id, kind, group or None)
-                    or KNOWN_PLURALS.get(kind, kind.lower() + "s")
-                )
-
-                # Server-side apply via PATCH with application/apply-patch+yaml
-                if ns:
-                    custom_api.patch_namespaced_custom_object(
-                        group=group, version=version, namespace=ns,
-                        plural=plural, name=name, body=resource,
-                        field_manager="bnk-forge", force=True,
-                    )
-                else:
-                    custom_api.patch_cluster_custom_object(
-                        group=group, version=version,
-                        plural=plural, name=name, body=resource,
-                        field_manager="bnk-forge", force=True,
-                    )
-
-                results["applied"].append({
-                    "kind": kind, "name": name, "namespace": ns,
-                })
-            except ApiException as e:
-                if e.status == 404:
-                    results["skipped"].append({
-                        "kind": kind, "name": name, "namespace": ns,
-                        "reason": f"CRD not installed: {kind}",
-                    })
-                else:
-                    results["failed"].append({
-                        "kind": kind, "name": name, "namespace": ns,
-                        "error": str(e.reason)[:200],
-                    })
-            except Exception as e:
-                error_str = str(e)
-                if "404" in error_str or "resource type" in error_str.lower():
-                    results["skipped"].append({
-                        "kind": kind, "name": name, "namespace": ns,
-                        "reason": f"CRD not installed: {kind}",
-                    })
-                else:
-                    results["failed"].append({
-                        "kind": kind, "name": name, "namespace": ns,
-                        "error": error_str[:200],
-                    })
+    results = apply_resources(db, cluster_id, custom_api, resources)
 
     return {
         "message": f"Import complete: {len(results['applied'])} applied, {len(results['failed'])} failed, {len(results['skipped'])} skipped",

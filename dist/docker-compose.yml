@@ -1,0 +1,469 @@
+# =============================================================================
+# BNK Forge — Docker Compose (Registry Install)
+# =============================================================================
+#
+# This file pulls pre-built images from a container registry.
+# No source code or build step required.
+#
+# Usage:
+#   Linux server:  docker compose up -d
+#   macOS/Windows: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Prerequisites:
+#   - Docker Engine 24+ with Compose v2.24+
+#   - Authenticated to the container registry (if private)
+#
+# Configuration:
+#   Copy .env.example to .env and set your passwords before first start.
+#
+
+# ── Registry configuration ──────────────────────────────────────────────────
+# Set BNK_FORGE_REGISTRY and BNK_FORGE_VERSION in .env or environment:
+#   BNK_FORGE_REGISTRY=ghcr.io/your-org    (no trailing slash)
+#   BNK_FORGE_VERSION=3.0.1                (or "latest")
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
+  REDIS_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
+  # Artifact (container-image) engine talks to the Docker daemon through the
+  # scoped socket proxy below — never the raw host socket. Under host
+  # networking the proxy publishes to the host loopback, so services reach it
+  # at 127.0.0.1:2375. Overridable via DOCKER_HOST in .env.
+  DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+
+x-worker-volumes: &worker-volumes
+  - module_catalog:/tmp/bnk-forge-modules
+  - bnk-forge-data:/app/projects
+  - bnk-forge-keys:/app/keys
+  - state_data:/app/state
+  - helm_cache:/home/bnkforge/.cache/helm
+  - helm_config:/home/bnkforge/.config/helm
+  - helm_charts:/app/helm_charts
+  - workspace_data:/app/workspaces
+  - ./secrets:/app/secrets:ro
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bnk-forge-postgres
+    network_mode: host
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: bnkforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bnkforge_dev_password}
+      POSTGRES_DB: bnkforge
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bnkforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  redis:
+    image: redis:7-alpine
+    container_name: bnk-forge-redis
+    network_mode: host
+    logging: *default-logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-bnkforge_redis_dev}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-bnkforge_redis_dev}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # Scoped Docker Engine API proxy for the artifact (container-image) engine.
+  # The worker NEVER mounts the raw host socket; this proxy exposes only the
+  # containers sub-API (create/start/logs/wait) plus image pull, so a
+  # misbehaving artifact image cannot reach host bind mounts, the network/volume
+  # APIs, or privileged ops.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: bnk-forge-docker-socket-proxy
+    # NOT network_mode: host — under host networking the proxy would bind
+    # 0.0.0.0:2375 on the server (a root-equivalent surface). Instead publish
+    # ONLY to the host loopback; the host-net services reach it at
+    # 127.0.0.1:2375 (see DOCKER_HOST in the x-backend-env anchor above).
+    ports:
+      - "127.0.0.1:2375:2375"
+    logging: *default-logging
+    environment:
+      # Allow only container create + start/logs/wait, plus image pull. The
+      # runner's full surface (create/start/wait/logs/--rm, named-volume and
+      # volume-subpath mounts) works with exactly these — verified against
+      # tecnativa/docker-socket-proxy:0.3.0.
+      # NOTE: these switches gate the Engine API by *path*, not by request body.
+      # They narrow which endpoints are reachable; they do NOT inspect a
+      # /containers/create HostConfig, so this is not a bind-mount/privileged
+      # firewall. Safe here because the only caller (DockerRunner) builds a
+      # fixed argv — treat the argv builder as the security boundary.
+      CONTAINERS: "1"
+      POST: "1"
+      IMAGES: "1"   # required so `docker run` can pull the digest-pinned image
+      AUTH: "1"     # required so `docker --config` authfile is honored on pull
+      # Everything else denied (defaults are 0; set explicitly for clarity).
+      EXEC: "0"
+      VOLUMES: "0"
+      NETWORKS: "0"
+      SECRETS: "0"
+      SWARM: "0"
+      SERVICES: "0"
+      NODES: "0"
+      TASKS: "0"
+      INFO: "0"
+      PLUGINS: "0"
+      SYSTEM: "0"
+      DISTRIBUTION: "0"
+    volumes:
+      # The proxy itself needs the socket (read-only); services reach the daemon
+      # ONLY through this proxy's TCP port, never the socket directly.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  backend:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-backend
+    network_mode: host
+    logging: *default-logging
+    environment:
+      <<: *backend-env
+      BNK_FORGE_DEPLOY_MODE: ${BNK_FORGE_DEPLOY_MODE:-server}
+      HOST_REPO_PATH: ${HOST_REPO_PATH:-}
+    volumes:
+      - module_catalog:/tmp/bnk-forge-modules
+      - bnk-forge-data:/app/projects
+      - bnk-forge-keys:/app/keys
+      - state_data:/app/state
+      - helm_cache:/home/bnkforge/.cache/helm
+      - helm_config:/home/bnkforge/.config/helm
+      - helm_charts:/app/helm_charts
+      - workspace_data:/app/workspaces
+      - ./secrets:/app/secrets:ro
+      - ./VERSION:/app/VERSION:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  celery-worker:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-celery-worker
+    network_mode: host
+    logging: *default-logging
+    command: celery -A celery_app worker --loglevel=info --concurrency=4 --queues=default,opentofu,orchestrator,cli
+    environment:
+      <<: *backend-env
+    volumes: *worker-volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 2>/dev/null | grep -q 'pong' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  celery-worker-2:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-celery-worker-2
+    network_mode: host
+    logging: *default-logging
+    command: celery -A celery_app worker --loglevel=info --concurrency=4 --queues=default,opentofu,cli
+    environment:
+      <<: *backend-env
+    volumes: *worker-volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 2>/dev/null | grep -q 'pong' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  celery-beat:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-celery-beat
+    network_mode: host
+    logging: *default-logging
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat-schedule || test -f /app/celerybeat-schedule || celery -A celery_app inspect ping --timeout 3 2>/dev/null | grep -q 'pong' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  frontend:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-frontend
+    network_mode: host
+    logging: *default-logging
+    environment:
+      - BRAND=${BRAND:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  proxy:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-proxy
+    network_mode: host
+    logging: *default-logging
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fk https://localhost:8443/api/system/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  mcp:
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    container_name: bnk-forge-mcp
+    network_mode: host
+    logging: *default-logging
+    environment:
+      BNK_FORGE_API_URL: http://localhost:8000
+      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
+      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      MCP_PORT: "8081"
+      MCP_LOG_LEVEL: INFO
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; req=urllib.request.Request('http://localhost:8081/mcp',headers={'Accept':'application/json,text/event-stream','Content-Type':'application/json'},data=b'{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"method\\\":\\\"ping\\\",\\\"id\\\":1}'); urllib.request.urlopen(req)\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  postgres-backup:
+    image: postgres:16-alpine
+    container_name: bnk-forge-postgres-backup
+    network_mode: host
+    logging: *default-logging
+    environment:
+      PGHOST: localhost
+      PGUSER: bnkforge
+      PGPASSWORD: ${POSTGRES_PASSWORD:-bnkforge_dev_password}
+      PGDATABASE: bnkforge
+      BACKUP_RETENTION_DAYS: "7"
+    volumes:
+      - postgres_backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /backups
+        do_backup() {
+          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+          BACKUP_FILE="/backups/bnkforge_$${TIMESTAMP}.sql.gz"
+          echo "[$$TIMESTAMP] Starting backup..."
+          pg_dump | gzip > "$$BACKUP_FILE"
+          if [ $$? -eq 0 ]; then
+            echo "[$$TIMESTAMP] Backup completed: $$BACKUP_FILE"
+            find /backups -name "bnkforge_*.sql.gz" -mtime +$${BACKUP_RETENTION_DAYS} -delete
+            echo "[$$TIMESTAMP] Cleaned up backups older than $${BACKUP_RETENTION_DAYS} days"
+          else
+            echo "[$$TIMESTAMP] Backup failed!"
+          fi
+        }
+        do_backup
+        while true; do
+          CURRENT_HOUR=$$(date +%H)
+          CURRENT_MIN=$$(date +%M)
+          # Strip leading zero so 08/09 are not misread as invalid octal in arithmetic
+          CURRENT_HOUR=$${CURRENT_HOUR#0}
+          CURRENT_MIN=$${CURRENT_MIN#0}
+          if [ $$CURRENT_HOUR -lt 2 ]; then
+            WAIT_HOURS=$$((2 - CURRENT_HOUR))
+          else
+            WAIT_HOURS=$$((26 - CURRENT_HOUR))
+          fi
+          WAIT_SECS=$$((WAIT_HOURS * 3600 - CURRENT_MIN * 60))
+          echo "Next backup in $$WAIT_HOURS hours ($$WAIT_SECS seconds)"
+          sleep $$WAIT_SECS
+          do_backup
+        done
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+# NOTE: the artifact runner network (bnk-forge-artifacts) is deliberately NOT
+# declared here. No bnk-forge service can join it — under host networking a
+# service may not also attach to a bridge network — and `docker compose up` does
+# not create a declared network that no service references (verified on Docker
+# 29.x), so declaring it here would create nothing and every artifact step would
+# die with "network not found". install.sh creates it. The DockerRunner attaches
+# steps to it by name — see CONTAINER_ARTIFACT_NETWORK.
+
+volumes:
+  module_catalog:
+    driver: local
+  bnk-forge-data:
+    driver: local
+  bnk-forge-keys:
+    driver: local
+  state_data:
+    driver: local
+  workspace_data:
+    driver: local
+  helm_cache:
+    driver: local
+  helm_config:
+    driver: local
+  helm_charts:
+    driver: local
+  postgres_data:
+    driver: local
+  postgres_backups:
+    driver: local
+  redis_data:
+    driver: local

@@ -159,6 +159,135 @@ class TestCreateSource:
         assert args[0].url == "https://github.com/example/repo.git"
         assert kwargs == {"sync_related_modules": False}
 
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_create_survives_failed_initial_sync_and_leaves_session_committable(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """#9: a failing initial sync must not poison the session.
+
+        _auto_sync_blueprints_for_git_source flushes on the *same* session. When
+        one of those writes failed, catching the exception unwound the Python
+        stack but left SQLAlchemy in PendingRollback -- so the route's
+        db.commit() raised PendingRollbackError, surfaced as a 500 that hid the
+        real cause. The savepoint must contain that damage.
+        """
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        # Fail the way the real bug did: a flush error inside the blueprint sync,
+        # which is what poisons the session (not a plain Python exception).
+        def _explode(source, **kwargs):
+            db.add(ModuleLibrary())  # NOT NULL violations on flush
+            db.flush()
+
+        mock_blueprint_sync_cls.return_value.sync_git_source.side_effect = _explode
+
+        svc = ModuleSourceService(db)
+        result = svc.create_source(_source_data())
+
+        # The source still exists ...
+        assert result["name"] == "new-source"
+        # ... the failure is reported instead of being swallowed to a warning ...
+        assert result["sync_status"] == "failed"
+        assert result["sync_error"]
+        # ... and the session is usable, which is the actual bug.
+        db.commit()
+        assert db.query(ModuleSource).filter_by(name="new-source").one().sync_status == "failed"
+
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_successful_sync_that_commits_internally_is_not_marked_failed(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """The real ModuleSyncService commits inside the savepoint.
+
+        sync_git_source owns its own sync_status bookkeeping and calls
+        db.commit(); Session.commit() commits the OUTERMOST transaction, which
+        closes the savepoint. Committing a closed savepoint raises
+        ResourceClosedError -- which would be caught by the failure handler and
+        mark a perfectly successful sync as failed. Mocked sync services never
+        commit, so this path is invisible unless the mock does what the real
+        thing does.
+        """
+        def _sync_and_commit(src):
+            src.sync_status = "success"
+            db.commit()
+            return {"modules_found": 1, "modules_created": 1, "modules_updated": 0, "errors": []}
+
+        mock_sync_class.return_value.sync_git_source.side_effect = _sync_and_commit
+        mock_blueprint_sync_cls.return_value.sync_git_source.return_value = {
+            "blueprints_found": 0, "releases_created": 0, "releases_existing": 0,
+            "releases_invalid": 0, "errors": [],
+        }
+
+        result = ModuleSourceService(db).create_source(_source_data())
+
+        assert result["sync_status"] != "failed", (
+            "a successful sync was reported as failed — the savepoint was closed by "
+            "the inner commit and committing it raised"
+        )
+        assert not result.get("sync_error")
+        db.commit()
+
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_create_records_sync_error_text(self, mock_sync_class, mock_blueprint_sync_cls, db):
+        """The real cause must reach the caller, not just the log."""
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        mock_blueprint_sync_cls.return_value.sync_git_source.side_effect = RuntimeError(
+            "manifest.yaml is not valid YAML"
+        )
+
+        result = ModuleSourceService(db).create_source(_source_data())
+
+        assert result["sync_status"] == "failed"
+        assert "manifest.yaml is not valid YAML" in result["sync_error"]
+        db.commit()
+
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_sync_skips_blueprint_sync_when_linked_blueprint_source_is_inactive(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """#87 -- the mirror of the #404 guard, for the module->blueprint direction.
+
+        A deliberately deactivated twin blueprint source must not be re-synced
+        (and therefore re-activated) just because the module source it is
+        linked to gets synced.
+        """
+        from models import BlueprintSource
+
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        # The pre-existing, deliberately deactivated twin.
+        twin = BlueprintSource(
+            name="shared blueprints",
+            source_type="git",
+            url="https://github.com/example/repo",
+            branch="main",
+            git_ref=None,
+            is_active=False,
+            sync_status="pending",
+        )
+        db.add(twin)
+        db.commit()
+        db.refresh(twin)
+
+        svc = ModuleSourceService(db)
+        # _source_data() uses url https://github.com/example/repo.git, branch main,
+        # which _source_key normalises to the same key as the twin above.
+        result = svc.create_source(_source_data())
+
+        mock_blueprint_sync_cls.return_value.sync_git_source.assert_not_called()
+        db.refresh(twin)
+        assert twin.is_active is False, "module sync re-activated the deactivated blueprint source"
+        # And the source still got created -- the skip is not a failure.
+        assert result["name"] == "new-source"
+
     @patch("services.module_sync_service.ModuleSyncService")
     def test_create_registry_source_does_not_run_initial_git_sync(self, mock_sync_class, db):
         svc = ModuleSourceService(db)

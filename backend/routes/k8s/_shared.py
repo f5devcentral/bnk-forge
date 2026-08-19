@@ -22,10 +22,26 @@ logger = logging.getLogger(__name__)
 # DRY Serialization Helpers
 # ============================================================================
 
-def serialize_cluster(cluster: KubernetesCluster, include_project_id: bool = True) -> dict:
+def serialize_cluster(
+    cluster: KubernetesCluster,
+    include_project_id: bool = True,
+    membership: "tuple[list[int], list[int]] | None" = None,
+    include_bnk_config: bool = True,
+) -> dict:
     """
     Serialize a KubernetesCluster to dict.
     DRY helper to avoid repeated serialization code.
+
+    membership: pre-fetched (host_ids, dpu_ids) for BNK clusters in list
+    contexts.  When provided, _serialize_bnk_config uses it directly instead
+    of issuing per-cluster queries (eliminates the 2N pattern; ADR-424 finding C).
+
+    include_bnk_config: when False, bnk_config is redacted (None). The
+    ADR-424 bnk_config carries cross-project infrastructure membership
+    (host_ids, dpu_ids, control_plane_host_id, tmfifo_pool_cidr); the global
+    instance-wide list must not leak it to any viewer (#116). The
+    project-scoped list and the per-cluster detail keep it (their callers
+    are the surfaces that actually consume it).
     """
     platform_context = PlatformContextService.serialize_cluster_context(cluster)
 
@@ -55,10 +71,68 @@ def serialize_cluster(cluster: KubernetesCluster, include_project_id: bool = Tru
         # Per-cluster prereq selection (NULL → defaults; locked entries are
         # always included in the effective set).
         "enabled_prerequisites": cluster.enabled_prerequisites,
+        # ADR-478/494: release FK ids — deployable = intent (set at deploy time);
+        # running = observed (set by discovery scan). Both nullable.
+        "deployable_release_id": cluster.deployable_release_id,
+        "running_release_id": cluster.running_release_id,
+        # BNK multi-host cluster configuration side-table (ADR-424)
+        "bnk_config": (
+            _serialize_bnk_config(cluster, membership=membership)
+            if include_bnk_config and getattr(cluster, "bnk_config", None)
+            else None
+        ),
     }
     if include_project_id:
         result["project_id"] = cluster.project_id
     return result
+
+
+def _serialize_bnk_config(
+    cluster: KubernetesCluster,
+    membership: "tuple[list[int], list[int]] | None" = None,
+) -> dict:
+    """Serialize the ADR-424 BnkClusterConfig side-table plus live membership.
+
+    host_ids/dpu_ids reflect the hosts/DPUs whose kubernetes_cluster_id points
+    at this cluster; the member dialog seeds its selection from these instead of
+    re-applying the B-all default (which would steal sibling clusters' members).
+    Only invoked for BNK clusters (bnk_config present), so the extra membership
+    queries never touch non-BNK clusters in list responses.
+
+    membership: pre-fetched (host_ids, dpu_ids) from bulk_cluster_membership.
+    When provided, no per-cluster queries are issued.  When None (single-cluster
+    contexts such as GET or POST), queries via object_session (ADR-424 finding C).
+    """
+    cfg = cluster.bnk_config
+    if membership is not None:
+        host_ids, dpu_ids = membership
+    else:
+        from sqlalchemy.orm import object_session
+
+        from models.bare_metal import BareMetalHost
+        from models.dpu import Dpu
+
+        host_ids = []
+        dpu_ids = []
+        session = object_session(cluster)
+        if session is not None:
+            host_ids = sorted(
+                h.id for h in session.query(BareMetalHost.id)
+                .filter(BareMetalHost.kubernetes_cluster_id == cluster.id).all()
+            )
+            dpu_ids = sorted(
+                d.id for d in session.query(Dpu.id)
+                .filter(Dpu.kubernetes_cluster_id == cluster.id).all()
+            )
+    return {
+        "id": cfg.id,
+        "cluster_id": cfg.cluster_id,
+        "tmfifo_pool_cidr": cfg.tmfifo_pool_cidr,
+        "join_transport": cfg.join_transport,
+        "control_plane_host_id": cfg.control_plane_host_id,
+        "host_ids": host_ids,
+        "dpu_ids": dpu_ids,
+    }
 
 
 def run_kubectl(cmd, timeout: int = 30):

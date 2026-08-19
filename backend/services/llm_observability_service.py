@@ -564,29 +564,31 @@ class LlmObservabilityService:
     def _parse_log_lines(data: dict[str, Any] | None) -> tuple[list[dict[str, Any]], int | None]:
         """Flatten Loki streams into request rows, newest first. Returns
         (rows, oldest_ts_ns) — the cursor for 'load older'."""
-        entries: list[tuple[int, str]] = []
+        entries: list[tuple[int, str, dict]] = []
         if isinstance(data, dict):
             for stream in (data.get("data") or {}).get("result") or []:
+                stream_labels = stream.get("stream", {})
                 for pair in stream.get("values") or []:
                     try:
-                        entries.append((int(pair[0]), pair[1]))
+                        entries.append((int(pair[0]), pair[1], stream_labels))
                     except (IndexError, TypeError, ValueError):
                         continue
         entries.sort(key=lambda e: e[0], reverse=True)  # newest first
 
         rows: list[dict[str, Any]] = []
-        for ts_ns, line in entries:
+        for ts_ns, line, stream_labels in entries:
             try:
                 rec = json.loads(line)
             except (TypeError, ValueError):
                 continue
-            status = str(rec.get("status", ""))
+            model = str(rec.get("model") or stream_labels.get("model") or "")
+            status = str(rec.get("status") or stream_labels.get("status") or "")
             rows.append(
                 {
                     "ts": _iso(ts_ns / 1_000_000_000),
                     "type": "success" if status.startswith("2") else "error",
                     "message": str(rec.get("userq", "")),
-                    "model": str(rec.get("model", "")),
+                    "model": model,
                     "latency_ms": float(rec.get("latency_ms", 0) or 0),
                     "prompt_tk": int(rec.get("prompt_tk", 0) or 0),
                     "comp_tk": int(rec.get("comp_tk", 0) or 0),

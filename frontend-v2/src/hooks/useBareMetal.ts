@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   bareMetalHostsApi,
   bareMetalDeploymentsApi,
-  bareMetalProfilesApi,
+  deployableReleasesApi,
 } from '@/lib/api/bare-metal';
 import { queryKeys } from '@/lib/queryKeys';
 import type {
@@ -219,19 +219,40 @@ export function useDeploymentStepLogs(
   });
 }
 
-// --- Version Profile hooks ---
+// --- Deployable Release hooks ---
 
-export function useBnkVersionProfiles() {
+export function useDeployableReleases() {
   return useQuery({
-    queryKey: queryKeys.bareMetal.profiles.all,
-    queryFn: () => bareMetalProfilesApi.listProfiles(),
+    queryKey: queryKeys.bareMetal.releases.all,
+    queryFn: () => deployableReleasesApi.listReleases(),
   });
 }
 
-export function useBnkVersionProfile(profileId: number | null) {
+export function useDeployableRelease(releaseId: number | null) {
   return useQuery({
-    queryKey: queryKeys.bareMetal.profiles.detail(profileId ?? 0),
-    queryFn: () => bareMetalProfilesApi.getProfile(profileId as number),
-    enabled: !!profileId,
+    queryKey: queryKeys.bareMetal.releases.detail(releaseId ?? 0),
+    queryFn: () => deployableReleasesApi.getRelease(releaseId as number),
+    enabled: !!releaseId,
+  });
+}
+
+export function useActivateDeployableRelease() {
+  const queryClient = useQueryClient();
+  return useAppMutation({
+    mutationFn: ({ releaseId, isActive }: { releaseId: number; isActive: boolean }) =>
+      deployableReleasesApi.activate(releaseId, isActive),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.bareMetal.releases.all });
+    },
+  });
+}
+
+export function useSetDefaultDeployableRelease() {
+  const queryClient = useQueryClient();
+  return useAppMutation({
+    mutationFn: (releaseId: number) => deployableReleasesApi.setDefault(releaseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.bareMetal.releases.all });
+    },
   });
 }

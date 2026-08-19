@@ -11,6 +11,7 @@ Covers:
 - _try_auto_register_cluster() creates cluster and links to host
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ import pytest
 from core.encryption import encrypt_value
 from models import ModuleLibrary, Project, ProjectModule
 from models.bare_metal import BareMetalHost
+from models.dpu import Dpu
 from models.ssh_credential import SSHCredential
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -319,6 +321,164 @@ class TestBuildSSHContext:
             ctx = _build_ssh_context(db, mod)
 
         assert ctx.ssh_host == bare_metal_host.host_ip
+
+    def test_build_ssh_context_uses_dpu_tmfifo_ip_when_dpu_mgmt_ip_absent(
+        self, db, project_module, bare_metal_host, project,
+    ):
+        """ADR-424: when exactly one cluster-member DPU has a persisted tmfifo IP
+        and dpu_mgmt_ip is not set, the relay dials that IP (not .2)."""
+        from tasks.ssh_tasks import _build_ssh_context
+
+        assert bare_metal_host.dpu_mgmt_ip is None
+
+        from models.kubernetes import KubernetesCluster
+        cluster = KubernetesCluster(name="c-tmfifo", context="ctx-tmfifo", project_id=project.id)
+        db.add(cluster)
+        db.flush()
+
+        dpu = Dpu(
+            project_id=project.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,
+            pci_address="0000:0d:00",
+            kubernetes_cluster_id=cluster.id,
+            dpu_tmfifo_ip="192.168.100.6",
+        )
+        db.add(dpu)
+        db.flush()
+
+        with patch("tasks.ssh_tasks._get_module_def_for_target", return_value=None):
+            ctx = _build_ssh_context(db, project_module)
+
+        assert ctx.dpu_host == "192.168.100.6"
+
+    def test_build_ssh_context_dpu_mgmt_ip_wins_over_tmfifo_ip(
+        self, db, project_module, bare_metal_host, project,
+    ):
+        """ADR-424: BareMetalHost.dpu_mgmt_ip (OOB) takes precedence over any
+        cluster-member DPU tmfifo IP so that dual_dpu_obmc hosts are unaffected."""
+        from tasks.ssh_tasks import _build_ssh_context
+
+        bare_metal_host.dpu_mgmt_ip = "10.1.1.50"
+        db.flush()
+
+        dpu = Dpu(
+            project_id=project.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,
+            pci_address="0000:0d:00",
+            dpu_tmfifo_ip="192.168.100.6",
+        )
+        db.add(dpu)
+        db.flush()
+
+        with patch("tasks.ssh_tasks._get_module_def_for_target", return_value=None):
+            ctx = _build_ssh_context(db, project_module)
+
+        assert ctx.dpu_host == "10.1.1.50"
+
+    def test_build_ssh_context_warns_and_falls_through_for_ambiguous_multi_dpu(
+        self, db, project_module, bare_metal_host, project, caplog,
+    ):
+        """ADR-424 Phase 2 boundary: when two cluster-member DPUs on the same host
+        both have tmfifo IPs, the relay cannot unambiguously pick one — it must
+        warn and fall back to the legacy dpu_info / 192.168.100.2 path."""
+        from tasks.ssh_tasks import _build_ssh_context
+
+        assert bare_metal_host.dpu_mgmt_ip is None
+        # bare_metal_host fixture has dpu_info[0].mgmt_ip == "192.168.100.2"
+
+        from models.kubernetes import KubernetesCluster
+        cluster = KubernetesCluster(name="c-ambiguous", context="ctx-ambiguous", project_id=project.id)
+        db.add(cluster)
+        db.flush()
+
+        dpu_a = Dpu(
+            project_id=project.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,
+            pci_address="0000:0d:00",
+            kubernetes_cluster_id=cluster.id,
+            dpu_tmfifo_ip="192.168.100.6",
+        )
+        dpu_b = Dpu(
+            project_id=project.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,
+            pci_address="0000:0e:00",
+            kubernetes_cluster_id=cluster.id,
+            dpu_tmfifo_ip="192.168.100.10",
+        )
+        db.add_all([dpu_a, dpu_b])
+        db.flush()
+
+        with caplog.at_level(logging.WARNING, logger="tasks.ssh_tasks"), \
+                patch("tasks.ssh_tasks._get_module_def_for_target", return_value=None):
+            ctx = _build_ssh_context(db, project_module)
+
+        assert "multi-DPU-per-host relay target selection is not yet supported" in caplog.text
+        # Falls through to dpu_info[0].mgmt_ip from the bare_metal_host fixture
+        assert ctx.dpu_host == "192.168.100.2"
+
+    def test_build_ssh_context_ignores_dpu_in_other_project(
+        self, db, project_module, bare_metal_host, project,
+    ):
+        """ADR-424 security: a DPU sharing host_node_ip but owned by ANOTHER
+        project must not be picked as the relay target (host_node_ip is unique
+        only per (project_id, host_node_ip, pci_address))."""
+        from models.kubernetes import KubernetesCluster
+        from tasks.ssh_tasks import _build_ssh_context
+
+        other = Project(
+            name="Other BM Project", description="", project_type="bare-metal",
+            cloud_provider="on-prem", environment="dev", backend_type="local",
+            color="#000000", icon="server", is_active=True,
+        )
+        db.add(other)
+        db.flush()
+        other_cluster = KubernetesCluster(name="c-foreign", context="ctx-foreign", project_id=other.id)
+        db.add(other_cluster)
+        db.flush()
+        foreign = Dpu(
+            project_id=other.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,  # same host IP, different project
+            pci_address="0000:0d:00",
+            kubernetes_cluster_id=other_cluster.id,
+            dpu_tmfifo_ip="192.168.104.6",
+        )
+        db.add(foreign)
+        db.flush()
+
+        with patch("tasks.ssh_tasks._get_module_def_for_target", return_value=None):
+            ctx = _build_ssh_context(db, project_module)
+
+        # Foreign-project DPU ignored → falls back to dpu_info default.
+        assert ctx.dpu_host == "192.168.100.2"
+
+    def test_build_ssh_context_ignores_orphaned_dpu(
+        self, db, project_module, bare_metal_host, project,
+    ):
+        """ADR-424: an orphaned DPU (kubernetes_cluster_id NULL, dpu_tmfifo_ip
+        still populated after ondelete=SET NULL) must not be dialed as the relay
+        target — only live cluster members qualify."""
+        from tasks.ssh_tasks import _build_ssh_context
+
+        orphan = Dpu(
+            project_id=project.id,
+            access_mode="in-band",
+            host_node_ip=bare_metal_host.host_ip,
+            pci_address="0000:0d:00",
+            kubernetes_cluster_id=None,  # orphan
+            dpu_tmfifo_ip="192.168.105.6",
+        )
+        db.add(orphan)
+        db.flush()
+
+        with patch("tasks.ssh_tasks._get_module_def_for_target", return_value=None):
+            ctx = _build_ssh_context(db, project_module)
+
+        assert ctx.dpu_host == "192.168.100.2"
 
 
 # ── _resolve_jumphost_chain ──────────────────────────────────────────
@@ -729,3 +889,101 @@ class TestTryAutoRegisterCluster:
             _try_auto_register_cluster(db, project_module, outputs)
 
         mock_scan_task.delay.assert_not_called()
+
+    def test_try_auto_register_stamps_cluster_deployable_release_id(
+        self, db, project_module, bare_metal_host,
+    ):
+        """ADR-478 P1b: cluster.deployable_release_id is stamped from host.version_profile_id at link seam."""
+        from models import KubernetesCluster
+        from models.bnk_deployable_release import BnkDeployableRelease
+        from tasks.ssh_tasks import _try_auto_register_cluster
+
+        # Create a deployable release row so the FK is valid
+        release = BnkDeployableRelease(
+            name="bnk-2.2",
+            display_name="BNK 2.2 (GA)",
+            description="test",
+            is_default=True,
+            is_active=True,
+            source_type="manual",
+            bnk_manifest_version="2.2.1-3.2226.0-0.0.511",
+            bnk_cr_kind="CNEInstance",
+            flo_version="2.17.2",
+            k8s_version="1.29.8",
+            doca_version="2.6.0",
+            containerd_version="1.7.22",
+            runc_version="1.1.14",
+            calico_version="3.27.3",
+            cert_manager_version="v1.16.1",
+            gateway_api_version="v1.1.0",
+            multus_version="4.0.2",
+            sriov_version="1.5.1",
+            storage_class_type="local-path",
+            storage_provisioner="rancher.io/local-path",
+        )
+        db.add(release)
+        db.flush()
+
+        # Stamp the host with this release (simulates what deploy_stack does)
+        bare_metal_host.version_profile_id = release.id
+        db.flush()
+
+        cluster = KubernetesCluster(
+            name="adr478-cluster",
+            context="adr478-context",
+            api_server="https://10.176.11.143:6443",
+            status="active",
+        )
+        db.add(cluster)
+        db.flush()
+
+        outputs = {
+            "cluster_name": "adr478-cluster",
+            "remote_kubeconfig_path": "/etc/kubernetes/admin.conf",
+            "remote_host": "10.176.11.143",
+        }
+        mock_result = {"success": True, "cluster_name": "adr478-cluster", "cluster_id": cluster.id}
+
+        with patch("services.cluster_auto_registration_service.matches_cluster_output_contract", return_value=True), \
+             patch("services.cluster_auto_registration_service.maybe_auto_register_cluster", return_value=mock_result), \
+             patch("tasks.cluster_scan_task.enqueue_cluster_scan"):
+            _try_auto_register_cluster(db, project_module, outputs)
+
+        db.refresh(cluster)
+        assert cluster.deployable_release_id == release.id, (
+            "Cluster should record the deployable_release_id from the host's version_profile_id"
+        )
+
+    def test_try_auto_register_skips_cluster_stamp_when_no_host_release(
+        self, db, project_module, bare_metal_host,
+    ):
+        """ADR-478 P1b: cluster.deployable_release_id stays NULL when host has no version_profile_id."""
+        from models import KubernetesCluster
+        from tasks.ssh_tasks import _try_auto_register_cluster
+
+        # host.version_profile_id is None (default in fixture)
+        assert bare_metal_host.version_profile_id is None
+
+        cluster = KubernetesCluster(
+            name="adr478-no-release-cluster",
+            context="adr478-no-release-context",
+            api_server="https://10.176.11.143:6443",
+            status="active",
+        )
+        db.add(cluster)
+        db.flush()
+
+        outputs = {
+            "cluster_name": "adr478-no-release-cluster",
+            "remote_kubeconfig_path": "/etc/kubernetes/admin.conf",
+            "remote_host": "10.176.11.143",
+        }
+        mock_result = {"success": True, "cluster_name": "adr478-no-release-cluster", "cluster_id": cluster.id}
+
+        with patch("services.cluster_auto_registration_service.matches_cluster_output_contract", return_value=True), \
+             patch("services.cluster_auto_registration_service.maybe_auto_register_cluster", return_value=mock_result), \
+             patch("tasks.cluster_scan_task.enqueue_cluster_scan"):
+            _try_auto_register_cluster(db, project_module, outputs)
+
+        db.refresh(cluster)
+        assert cluster.deployable_release_id is None

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SectionCard } from '@/components/ui/section-card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { DriftDetailPanel } from './DriftDetailPanel';
 import {
   Dialog,
   DialogContent,
@@ -258,73 +259,31 @@ export function DriftCheckHistory({ projectId, moduleId }: DriftCheckHistoryProp
           <DialogHeader>
             <DialogTitle>Drift Check Details</DialogTitle>
             <DialogDescription>
-              {selectedCheck?.module_name && `Module: ${selectedCheck.module_name} • `}
-              {selectedCheck?.created_at && formatTimeAgo(selectedCheck.created_at)}
+              {/* The panel renders the module name as its own heading, and a
+                  "Last checked" time from last_check_at (when the check last ran).
+                  This shows created_at (when the check was requested) -- a distinct
+                  fact, so it complements rather than duplicates the panel. */}
+              {selectedCheck?.created_at && `Requested ${formatTimeAgo(selectedCheck.created_at)}`}
             </DialogDescription>
           </DialogHeader>
           {selectedCheck && (
             <div className="space-y-4">
-              {/* Status */}
-              <div>
-                <Label className="text-sm font-medium">Status</Label>
-                <div className="mt-1">{getStatusBadge(selectedCheck)}</div>
-              </div>
+              {/* The full drift panel -- diff, severity, and the Reconcile /
+                  View-module actions (#70). Previously this dialog
+                  hand-rolled a read-only subset (status, summary, counts,
+                  changed resources) and DriftDetailPanel -- which carries
+                  the working Reconcile button -- was mounted nowhere in the
+                  app, so "drift detected -> view diff -> one-click reconcile"
+                  could not be completed from the drift UI at all. */}
+              <DriftDetailPanel
+                driftCheck={selectedCheck}
+                projectId={projectId}
+                moduleId={selectedCheck.module_id}
+                onReconcile={() => setSelectedCheck(null)}
+                compact
+              />
 
-              {/* Summary */}
-              {selectedCheck.drift_summary && (
-                <div>
-                  <Label className="text-sm font-medium">Summary</Label>
-                  <p className="mt-1 text-sm">{selectedCheck.drift_summary}</p>
-                </div>
-              )}
-
-              {/* Resource Changes */}
-              {selectedCheck.drift_details?.resource_changes && (
-                <div>
-                  <Label className="text-sm font-medium">Resource Changes</Label>
-                  <div className="mt-2 flex gap-4">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="success">
-                        +{selectedCheck.drift_details.resource_changes.add}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">to add</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="warning">
-                        ~{selectedCheck.drift_details.resource_changes.change}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">to change</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="destructive">
-                        -{selectedCheck.drift_details.resource_changes.destroy}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">to destroy</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Changed Resources */}
-              {selectedCheck.drift_details?.changed_resources &&
-                selectedCheck.drift_details.changed_resources.length > 0 && (
-                  <div>
-                    <Label className="text-sm font-medium">Changed Resources</Label>
-                    <div className="mt-2 space-y-2">
-                      {selectedCheck.drift_details.changed_resources.map((resource, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between p-2 border rounded text-sm"
-                        >
-                          <code className="text-xs">{resource.address}</code>
-                          <Badge variant="muted">{resource.action}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-              {/* Error Message */}
+              {/* Error Message -- the panel does not render this; keep it. */}
               {selectedCheck.error_message && (
                 <Alert variant="destructive">
                   <AlertDescription>{selectedCheck.error_message}</AlertDescription>
@@ -336,8 +295,4 @@ export function DriftCheckHistory({ projectId, moduleId }: DriftCheckHistoryProp
       </Dialog>
     </>
   );
-}
-
-function Label({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={className}>{children}</div>;
 }

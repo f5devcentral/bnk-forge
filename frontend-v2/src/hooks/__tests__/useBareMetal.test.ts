@@ -22,9 +22,11 @@ import {
   useBareMetalHosts,
   useBareMetalHostsWithPolling,
   useTriggerBareMetalDiscovery,
+  useDeployableReleases,
+  useCreateBareMetalDeployment,
 } from '@/hooks/useBareMetal';
 import { queryKeys } from '@/lib/queryKeys';
-import type { BareMetalHost } from '@/types/bare-metal';
+import type { BareMetalHost, DeployableRelease } from '@/types/bare-metal';
 
 /**
  * Creates a QueryClient wrapper with settings optimized for testing.
@@ -98,6 +100,39 @@ function makeSampleHost(overrides: Partial<BareMetalHost> = {}): BareMetalHost {
     kubernetes_cluster_id: null,
     created_at: '2026-05-01T00:00:00Z',
     updated_at: '2026-05-07T10:00:00Z',
+    ...overrides,
+  };
+}
+
+/**
+ * Sample deployable release matching backend DeployableReleaseResponse schema.
+ */
+function makeSampleRelease(overrides: Partial<DeployableRelease> = {}): DeployableRelease {
+  return {
+    id: 1,
+    name: 'bnk-2.2',
+    display_name: 'BNK 2.2 (SSH bare-metal)',
+    description: 'Stable release for SSH bare-metal deployments',
+    is_default: true,
+    is_active: true,
+    source_type: 'bundled',
+    bnk_release_id: null,
+    bnk_manifest_version: '2.2.0',
+    bnk_cr_kind: 'BnkInstance',
+    flo_version: '1.4.0',
+    k8s_version: '1.28.0',
+    doca_version: '2.6.0',
+    containerd_version: '1.7.0',
+    runc_version: '1.1.0',
+    calico_version: '3.26.0',
+    cert_manager_version: '1.13.0',
+    gateway_api_version: '1.0.0',
+    multus_version: '4.0.0',
+    sriov_version: '1.4.0',
+    storage_class_type: 'local',
+    storage_provisioner: 'local-path',
+    feature_flags: null,
+    created_at: '2026-01-01T00:00:00Z',
     ...overrides,
   };
 }
@@ -405,5 +440,112 @@ describe('useBareMetalHostsWithPolling', () => {
     // After polling interval (2000ms), it should refetch
     // Since we can't easily wait for the interval in tests, we verify the
     // logic is correct by checking the status conditions
+  });
+
+  it('submits multi-host deployment parameters correctly (CT-012 compliant)', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+
+    server.use(
+      http.post('*/api/projects/7/bare-metal/deployments', async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          id: 42,
+          host_id: 1,
+          project_id: 7,
+          topology: 'bf3',
+          status: 'in_progress',
+          current_phase: 'phase_1_dpu',
+          current_step_index: 0,
+          celery_task_id: 'task-abc-123',
+          resume_from_step: null,
+          started_at: '2026-07-23T10:00:00Z',
+          completed_at: null,
+          duration_seconds: null,
+          error_message: null,
+          error_phase: null,
+          error_step_index: null,
+          triggered_by: 'user',
+          created_at: '2026-07-23T10:00:00Z',
+          steps: [],
+        });
+      })
+    );
+
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useCreateBareMetalDeployment(PROJECT_ID), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        host_id: 1,
+        control_plane_host_id: 1,
+        worker_host_ids: [2, 3],
+      });
+    });
+
+    // dpu_selections, tmfifo_pool_cidr, topology, and network_mode were removed from
+    // BareMetalDeploymentCreate — the deployment API does not consume them (Phase 2).
+    expect(capturedBody).toEqual({
+      host_id: 1,
+      control_plane_host_id: 1,
+      worker_host_ids: [2, 3],
+    });
+    expect(capturedBody).not.toHaveProperty('dpu_selections');
+    expect(capturedBody).not.toHaveProperty('tmfifo_pool_cidr');
+    expect(capturedBody).not.toHaveProperty('topology');
+    expect(capturedBody).not.toHaveProperty('network_mode');
+  });
+});
+
+// ============================================================================
+// useDeployableReleases — CT-012: real response shape from new endpoint
+// ============================================================================
+
+describe('useDeployableReleases', () => {
+  it('fetches releases from /api/bare-metal/deployable-releases and unwraps { releases: [...] }', async () => {
+    const sample = makeSampleRelease();
+    server.use(
+      http.get('*/api/bare-metal/deployable-releases', () =>
+        HttpResponse.json({ releases: [sample] }),
+      ),
+    );
+
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useDeployableReleases(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveLength(1);
+    const release = result.current.data![0];
+    expect(release.name).toBe('bnk-2.2');
+    expect(release.is_default).toBe(true);
+    expect(release.is_active).toBe(true);
+    expect(release.source_type).toBe('bundled');
+    expect(release.bnk_manifest_version).toBe('2.2.0');
+    expect(release.flo_version).toBe('1.4.0');
+  });
+
+  it('stores result under the releases query key', async () => {
+    const sample = makeSampleRelease({ id: 42, name: 'bnk-2.3.1' });
+    server.use(
+      http.get('*/api/bare-metal/deployable-releases', () =>
+        HttpResponse.json({ releases: [sample] }),
+      ),
+    );
+
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useDeployableReleases(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = queryClient.getQueryData<DeployableRelease[]>(
+      queryKeys.bareMetal.releases.all,
+    );
+    expect(cached).toHaveLength(1);
+    expect(cached![0].id).toBe(42);
   });
 });

@@ -1020,7 +1020,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                 # S14-039: Update stack status if module belongs to a stack
                 _update_stack_status_if_needed(module, db)
                 # D-001 Phase 3: fire destroy trigger even for skipped modules
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
                 return {"status": "skipped", "module_id": module.id, "reason": f"No infrastructure (status was {module.status})"}
 
             project = module.project
@@ -1171,7 +1171,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                 # D-001 Phase 3: event-chain destroy trigger hook
                 # Fire after module reaches destroyed/destroy_failed so the next
                 # dependency in the reverse-DAG chain is queued (or finalize runs).
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
                 # If destroy succeeded, clear plan metadata (infrastructure no longer exists)
                 if destroy_code == 0:
@@ -1206,7 +1206,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
             # C1: fire event-chain trigger so terminal detection can run even on timeout
             if _exc_module is not None:
                 try:
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
                 except Exception as trigger_err:
                     logger.warning(f"_trigger_next_destroy_module failed after soft timeout: {trigger_err}")
             raise
@@ -1233,7 +1233,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(f"_trigger_next_destroy_module failed after ModuleLockError: {trigger_err}")
             raise
@@ -1257,7 +1257,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(f"_trigger_next_destroy_module failed after ModuleLockLostError: {trigger_err}")
             raise
@@ -1272,7 +1272,7 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(f"_trigger_next_destroy_module failed after generic exception: {trigger_err}")
             raise

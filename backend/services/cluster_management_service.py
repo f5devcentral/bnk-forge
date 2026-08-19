@@ -280,12 +280,17 @@ class ClusterManagementService(BaseService):
 
         kubeconfig_encrypted = encrypt_value(kubeconfig_yaml)
 
-        # Duplicate name check
+        # Duplicate name check -- scoped to THIS project (#113). A global check
+        # let project A's "prod" block project B's "prod" and told B that A had
+        # a cluster by that name via the 409. The DB constraint is now
+        # (project_id, name) too (v2_153), so this is the user-facing guard in
+        # front of it, not the only thing standing between two tenants.
         existing = self.db.query(KubernetesCluster).filter(
-            KubernetesCluster.name == cluster_data.name
+            KubernetesCluster.project_id == project_id,
+            KubernetesCluster.name == cluster_data.name,
         ).first()
         if existing:
-            raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists")
+            raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists in this project")
 
         # Auto-extract SSH tunnel target from kubeconfig API server URL
         ssh_remote_host = cluster_data.ssh_remote_k8s_host or "localhost"
@@ -347,24 +352,75 @@ class ClusterManagementService(BaseService):
         }
 
     def list_all_clusters(self) -> dict[str, Any]:
-        """List all Kubernetes clusters (global)."""
+        """List all Kubernetes clusters (global).
+
+        This endpoint is instance-wide (require_viewer, not project-scoped), so
+        it must not expose the ADR-424 bnk_config -- host/DPU membership,
+        control-plane host, tmfifo pool CIDR -- cross-project to any viewer
+        (#116). bnk_config is redacted here; the project-scoped list and the
+        per-cluster detail keep it. No frontend consumer of this global list
+        reads bnk_config (only the project-scoped K8sClusterList does), so this
+        removes the disclosure without losing a feature -- and it also drops the
+        now-unnecessary membership bulk-fetch those fields required.
+        """
+        from sqlalchemy.orm import selectinload
+
         from routes.k8s._shared import serialize_cluster
-        clusters = self.db.query(KubernetesCluster).all()
-        result = [serialize_cluster(c) for c in clusters]
+
+        clusters = (
+            self.db.query(KubernetesCluster)
+            .options(selectinload(KubernetesCluster.bnk_config))
+            .all()
+        )
+        result = [serialize_cluster(c, include_bnk_config=False) for c in clusters]
         return {"clusters": result, "count": len(result)}
 
     def list_project_clusters(self, project_id: int) -> dict[str, Any]:
-        """List all Kubernetes clusters for a project."""
+        """List all Kubernetes clusters for a project.
+
+        NOTE (#116): this list still renders bnk_config, and its route is
+        require_viewer (any authenticated user) with NO membership/ownership
+        check -- project_id is a path param anyone may supply. Combined with the
+        global list (which still returns each cluster's project_id), any viewer
+        can read any project's bnk_config in two requests. Redacting bnk_config
+        on the global list (this change) is a strict improvement but does NOT
+        fully close #116: the project list must enforce per-project membership
+        first, and that is a pre-existing tenancy-model decision (require_viewer
+        is role-based across the app) larger than this change. Until that lands,
+        bnk_config here is readable by any authenticated user.
+        """
+        from sqlalchemy.orm import selectinload
+
         from routes.k8s._shared import serialize_cluster
+        from services.bnk_cluster_service import BnkClusterService
+
         self._get_project(project_id)
-        clusters = self.db.query(KubernetesCluster).filter(
-            KubernetesCluster.project_id == project_id
-        ).all()
-        result = [serialize_cluster(c, include_project_id=False) for c in clusters]
+        clusters = (
+            self.db.query(KubernetesCluster)
+            .filter(KubernetesCluster.project_id == project_id)
+            .options(selectinload(KubernetesCluster.bnk_config))
+            .all()
+        )
+        bnk_ids = [c.id for c in clusters if getattr(c, "bnk_config", None)]
+        membership_map = BnkClusterService(self.db).bulk_cluster_membership(bnk_ids)
+        result = [
+            serialize_cluster(c, include_project_id=False, membership=membership_map.get(c.id))
+            for c in clusters
+        ]
         return {"clusters": result, "count": len(result)}
 
     def get_cluster_details(self, cluster_id: int) -> dict[str, Any]:
-        """Get cluster details."""
+        """Get cluster details.
+
+        NOTE (#116): GET /k8s/clusters/{cluster_id} is require_viewer with NO
+        project scope (unlike the PUT/DELETE on the same path, which use
+        require_cluster_owner). This handler hand-builds its dict and must NOT
+        gain a bnk_config key -- reusing serialize_cluster here (or adding
+        bnk_config by hand) would reintroduce the cross-project disclosure #116
+        closes, one request further along, and the id needed comes straight from
+        the global list. If bnk_config is ever needed on detail, scope this route
+        to the project first.
+        """
         cluster = self._get_cluster(cluster_id)
         context = PlatformContextService.serialize_cluster_context(cluster)
         return {
@@ -377,6 +433,9 @@ class ClusterManagementService(BaseService):
             "region": cluster.region, "default_namespace": cluster.default_namespace,
             "status": cluster.status, "version": cluster.version,
             "project_id": cluster.project_id,
+            # ADR-478/494: release FK ids — deployable = intent; running = observed by scan.
+            "deployable_release_id": cluster.deployable_release_id,
+            "running_release_id": cluster.running_release_id,
             "last_synced_at": cluster.last_synced_at.isoformat() if cluster.last_synced_at else None,
             "created_at": cluster.created_at.isoformat() if cluster.created_at else None,
             "updated_at": cluster.updated_at.isoformat() if cluster.updated_at else None
@@ -392,12 +451,14 @@ class ClusterManagementService(BaseService):
         requested_ssh_tunnel_enabled = cluster_data.ssh_tunnel_enabled
 
         if cluster_data.name is not None:
+            # Scoped to the cluster's own project (#113) -- see create_cluster.
             existing = self.db.query(KubernetesCluster).filter(
+                KubernetesCluster.project_id == cluster.project_id,
                 KubernetesCluster.name == cluster_data.name,
-                KubernetesCluster.id != cluster_id
+                KubernetesCluster.id != cluster_id,
             ).first()
             if existing:
-                raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists")
+                raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists in this project")
             cluster.name = cluster_data.name
 
         if cluster_data.kubeconfig is not None:
@@ -484,6 +545,10 @@ class ClusterManagementService(BaseService):
         """Delete cluster configuration."""
         cluster = self._get_cluster(cluster_id)
         cluster_name = cluster.name
+
+        # tmfifo IP release is handled by the KubernetesCluster before_delete
+        # mapper event in models/kubernetes.py (ADR-424 finding B) — no
+        # per-caller wiring needed here.
         self.db.delete(cluster)
         self.db.flush()
         return {"message": f"Cluster '{cluster_name}' deleted successfully"}

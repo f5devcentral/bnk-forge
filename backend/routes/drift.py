@@ -12,6 +12,7 @@ from database import get_db
 from models import User
 from routes.auth import require_module_owner, require_project_owner, require_viewer
 from schemas.drift import (
+    ClusterDriftStatusResponse,
     DriftCheckResponse,
     DriftSettingsRequest,
     DriftSettingsResponse,
@@ -158,7 +159,7 @@ def get_drift_stats(
     return svc.get_stats(project_id=project_id, days=days)
 
 
-@router.get("/api/clusters/{cluster_id}/drift/status", dependencies=[Depends(require_viewer)])
+@router.get("/api/clusters/{cluster_id}/drift/status", response_model=ClusterDriftStatusResponse, dependencies=[Depends(require_viewer)])
 def get_cluster_drift_status(cluster_id: int, db: Session = Depends(get_db)):
     """Get drift status for all modules deployed to a cluster's project."""
     svc = DriftService(db)

@@ -178,15 +178,18 @@ def test_stale_inactivation_keeps_all_versions_of_present_path(db):
     svc._import_pack_module(source, _info("1.11.4"), "tools/roksbnkctl")
     svc._import_pack_module(source, _info("1.20.0"), "tools/roksbnkctl")
 
-    inactivated = svc._inactivate_stale_manifest_modules(
+    inactivated, pinned = svc._inactivate_stale_manifest_modules(
         source_id=source.id, discovered_pack_paths={"tools/roksbnkctl"}
     )
     assert inactivated == 0
+    assert pinned == []
     assert all(r.is_active for r in _rows(db, source.id))
 
-    inactivated = svc._inactivate_stale_manifest_modules(source_id=source.id, discovered_pack_paths=set())
+    inactivated, pinned = svc._inactivate_stale_manifest_modules(source_id=source.id, discovered_pack_paths=set())
     db.commit()
     assert inactivated == 2
+    # No project pins these rows in this test, so no pinned-version warnings.
+    assert pinned == []
     assert not any(r.is_active for r in _rows(db, source.id))
 
 
@@ -365,3 +368,74 @@ def test_version_sort_key_ignores_build_metadata():
     assert ordered.index("2.0.0") < ordered.index("v2.0.1+build.7")
     # pre-release with build metadata still ranks below the release of the same core
     assert ordered.index("2.0.1-rc.1+build.9") < ordered.index("v2.0.1+build.7")
+
+
+@pytest.mark.component
+def test_inactivation_warns_when_a_pinned_version_is_dropped(db):
+    """#91: a version row still pinned by a project module must be reported --
+    with the pinning projects named -- when the source stops publishing it."""
+    from tests.factories import ProjectFactory, ProjectModuleFactory
+
+    source = _source(db)
+    svc = ModuleSyncService(db)
+    svc._import_pack_module(source, _info("1.11.4"), "tools/roksbnkctl")
+    svc._import_pack_module(source, _info("1.20.0"), "tools/roksbnkctl")
+    db.flush()
+
+    rows = _rows(db, source.id)
+    pinned_row = next(r for r in rows if r.version == "1.11.4")
+
+    # A project pins the OLD version specifically.
+    project = ProjectFactory(db, name="payments-prod")
+    ProjectModuleFactory(db, project=project, library_module=pinned_row)
+    db.flush()
+
+    # Source now publishes nothing -> both rows go stale.
+    inactivated, pinned = svc._inactivate_stale_manifest_modules(
+        source_id=source.id, discovered_pack_paths=set()
+    )
+    db.commit()
+
+    assert inactivated == 2
+    # Only the pinned row is warned about, not the unpinned one.
+    assert len(pinned) == 1
+    w = pinned[0]
+    assert w["module_id"] == pinned_row.id
+    assert w["version"] == "1.11.4"
+    assert w["pinned_by"] == [{"project_id": project.id, "project_name": "payments-prod"}]
+    assert "still pinned by 1 project" in w["message"]
+    # And the deactivation still happened -- warning, not block (ADR D-033 §4).
+    assert not any(r.is_active for r in _rows(db, source.id))
+
+
+@pytest.mark.component
+def test_full_sync_surfaces_pinned_warnings_in_results(db):
+    """Through sync_git_source's results dict, not just the helper."""
+    from unittest.mock import patch
+
+    from tests.factories import ProjectFactory, ProjectModuleFactory
+
+    source = _source(db)
+    svc = ModuleSyncService(db)
+    # The pinned row lives at a DIFFERENT path than what the source now
+    # publishes, so it goes stale while the sync still finds a pack (the
+    # reconcile branch only runs when pack_paths is non-empty).
+    svc._import_pack_module(source, _info("1.11.4", path="tools/oldctl"), "tools/oldctl")
+    db.flush()
+    row = _rows(db, source.id, path="tools/oldctl")[0]
+    project = ProjectFactory(db, name="edge-cluster")
+    ProjectModuleFactory(db, project=project, library_module=row)
+    db.commit()
+
+    def _fake_parse(module_path, temp_dir):
+        return _info("2.0.0", path="tools/roksbnkctl")
+
+    # Source now publishes only tools/roksbnkctl; tools/oldctl (pinned) goes stale.
+    with patch.object(svc, "_clone_repository", return_value="/tmp/repo"), \
+            patch.object(svc, "_find_pack_modules", return_value=["tools/roksbnkctl"]), \
+            patch.object(svc, "_parse_pack_module", side_effect=_fake_parse), \
+            patch("os.path.exists", return_value=False):
+        results = svc.sync_git_source(source)
+
+    assert results["pinned_versions_inactivated"], "pinned deactivation not surfaced in results"
+    assert results["pinned_versions_inactivated"][0]["pinned_by"][0]["project_name"] == "edge-cluster"

@@ -161,9 +161,14 @@ class TestBuildNetworkPolicyAndPvc:
         netpol = _runner().build_network_policy()
         assert netpol.metadata.name == DENY_ALL_NETPOL_NAME
         assert sorted(netpol.spec.policy_types) == ["Egress", "Ingress"]
-        # Empty pod selector → selects all pods; no rules → deny all.
+        # Empty pod selector → selects all pods. Ingress stays a blanket deny.
         assert netpol.spec.ingress == []
-        assert netpol.spec.egress == []
+        # Egress is no longer a blanket deny: `egress=[]` also denied DNS, so on
+        # an enforcing CNI a provisioning artifact could not resolve anything or
+        # reach a cloud API (#79 item 5). It now allows DNS + public
+        # destinations with RFC1918/loopback/link-local excluded — asserted in
+        # tests/unit/test_container_hardening_phase2.py::TestRunnerNetworkPolicy.
+        assert netpol.spec.egress, "egress must allow DNS + public destinations"
         assert netpol.spec.pod_selector.match_labels in (None, {})
 
     def test_workspace_pvc_named_per_component(self):

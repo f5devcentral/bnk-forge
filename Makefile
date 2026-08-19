@@ -83,11 +83,11 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
         test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
-        test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
+        test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
-        build build-backend build-frontend build-worker build-agent build-all \
+        build build-retry build-backend build-frontend build-worker build-agent build-all \
         fetch-awsbnkctl \
         up down restart deploy deploy-backend deploy-frontend upgrade-safe \
         clean clean-docker check-disk setup-cleanup-cron check-migrations \
@@ -158,7 +158,7 @@ _install-start: ensure-artifact-network
 	@echo ""
 	@echo "Fixing volume permissions..."
 	@PROJECT=$$(basename "$(CURDIR)"); \
-	for v in bnk-forge-data bnk-forge-keys state_data helm_cache helm_config helm_charts workspace_data; do \
+	for v in bnk-forge-data bnk-forge-keys bnk-forge-agent-token state_data helm_cache helm_config helm_charts workspace_data; do \
 	  docker volume create \
 	    --label com.docker.compose.project=$${PROJECT} \
 	    --label com.docker.compose.volume=$${v} \
@@ -167,15 +167,16 @@ _install-start: ensure-artifact-network
 	docker run --rm \
 	  -v "$${PROJECT}_bnk-forge-data:/app/projects" \
 	  -v "$${PROJECT}_bnk-forge-keys:/app/keys" \
+	  -v "$${PROJECT}_bnk-forge-agent-token:/app/agent-token" \
 	  -v "$${PROJECT}_state_data:/app/state" \
 	  -v "$${PROJECT}_helm_cache:/home/bnkforge/.cache/helm" \
 	  -v "$${PROJECT}_helm_config:/home/bnkforge/.config/helm" \
 	  -v "$${PROJECT}_helm_charts:/app/helm_charts" \
 	  -v "$${PROJECT}_workspace_data:/app/workspaces" \
 	  alpine:latest sh -c " \
-	    mkdir -p /app/projects /app/keys /app/state /app/helm_charts /app/workspaces \
+	    mkdir -p /app/projects /app/keys /app/agent-token /app/state /app/helm_charts /app/workspaces \
 	      /home/bnkforge/.cache/helm /home/bnkforge/.config/helm && \
-	    chown -R 1000:1000 /app/projects /app/keys /app/state /app/helm_charts \
+	    chown -R 1000:1000 /app/projects /app/keys /app/agent-token /app/state /app/helm_charts \
 	      /app/workspaces /home/bnkforge" \
 	  2>/dev/null && echo "  ✓ Volume permissions configured" \
 	  || echo "  ⚠  Could not pre-configure permissions"
@@ -257,18 +258,33 @@ build:
 	@echo "  Build complete (cached)"
 	@echo "========================================="
 
+# Same as `build`, but retries on transient download failures. Use this for
+# from-scratch builds on DLP-managed workstations: the github.com tool
+# downloads use Docker `ADD` (see docs/adr/D-035), which has no built-in retry,
+# so a transient CDN/TLS blip aborts the whole build. BuildKit's layer cache
+# makes each retry cheap (only the failed layer re-runs). Tune with
+# RETRY_ATTEMPTS / RETRY_DELAY, e.g. `make build-retry RETRY_ATTEMPTS=5`.
+build-retry:
+	@echo ""
+	@echo "=== Building all app images (parallel, with retry) ==="
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 ./scripts/retry.sh -- docker compose build backend celery-worker celery-beat frontend forge-agent
+	@echo ""
+	@echo "========================================="
+	@echo "  Build complete (cached)"
+	@echo "========================================="
+
 # Build just the API image (backend code changes)
 build-backend:
 	@echo ""
 	@echo "=== Building backend (API) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build backend
 	@echo "  ✓ Backend image built"
 
 # Build just the frontend image
 build-frontend:
 	@echo ""
 	@echo "=== Building frontend ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build frontend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build frontend
 	@echo "  ✓ Frontend image built"
 
 # Fetch the pinned awsbnkctl release binary (linux/amd64) for the worker mount.
@@ -448,7 +464,7 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh
+	@shellcheck --severity=warning upgrade.sh scripts/*.sh vm-bnk-forge/*.sh vm-bnk-forge/lib/*.sh
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
@@ -564,7 +580,21 @@ test-contracts: $(BACKEND_PREREQ)
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/contract/ -v --tb=short $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
-test-integration-full: SUITE = integration
+# Exact complement of test-integration-full: together they cover every test in
+# tests/integration/. The selector is spelled out rather than inherited from
+# pyproject's addopts (-m 'not full') on purpose -- that implicit coupling is
+# what let the two targets stop being complements without anyone noticing
+# (#130). Change one selector, change the other.
+test-integration: SUITE = integration
+test-integration: $(BACKEND_PREREQ)
+	@echo ""
+	@echo "=== Integration Tests (non-full marker set) ==="
+	@cd backend && $(BACKEND_VENV) \
+	  $(PYTEST_BASE) tests/integration/ -m 'not full' --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
+
+# SUITE is integration-full, not integration: the artifact filenames are derived
+# from it, and CI now runs both targets in one job.
+test-integration-full: SUITE = integration-full
 test-integration-full: $(BACKEND_PREREQ)
 	@echo ""
 	@echo "=== Full-Mode Integration Tests (requires running Docker stack) ==="
@@ -640,6 +670,7 @@ test-backend-legacy: $(BACKEND_PREREQ)
 	    --ignore=tests/component \
 	    --ignore=tests/integration \
 	    --ignore=tests/contract \
+	    --ignore=tests/migrations \
 	    --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
 build-frontend-check: $(FRONTEND_PREREQ)
@@ -746,11 +777,13 @@ test-docker: lint-backend-docker test-backend-docker test-frontend-docker test-o
 
 build-test-images: .stamp/backend-test-image .stamp/operator-test-image
 
-.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt
+# VERSION is a prerequisite because the image now COPYs it — without this a
+# version bump leaves a stale test image reporting the old number.
+.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt VERSION
 	@mkdir -p .stamp
 	@echo ""
 	@echo "=== Building backend test image ($(BACKEND_TEST_IMAGE)) ==="
-	docker build --target test -t $(BACKEND_TEST_IMAGE) backend/
+	docker build --target test -f backend/Dockerfile -t $(BACKEND_TEST_IMAGE) .
 	@touch $@
 
 .stamp/operator-test-image: bnk-operator/Dockerfile bnk-operator/requirements.txt bnk-operator/requirements-dev.txt
@@ -925,6 +958,7 @@ help:
 	@echo "  make test-operator         Run operator tests only (pytest)"
 	@echo "  make test-contracts        Run golden contract tests (response shape verification)"
 	@echo "  make test-db               Run DB migration validation tests"
+	@echo "  make test-integration    Run integration tests (default marker set)"
 	@echo "  make test-integration-full Run full-mode integration tests (requires Docker stack)"
 	@echo "  make test-e2e              Run Tier 1 E2E tests (requires running stack)"
 	@echo "  make test-e2e-tier2        Run Tier 2 E2E tests (requires stack + AWS creds)"
@@ -977,6 +1011,17 @@ help:
 #   make push-images   — tag + push all images to BNK_FORGE_REGISTRY
 #
 
+# Files that `make dist` generates into dist/ but git does NOT track. The
+# tarball manifest is `git ls-files dist/` plus this list, so packaging inherits
+# the tracked set by definition -- dist/.gitignore stays the single source of
+# truth -- while still shipping generated artifacts. Anything else sitting in a
+# builder's dist/ (real secrets, .env, logs) is never copied. See #133.
+#
+# Note: git supplies the file NAMES only; contents are copied from the working
+# tree, so the tracked files this target regenerates in place (VERSION, the two
+# nginx confs) ship with their fresh content, not their committed content.
+DIST_GENERATED := install-guide.html
+
 # Build distributable install package (no source code needed by end users)
 # No 'build' prerequisite: the tarball bundles no images (recipients pull from
 # the registry), so rebuilding images here would be wasted work.
@@ -991,16 +1036,32 @@ dist:
 	echo "=== Updating dist/VERSION ==="; \
 	cp VERSION dist/VERSION; \
 	echo "=== Updating dist/nginx configs ==="; \
+	: "Adding a conf here? dist/.gitignore lists the tracked ones by name;"; \
+	: "a file not listed there stays untracked and misses a fresh clone."; \
 	cp proxy/nginx.local.conf dist/nginx/proxy.local.conf; \
 	cp frontend-v2/nginx.local.conf dist/nginx/frontend.local.conf; \
 	echo "=== Bundling install guide ==="; \
 	cp user-pack/install-guide.html dist/install-guide.html; \
-	echo "=== Creating tarball ==="; \
+	echo "=== Creating tarball (tracked files + generated artifacts only) ==="; \
 	TMPDIR=$$(mktemp -d); \
-	cp -R dist "$$TMPDIR/bnk-forge-$${VERSION}"; \
-	rm -f "$$TMPDIR/bnk-forge-$${VERSION}/bnk-forge-"*.tar.gz; \
+	STAGE="$$TMPDIR/bnk-forge-$${VERSION}"; \
+	mkdir -p "$$STAGE"; \
+	{ git ls-files -z -- dist/; \
+	  for g in $(DIST_GENERATED); do printf 'dist/%s\0' "$$g"; done; } \
+	  | sort -zu \
+	  | while IFS= read -r -d '' f; do \
+	      if [ ! -f "$$f" ]; then \
+	        echo "  ✗ manifest lists a file that is not in the working tree: $$f" >&2; \
+	        exit 1; \
+	      fi; \
+	      rel="$${f#dist/}"; \
+	      mkdir -p "$$STAGE/$$(dirname "$$rel")"; \
+	      cp "$$f" "$$STAGE/$$rel"; \
+	    done || { rm -rf "$$TMPDIR"; exit 1; }; \
 	tar -czf "dist/bnk-forge-$${VERSION}.tar.gz" -C "$$TMPDIR" "bnk-forge-$${VERSION}"; \
 	rm -rf "$$TMPDIR"; \
+	DIST_GENERATED="$(DIST_GENERATED)" scripts/check-dist-contents.sh \
+	  "dist/bnk-forge-$${VERSION}.tar.gz" || exit 1; \
 	echo ""; \
 	echo "  ✓ Created: dist/bnk-forge-$${VERSION}.tar.gz"; \
 	echo ""; \
@@ -1149,7 +1210,7 @@ push-customer-build:
 	echo ""; \
 	echo "========================================="; \
 	echo "  ✅ Pushed to $$REGISTRY"; \
-	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp)"; \
+	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp/operator)"; \
 	echo "    Rolling:   $${REGISTRY}/bnk-forge-api:customer-build"; \
 	echo "    Platforms: $(CB_PLATFORMS)"; \
 	echo ""; \
@@ -1195,6 +1256,22 @@ publish-signed:
 docker-verify:
 	@echo ""
 	@echo "=== Docker Image Verification ==="
+	@echo ""
+	@echo "--- Version baked into the image ---"
+	@expected=$$(cat VERSION); \
+	failed=0; \
+	for img in bnk-forge-api bnk-forge-worker bnk-forge-beat; do \
+	  actual=$$(docker run --rm --entrypoint "" $$img:latest cat /app/VERSION 2>/dev/null || echo ""); \
+	  if [ "$$actual" = "$$expected" ]; then \
+	    echo "  OK    $$img reports $$actual"; \
+	  else \
+	    echo "  FAIL  $$img reports '$$actual', expected '$$expected'"; \
+	    echo "        settings.VERSION falls back to 0.0.0 when /app/VERSION is absent,"; \
+	    echo "        which surfaces on /api, the OpenAPI title and X-BNK-Forge-Version."; \
+	    failed=1; \
+	  fi; \
+	done; \
+	[ $$failed -eq 0 ] || exit 1
 	@echo ""
 	@echo "--- Worker CLI tools ---"
 	@failed=0; \
@@ -1269,8 +1346,8 @@ docker-check:
 	@echo "=== Docker Check (BuildKit lint) ==="
 	@failed=0; \
 	  for target_spec in \
-	    "backend/Dockerfile:backend" \
-	    "frontend-v2/Dockerfile:frontend-v2" \
+	    "backend/Dockerfile:." \
+	    "frontend-v2/Dockerfile:." \
 	    "proxy/Dockerfile:proxy" \
 	    "mcp-server/Dockerfile:mcp-server" \
 	    "bnk-operator/Dockerfile:bnk-operator"; do \

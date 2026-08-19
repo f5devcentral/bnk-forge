@@ -331,12 +331,46 @@ verification, not full dependency introspection).
 MCP now emits structured invocation logs at two layers:
 
 1. **Tool boundary** (`bnk_forge_mcp.observability`):
-   - `event`: `tool_invocation_start` / `tool_invocation_result`
+   - `event`: `tool_invocation_start` / `tool_invocation_result` /
+     `tool_invocation_blocked`
    - `invocation_id`
    - `tool_name`, `module`
    - catalog context when available: `risk_class`, `auth_expectation`,
      `backend_method`, `backend_path`
    - `success`, `duration_ms`, `error_class` (on failure)
+   - `reason` (on `tool_invocation_blocked`)
+
+### Destructive-tool confirmation gate
+
+Tools catalogued `risk_class: destructive` are enforced at runtime, not only
+logged. Each one carries an extra `confirm: bool = False` argument, and calling
+it without `confirm=true` returns a `CONFIRMATION_REQUIRED` refusal without
+touching the backend:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "error_class": "confirmation_required",
+    "code": "CONFIRMATION_REQUIRED",
+    "retryable": false,
+    "next_action": "Verify this is the intended target, then re-invoke with confirm=true..."
+  }
+}
+```
+
+This matters because the `mcp` service account is `role=admin`: without a gate,
+one tool call from an autonomous agent deletes a real project or cluster with no
+second factor. The gate is applied where tools are registered, so it follows the
+catalog — mark a new tool `destructive` and it is gated automatically.
+
+`confirm` is distinct from a tool's own `force` argument. `force` bypasses
+*backend* safety checks (e.g. deleting an active project); `confirm` asserts
+*intent* to run a destructive operation at all.
+
+Set `BNK_FORGE_MCP_REQUIRE_CONFIRMATION=false` to disable the gate for trusted
+non-interactive teardown (CI tearing down its own fixtures). It is read per
+call, and defaults to enabled.
 
 2. **HTTP client boundary** (`bnk_forge_mcp.client`):
    - `method`, `path`

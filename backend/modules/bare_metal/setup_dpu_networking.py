@@ -158,7 +158,12 @@ class SetupDPUNetworkingModule(SSHModule):
 
         from services.bare_metal.ssh_session import SSHSession
 
-        dpu_ip: str = str(variables.get("dpu_ip") or "192.168.100.2")
+        # Prefer the address actually baked into bf.conf. `dpu_ip` comes from
+        # flash-dpu, but a re-run or a partial chain can leave it unset, and the
+        # 192.168.100.2 literal is only correct for the pool's FIRST /30 (#118).
+        dpu_ip: str = str(
+            variables.get("dpu_ip") or variables.get("dpu_tmfifo_ip") or "192.168.100.2"
+        )
         host_ip: str = str(variables.get("host_ip") or "")
         dns_servers_raw: str = str(variables.get("dns_servers") or "8.8.8.8,8.8.4.4")
         dns_servers = [s.strip() for s in dns_servers_raw.split(",") if s.strip()]
@@ -264,18 +269,8 @@ class SetupDPUNetworkingModule(SSHModule):
         on_output("[setup-dpu-net] DPU DNS configured")
 
         # ── Step 5: Verify DPU internet access ────────────────────────
-        on_output("[setup-dpu-net] Verifying DPU internet access (ping 8.8.8.8)...")
-        r = dpu_session.execute("ping -c1 -W5 8.8.8.8", timeout=15)
-        if r.exit_code != 0:
-            on_output(
-                f"[setup-dpu-net] WARNING: DPU ping failed (exit={r.exit_code}): "
-                f"{r.stderr[:200]}"
-            )
-            raise RuntimeError(
-                "DPU cannot reach 8.8.8.8 after NAT/routing setup. "
-                "Check host iptables, IP forwarding, and DPU route table."
-            )
-        on_output(f"[setup-dpu-net] DPU internet access verified: {r.stdout.strip()[:120]}")
+        on_output("[setup-dpu-net] Verifying DPU internet access...")
+        self._verify_dpu_internet_access(dpu_session, on_output)
 
         total = time.monotonic() - t0
         on_output(f"[setup-dpu-net] Complete ({total:.1f}s total)")
@@ -357,27 +352,8 @@ class SetupDPUNetworkingModule(SSHModule):
                 "Check host→DPU OOB-subnet routing and DPU SSH credentials."
             ) from exc
 
-        on_output("[setup-dpu-net] Connected to DPU — verifying internet...")
-        r = dpu_session.execute("ping -c2 -W2 8.8.8.8", timeout=15)
-        if r.exit_code == 0:
-            on_output("[setup-dpu-net] DPU internet access verified (ping 8.8.8.8 OK)")
-        else:
-            on_output(
-                "[setup-dpu-net] WARNING: DPU ping to 8.8.8.8 failed "
-                f"(exit={r.exit_code}); trying DNS resolution as fallback..."
-            )
-            r = dpu_session.execute(
-                "getent hosts pkgs.k8s.io > /dev/null && echo DNS_OK || echo DNS_FAILED",
-                timeout=15,
-            )
-            if "DNS_OK" not in r.stdout:
-                raise RuntimeError(
-                    "DPU has no internet via oob_net0 (both ICMP and DNS "
-                    "checks failed). Confirm the OOB management network "
-                    "provides internet and that the DPU's bf.conf netplan "
-                    "set oob_net0 to dhcp4: true."
-                )
-            on_output("[setup-dpu-net] DPU DNS resolution works (oob_net0 OK)")
+        on_output("[setup-dpu-net] Connected to DPU — verifying internet access...")
+        self._verify_dpu_internet_access(dpu_session, on_output)
 
         # ── Host-side VLAN sub-interfaces ─────────────────────────────
         # For each VLAN configured on the DPU's br-lag, lay down a matching
@@ -413,6 +389,92 @@ class SetupDPUNetworkingModule(SSHModule):
             "cluster_api_ip": cluster_api_ip,
             "execution_duration_seconds": round(total, 1),
         }
+
+    # ── Helper: retry-tolerant internet verification ──────────────────
+
+    def _verify_dpu_internet_access(
+        self,
+        dpu_session: Any,
+        on_output: Any,
+        max_attempts: int = 5,
+        sleep_seconds: float = 3.0,
+    ) -> None:
+        """Verify DPU internet access with retry tolerance for first-packet ARP loss.
+
+        Checks in order, early-exiting as soon as any check passes:
+        1. ICMP ping to 8.8.8.8 — fast soft signal (ICMP is blocked on some networks)
+        2. DNS resolution of pkgs.k8s.io — validates resolv.conf + gateway forwarding
+        3. TCP connect to pkgs.k8s.io:443 or github.com:443 — what install-dpu-prereqs
+           actually needs (apt repos, containerd/runc releases, K8s packages)
+
+        Retries up to max_attempts times with sleep_seconds between to tolerate
+        first-packet ARP loss against a freshly-installed default route. The
+        module exits the loop as soon as any check passes (happy-path is fast).
+
+        Raises RuntimeError on genuine failure, naming the specific failed check
+        (DNS:<host> or TCP:<host>:<port>) and the endpoint so the operator knows
+        exactly what to investigate.
+        """
+        _DNS_HOST = "pkgs.k8s.io"
+        _TCP_ENDPOINTS = [("pkgs.k8s.io", 443), ("github.com", 443)]
+
+        last_failed: list[str] = []
+
+        for attempt in range(1, max_attempts + 1):
+            on_output(f"[setup-dpu-net] Internet check {attempt}/{max_attempts}...")
+            last_failed = []
+
+            # ICMP — passes immediately once ARP is warm; may be blocked on some networks
+            r = dpu_session.execute("ping -c1 -W2 8.8.8.8", timeout=8)
+            if r.exit_code == 0:
+                on_output("[setup-dpu-net] Internet verified (ICMP 8.8.8.8 OK)")
+                return
+            last_failed.append("ICMP:8.8.8.8")
+            on_output(
+                f"[setup-dpu-net] ICMP to 8.8.8.8 failed (exit={r.exit_code}) "
+                "— checking DNS+TCP..."
+            )
+
+            # DNS — validates that resolv.conf was written and the gateway forwards DNS
+            r = dpu_session.execute(
+                f"getent hosts {_DNS_HOST} >/dev/null 2>&1 && echo DNS_OK || echo DNS_FAILED",
+                timeout=8,
+            )
+            dns_ok = "DNS_OK" in r.stdout
+            if not dns_ok:
+                last_failed.append(f"DNS:{_DNS_HOST}")
+                on_output(f"[setup-dpu-net] DNS resolution of {_DNS_HOST} failed")
+            else:
+                on_output(f"[setup-dpu-net] DNS OK ({_DNS_HOST}) — checking TCP reachability...")
+                # TCP connect to the endpoints install-dpu-prereqs hits over HTTPS
+                for tcp_host, tcp_port in _TCP_ENDPOINTS:
+                    r = dpu_session.execute(
+                        f"timeout 5 bash -c 'exec 3<>/dev/tcp/{tcp_host}/{tcp_port}' "
+                        "2>/dev/null && echo TCP_OK || echo TCP_FAILED",
+                        timeout=10,
+                    )
+                    if "TCP_OK" in r.stdout:
+                        on_output(
+                            f"[setup-dpu-net] Internet verified "
+                            f"(DNS:{_DNS_HOST} + TCP:{tcp_host}:{tcp_port} OK)"
+                        )
+                        return
+                    last_failed.append(f"TCP:{tcp_host}:{tcp_port}")
+                    on_output(f"[setup-dpu-net] TCP {tcp_host}:{tcp_port} failed")
+
+            if attempt < max_attempts:
+                on_output(
+                    f"[setup-dpu-net] Connectivity not confirmed "
+                    f"({', '.join(last_failed)}); retrying in {sleep_seconds:.0f}s..."
+                )
+                time.sleep(sleep_seconds)
+
+        raise RuntimeError(
+            f"DPU internet access not confirmed after {max_attempts} attempt(s). "
+            f"Last failed checks: {', '.join(last_failed) or 'none recorded'}. "
+            "Check host iptables (MASQUERADE rule), IP forwarding on host, "
+            "DPU default route (via 192.168.100.1), and /etc/resolv.conf on DPU."
+        )
 
     # ── Helper: configure host-side VLAN sub-interfaces ───────────────
 

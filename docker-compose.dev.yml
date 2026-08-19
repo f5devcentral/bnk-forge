@@ -21,7 +21,8 @@
 services:
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: api
       args:
         BUILD_DEV: "true"
@@ -73,7 +74,8 @@ services:
 
   celery-worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: worker
       args:
         BUILD_DEV: "true"

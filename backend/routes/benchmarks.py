@@ -55,6 +55,7 @@ from schemas.benchmarks import (
     BenchmarkTargetListResponse,
     BenchmarkTargetResponse,
     BenchmarkTargetUpdate,
+    BenchmarkTrendsResponse,
     DiscoverTargetsRequest,
     DiscoverTargetsResponse,
     ImportAwsJumphostRequest,
@@ -83,14 +84,28 @@ ws_router = APIRouter()
 # Agent auth helpers — flag-gated (BENCHMARK_AGENT_AUTH_REQUIRED)
 # ============================================================================
 
-def _require_agent_bearer(request: Request) -> None:
-    """When BENCHMARK_AGENT_AUTH_REQUIRED is ON, validate the bearer token.
+# Roles whose tokens may write to the agent-facing endpoints. `agent` is the
+# claim _mint_agent_token and the bootstrap token carry; operator/admin keeps
+# the documented human curl flow (`curl -X POST .../results/aiperf` with a user
+# token) working. A viewer token authenticates a person but grants no write
+# intent, so it is rejected here even though it decodes cleanly.
+_AGENT_WRITE_ROLES = frozenset({"agent", "operator", "admin"})
 
-    Raises BadRequestError (→ 401) if the token is missing or invalid.
-    When the flag is OFF this is a no-op, preserving the open curl flow.
+
+def _require_agent_bearer(request: Request) -> dict:
+    """Gate the agent-facing mutating endpoints (register / ingest).
+
+    Requires a valid bearer token whose role may write here (#148, the F6 half
+    of #41). Previously any valid token was accepted -- a viewer's included --
+    and, because BENCHMARK_AGENT_AUTH_REQUIRED defaulted to False, on a default
+    deployment no token was required at all.
+
+    Returns the decoded payload so callers can bind on its claims. When the flag
+    is OFF this returns {} without checking, preserving the open curl flow for
+    trusted networks that opt out explicitly.
     """
     if not settings.BENCHMARK_AGENT_AUTH_REQUIRED:
-        return
+        return {}
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise BadRequestError("Bearer token required", code="AGENT_AUTH_REQUIRED")
@@ -98,9 +113,16 @@ def _require_agent_bearer(request: Request) -> None:
     from core.errors import UnauthorizedError
     from services.auth_service import decode_token
     try:
-        decode_token(token)
+        payload = decode_token(token)
     except UnauthorizedError as exc:
         raise BadRequestError(str(exc), code="AGENT_AUTH_INVALID")
+    role = str(payload.get("role") or "")
+    if role not in _AGENT_WRITE_ROLES:
+        raise BadRequestError(
+            f"Token role '{role or 'none'}' may not write to agent endpoints",
+            code="AGENT_AUTH_FORBIDDEN",
+        )
+    return payload
 
 
 # ============================================================================
@@ -339,6 +361,37 @@ def delete_benchmark_run(run_id: int, db: Session = Depends(get_db)):
     svc = BenchmarkService(db)
     svc.delete_run(run_id)
     db.commit()
+
+
+@router.post(
+    "/api/benchmarks/runs/{run_id}/baseline",
+    response_model=BenchmarkRunResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("set benchmark run baseline")
+def set_benchmark_run_baseline(run_id: int, db: Session = Depends(get_db)):
+    """Mark a completed run as the baseline for its (target, scenario/config) context.
+
+    Clears any previous baseline in that same context — one baseline per context.
+    """
+    svc = BenchmarkService(db)
+    result = svc.set_baseline(run_id)
+    db.commit()
+    return result
+
+
+@router.delete(
+    "/api/benchmarks/runs/{run_id}/baseline",
+    response_model=BenchmarkRunResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("unset benchmark run baseline")
+def unset_benchmark_run_baseline(run_id: int, db: Session = Depends(get_db)):
+    """Clear the baseline flag on a run."""
+    svc = BenchmarkService(db)
+    result = svc.unset_baseline(run_id)
+    db.commit()
+    return result
 
 
 # ============================================================================
@@ -684,6 +737,22 @@ def get_benchmark_summary(db: Session = Depends(get_db)):
     """Get dashboard summary of benchmark activity."""
     svc = BenchmarkService(db)
     return svc.get_summary()
+
+
+@router.get("/api/benchmarks/trends", response_model=BenchmarkTrendsResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("get benchmark trends")
+def get_benchmark_trends(
+    target_id: int | None = Query(None),
+    proxy: str | None = Query(None),
+    scenario_key: str | None = Query(None),
+    config_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Time-ordered completed-run metrics for a target/proxy/scenario/config context,
+    with the current baseline (if any) always included."""
+    svc = BenchmarkService(db)
+    return svc.get_trends(target_id=target_id, proxy=proxy, scenario_key=scenario_key, config_id=config_id, limit=limit)
 
 
 # ============================================================================
@@ -1341,8 +1410,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
 
     Two orthogonal layers are honored:
       - BENCHMARK_AGENT_AUTH_REQUIRED (agent-specific, second layer): when ON a
-        token is mandatory, must be valid, and its ``agent_id`` claim must match
-        the path agent_id — rejection closes 4401.
+        token is mandatory, must be valid, and must carry an ``agent_id`` claim
+        matching the path agent_id — rejection closes 4401. A token with no
+        agent_id claim is rejected: it authenticates a caller but does not
+        identify an agent.
       - REQUIRE_AUTH (global JWT, M2): when ON a valid token is required —
         rejection closes 4001. When OFF the connection is accepted (local
         no-auth deployments), mirroring AuthMiddleware.
@@ -1369,8 +1440,26 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         except UnauthorizedError:
             logger.warning("Agent %d WS rejected: invalid token", agent_id)
             return 4401
+        # Identity binding (#41 F5). A token WITHOUT an agent_id claim used to
+        # skip this check entirely, so any valid token -- a viewer's included --
+        # could connect as any agent_id and send heartbeat/progress or flip agent
+        # status. Authentication is not identity: when agent auth is required the
+        # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
-        if token_agent_id is not None and int(token_agent_id) != agent_id:
+        if token_agent_id is None:
+            logger.warning(
+                "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
+                agent_id,
+            )
+            return 4401
+        try:
+            claim_matches = int(token_agent_id) == agent_id
+        except (TypeError, ValueError):
+            logger.warning(
+                "Agent %d WS rejected: non-numeric agent_id claim %r", agent_id, token_agent_id
+            )
+            return 4401
+        if not claim_matches:
             logger.warning(
                 "Agent %d WS rejected: token agent_id=%s does not match path", agent_id, token_agent_id
             )

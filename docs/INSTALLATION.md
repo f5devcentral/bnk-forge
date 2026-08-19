@@ -10,6 +10,7 @@ This guide covers installing BNK Forge on various environments.
 - [System Requirements](#system-requirements)
 - [Local Development](#local-development)
 - [Production Deployment](#production-deployment)
+- [Provisioned VM (KVM or cloud-init)](#provisioned-vm-kvm-or-cloud-init)
 - [Configuration Options](#configuration-options)
 - [Verify Installation](#verify-installation)
 - [First Steps After Installation](#first-steps-after-installation)
@@ -237,6 +238,35 @@ make down             # Stop and remove
 make status           # Health check
 make server-logs      # Tail logs
 ```
+
+---
+
+## Provisioned VM (KVM or cloud-init)
+
+The steps above assume a host you already have. To get a **fresh** VM that
+installs BNK Forge unattended on first boot, use the harness in
+[`vm-bnk-forge/`](../vm-bnk-forge/README.md) — it renders a cloud-init that
+installs Docker, clones the repo, and runs `make install`.
+
+```bash
+cd vm-bnk-forge
+cp config.env.example config.env
+$EDITOR config.env       # VM_NAME, sizing, BRANCH (pin a release tag for demos)
+
+./make-vm.sh             # Linux + KVM host: builds a seed disk and virt-installs
+./render-cloud-init.sh   # any host: emits user-data to paste into a cloud provider
+```
+
+Roughly six minutes later the VM serves `https://<vm-ip>:8443` with every
+container healthy (8443/8082, since `make install` runs the host-networked
+server topology). The VM path applies the same hardening this guide describes:
+`ufw` is enabled during cloud-init for 22 plus those proxy ports, sshd is
+key-only with root login disabled, and the GitHub deploy key is shredded once
+the clone completes.
+
+The default credentials (`admin` / `changeme`) and the Docker-socket mount
+still apply — read the README's security notes before giving such a VM a
+public address.
 
 ---
 

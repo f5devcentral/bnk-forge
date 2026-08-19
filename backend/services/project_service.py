@@ -16,6 +16,7 @@ at module level for backward compatibility.
 """
 
 import logging
+from collections.abc import Iterable
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload, subqueryload
@@ -88,6 +89,46 @@ def _freeze_encryption_passphrase_before_rename(db: Session, project: "Project")
 # ProjectService (IMP-002)
 # ============================================================
 
+from tasks.parallel_tasks import NO_INFRA_STATUSES  # noqa: E402  (module status vocabulary)
+
+# A module that still owns infrastructure AND has failed. Kept separate from
+# NO_INFRA_STATUSES because init_failed/plan_failed are failures that own
+# nothing -- they belong to "clean", not to "failed".
+INFRA_FAILED_STATUSES = frozenset({
+    "failed",
+    "apply_failed",
+    "destroy_failed",
+})
+
+
+def summarize_module_state(module_statuses: Iterable[str | None]) -> str:
+    """One field a client can poll for teardown completion.
+
+    "clean" / "in_progress" / "failed", derived from the SAME predicate the
+    DELETE gate uses -- module statuses against NO_INFRA_STATUSES -- so that:
+
+        module_state == "clean"  <=>  DELETE succeeds without force=true
+
+    That equivalence is the point. This field previously came from the stored
+    deployed_count / failed_count columns, which bucket by a different rule:
+    deployed_count counts only "applied" and failed_count counts the five
+    *_failed statuses, so neither counts "applying" or "destroying". A module
+    mid-teardown therefore reported "clean" while the gate refused with 409 --
+    a polling client would read "clean" and proceed to DELETE, which is issue
+    #125 again under a new field name. Deriving both from NO_INFRA_STATUSES
+    means a status added there lands in the gate and this field at once.
+
+    Callers should treat anything other than "clean" as "not finished".
+    """
+    owning = [(status or "") for status in module_statuses
+              if (status or "") not in NO_INFRA_STATUSES]
+    if not owning:
+        return "clean"
+    if any(status in INFRA_FAILED_STATUSES for status in owning):
+        return "failed"
+    return "in_progress"
+
+
 class ProjectService(BaseService):
     """Encapsulates all project business logic.
 
@@ -131,6 +172,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count,
             "deployed_count": project.deployed_count,
             "failed_count": project.failed_count,
+            "module_state": summarize_module_state(m.status for m in project.project_modules),
             "cluster_count": len(project.k8s_clusters) if project.k8s_clusters else 0,
             "owner": project.owner,
             "team": project.team,
@@ -269,6 +311,7 @@ class ProjectService(BaseService):
             "module_count": project.module_count or 0,
             "deployed_count": project.deployed_count or 0,
             "failed_count": project.failed_count or 0,
+            "module_state": summarize_module_state(m.status for m in project.project_modules),
             "owner": project.owner,
             "team": project.team,
             "visibility": project.visibility,
@@ -345,6 +388,9 @@ class ProjectService(BaseService):
                 CloudCredentialTemplate.ibmcloud_resource_group,
             ),
             subqueryload(Project.k8s_clusters),
+            # module_state is derived from module statuses; without this the list
+            # endpoint would lazy-load modules once per project.
+            subqueryload(Project.project_modules).load_only(ProjectModule.status),
             joinedload(Project.user).load_only(User.id, User.username),  # MU-001
         ).order_by(Project.name).all()
 
@@ -577,11 +623,13 @@ class ProjectService(BaseService):
             project.project_type = project_data.project_type
         if project_data.cloud_provider is not None:
             project.cloud_provider = project_data.cloud_provider
-        if hasattr(project_data, "target_platform_profile"):
+        # Same always-true hasattr() as the credential fields below: a partial
+        # update was nulling the project's platform routing on every request.
+        if self._field_was_supplied(project_data, "target_platform_profile"):
             project.target_platform_profile = project_data.target_platform_profile
-        if hasattr(project_data, "platform_provider"):
+        if self._field_was_supplied(project_data, "platform_provider"):
             project.platform_provider = project_data.platform_provider
-        if hasattr(project_data, "management_boundary"):
+        if self._field_was_supplied(project_data, "management_boundary"):
             project.management_boundary = project_data.management_boundary
 
         # PLATFORM-CONTEXT-004 baseline normalization on update:
@@ -612,12 +660,26 @@ class ProjectService(BaseService):
         if project_data.state_config is not None:
             self._apply_state_config(project, project_data.state_config)
 
-        # Update credential template if provided
-        if hasattr(project_data, "credential_template_id"):
+        # Only assign when the CALLER sent the field. hasattr() is always True
+        # for a declared Pydantic field, so the previous checks fired on every
+        # request and wrote the field's default of None — a partial update that
+        # never mentioned the credential template silently detached it.
+        #
+        # The damage is not cosmetic: get_cloud_credentials_env() derives
+        # IBMCLOUD_API_KEY (and the AWS/Azure/GCP equivalents) from the project's
+        # template, so once it is cleared every subsequent module runs with no
+        # cloud credentials at all. Because the project row is touched as modules
+        # complete, the first module in a blueprint succeeds and every later one
+        # fails with "no IBM Cloud API key", which reads like a module bug rather
+        # than a project one.
+        #
+        # _field_was_supplied() is the existing expression of "if provided" —
+        # already used below for target_platform_profile — so this uses it rather
+        # than reading model_fields_set inline a second time.
+        if self._field_was_supplied(project_data, "credential_template_id"):
             project.credential_template_id = project_data.credential_template_id
 
-        # Update SSH credential if provided
-        if hasattr(project_data, "ssh_credential_id"):
+        if self._field_was_supplied(project_data, "ssh_credential_id"):
             project.ssh_credential_id = project_data.ssh_credential_id
 
         # Update enabled status if provided
@@ -644,6 +706,55 @@ class ProjectService(BaseService):
         Returns SuccessResponse-shaped dict.
         """
         project = self._get_project(project_id)
+
+        # Refuse to delete a project whose modules may still own cloud resources.
+        #
+        # Forge holds the ONLY record of what a module built, so deleting the
+        # project orphans those resources with no retry path — the cluster keeps
+        # billing and nothing in Forge points at it. Reported on 3.1.6: a
+        # destroy-all returned non-zero, DELETE succeeded 22 seconds later, and a
+        # live ROKS cluster plus its VPC, three subnets and three public gateways
+        # had to be removed by hand (issue #125).
+        #
+        # NO_INFRA_STATUSES is the existing definition of "this module has
+        # nothing left to destroy"; anything else — applied, applying,
+        # destroying, apply_failed, destroy_failed — may still own something.
+        #
+        # This runs FIRST, ahead of the active-project and live-lock gates, and
+        # that ordering is load-bearing. The only-project gate below refuses with
+        # "use force=true to delete it anyway" — advice about project count, not
+        # about infrastructure. A user who follows it passes the one flag that
+        # also disarms this gate, which is precisely how #125 happened. Checking
+        # infra first means force=true is only ever suggested to someone whose
+        # modules are already destroyed.
+        #
+        # force=true remains available: deliberately abandoning resources is a
+        # legitimate operation. It just must not be the default, because a
+        # project that still owns resources is recoverable and a deleted one is
+        # not.
+        undestroyed = [
+            m for m in self.db.query(ProjectModule)
+            .filter(ProjectModule.project_id == project_id).all()
+            if (m.status or "") not in NO_INFRA_STATUSES
+        ]
+        if undestroyed and not force:
+            raise ConflictError(
+                "project",
+                f"Cannot delete: {len(undestroyed)} module(s) are not destroyed and may "
+                f"still own cloud resources. Destroy them first, or pass force=true to "
+                f"delete the project and abandon those resources.",
+                details={
+                    "requires_force": True,
+                    "undestroyed_modules": [
+                        {
+                            "id": m.id,
+                            "name": (m.library_module.name if m.library_module else m.path_in_project),
+                            "status": m.status,
+                        }
+                        for m in undestroyed
+                    ],
+                },
+            )
 
         # Check if this is the only project
         total_projects = self.db.query(Project).count()

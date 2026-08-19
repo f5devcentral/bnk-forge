@@ -21,6 +21,7 @@ from models.enums import StackInstanceStatus
 from schemas.projects import ProjectCreate
 from services.blueprint_catalog_common import _resolve_category
 from services.execution.k8s_catalog_payload import _render_template_obj
+from services.module_resolution import warn_on_cross_source_ambiguity
 from services.module_version_query import available_module_versions
 from services.project_module_service import ProjectModuleService
 from services.project_service import ProjectService
@@ -70,13 +71,20 @@ class ImportedBlueprintService:
             ModuleLibrary.path == module_ref, ModuleLibrary.is_active
         )
         if pinned_version:
-            exact = (
+            # D-033 identity is (module_source_id, path, version), but a blueprint
+            # pin carries no source -- so if two sources catalog the same
+            # path+version (a fork registered alongside the original), highest id
+            # silently wins and the deploy binds the fork's manifest. Nothing the
+            # blueprint author can see or control. Cannot be auto-resolved without
+            # source-aware pins, so make it loud (#90 F3).
+            candidates = (
                 query.filter(ModuleLibrary.version == pinned_version)
                 .order_by(ModuleLibrary.is_latest.desc(), ModuleLibrary.id.desc())
-                .first()
+                .all()
             )
-            if exact is not None:
-                return exact
+            if candidates:
+                warn_on_cross_source_ambiguity(candidates, module_ref)
+                return candidates[0]
             # Transitional fallback applies ONLY when the path has no hashed
             # (version-identified) rows at all — a purely pre-D-033 path. Once
             # ANY hashed version exists, a missed pin is a hard miss; silently

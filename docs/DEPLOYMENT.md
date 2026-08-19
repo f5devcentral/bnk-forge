@@ -47,6 +47,8 @@ open https://localhost
 
 That's it. The database migrations run automatically on startup. All 9 containers will start in the correct order with health check dependencies.
 
+Need the host itself provisioned too? [`vm-bnk-forge/`](../vm-bnk-forge/README.md) builds a fresh Ubuntu 24.04 VM (local KVM or any cloud that takes cloud-init user-data) that runs these steps unattended on first boot.
+
 ---
 
 ## First Login
@@ -589,7 +591,7 @@ BNK Forge is deployed on a test server for staging and demos.
 | **ROI Tool** | `https://10.176.11.91/roi/` |
 | **SSH** | `ubuntu@10.176.11.91` (pw: `F5@apcj`) |
 | **PVE Jump** | `root@10.176.10.132` (pw: `F5@apcj`) → SSH to .91 |
-| **VM** | Proxmox VM 150 (webdemo2) — 8 CPU, 16GB RAM, 52GB disk |
+| **VM** | Proxmox VM 150 (webdemo2) — 8 CPU, 16GB RAM, 52GB disk (`vm-bnk-forge/` takes its 8 vCPU / 16 GB defaults from this reference; it defaults to a 100 GiB disk) |
 | **OS** | Ubuntu 22.04 LTS |
 | **Docker** | 28.1.1 |
 

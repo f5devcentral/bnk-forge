@@ -388,6 +388,34 @@ class TestModuleStatus:
         with pytest.raises(NotFoundError):
             svc.get_module_status(99999)
 
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_status_exposes_latest_task_id(self, mock_deps, mock_counts, svc, project_and_lib, db):
+        """#154: the task is the handle for the module's output, and it was not
+        reachable from /status. Newest task by default; the live lock holder
+        when a task is running now."""
+        from models import Task
+
+        project, lib = project_and_lib
+        mid = svc.add_module(project.id, lib.id, "infra/vpc")["module_id"]
+
+        assert svc.get_module_status(mid)["latest_task_id"] is None
+
+        t1 = Task(project_id=project.id, module_id=mid, task_type="apply",
+                  status="completed", triggered_by="user", celery_task_id="c1")
+        t2 = Task(project_id=project.id, module_id=mid, task_type="apply",
+                  status="completed", triggered_by="user", celery_task_id="c2")
+        db.add_all([t1, t2])
+        db.commit()
+        assert svc.get_module_status(mid)["latest_task_id"] == t2.id
+
+        # A task holding the module lock is the one running NOW -- prefer it,
+        # even if a newer row exists (e.g. a queued retry).
+        module = svc.get_module(mid)
+        module.holding_task_id = t1.id
+        db.commit()
+        assert svc.get_module_status(mid)["latest_task_id"] == t1.id
+
 
 class TestModuleVariables:
     @patch("services.project_module_service.update_project_counts")
@@ -1427,3 +1455,320 @@ class TestSubmitAction:
         mock_dispatch.assert_called_once_with(
             result["task_id"], module, "run-scenario", {"scenario": "tcpl4lb", "region": "us-east"}
         )
+
+
+# ── Disabled modules are not runnable (issue #527) ───────────────────
+
+
+class TestDisabledModuleIsNotRunnable:
+    """`enabled: false` must actually hold a module back.
+
+    Issue #527: a blueprint's second module was explicitly disabled, yet the
+    dependency chain dispatched it the moment the first module completed — so
+    there was no way to build a ROKS cluster without BNK landing on it. Blueprint
+    manifests depend on this too: `optional: true` creates a module DISABLED, and
+    that guarantee is only as strong as this check.
+    """
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_validate_rejects_disabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """The shared plan/apply gate refuses a disabled module."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = False
+        db.flush()
+
+        result = svc.validate_module(module.id, operation="apply")
+
+        assert result["valid"] is False, (
+            "a disabled module validated as ready to apply — nothing stops it being "
+            "deployed (issue #527)"
+        )
+        assert any("disabled" in e.lower() for e in result["errors"]), result["errors"]
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_validate_allows_enabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """Contrast: the same module passes once enabled.
+
+        Without this, the assertion above would also hold if validation were
+        broken for every module.
+        """
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = True
+        db.flush()
+
+        result = svc.validate_module(module.id, operation="apply")
+
+        assert not any("disabled" in e.lower() for e in result["errors"]), result["errors"]
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_submit_apply_refuses_disabled_module(self, _deps, _counts, svc, db, project_and_lib):
+        """A disabled module cannot be deployed by calling apply directly either."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = False
+        module.status = "initialized"
+        db.flush()
+
+        with patch("services.execution.task_dispatch.dispatch_apply") as mock_dispatch:
+            with pytest.raises(BadRequestError, match="(?i)disabled"):
+                svc.submit_apply(module.id)
+            mock_dispatch.assert_not_called()
+
+
+# ── Cancel actually stops the work (issues #462, #527 part 2) ────────
+
+
+class TestCancelStopsRealWork:
+    """Cancel must revoke queued tasks and kill the daemon-side container.
+
+    Issue #462: `revoke(terminate=True)` SIGKILLs the worker-side `docker run`
+    client; the container keeps running against live infrastructure while Forge
+    reports "cancelled" and drops the module lock. And matching only
+    `status == "in_progress"` left a task queued behind it un-revoked, so the
+    worker ran the full apply after the user was told it stopped.
+    """
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_revokes_and_marks_a_queued_task(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """F4: a queued task is revoked and marked cancelled, not left live."""
+        from models import ProjectModule
+        from models import Task as TaskModel
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        queued = make_task(
+            project=project, module=module, task_type="apply",
+            status="queued", celery_task_id="celery-queued-1",
+        )
+
+        revoked = []
+        with patch("celery_app.celery_app") as mock_celery, \
+             patch.object(svc, "_kill_containers_for_tasks", return_value=([], True)):
+            mock_celery.control.revoke.side_effect = lambda tid, **kw: revoked.append(tid)
+            result = svc.cancel_operation(module.id)
+
+        assert result["success"] is True
+        assert "celery-queued-1" in revoked, (
+            "queued task was not revoked — the worker would still run the full apply "
+            "after the user was told it stopped (issue #462 F4)"
+        )
+        # The service marks; the route commits (project_execution.cancel_deployment),
+        # so assert on the session object rather than re-reading the DB.
+        assert queued.status == "cancelled", (
+            "a revoked task left in 'queued' still looks live to the rest of the system"
+        )
+        assert result["tasks_cancelled"] == 1
+        assert db.query(TaskModel).filter(
+            TaskModel.module_id == module.id,
+            TaskModel.status.in_(["queued", "pending", "in_progress"]),
+        ).count() == 0
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_kills_the_daemon_side_container(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """F3: the container is killed, and killed BEFORE the lock is released.
+
+        The kill is now DISPATCHED TO THE WORKER rather than run inline: cancel
+        executes in the FastAPI `backend` service, whose image has no docker CLI
+        (only the worker stage copies one) and no DOCKER_HOST. Inline it raised
+        FileNotFoundError and was swallowed into "0 killed".
+        """
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        make_task(
+            project=project, module=module, task_type="apply",
+            status="in_progress", celery_task_id="celery-running-1",
+        )
+
+        order = []
+        dispatched = MagicMock()
+        dispatched.get.side_effect = (
+            lambda timeout=None: order.append("kill")
+            or {"killed": ["abc123def456"], "reachable": True, "error": None}
+        )
+
+        with patch("celery_app.celery_app"),              patch("services.execution.task_dispatch.get_engine_type", return_value="container"),              patch("tasks.container_tasks.kill_module_containers") as mock_task,              patch("services.module_lock.ModuleLockService") as mock_lock:
+            mock_task.apply_async.return_value = dispatched
+            mock_lock.return_value.force_release.side_effect = lambda mid: order.append("unlock")
+
+            result = svc.cancel_operation(module.id)
+
+        assert mock_task.apply_async.called, (
+            "the kill was not dispatched to the worker — run inline it hits an "
+            "image with no docker CLI and silently reports nothing killed"
+        )
+        assert result["containers_killed"] == 1
+        assert result["containers_kill_confirmed"] is True
+        assert order == ["kill", "unlock"], (
+            f"lock must not be released before a confirmed kill, got {order}"
+        )
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_cancel_skips_container_kill_for_non_container_engines(
+        self, _deps, _counts, svc, db, project_and_lib, make_task
+    ):
+        """An OpenTofu module has no step container — don't go looking for one."""
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        make_task(
+            project=project, module=module, task_type="apply",
+            status="in_progress", celery_task_id="celery-running-2",
+        )
+
+        with patch("celery_app.celery_app"), \
+             patch("services.execution.task_dispatch.get_engine_type", return_value="opentofu"), \
+             patch("services.execution.container_runner.DockerRunner") as mock_runner:
+            result = svc.cancel_operation(module.id)
+
+        mock_runner.assert_not_called()
+        assert result["containers_killed"] == 0
+
+
+# ── Review fixes: every dispatch path honours `enabled` (issue #527) ─────
+
+
+class TestEveryDispatchPathHonoursEnabled:
+    """`enabled` must hold on every route that starts work, not just plan/apply.
+
+    The first pass put the gate in _validate_for_operation, which submit_plan and
+    submit_apply call — but deploy_module, retry_deployment and submit_action do
+    not go through it. POST /deploy is the endpoint the UI's Deploy button uses,
+    so the headline fix was defeated by the most likely route a user takes.
+
+    submit_destroy and cancel_operation are deliberately NOT gated: a disabled
+    module may still hold infrastructure that must be destroyable, and a running
+    operation must always be cancellable.
+    """
+
+    def _disabled_module(self, svc, db, project_and_lib, status="initialized"):
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.enabled = False
+        module.status = status
+        db.flush()
+        return module
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_deploy_module_refuses_a_disabled_module(self, _d, _c, svc, db, project_and_lib):
+        module = self._disabled_module(svc, db, project_and_lib)
+        with patch("services.execution.task_dispatch.dispatch_apply") as apply_, \
+             patch("services.execution.task_dispatch.dispatch_init") as init_:
+            with pytest.raises(BadRequestError, match="(?i)disabled"):
+                svc.deploy_module(module.id)
+            apply_.assert_not_called()
+            init_.assert_not_called()
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_retry_deployment_refuses_a_disabled_module(self, _d, _c, svc, db, project_and_lib):
+        module = self._disabled_module(svc, db, project_and_lib, status="apply_failed")
+        with patch("services.execution.task_dispatch.dispatch_apply") as apply_:
+            with pytest.raises(BadRequestError, match="(?i)disabled"):
+                svc.retry_deployment(module.id)
+            apply_.assert_not_called()
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_destroy_is_still_allowed_on_a_disabled_module(self, _d, _c, svc, db, project_and_lib):
+        """Deliberate exception: a disabled module can still hold live infra."""
+        module = self._disabled_module(svc, db, project_and_lib, status="applied")
+        with patch("services.execution.task_dispatch.dispatch_destroy") as destroy_, \
+             patch.object(ProjectModuleService, "_create_snapshot"):
+            destroy_.return_value = MagicMock(id="celery-d")
+            result = svc.submit_destroy(module.id)
+        assert result["success"] is True, (
+            "a disabled module must remain destroyable — otherwise disabling it "
+            "strands whatever infrastructure it already built"
+        )
+
+
+class TestCancelGuardDoesNotDependOnTheNewestRow:
+    """A newer, id-less task must not disable cancellation (review finding).
+
+    create_task commits before dispatch stamps celery_task_id, and
+    _trigger_next_stack_module commits its "pending" row before calling
+    dispatch_apply. So a NEWER row without an id can sit in front of the running
+    task. Guarding on cancellable[0].celery_task_id meant the whole cancel was
+    skipped in that window: the running task was never revoked, no container was
+    killed, and the caller was told "Reset stuck deployment status" with
+    success=True.
+    """
+
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_running_task_is_revoked_despite_a_newer_id_less_row(
+        self, _d, _c, svc, db, project_and_lib, make_task
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from models import ProjectModule
+
+        project, lib = project_and_lib
+        added = svc.add_module(project.id, lib.id, "infra/vpc")
+        module = db.query(ProjectModule).filter(ProjectModule.id == added["module_id"]).first()
+        module.status = "applying"
+        db.flush()
+
+        now = datetime.now(UTC)
+        running = make_task(
+            project=project, module=module, task_type="apply",
+            status="in_progress", celery_task_id="celery-running",
+        )
+        running.created_at = now - timedelta(seconds=30)
+        pending = make_task(project=project, module=module, task_type="apply", status="pending")
+        pending.celery_task_id = None          # the real pre-dispatch state
+        pending.created_at = now               # strictly newer
+        db.flush()
+
+        revoked = []
+        with patch("celery_app.celery_app") as mock_celery, \
+             patch.object(ProjectModuleService, "_kill_containers_for_tasks", return_value=([], True)):
+            mock_celery.control.revoke.side_effect = lambda tid, **kw: revoked.append(tid)
+            result = svc.cancel_operation(module.id)
+
+        assert "celery-running" in revoked, (
+            "the RUNNING task was not revoked — a newer id-less row shadowed it and "
+            "the caller was told the deployment had been reset while it kept running"
+        )
+        assert running.status == "cancelled"
+        assert result["tasks_cancelled"] == 2, "the id-less row must still be marked cancelled"

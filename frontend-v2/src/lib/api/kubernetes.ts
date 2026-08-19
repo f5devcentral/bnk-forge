@@ -51,6 +51,10 @@ import type {
   HugePagesDeployResponse,
   NodeReadinessProbeRequest,
   NodeReadinessProbeResponse,
+  BnkClusterConfigSummary,
+  BnkClusterConfigCreateRequest,
+  BnkClusterMemberAssignRequest,
+  BnkClusterMemberAssignResponse,
 } from '@/types';
 import type {
   ApiClusterCreateRequest,
@@ -389,4 +393,11 @@ export const kubernetesApi = {
 
   getDpfHealth: (clusterId: number) =>
     apiClient.get<DpfHealthEndpointResponse>(`/api/k8s/clusters/${clusterId}/dpf/health`).then((res) => res.data),
+
+  // ADR-424: BNK Multi-host / Multi-DPU cluster configuration & member assignment
+  configureBnkCluster: (clusterId: number, data: BnkClusterConfigCreateRequest) =>
+    apiClient.post<BnkClusterConfigSummary>(`/api/k8s/clusters/${clusterId}/bnk-config`, data).then((res) => res.data),
+
+  assignBnkClusterMembers: (clusterId: number, data: BnkClusterMemberAssignRequest) =>
+    apiClient.post<BnkClusterMemberAssignResponse>(`/api/k8s/clusters/${clusterId}/bnk-members`, data).then((res) => res.data),
 };
