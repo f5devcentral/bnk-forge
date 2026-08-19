@@ -453,9 +453,9 @@ metadata:
   namespace: ${namespace}
 spec:
   # SNAT for outbound source-address translation.
-  #   SNAT_POOL  -> uses egressSnatpool below
+  #   SRC_TRANS_SNATPOOL -> uses egressSnatpool below
   #   SRC_TRANS_AUTOMAP -> no pool needed (drop egressSnatpool)
-  snatType: SNAT_POOL
+  snatType: SRC_TRANS_SNATPOOL
   egressSnatpool: my-snatpool
   # Namespaces whose egress traffic this captures, and the pseudo-CNI/VXLAN
   # binding. This is the shape the BNK topology and egress views read

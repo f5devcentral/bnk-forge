@@ -125,7 +125,7 @@ describe('ResourceCreateDialog', () => {
 
       expect(doc.kind).toBe('F5SPKEgress');
       // New shape present ...
-      expect(spec.snatType).toBe('SNAT_POOL');
+      expect(spec.snatType).toBe('SRC_TRANS_SNATPOOL');
       expect(spec.egressSnatpool).toBe('my-snatpool');
       const cni = spec.pseudoCNIConfig as Record<string, unknown>;
       expect(cni).toBeTruthy();
