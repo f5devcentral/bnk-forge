@@ -187,6 +187,14 @@ def build_route_ref_map(topology: list[dict]) -> dict[tuple[str, str], list[dict
                         "listenerName": listener.get("name", ""),
                         "port": backend.get("port"),
                         "weight": backend.get("weight"),
+                        # Analyzer-computed weights, carried through from the
+                        # topology backend (topology._build_backend). The backends
+                        # view must prefer effectiveWeight over the declared weight
+                        # for the same reason the topology tree does -- otherwise
+                        # this second surface shows the spec value the analyzer
+                        # overrode (#8). None when the annotation didn't weight it.
+                        "effectiveWeight": backend.get("effectiveWeight"),
+                        "analyzerWeights": backend.get("analyzerWeights"),
                     })
     return ref_map
 

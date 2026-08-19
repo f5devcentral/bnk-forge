@@ -185,12 +185,19 @@ function BackendRow({
                   <span>port {ref.port}</span>
                 </>
               )}
-              {ref.weight != null && ref.weight !== 1 && (
-                <>
-                  <span className="text-muted-foreground/60">|</span>
-                  <span>weight {ref.weight}</span>
-                </>
-              )}
+              {(() => {
+                // Prefer the analyzer's computed weight over the declared spec
+                // weight; fall back to `weight` when the analyzer didn't weight
+                // this backend (#8). Hide the default of 1 as before.
+                const shownWeight = ref.effectiveWeight ?? ref.weight;
+                if (shownWeight == null || shownWeight === 1) return null;
+                return (
+                  <>
+                    <span className="text-muted-foreground/60">|</span>
+                    <span>weight {shownWeight}</span>
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>

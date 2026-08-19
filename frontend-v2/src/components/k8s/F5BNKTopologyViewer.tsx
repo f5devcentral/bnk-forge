@@ -52,7 +52,12 @@ interface TopologyBackend {
   name: string;
   namespace?: string | null;
   port: number | null;
-  weight: number | null;
+  weight: number | null;          // declared spec weight
+  // Analyzer-computed weights (k8s.f5.com/service-settings). effectiveWeight is
+  // the number to show; null when the analyzer didn't weight this backend, so
+  // fall back to the declared `weight` (#8).
+  effectiveWeight?: number | null;
+  analyzerWeights?: Record<string, number> | null;
   kind?: string;
   group?: string;
 }
@@ -603,8 +608,16 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                       if (isCustomKind) {
                         badges.push({ text: be.kind!, variant: 'outline' });
                       }
-                      if (be.weight) {
-                        badges.push({ text: `weight ${be.weight}` });
+                      // Prefer the analyzer's computed weight over the declared
+                      // spec weight; fall back to `weight` when the analyzer didn't
+                      // weight this backend (#8).
+                      const shownWeight = be.effectiveWeight ?? be.weight;
+                      if (shownWeight) {
+                        const fromAnalyzer = be.effectiveWeight != null;
+                        badges.push({
+                          text: `weight ${shownWeight}`,
+                          ...(fromAnalyzer ? { variant: 'info' as const } : {}),
+                        });
                       }
                       return (
                         <TreeLeaf
