@@ -247,6 +247,47 @@ class TestCreateSource:
         assert "manifest.yaml is not valid YAML" in result["sync_error"]
         db.commit()
 
+    @patch("services.module_source_service.BlueprintSyncService")
+    @patch("services.module_sync_service.ModuleSyncService")
+    def test_sync_skips_blueprint_sync_when_linked_blueprint_source_is_inactive(
+        self, mock_sync_class, mock_blueprint_sync_cls, db
+    ):
+        """#87 -- the mirror of the #404 guard, for the module->blueprint direction.
+
+        A deliberately deactivated twin blueprint source must not be re-synced
+        (and therefore re-activated) just because the module source it is
+        linked to gets synced.
+        """
+        from models import BlueprintSource
+
+        mock_sync_class.return_value.sync_git_source.return_value = {
+            "modules_found": 0, "modules_created": 0, "modules_updated": 0, "errors": [],
+        }
+        # The pre-existing, deliberately deactivated twin.
+        twin = BlueprintSource(
+            name="shared blueprints",
+            source_type="git",
+            url="https://github.com/example/repo",
+            branch="main",
+            git_ref=None,
+            is_active=False,
+            sync_status="pending",
+        )
+        db.add(twin)
+        db.commit()
+        db.refresh(twin)
+
+        svc = ModuleSourceService(db)
+        # _source_data() uses url https://github.com/example/repo.git, branch main,
+        # which _source_key normalises to the same key as the twin above.
+        result = svc.create_source(_source_data())
+
+        mock_blueprint_sync_cls.return_value.sync_git_source.assert_not_called()
+        db.refresh(twin)
+        assert twin.is_active is False, "module sync re-activated the deactivated blueprint source"
+        # And the source still got created -- the skip is not a failure.
+        assert result["name"] == "new-source"
+
     @patch("services.module_sync_service.ModuleSyncService")
     def test_create_registry_source_does_not_run_initial_git_sync(self, mock_sync_class, db):
         svc = ModuleSourceService(db)
