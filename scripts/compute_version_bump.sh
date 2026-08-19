@@ -88,15 +88,6 @@ else
   SINCE_TAG=$(last_final_tag)
 fi
 
-if [[ -z "$SINCE_TAG" ]]; then
-  # No prior final tag — scan all commits. Whether this is actually safe is
-  # decided by the baseline resolution below (it requires an explicit
-  # --baseline in this case rather than silently proceeding).
-  COMMITS=$(git log --pretty=format:"%s" 2>/dev/null || true)
-else
-  COMMITS=$(git log "${SINCE_TAG}..HEAD" --pretty=format:"%s" 2>/dev/null || true)
-fi
-
 if [[ -n "$BASELINE_OVERRIDE" ]]; then
   BASELINE="$BASELINE_OVERRIDE"
 elif [[ -n "$SINCE_TAG" ]]; then
@@ -109,23 +100,39 @@ else
 fi
 
 # ── Determine bump type ───────────────────────────────────────────────────────
+# Conventional-commits: a breaking change is declared EITHER as `type!:` in the
+# subject OR as a `BREAKING CHANGE` footer, which by definition lives in the
+# body. The subject determines feat/fix. So we must read the body, not just the
+# subject (%s) -- reading %s alone made the footer branch unreachable and shipped
+# footer-declared breaking changes as patches (PR #177 review).
 BUMP_TYPE="patch"
 
-while IFS= read -r subject; do
-  [[ -z "$subject" ]] && continue
+if [[ -z "$SINCE_TAG" ]]; then
+  RANGE_HASHES=$(git log --pretty=format:"%H" 2>/dev/null || true)
+else
+  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --pretty=format:"%H" 2>/dev/null || true)
+fi
 
-  # BREAKING CHANGE in footer (multi-line) or ! in type
-  if echo "$subject" | grep -qiE '(\bBREAKING[[:space:]]+CHANGE\b|^[a-z]+(\([^)]*\))?!:)'; then
+while IFS= read -r sha; do
+  [[ -z "$sha" ]] && continue
+  subject=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
+  body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
+
+  # Major: `type!:` in the subject, OR a BREAKING CHANGE / BREAKING-CHANGE marker
+  # anywhere in the message (footer or deliberate prose).
+  if echo "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+     || printf '%s\n%s\n' "$subject" "$body" | grep -qE '\bBREAKING[[:space:] -]+CHANGE\b'; then
     BUMP_TYPE="major"
     break
   fi
 
+  # Minor: feat: in the subject (type is declared in the subject, never the body).
   if [[ "$BUMP_TYPE" != "major" ]]; then
     if echo "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
       BUMP_TYPE="minor"
     fi
   fi
-done <<< "$COMMITS"
+done <<< "$RANGE_HASHES"
 
 # ── Compute target version ────────────────────────────────────────────────────
 TARGET_VERSION=$(bump_version "$BASELINE" "$BUMP_TYPE")
@@ -153,19 +160,30 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     local tmpdir
     tmpdir=$(mktemp -d)
     git init -q "$tmpdir"
+    # Self-contained identity so the self-test runs anywhere (fresh runners,
+    # no global git config).
+    git -C "$tmpdir" config user.email "selftest@bnk-forge.local"
+    git -C "$tmpdir" config user.name "bnk-forge self-test"
     git -C "$tmpdir" commit --allow-empty -m "initial" -q
     if [[ -n "$since" ]]; then
       git -C "$tmpdir" tag "$since"
     fi
-    # Add fake commits
-    while IFS='|' read -r msg; do
-      [[ -z "$msg" ]] && continue
-      git -C "$tmpdir" commit --allow-empty -m "$msg" -q
+    # Add fake commits. An entry may carry a body via "subject~~BODY~~body"
+    # so tests can exercise a footer-declared BREAKING CHANGE (bodies, not
+    # subjects, are where the spec puts it). Entries are comma-separated, so
+    # test strings must not contain commas.
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      if [[ "$entry" == *"~~BODY~~"* ]]; then
+        git -C "$tmpdir" commit --allow-empty \
+          -m "${entry%%~~BODY~~*}" -m "${entry#*~~BODY~~}" -q
+      else
+        git -C "$tmpdir" commit --allow-empty -m "$entry" -q
+      fi
     done <<< "$(echo "$commits_str" | tr ',' '\n')"
 
+    # Run the version computer inside the temp repo so it scans the fake range.
     local result
-    result=$(bash "$(dirname "$0")/$(basename "$0")" --since-tag "${since:-}" --baseline "$baseline" 2>/dev/null || true)
-    # Override COMMITS via the temp repo by running in that dir
     result=$(cd "$tmpdir" && bash "$OLDPWD/$(dirname "$0")/$(basename "$0")" \
       ${since:+--since-tag "$since"} --baseline "$baseline" 2>/dev/null || true)
 
@@ -198,6 +216,16 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
 
   # Test 4: no commits → patch bump
   run_test "no commits → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" ""
+
+  # Test 5: BREAKING CHANGE footer in the BODY → major (the PR #177 bug: a
+  # fix-subject commit whose body declares the break must still bump major).
+  run_test "BREAKING CHANGE footer in body → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: harden non-root gate~~BODY~~BREAKING CHANGE: USER nonroot must become USER 65532"
+
+  # Test 6: lowercase "breaking change" in body prose must NOT trigger major
+  # (case-sensitive marker, so reading bodies can't false-positive on prose).
+  run_test "lowercase breaking change in body → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
+    "fix: tidy up~~BODY~~this is explicitly not a breaking change"
 
   echo "=== END SELF-TEST ==="
 fi
