@@ -239,6 +239,40 @@ class BNKForgeClient:
             status_code,
         )
 
+    @staticmethod
+    def _mark_ok(result: Any) -> Any:
+        """Stamp a single, universal outcome key on every success body.
+
+        The error path returns ``{"ok": False, ...}`` (``_error_payload``), but
+        success bodies came straight from the backend in whatever shape it chose
+        -- some carried ``success: true``, some nothing, and mutating tools
+        returned flat ``{message, project_id}`` (#66). An agent had no one field
+        to check across tools. Stamping ``ok: True`` here -- the single choke
+        point every get/post/put/patch/delete flows through -- gives all 151
+        tools the same outcome key an agent can branch on (``ok`` present and not
+        False == success), without rewriting each tool's return.
+
+        Additive and non-breaking: existing keys are left untouched, and a body
+        that already set ``ok`` (a structured passthrough) is not overridden.
+        Non-dict bodies (list/scalar collections) can't carry a key; they are
+        unambiguously not the error envelope, so success is signalled by the
+        absence of ``ok: False`` rather than the presence of ``ok: True``.
+
+        Crucially, ``ok`` is derived from an explicit ``success`` when present.
+        Several backend routes return HTTP 200 with ``{"success": false, ...}``
+        -- a Celery task that failed or is still pending -- and ``_request``
+        only raises on non-2xx, so those bodies reach here. Stamping an
+        unconditional ``ok: True`` would attach an authoritative-looking key
+        that contradicts the body it's on, which is worse than no key: it
+        removes the agent's reason to look further. Deferring to ``success``
+        (the same way we defer to an existing ``ok``) makes those land on
+        ``ok: False``, which is the truth. Bodies with no ``success`` key -- the
+        common case -- still get ``ok: True``.
+        """
+        if isinstance(result, dict):
+            result.setdefault("ok", bool(result.get("success", True)))
+        return result
+
     async def _request_with_error_envelope(self, method: str, path: str, **kwargs: Any) -> Any:
         """Return API result or a structured MCP-friendly error envelope."""
         start = time.perf_counter()
@@ -246,7 +280,7 @@ class BNKForgeClient:
             result = await self._request(method, path, **kwargs)
             duration_ms = int((time.perf_counter() - start) * 1000)
             self._log_client_event(method=method, path=path, duration_ms=duration_ms, success=True)
-            return result
+            return self._mark_ok(result)
         except APIError as err:
             logger.warning("API request failed: %s %s -> %s", method, path, err)
             duration_ms = int((time.perf_counter() - start) * 1000)
