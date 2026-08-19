@@ -360,7 +360,6 @@ def materialize_secret_files(
         # being followed.
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
         with os.fdopen(os.open(dest, flags, 0o600), "wb") as handle:
-            handle.write(content)
             # fchmod on the open descriptor, NOT os.chmod(dest) after close.
             # chmod by path follows symlinks, so a co-tenant swapping `dest`
             # for a symlink between our close and the chmod would get an
@@ -368,7 +367,13 @@ def materialize_secret_files(
             # content exposure -- within the documented F3 co-tenancy, but
             # free to close). fchmod acts on the exact inode we opened with
             # O_NOFOLLOW, so there is no path re-resolution to race (#94 N1).
+            #
+            # Tighten BEFORE writing: on a re-run over a pre-existing wider-mode
+            # file, O_CREAT's 0600 does not apply, so writing first would put
+            # the secret on disk world-readable for the duration of the write.
+            # Our fd is already open, so the tighter mode does not affect it.
             os.fchmod(handle.fileno(), 0o600)
+            handle.write(content)
         written.append(rel_path)
         logger.info(
             "Materialized secret '%s' for project %s at workspace path %s",

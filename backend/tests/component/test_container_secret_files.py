@@ -320,6 +320,54 @@ def test_materialize_sets_mode_on_the_open_descriptor_not_the_path(
     )
 
 
+def test_materialize_tightens_mode_before_writing_over_a_wide_file(
+    db, make_project, tmp_path, monkeypatch
+):
+    """On a re-run over a pre-existing wider-mode file, O_CREAT's 0600 does not
+    apply -- so the mode must be tightened BEFORE the secret bytes land, or the
+    secret sits world-readable for the duration of the write. Observe the mode
+    at the moment of the write call.
+    """
+    import os as _os
+
+    project = make_project()
+    db.commit()
+    _file_secret(db, project.id, "far_tarball", b"payload")
+
+    dest = tmp_path / "poc" / "keys" / "f5-far.tgz"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"stale")
+    dest.chmod(0o644)  # the wide pre-existing file a re-run would hit
+
+    modes_at_write: list[str] = []
+    real_fdopen = _os.fdopen
+
+    def _spy_fdopen(fd, *a, **kw):
+        f = real_fdopen(fd, *a, **kw)
+        real_write = f.write
+
+        def _write(data):
+            modes_at_write.append(oct(_os.fstat(fd).st_mode & 0o777))
+            return real_write(data)
+
+        f.write = _write
+        return f
+
+    monkeypatch.setattr("services.execution.container_run_secrets.os.fdopen", _spy_fdopen)
+
+    materialize_secret_files(
+        db, project.id,
+        _artifact([{"secret_name": "far_tarball", "path": "poc/keys/f5-far.tgz"}]),
+        str(tmp_path),
+    )
+
+    assert dest.read_bytes() == b"payload"
+    assert modes_at_write == ["0o600"], (
+        f"secret bytes were written while the file was {modes_at_write} -- mode must "
+        "be tightened before the write, not after"
+    )
+
+
 def test_materialize_noop_without_secret_files(db, make_project, tmp_path):
     project = make_project()
     db.commit()
