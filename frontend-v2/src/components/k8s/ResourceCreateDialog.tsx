@@ -452,14 +452,21 @@ metadata:
   name: my-egress
   namespace: ${namespace}
 spec:
-  # SNAT pool reference for source address translation.
-  # Alternative: use sourceTranslationType: SRC_TRANS_AUTOMAP (no snatPoolRef needed)
-  snatPoolRef:
-    name: my-snatpool
-  # Egress routing — where to send outbound traffic
-  routes:
-  - destination: 0.0.0.0/0
-    gateway: 10.0.10.1`,
+  # SNAT for outbound source-address translation.
+  #   SNAT_POOL  -> uses egressSnatpool below
+  #   SRC_TRANS_AUTOMAP -> no pool needed (drop egressSnatpool)
+  snatType: SNAT_POOL
+  egressSnatpool: my-snatpool
+  # Namespaces whose egress traffic this captures, and the pseudo-CNI/VXLAN
+  # binding. This is the shape the BNK topology and egress views read
+  # (backend _build_egress); the older snatPoolRef/routes shape rendered blank.
+  pseudoCNIConfig:
+    namespaces:
+    - ${namespace}
+    vxlan:
+      tmmInterfaceName: tmm-egress
+      nodeInterfaceName: eth0
+  # Optional: firewallEnforcedPolicy, logProfile`,
 
     bnksecpolicy: `apiVersion: gateway.k8s.f5net.com/v1alpha1
 kind: BNKSecPolicy
