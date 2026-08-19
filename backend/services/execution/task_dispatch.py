@@ -242,11 +242,22 @@ def _derive_container_time_limits(module, phase: str = "apply", action: str | No
     if not isinstance(manifest, dict):
         return {}
     if phase == "action":
+        # Actions live under manifest["actions"][name]["steps"] -- a shape
+        # canonical_step_sets does not cover, so read it directly.
         declared = (manifest.get("actions") or {})
         block = declared.get(action) if isinstance(declared, dict) else None
         steps = (block or {}).get("steps") if isinstance(block, dict) else None
     else:
-        steps = (manifest.get("steps") or {}).get(phase)
+        # Resolve lifecycle steps through the SAME resolver the engine and the
+        # validator use. A manifest may declare them at top-level ``steps`` or
+        # at ``execution.steps`` (canonical since #123; declaring both is
+        # rejected). Reading ``manifest["steps"]`` here meant an
+        # ``execution.steps`` manifest derived an empty budget and silently
+        # fell back to the global limit -- so the long cluster build this
+        # function exists to protect was hard-killed mid-run anyway (#127).
+        from services.module_metadata import canonical_step_sets
+
+        steps = canonical_step_sets(manifest).get(phase)
     if not isinstance(steps, list):
         return {}
 

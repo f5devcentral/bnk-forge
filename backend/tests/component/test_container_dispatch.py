@@ -132,6 +132,101 @@ class TestContainerDispatchRouting:
 
 
 @pytest.mark.component
+class TestTimeLimitDerivationReadsCanonicalSteps:
+    """#127: the time-limit derivation must read the SAME step-set the engine runs.
+
+    `_derive_container_time_limits` read ``manifest["steps"]`` directly, while
+    the engine and the validator resolve lifecycle steps through
+    ``canonical_step_sets`` (which prefers ``execution.steps``, canonical since
+    #123). An ``execution.steps`` manifest therefore derived an empty budget and
+    silently fell back to the global 7500 s limit -- so the long cluster build
+    this derivation exists to protect was hard-killed mid-run anyway. The
+    failure was silent: no error, just the wrong ceiling.
+    """
+
+    # Identical steps, declared in each of the two supported locations.
+    _STEPS = [
+        {"name": "init", "timeout_seconds": 300},
+        {"name": "cluster-up", "timeout_seconds": 3600,
+         "retry": {"max_attempts": 3, "backoff_seconds": 300}},
+    ]
+
+    def _module(self, db, manifest):
+        module = _container_module(db)
+        module.library_module.pack_manifest = manifest
+        return module
+
+    def test_execution_steps_derive_the_same_budget_as_top_level_steps(self, db):
+        """The issue's exact reproduction: both locations must yield one answer."""
+        top = self._module(db, {"steps": {"apply": self._STEPS}})
+        canonical = self._module(db, {"execution": {"steps": {"apply": self._STEPS}}})
+
+        from_top = task_dispatch._derive_container_time_limits(top, "apply")
+        from_canonical = task_dispatch._derive_container_time_limits(canonical, "apply")
+
+        assert from_top, "sanity: the top-level shape must derive a budget"
+        assert from_canonical == from_top, (
+            "execution.steps derived a different ceiling than top-level steps -- "
+            "the canonical location silently fell back to the global limit (#127)"
+        )
+        assert from_canonical["time_limit"] > 7500
+
+    def test_derivation_and_engine_resolve_the_same_steps(self, db):
+        """Mirror of #123's engine/validator agreement test, for the derivation.
+
+        The engine runs canonical_step_sets(manifest)[phase]. Whatever budget
+        the derivation computes must come from exactly those steps.
+        """
+        from services.module_metadata import canonical_step_sets
+
+        manifest = {"execution": {"steps": {"apply": self._STEPS, "destroy": self._STEPS[:1]}}}
+        module = self._module(db, manifest)
+
+        for phase in ("apply", "destroy"):
+            engine_steps = canonical_step_sets(manifest)[phase]
+            # Re-derive from a manifest holding ONLY the engine's resolved steps
+            # at the top level; if the derivation reads the canonical set, the
+            # two budgets are identical.
+            reference = self._module(db, {"steps": {phase: engine_steps}})
+            assert (
+                task_dispatch._derive_container_time_limits(module, phase)
+                == task_dispatch._derive_container_time_limits(reference, phase)
+            ), f"derivation disagrees with the engine's resolved {phase} steps"
+
+    def test_destroy_budget_is_derived_from_execution_steps(self, db):
+        """destroy goes through the same resolver as apply (issue #463 F5)."""
+        module = self._module(db, {"execution": {"steps": {"destroy": self._STEPS}}})
+        limits = task_dispatch._derive_container_time_limits(module, "destroy")
+        assert limits and limits["time_limit"] > 7500
+
+    def test_action_step_set_is_untouched_by_the_resolver(self, db):
+        """The issue is explicit: leave the `action` branch reading manifest["actions"]."""
+        module = self._module(db, {
+            "actions": {"e2e": {"steps": self._STEPS}},
+            # A top-level lifecycle set too -- must not leak into the action budget.
+            "steps": {"apply": [{"name": "x", "timeout_seconds": 1}]},
+        })
+        limits = task_dispatch._derive_container_time_limits(module, "action", action="e2e")
+        assert limits and limits["time_limit"] > 7500
+
+    def test_missing_phase_in_canonical_set_uses_global_defaults(self, db):
+        """An execution.steps manifest with no destroy set must not invent one."""
+        module = self._module(db, {"execution": {"steps": {"apply": self._STEPS}}})
+        assert task_dispatch._derive_container_time_limits(module, "destroy") == {}
+
+    def test_dispatch_apply_honours_execution_steps_end_to_end(self, db):
+        """Through the real dispatch path, not just the helper."""
+        module = self._module(db, {"execution": {"steps": {"apply": self._STEPS}}})
+        with patch("tasks.container_tasks.run_container_apply") as task:
+            task.apply_async.return_value = MagicMock(id="celery-127")
+            task_dispatch.dispatch_apply(127, module)
+            _, kwargs = task.apply_async.call_args
+            assert kwargs.get("time_limit", 0) > 7500, (
+                "dispatch fell back to the global limit for an execution.steps manifest"
+            )
+
+
+@pytest.mark.component
 class TestContainerActionTimeLimits:
     """A long e2e/scenario action needs the same derived limit as apply (#463 F5)."""
 
