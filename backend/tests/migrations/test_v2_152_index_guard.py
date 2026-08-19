@@ -71,58 +71,11 @@ CREATE TABLE container_registries (
 
 
 @pytest.fixture()
-def engine():
-    if not PG_URL:
-        # Fail only in the job that is SUPPOSED to run these, which sets
-        # BNK_REQUIRE_MIGRATION_TESTS alongside the URL. Keying on CI generally
-        # was wrong: every other CI job legitimately has no Postgres, and the
-        # broad legacy suite collected this directory, so the guard failed three
-        # jobs it was never meant to touch.
-        if os.environ.get("BNK_REQUIRE_MIGRATION_TESTS"):
-            pytest.fail(
-                "TEST_POSTGRES_URL is unset in the job that requires the "
-                "migration tests — they would skip and the gate would pass "
-                "without asserting anything"
-            )
-        pytest.skip("TEST_POSTGRES_URL not set; v2_152 index semantics need Postgres")
-
-    import uuid
-
-    url = sa.engine.make_url(PG_URL)
-    scratch_name = f"bnkforge_migtest_{uuid.uuid4().hex[:12]}"
-
-    # CREATE/DROP DATABASE cannot run inside a transaction.
-    admin = sa.create_engine(
-        url.set(database="postgres"), isolation_level="AUTOCOMMIT"
-    )
-    try:
-        with admin.connect() as conn:
-            conn.execute(sa.text(f'CREATE DATABASE "{scratch_name}"'))
-    except sa.exc.OperationalError as exc:
-        # Same rule as the missing-URL branch: skipping is fine locally, but in
-        # the job that REQUIRES these tests a skip is a gate reporting green
-        # while asserting nothing. I reintroduced exactly that hole here one
-        # layer down — an unreachable database or a role without CREATEDB
-        # skipped straight past the guard.
-        if os.environ.get("BNK_REQUIRE_MIGRATION_TESTS"):
-            pytest.fail(
-                f"cannot create a scratch database in the job that requires the "
-                f"migration tests: {exc}"
-            )
-        pytest.skip(f"cannot create a scratch database on this server: {exc}")
-
-    scratch = sa.create_engine(url.set(database=scratch_name))
-    try:
-        yield scratch
-    finally:
-        scratch.dispose()
-        with admin.connect() as conn:
-            conn.execute(sa.text(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                "WHERE datname = :d AND pid <> pg_backend_pid()"
-            ), {"d": scratch_name})
-            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{scratch_name}"'))
-        admin.dispose()
+def engine(pg_scratch_engine):
+    """Scratch-database isolation now lives in conftest.py so this file and
+    test_v2_153 cannot drift apart on it -- including the rule that a skip is
+    a failure in the job that requires these tests."""
+    return pg_scratch_engine
 
 
 def _provision(engine, *, unique_index: bool) -> None:

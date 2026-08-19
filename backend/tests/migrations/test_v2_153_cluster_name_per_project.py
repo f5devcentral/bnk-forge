@@ -51,8 +51,12 @@ def _run(engine, direction: str) -> None:
 
 def _pre_migration_schema(engine) -> None:
     """The table as the ORM created it BEFORE v2_153: name globally unique."""
+    # CASCADE only where the dialect has it: kubernetes_clusters is an FK target,
+    # so a bare DROP fails on Postgres the moment anything references it. SQLite
+    # has no CASCADE keyword here and also no such dependency to clear.
+    cascade = " CASCADE" if engine.dialect.name == "postgresql" else ""
     with engine.begin() as conn:
-        conn.execute(sa.text("DROP TABLE IF EXISTS kubernetes_clusters"))
+        conn.execute(sa.text(f"DROP TABLE IF EXISTS kubernetes_clusters{cascade}"))
         conn.execute(sa.text(
             "CREATE TABLE kubernetes_clusters ("
             "  id INTEGER PRIMARY KEY,"
@@ -145,13 +149,16 @@ class TestSqlitePath:
 @pytest.mark.skipif(not PG_URL, reason="TEST_POSTGRES_URL not set")
 class TestPostgresPath:
     @pytest.fixture
-    def pg_engine(self):
-        eng = sa.create_engine(PG_URL)
-        _pre_migration_schema(eng)
-        yield eng
-        with eng.begin() as conn:
-            conn.execute(sa.text("DROP TABLE IF EXISTS kubernetes_clusters"))
-        eng.dispose()
+    def pg_engine(self, pg_scratch_engine):
+        """A throwaway database, not the one CI hands us via TEST_POSTGRES_URL.
+
+        That URL points at the full ORM schema built by init_db.py, where other
+        tables carry foreign keys to kubernetes_clusters -- so dropping it there
+        raises DependentObjectsStillExist, and succeeding would have corrupted
+        the schema the rest of the job depends on. See conftest.py.
+        """
+        _pre_migration_schema(pg_scratch_engine)
+        return pg_scratch_engine
 
     def test_upgrade_drops_the_implicitly_named_global_unique(self, pg_engine):
         """On Postgres the column-level UNIQUE becomes kubernetes_clusters_name_key;
