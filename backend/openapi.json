@@ -16989,7 +16989,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerRegistryTestResponse"
+                }
               }
             }
           },
@@ -40105,6 +40107,86 @@
           "updated_at"
         ],
         "title": "ContainerRegistryResponse"
+      },
+      "ContainerRegistryTestResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "last_test_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test Status"
+          },
+          "last_test_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test At"
+          },
+          "last_test_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "ContainerRegistryTestResponse",
+        "description": "Outcome of POST /{id}/test.\n\nMirrors what ContainerRegistryService.test_registry returns: the probe's\nown success/message/error plus the persisted last_test_* fields. Declared\nso the route carries a response_model like its siblings (#79) and the\nshape is visible in OpenAPI instead of only in the service body."
       },
       "ContainerRegistryUpdate": {
         "properties": {

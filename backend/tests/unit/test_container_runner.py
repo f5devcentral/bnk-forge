@@ -166,6 +166,16 @@ class TestBuildRunArgv:
         with pytest.raises(ValueError, match="absolute path"):
             runner.build_run_argv(_spec(mount_path="state"))
 
+    @pytest.mark.parametrize("bad", ["/state,ro", "/state:z", "/st ate"])
+    def test_mount_path_delimiters_rejected(self, bad):
+        """#79: mount_path is spliced into comma-delimited --mount options and a
+        colon-delimited -v spec, so ',' / ':' / whitespace would corrupt the
+        argv exactly as they would in workspace_volume/workspace_subpath --
+        which were already checked. Same rule for the sibling."""
+        runner = DockerRunner()
+        with pytest.raises(ValueError, match="must not contain"):
+            runner.build_run_argv(_spec(mount_path=bad))
+
 
 class _FakeFollow:
     """Stand-in for the ``docker logs --follow`` child the streamer thread runs.
