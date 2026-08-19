@@ -418,12 +418,29 @@ class ProjectModuleService(BaseService):
     def get_module_status(self, module_id: int) -> dict:
         """Get current status of a module."""
         module = self.get_module(module_id)
+
+        # The most recent task is the handle for this module's output
+        # (GET /api/tasks/{id}). Without it, getting from "this module failed"
+        # to its log required already knowing /api/tasks?module_id= exists
+        # (#154). Prefer the live lock holder (the task running NOW) when there
+        # is one, else the newest task row.
+        from models import Task as TaskModel
+
+        latest = (
+            self.db.query(TaskModel.id)
+            .filter(TaskModel.module_id == module.id)
+            .order_by(TaskModel.id.desc())
+            .first()
+        )
+        latest_task_id = module.holding_task_id or (latest[0] if latest else None)
+
         return {
             "id": module.id,
             "status": module.status,
             "last_deployed_at": module.last_deployed_at.isoformat() if module.last_deployed_at else None,
             "deployment_error": module.deployment_error,
             "stage_detail": module.stage_detail,
+            "latest_task_id": latest_task_id,
         }
 
     def get_module_variables(self, module_id: int) -> dict:

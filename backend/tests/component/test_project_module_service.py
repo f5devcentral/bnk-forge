@@ -388,6 +388,34 @@ class TestModuleStatus:
         with pytest.raises(NotFoundError):
             svc.get_module_status(99999)
 
+    @patch("services.project_module_service.update_project_counts")
+    @patch("services.project_module_service.detect_module_dependencies", return_value=[])
+    def test_status_exposes_latest_task_id(self, mock_deps, mock_counts, svc, project_and_lib, db):
+        """#154: the task is the handle for the module's output, and it was not
+        reachable from /status. Newest task by default; the live lock holder
+        when a task is running now."""
+        from models import Task
+
+        project, lib = project_and_lib
+        mid = svc.add_module(project.id, lib.id, "infra/vpc")["module_id"]
+
+        assert svc.get_module_status(mid)["latest_task_id"] is None
+
+        t1 = Task(project_id=project.id, module_id=mid, task_type="apply",
+                  status="completed", triggered_by="user", celery_task_id="c1")
+        t2 = Task(project_id=project.id, module_id=mid, task_type="apply",
+                  status="completed", triggered_by="user", celery_task_id="c2")
+        db.add_all([t1, t2])
+        db.commit()
+        assert svc.get_module_status(mid)["latest_task_id"] == t2.id
+
+        # A task holding the module lock is the one running NOW -- prefer it,
+        # even if a newer row exists (e.g. a queued retry).
+        module = svc.get_module(mid)
+        module.holding_task_id = t1.id
+        db.commit()
+        assert svc.get_module_status(mid)["latest_task_id"] == t1.id
+
 
 class TestModuleVariables:
     @patch("services.project_module_service.update_project_counts")

@@ -11606,7 +11606,7 @@
           "project-deployments"
         ],
         "summary": "Get Deployment Logs",
-        "description": "Get historical deployment logs for a module.\n\nArgs:\n    module_id: Module ID\n    limit: Maximum number of logs to return (1-10000, default 1000)\n    level: Filter by log level (all, info, error, warning, success)",
+        "description": "Get historical deployment logs for a module.\n\nEntries are returned NEWEST FIRST regardless of source. Sources, in\npreference order:\n  - \"deployment_log\": DeploymentLog rows (written by the retry path)\n  - \"task\": the module's newest Task.logs -- where every engine actually\n    streams its step output; `task_id` names it (GET /api/tasks/{task_id})\n  - \"none\": nothing recorded yet; `hint` says where output will appear\n\nArgs:\n    module_id: Module ID\n    limit: Maximum number of logs to return (1-10000, default 1000);\n        on the \"task\" source this is a tail of the most recent lines\n    level: Filter by log level (all, info, error, warning, success);\n        best-effort on the \"task\" source (matched on engine markers)",
         "operationId": "get_deployment_logs_api_project_modules__module_id__logs_get",
         "parameters": [
           {

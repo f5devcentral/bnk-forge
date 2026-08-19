@@ -1097,6 +1097,13 @@ def create_deployment_record(db, task: TaskModel, module: ProjectModule, action:
         resources_to_change=resources_to_change,
         resources_to_destroy=resources_to_destroy,
         environment=module.project.environment or "dev",
+        # The task is the handle for this run's output (GET /api/tasks/{id}).
+        # A deployment row has no task_id column, and that handle was not
+        # reachable from any module-facing endpoint (#154) -- so an operator
+        # who found a deployment id had a number that looked like the log
+        # handle but was not. Record it here; the /deployments route exposes
+        # it as task_id.
+        meta_data={"task_id": task.id, "celery_task_id": task.celery_task_id},
     )
 
     db.add(deployment)

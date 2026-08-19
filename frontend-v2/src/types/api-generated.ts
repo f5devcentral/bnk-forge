@@ -4503,10 +4503,19 @@ export interface paths {
          * Get Deployment Logs
          * @description Get historical deployment logs for a module.
          *
+         *     Entries are returned NEWEST FIRST regardless of source. Sources, in
+         *     preference order:
+         *       - "deployment_log": DeploymentLog rows (written by the retry path)
+         *       - "task": the module's newest Task.logs -- where every engine actually
+         *         streams its step output; `task_id` names it (GET /api/tasks/{task_id})
+         *       - "none": nothing recorded yet; `hint` says where output will appear
+         *
          *     Args:
          *         module_id: Module ID
-         *         limit: Maximum number of logs to return (1-10000, default 1000)
-         *         level: Filter by log level (all, info, error, warning, success)
+         *         limit: Maximum number of logs to return (1-10000, default 1000);
+         *             on the "task" source this is a tail of the most recent lines
+         *         level: Filter by log level (all, info, error, warning, success);
+         *             best-effort on the "task" source (matched on engine markers)
          */
         get: operations["get_deployment_logs_api_project_modules__module_id__logs_get"];
         put?: never;
