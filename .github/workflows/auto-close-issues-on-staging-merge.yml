@@ -51,6 +51,14 @@ jobs:
           import os, re
           body = os.environ.get("PR_BODY") or ""
           repo = os.environ["REPO"]
+          # Strip fenced blocks and inline code spans BEFORE scanning. A PR that
+          # documents closing keywords (a parser change, a template change, a
+          # how-to) otherwise closes the issues it is merely talking about --
+          # #158's own description parsed as issues=94 128 7, two of them open
+          # with their real fixes still unmerged. Fences first (they may contain
+          # backticks), then spans.
+          body = re.sub(r'```.*?```', '', body, flags=re.S)
+          body = re.sub(r'`[^`]*`', '', body)
           kw_pat = re.compile(r'(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b')
           ref_pat = re.compile(r'([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#(\d+)')
           sep_pat = re.compile(r'[ \t,]+')
