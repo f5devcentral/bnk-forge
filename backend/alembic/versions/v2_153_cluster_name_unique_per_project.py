@@ -60,7 +60,18 @@ def upgrade() -> None:
 
     if dialect == "sqlite":
         # SQLite cannot ALTER a column's unique-ness in place; batch mode
-        # recreates the table. Declare the new composite in the same pass.
+        # recreates the table from the REFLECTED schema. Be precise about what
+        # actually drops the old unique here, because it is not the
+        # drop_constraint below: SQLite reflection does not surface a
+        # column-level UNIQUE at all (_find_global_name_unique returns None on
+        # a table created with `name ... UNIQUE`), so `old` is usually None and
+        # that branch is skipped. The recreate rebuilds `name` from the
+        # reflected Column, which carries no unique flag -- and THAT is what
+        # removes it. Verified on the post-upgrade DDL: `name VARCHAR(255) NOT
+        # NULL` with no UNIQUE, composite present. The drop_constraint stays
+        # for the case where the unique WAS reflectable (a named constraint
+        # from an older explicit migration); it is belt-and-braces, not the
+        # mechanism. test_v2_153 asserts the end state, not the path.
         with op.batch_alter_table(_TABLE, recreate="always") as batch:
             if old:
                 batch.drop_constraint(old, type_="unique")
@@ -70,12 +81,29 @@ def upgrade() -> None:
         return
 
     if old:
-        # Postgres: the implicit unique is a constraint; some older stacks may
-        # carry it as a unique index instead -- try both shapes.
-        try:
+        # Postgres: a column-level UNIQUE lands in pg_constraint as contype='u'
+        # named kubernetes_clusters_name_key, and the dialect's
+        # get_unique_constraints reads pg_catalog.pg_constraint -- so the finder
+        # DOES return it here, unlike SQLite, and this drop is the real
+        # mechanism on this path. Some older stacks may carry it as a unique
+        # index instead -- try both shapes.
+        # Decide the shape from inspection rather than try/except-on-anything:
+        # a bare `except Exception` would swallow a permissions or lock error
+        # and then create the composite OVER a still-present global unique,
+        # leaving the DB with both and the bug intact.
+        insp = sa.inspect(bind)
+        is_constraint = any(uc.get("name") == old for uc in insp.get_unique_constraints(_TABLE))
+        if is_constraint:
             op.drop_constraint(old, _TABLE, type_="unique")
-        except Exception:
+        else:
             op.drop_index(old, table_name=_TABLE, if_exists=True)
+        # Refuse to continue if it is somehow still there: creating the composite
+        # alongside a surviving global unique would be a silent no-fix.
+        if _find_global_name_unique(bind) is not None:
+            raise RuntimeError(
+                f"v2_153: global unique {old!r} on {_TABLE}.name survived the drop; "
+                "refusing to add the composite on top of it"
+            )
     op.create_unique_constraint(_NEW, _TABLE, ["project_id", "name"])
     # Keep name cheaply searchable without uniqueness (the global unique
     # doubled as the lookup index; this restores that).
