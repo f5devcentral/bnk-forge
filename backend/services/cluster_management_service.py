@@ -393,7 +393,17 @@ class ClusterManagementService(BaseService):
         return {"clusters": result, "count": len(result)}
 
     def get_cluster_details(self, cluster_id: int) -> dict[str, Any]:
-        """Get cluster details."""
+        """Get cluster details.
+
+        NOTE (#116): GET /k8s/clusters/{cluster_id} is require_viewer with NO
+        project scope (unlike the PUT/DELETE on the same path, which use
+        require_cluster_owner). This handler hand-builds its dict and must NOT
+        gain a bnk_config key -- reusing serialize_cluster here (or adding
+        bnk_config by hand) would reintroduce the cross-project disclosure #116
+        closes, one request further along, and the id needed comes straight from
+        the global list. If bnk_config is ever needed on detail, scope this route
+        to the project first.
+        """
         cluster = self._get_cluster(cluster_id)
         context = PlatformContextService.serialize_cluster_context(cluster)
         return {

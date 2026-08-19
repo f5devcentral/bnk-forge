@@ -628,11 +628,14 @@ class TestBulkClusterMembership:
     def test_serialize_cluster_with_bnk_config_and_members(
         self, client, db, admin_headers, sample_user, make_project, make_k8s_cluster
     ):
-        """GET /api/k8s/clusters renders bnk_config.host_ids / dpu_ids correctly
-        for a cluster that has a BnkClusterConfig with members assigned.
+        """The project-scoped cluster list renders bnk_config.host_ids / dpu_ids
+        correctly; the instance-wide global list redacts bnk_config (#116).
 
-        Verifies _serialize_bnk_config branch (bnk_config present) and that
-        host IDs do not leak into the dpu_ids bucket (B6).
+        Verifies _serialize_bnk_config branch (bnk_config present on the
+        project-scoped list) and that host IDs do not leak into the dpu_ids
+        bucket (B6). The subject moved from the global list to the project list
+        because #116 redacts bnk_config on the global path -- so this also pins
+        the redaction: present when project-scoped, absent when global.
 
         Two hosts and two DPUs ensure that IDs are distinct across the tables
         (SQLite auto-increments per-table from 1, so IDs can coincide with a
@@ -660,8 +663,11 @@ class TestBulkClusterMembership:
         )
         assert r.status_code == 200, r.text
 
-        # Fetch the cluster list — exercises bulk_cluster_membership + serialize_cluster.
-        resp = client.get("/api/k8s/clusters", headers=admin_headers)
+        # Project-scoped list — exercises bulk_cluster_membership + serialize_cluster,
+        # and is the surface that still renders bnk_config after #116.
+        resp = client.get(
+            f"/api/projects/{project.id}/k8s/clusters", headers=admin_headers
+        )
         assert resp.status_code == 200, resp.text
 
         clusters = resp.json()["clusters"]
@@ -669,7 +675,7 @@ class TestBulkClusterMembership:
         assert target is not None, f"cluster {cluster.id} not in response"
 
         bnk = target.get("bnk_config")
-        assert bnk is not None, "bnk_config must be present for a BNK cluster"
+        assert bnk is not None, "bnk_config must be present on the project-scoped list"
 
         assert sorted(bnk["host_ids"]) == sorted([host1.id, host2.id]), (
             f"host_ids must contain the two assigned hosts, got {bnk['host_ids']}"
@@ -683,6 +689,18 @@ class TestBulkClusterMembership:
         )
         assert len(bnk["host_ids"]) == 2, (
             f"host_ids must have exactly 2 entries (no DPU leakage), got {bnk['host_ids']}"
+        )
+
+        # #116: the instance-wide global list must NOT leak bnk_config to any
+        # viewer, even though the same cluster carries it on the project list.
+        global_resp = client.get("/api/k8s/clusters", headers=admin_headers)
+        assert global_resp.status_code == 200, global_resp.text
+        global_target = next(
+            (c for c in global_resp.json()["clusters"] if c["id"] == cluster.id), None
+        )
+        assert global_target is not None
+        assert global_target.get("bnk_config") is None, (
+            "global list leaked bnk_config cross-project (#116)"
         )
 
 
