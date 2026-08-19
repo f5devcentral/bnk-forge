@@ -124,6 +124,29 @@ class TestCreateCluster:
         with pytest.raises(NotFoundError):
             svc.create_cluster(99999, _make_create_data())
 
+    def test_same_name_in_a_different_project_is_allowed(self, db, make_project):
+        """#113: cluster names are unique per PROJECT, not across the instance.
+
+        A global check let project A's "prod" block project B's "prod" -- and
+        told B, via the 409, that A had a cluster by that name. Cross-tenant
+        information leak plus a false collision. Both the app check and the DB
+        constraint (v2_153) are now scoped to (project_id, name)."""
+        a, b = make_project(), make_project()
+        svc = ClusterManagementService(db)
+        ra = svc.create_cluster(a.id, _make_create_data(name="prod"))
+        rb = svc.create_cluster(b.id, _make_create_data(name="prod"))  # must not raise
+        assert ra["id"] != rb["id"]
+        db.commit()  # and the DB constraint agrees -- no IntegrityError at commit
+
+    def test_same_project_duplicate_still_rejected_after_scoping(self, db, make_project):
+        """The scoping must not have loosened the within-project rule, and the
+        message must not leak anything about other projects."""
+        a = make_project()
+        svc = ClusterManagementService(db)
+        svc.create_cluster(a.id, _make_create_data(name="prod"))
+        with pytest.raises(ConflictError, match="in this project"):
+            svc.create_cluster(a.id, _make_create_data(name="prod"))
+
     def test_kubeconfig_is_encrypted(self, db, make_project):
         """The stored kubeconfig should be encrypted, not plaintext."""
         from models import KubernetesCluster
@@ -346,6 +369,19 @@ class TestUpdateCluster:
         svc = ClusterManagementService(db)
         with pytest.raises(ConflictError):
             svc.update_cluster(c2.id, _make_update_data(name="existing"))
+
+    def test_update_may_take_a_name_used_by_another_project(self, db, make_project, make_k8s_cluster):
+        """#113: renaming to a name that only ANOTHER project uses must succeed --
+        the old global check would have 409'd and disclosed the other project's
+        cluster name."""
+        a, b = make_project(), make_project()
+        make_k8s_cluster(project=a, name="prod")
+        mine = make_k8s_cluster(project=b, name="staging")
+        svc = ClusterManagementService(db)
+        svc.update_cluster(mine.id, _make_update_data(name="prod"))  # must not raise
+        db.refresh(mine)
+        assert mine.name == "prod"
+        db.commit()
 
     def test_update_kubeconfig_encrypts(self, db, make_project, make_k8s_cluster):
         from models import KubernetesCluster

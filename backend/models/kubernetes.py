@@ -1,6 +1,18 @@
 """Kubernetes cluster and F5 BNK networking models."""
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, event
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -13,7 +25,10 @@ class KubernetesCluster(Base):
     __tablename__ = "kubernetes_clusters"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, nullable=False, index=True)
+    # Unique per PROJECT, not globally -- see __table_args__ and v2_153 (#113).
+    # A global unique let project A's "prod" block project B's "prod" and leak
+    # A's cluster name to B via the 409.
+    name = Column(String(255), nullable=False, index=True)
     context = Column(String(255), nullable=False)  # kubectl context name
     api_server = Column(String(500))
     version = Column(String(50))
@@ -72,6 +87,14 @@ class KubernetesCluster(Base):
     firewall_policies = relationship("FirewallPolicy", back_populates="cluster", cascade="all, delete-orphan")
     bnk_config = relationship(
         "BnkClusterConfig", back_populates="cluster", uselist=False, cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        # Name is unique within a project, not across the instance (#113). NULL
+        # project_id rows (hand-registered / global clusters) are distinct from
+        # each other under the SQL standard's NULL semantics, which is intended:
+        # a cluster with no project has no tenant to collide within.
+        UniqueConstraint("project_id", "name", name="uq_kubernetes_clusters_project_name"),
     )
 
 

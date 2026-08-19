@@ -280,12 +280,17 @@ class ClusterManagementService(BaseService):
 
         kubeconfig_encrypted = encrypt_value(kubeconfig_yaml)
 
-        # Duplicate name check
+        # Duplicate name check -- scoped to THIS project (#113). A global check
+        # let project A's "prod" block project B's "prod" and told B that A had
+        # a cluster by that name via the 409. The DB constraint is now
+        # (project_id, name) too (v2_153), so this is the user-facing guard in
+        # front of it, not the only thing standing between two tenants.
         existing = self.db.query(KubernetesCluster).filter(
-            KubernetesCluster.name == cluster_data.name
+            KubernetesCluster.project_id == project_id,
+            KubernetesCluster.name == cluster_data.name,
         ).first()
         if existing:
-            raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists")
+            raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists in this project")
 
         # Auto-extract SSH tunnel target from kubeconfig API server URL
         ssh_remote_host = cluster_data.ssh_remote_k8s_host or "localhost"
@@ -423,12 +428,14 @@ class ClusterManagementService(BaseService):
         requested_ssh_tunnel_enabled = cluster_data.ssh_tunnel_enabled
 
         if cluster_data.name is not None:
+            # Scoped to the cluster's own project (#113) -- see create_cluster.
             existing = self.db.query(KubernetesCluster).filter(
+                KubernetesCluster.project_id == cluster.project_id,
                 KubernetesCluster.name == cluster_data.name,
-                KubernetesCluster.id != cluster_id
+                KubernetesCluster.id != cluster_id,
             ).first()
             if existing:
-                raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists")
+                raise ConflictError("cluster", f"Cluster '{cluster_data.name}' already exists in this project")
             cluster.name = cluster_data.name
 
         if cluster_data.kubeconfig is not None:
