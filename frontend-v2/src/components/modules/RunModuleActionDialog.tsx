@@ -8,7 +8,7 @@
  * description carries the reason). Progress is tracked via the existing task
  * polling (useTask) — action runs never change module.status.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Dialog,
@@ -34,6 +34,8 @@ import {
 import { AlertTriangle, CheckCircle2, FlaskConical, Loader2, XCircle } from 'lucide-react';
 import { useModuleActions, useRunModuleAction } from '@/hooks/useModuleActions';
 import { useTask } from '@/hooks/useTasks';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ModuleActionInfo, ModuleActionInputDef } from '@/lib/api/projects';
 import type { ProjectModule } from '@/types';
 
@@ -89,6 +91,26 @@ export function RunModuleActionDialog({ open, onOpenChange, module }: RunModuleA
 
   const canSubmit = !!selected && (!isAmber || amberConfirmed) && !runMutation.isPending && !taskActive;
 
+  // In-handler re-guard (#99). `canSubmit` only disables the button, and
+  // runMutation.isPending flips true a tick after the click -- so a rapid
+  // double-click (or two synthetic events) could fire two runs in that gap.
+  // The module lock backstops it server-side, but the second call would still
+  // surface a confusing "locked" error. A ref, not state, so it is updated
+  // synchronously within the same event.
+  const submittingRef = useRef(false);
+
+  // A report is produced when the TASK completes, not when the run is queued.
+  // Invalidate the reports query on the completed transition so the new report
+  // appears immediately instead of up to 30 s later on the next poll (#99).
+  const queryClient = useQueryClient();
+  const invalidatedForTaskRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (taskId && taskStatus === 'completed' && invalidatedForTaskRef.current !== taskId) {
+      invalidatedForTaskRef.current = taskId;
+      void queryClient.invalidateQueries({ queryKey: queryKeys.modules.project.reports(module.id) });
+    }
+  }, [taskId, taskStatus, module.id, queryClient]);
+
   const handleSelectAction = (name: string) => {
     setSelectedName(name);
     setAmberConfirmed(false);
@@ -102,6 +124,8 @@ export function RunModuleActionDialog({ open, onOpenChange, module }: RunModuleA
 
   const handleSubmit = async () => {
     if (!selected) return;
+    if (submittingRef.current || runMutation.isPending || taskActive) return;
+    submittingRef.current = true;
     const inputs: Record<string, unknown> = {};
     for (const def of selected.inputs ?? []) {
       const value = inputValues[def.name];
@@ -109,14 +133,18 @@ export function RunModuleActionDialog({ open, onOpenChange, module }: RunModuleA
       inputs[def.name] = coerceInputValue(def, value);
     }
     // Errors surface via useAppMutation's notifyError — just skip task tracking.
-    const result = await runMutation
-      .mutateAsync({
-        moduleId: module.id,
-        actionName: selected.name,
-        inputs: Object.keys(inputs).length > 0 ? inputs : undefined,
-      })
-      .catch(() => null);
-    if (result) setTaskId(result.task_id);
+    try {
+      const result = await runMutation
+        .mutateAsync({
+          moduleId: module.id,
+          actionName: selected.name,
+          inputs: Object.keys(inputs).length > 0 ? inputs : undefined,
+        })
+        .catch(() => null);
+      if (result) setTaskId(result.task_id);
+    } finally {
+      submittingRef.current = false;
+    }
   };
 
   const renderInput = (def: ModuleActionInputDef) => {
