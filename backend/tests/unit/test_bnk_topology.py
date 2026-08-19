@@ -8,6 +8,7 @@ No mocking — these are pure data transformations.
 import pytest
 
 from services.bnk.topology import (
+    _build_backend,
     _build_cne_instance,
     _build_data_plane,
     _build_egress,
@@ -16,6 +17,7 @@ from services.bnk.topology import (
     _match_net_policies,
     _match_routes_to_listener,
     _match_sec_policies,
+    _parse_service_settings,
     analyze_topology,
     resolve_list_refs,
 )
@@ -223,6 +225,60 @@ class TestMatchRoutesToListener:
         route = _httproute("r1", "other-gw", gw_ns="ns")
         result = _match_routes_to_listener([(route, "HTTPRoute")], [], "gw", "ns", "http")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# analyzer weights (#8) — k8s.f5.com/service-settings annotation
+# ---------------------------------------------------------------------------
+
+
+def _l4route_with_settings(name, gw_name, gw_ns, backends, settings_json=None):
+    r = _resource(name, gw_ns, spec={
+        "parentRefs": [{"name": gw_name, "namespace": gw_ns}],
+        "rules": [{"backendRefs": backends}],
+    })
+    if settings_json is not None:
+        r["metadata"]["annotations"] = {"k8s.f5.com/service-settings": settings_json}
+    return r
+
+
+class TestAnalyzerWeights:
+    def test_parse_service_settings_returns_per_service_pod_weights(self):
+        meta = {"name": "r", "annotations": {"k8s.f5.com/service-settings":
+                '{"vlm-vllm-agg-vlmfrontend": {"10.244.123.12": 99},'
+                ' "p-vlm-vllm-agg-vlmfrontend": {"10.244.139.205": 1}}'}}
+        parsed = _parse_service_settings(meta)
+        assert parsed["vlm-vllm-agg-vlmfrontend"] == {"10.244.123.12": 99}
+        assert parsed["p-vlm-vllm-agg-vlmfrontend"] == {"10.244.139.205": 1}
+
+    def test_parse_missing_or_bad_annotation_is_empty(self):
+        assert _parse_service_settings({"name": "r"}) == {}
+        assert _parse_service_settings({"annotations": {"k8s.f5.com/service-settings": "not json"}}) == {}
+        assert _parse_service_settings({"annotations": {"k8s.f5.com/service-settings": "[1,2]"}}) == {}
+
+    def test_build_backend_surfaces_analyzer_weight_over_declared(self):
+        weights = {"vlm-vllm-agg-vlmfrontend": {"10.244.123.12": 99}}
+        # Declared weight is 1; the analyzer computed 99. effectiveWeight is 99.
+        b = _build_backend({"name": "vlm-vllm-agg-vlmfrontend", "port": 8000, "weight": 1}, weights)
+        assert b["weight"] == 1                       # declared, preserved
+        assert b["analyzerWeights"] == {"10.244.123.12": 99}
+        assert b["effectiveWeight"] == 99
+
+    def test_build_backend_without_analyzer_data_falls_back(self):
+        b = _build_backend({"name": "unweighted-svc", "port": 80, "weight": 50}, {})
+        assert b["analyzerWeights"] is None
+        assert b["effectiveWeight"] is None           # UI falls back to `weight`
+
+    def test_route_backends_carry_analyzer_weights_end_to_end(self):
+        route = _l4route_with_settings(
+            "l4route-vlm-internal-gw1", "gw", "f5-bnk",
+            backends=[{"name": "vlm-vllm-agg-vlmfrontend", "port": 8000, "weight": 1}],
+            settings_json='{"vlm-vllm-agg-vlmfrontend": {"10.244.123.12": 99}}',
+        )
+        result = _match_routes_to_listener([(route, "L4Route")], [], "gw", "f5-bnk", "l4")
+        assert len(result) == 1
+        backend = result[0]["backends"][0]
+        assert backend["effectiveWeight"] == 99, "the displayed weight must come from the analyzer, not the spec"
 
 
 # ---------------------------------------------------------------------------
