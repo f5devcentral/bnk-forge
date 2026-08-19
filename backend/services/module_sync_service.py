@@ -732,15 +732,12 @@ class ModuleSyncService:
         The result is never None, so the validator never skips the host check
         on artifact ingest.
         """
-        from services.defaults_service import SYSTEM_DEFAULTS, get_default
+        # One resolver shared with the runtime pull-auth path
+        # (supply_chain.enforce_host_allowlist), so ingest and runtime can never
+        # again disagree on what an empty allowlist means (#79).
+        from services.execution.supply_chain import resolve_registry_host_allowlist
 
-        try:
-            raw = get_default(self.db, "container.registry_host_allowlist")
-        except Exception:
-            raw = None
-        if not raw:
-            raw = SYSTEM_DEFAULTS["container.registry_host_allowlist"]["value"]
-        return [host.strip() for host in str(raw).split(",") if host.strip()]
+        return sorted(resolve_registry_host_allowlist(self.db))
 
     def _parse_terraform_module(self, module_path: str, repo_path: str) -> dict | None:
         """
