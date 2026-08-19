@@ -371,7 +371,19 @@ class ClusterManagementService(BaseService):
         return {"clusters": result, "count": len(result)}
 
     def list_project_clusters(self, project_id: int) -> dict[str, Any]:
-        """List all Kubernetes clusters for a project."""
+        """List all Kubernetes clusters for a project.
+
+        NOTE (#116): this list still renders bnk_config, and its route is
+        require_viewer (any authenticated user) with NO membership/ownership
+        check -- project_id is a path param anyone may supply. Combined with the
+        global list (which still returns each cluster's project_id), any viewer
+        can read any project's bnk_config in two requests. Redacting bnk_config
+        on the global list (this change) is a strict improvement but does NOT
+        fully close #116: the project list must enforce per-project membership
+        first, and that is a pre-existing tenancy-model decision (require_viewer
+        is role-based across the app) larger than this change. Until that lands,
+        bnk_config here is readable by any authenticated user.
+        """
         from sqlalchemy.orm import selectinload
 
         from routes.k8s._shared import serialize_cluster
