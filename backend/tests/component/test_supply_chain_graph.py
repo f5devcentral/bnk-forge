@@ -111,9 +111,43 @@ class TestAllowlistEnforcement:
             with pytest.raises(sc.SupplyChainPolicyError, match="not in the configured"):
                 sc.enforce_host_allowlist(db, ["evil.example.com"])
 
-    def test_empty_allowlist_disables_enforcement(self, db):
+    def test_empty_allowlist_enforces_the_built_in_default(self, db):
+        """#79: an empty/unset allowlist is FAIL-CLOSED.
+
+        This test previously asserted the opposite -- that an empty setting
+        disabled enforcement -- while the ingest-time reader in
+        module_sync_service fell back to the built-in default. Same key, two
+        readers, opposite meanings for "empty": an operator who cleared the
+        setting, or a fresh install before the row existed, got an unenforced
+        pull path while ingest still claimed to enforce. Both readers now
+        share resolve_registry_host_allowlist, so "empty" means "the shipped
+        default", never "anything goes".
+        """
         with patch("services.execution.supply_chain.get_default", return_value=""):
-            sc.enforce_host_allowlist(db, ["anything.example.com"])  # no raise
+            with pytest.raises(sc.SupplyChainPolicyError, match="not in the configured"):
+                sc.enforce_host_allowlist(db, ["anything.example.com"])
+            # ...but a host on the shipped default still passes.
+            sc.enforce_host_allowlist(db, ["ghcr.io"])  # no raise
+
+    def test_unset_and_raising_lookup_also_fail_closed(self, db):
+        with patch("services.execution.supply_chain.get_default", return_value=None):
+            with pytest.raises(sc.SupplyChainPolicyError):
+                sc.enforce_host_allowlist(db, ["anything.example.com"])
+        with patch("services.execution.supply_chain.get_default", side_effect=RuntimeError("db down")):
+            with pytest.raises(sc.SupplyChainPolicyError):
+                sc.enforce_host_allowlist(db, ["anything.example.com"])
+            sc.enforce_host_allowlist(db, ["quay.io"])  # shipped default still honoured
+
+    def test_ingest_and_runtime_resolve_the_same_allowlist(self, db):
+        """The point of the shared resolver: the two readers cannot disagree."""
+        from services.module_sync_service import ModuleSyncService
+
+        for raw in ("", None, "  ", "harbor.internal, ghcr.io "):
+            with patch("services.execution.supply_chain.get_default", return_value=raw):
+                runtime = sc.resolve_registry_host_allowlist(db)
+                ingest = set(ModuleSyncService(db)._registry_host_allowlist())
+                assert runtime == ingest, f"readers disagree for raw={raw!r}: {runtime} vs {ingest}"
+                assert runtime, f"resolver returned an empty allowlist for raw={raw!r}"
 
 
 @pytest.mark.component

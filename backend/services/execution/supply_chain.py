@@ -185,16 +185,37 @@ def build_merged_dockerconfigjson(auths_by_host: dict[str, dict[str, str]]) -> s
     return base64.b64encode(json.dumps(document).encode("utf-8")).decode("ascii")
 
 
+def resolve_registry_host_allowlist(db: Session) -> set[str]:
+    """The registry-host allowlist, resolved fail-CLOSED.
+
+    Reads ``container.registry_host_allowlist`` and falls back to the built-in
+    safe default when the setting is unset, empty, or the lookup raises -- so
+    the result is never empty and the check is always enforced. This is the
+    SAME resolution ``module_sync_service._registry_host_allowlist`` uses at
+    ingest. The two readers used to disagree on what "empty" meant: ingest fell
+    back to the default (closed); this one returned early (open). An operator
+    who cleared the setting, or a fresh install before the row existed, got
+    an unenforced pull path while ingest still claimed to be enforcing
+    (#79). One resolution, one answer.
+    """
+    from services.defaults_service import SYSTEM_DEFAULTS
+
+    try:
+        raw = get_default(db, REGISTRY_HOST_ALLOWLIST_KEY)
+    except Exception:
+        raw = None
+    if not raw or not str(raw).strip():
+        raw = SYSTEM_DEFAULTS[REGISTRY_HOST_ALLOWLIST_KEY]["value"]
+    return {h.strip().lower() for h in str(raw).split(",") if h.strip()}
+
+
 def enforce_host_allowlist(db: Session, hosts: list[str]) -> None:
     """Raise :class:`SupplyChainPolicyError` for any host not on the allowlist.
 
-    The allowlist is the ``container.registry_host_allowlist`` system default
-    (comma-separated). An empty/unset allowlist disables enforcement.
+    Fail-closed: an unset/empty setting enforces the built-in default, never
+    "anything goes". See resolve_registry_host_allowlist.
     """
-    raw = get_default(db, REGISTRY_HOST_ALLOWLIST_KEY)
-    allow = {h.strip().lower() for h in str(raw or "").split(",") if h.strip()}
-    if not allow:
-        return
+    allow = resolve_registry_host_allowlist(db)
     for host in hosts:
         if host and host.lower() not in allow:
             raise SupplyChainPolicyError(
