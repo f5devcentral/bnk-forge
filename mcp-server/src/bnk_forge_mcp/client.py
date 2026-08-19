@@ -154,10 +154,20 @@ class BNKForgeClient:
         if not isinstance(body, dict):
             return {"detail": str(body), "code": None, "details": None}
 
-        # FastAPI wraps HTTPException payloads as {"detail": <payload>}; the
-        # payload may itself be the structured dict. Unwrap one level.
-        inner = body.get("detail")
-        structured = inner if isinstance(inner, dict) else body
+        # The backend's own handler (core.errors.format_error_response) nests
+        # the structured dict under "error"; FastAPI's HTTPException handler
+        # nests under "detail". Unwrap one level from either, preferring the
+        # backend's shape. This is exactly the dict the old code str()'d --
+        # the issue's evidence came from the "error" key.
+        inner = None
+        for wrapper in ("error", "detail"):
+            candidate = body.get(wrapper)
+            if isinstance(candidate, dict):
+                inner = candidate
+                break
+        structured = inner if inner is not None else body
+        if inner is None:
+            inner = body.get("detail")
 
         code = structured.get("code")
         details = structured.get("details")

@@ -90,6 +90,25 @@ def test_structured_backend_error_is_not_a_python_repr() -> None:
     assert "'" not in wire["error"]["detail"]  # no repr leaking into the text
 
 
+def test_real_backend_shape_nested_under_error_is_unwrapped() -> None:
+    """The backend's actual handler (core.errors.format_error_response) emits
+    {"error": {code, message, details, path, request_id}} -- nested under
+    "error", NOT top-level and NOT under "detail". This is precisely the dict
+    the old code str()'d (its key loop hit "error"), producing the repr in the
+    issue. The parser must unwrap THIS shape, not only FastAPI's."""
+    body = {"error": {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "Project not found",
+        "details": {"project_id": "999999"},
+        "path": "/api/projects/999999",
+        "request_id": "abc",
+    }}
+    parsed = BNKForgeClient._parse_error_body(_resp(404, body))
+    assert parsed["detail"] == "Project not found"
+    assert parsed["code"] == "PROJECT_NOT_FOUND"
+    assert parsed["details"] == {"project_id": "999999"}
+
+
 def test_fastapi_wrapped_structured_error_is_unwrapped() -> None:
     """FastAPI HTTPException nests the payload under "detail"; the structured
     dict must still be found one level down."""
