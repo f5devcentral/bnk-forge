@@ -190,14 +190,17 @@ def register(mcp: FastMCP, client: BNKForgeClient) -> None:
         success = bool(result.get("success", True))
         message = result.get("message")
         # Map flat project_id → project.id; collect remaining non-meta keys.
-        skip_keys = {"success", "message"}
+        # "ok" is the universal outcome key the client stamps on every success
+        # body (#66); it's meta, not project data, so keep it out of the entity
+        # and surface it on the envelope instead.
+        skip_keys = {"ok", "success", "message"}
         if "project_id" in result:
             project_entity["id"] = result["project_id"]
             skip_keys.add("project_id")
         for k, v in result.items():
             if k not in skip_keys:
                 project_entity[k] = v
-        envelope: dict = {"success": success, "project": project_entity}
+        envelope: dict = {"ok": success, "success": success, "project": project_entity}
         if message is not None:
             envelope["message"] = message
         return json.dumps(envelope, indent=2)
