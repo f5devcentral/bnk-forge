@@ -919,6 +919,7 @@ class TestKillTaskContainers:
         assert killed == ["def456"], "an already-exited container must not abort the sweep"
 
 
+@pytest.mark.unit
 class TestRootUserGate:
     """The non-root gate must key on the uid, not on a fixed set of strings.
 
@@ -984,3 +985,47 @@ class TestRootUserGate:
     def test_non_root_images_are_allowed(self, declared):
         """Contrast: the gate must not start rejecting legitimate images."""
         assert DockerRunner.is_root_user(declared) is False
+
+
+@pytest.mark.unit
+class TestEveryClassInThisFileIsMarkedUnit:
+    """Guard against the #128 failure mode recurring in THIS file.
+
+    Every test class here is decorated ``@pytest.mark.unit``. #1 and #2 both
+    appended a class after the same trailing marker; git resolved the add/add
+    by hoisting the marker into common context, so the class that came out
+    second was left bare -- 29 root-gate tests silently invisible to ``-m
+    unit`` while still passing by path. Nothing in CI can see that loss,
+    which is why it needs a test.
+
+    Deliberately scoped to this file. The repo has no suite-wide convention
+    to enforce: 781 of ~890 classes under tests/unit carry no marker, and no
+    CI target selects by ``-m unit``. A suite-wide guard would be asserting a
+    rule nobody follows. This file DOES follow it, so keep it honest here.
+    """
+
+    def test_all_test_classes_carry_the_unit_marker(self):
+        import re
+        from pathlib import Path
+
+        src = Path(__file__).read_text(encoding="utf-8")
+        lines = src.splitlines()
+        bare: list[str] = []
+        for i, line in enumerate(lines):
+            m = re.match(r"^class (Test\w+)", line)
+            if not m:
+                continue
+            j = i - 1
+            marked = False
+            # Walk back over decorators and blank lines to find the marker.
+            while j >= 0 and (lines[j].strip().startswith("@") or not lines[j].strip()):
+                if "pytest.mark.unit" in lines[j]:
+                    marked = True
+                j -= 1
+            if not marked:
+                bare.append(f"{m.group(1)} (line {i + 1})")
+
+        assert not bare, (
+            "test class(es) in this file lack @pytest.mark.unit -- a merge probably "
+            f"hoisted the marker onto the wrong class (see #128): {', '.join(bare)}"
+        )
