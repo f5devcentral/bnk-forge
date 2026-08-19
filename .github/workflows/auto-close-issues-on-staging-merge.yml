@@ -57,7 +57,11 @@ jobs:
           out=[]; seen=set()
           for m in kw_pat.finditer(body):
               i = m.end()
-              i += re.match(r'[:\s]*', body[i:]).end()
+              # Accept the PR template's own line, "Fixes / Implements: #N":
+              # allow an optional "/ Implements" (or "/ Closes" etc.) between the
+              # keyword and the reference. Before this, the template form matched
+              # NOTHING and every issue had to be closed by hand.
+              i += re.match(r'(?i)[:\s]*(?:/\s*(?:implements|closes|fixes|resolves)\s*)?[:\s]*', body[i:]).end()
               while True:
                   r = ref_pat.match(body, i)
                   if not r:
