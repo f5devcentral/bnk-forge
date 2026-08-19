@@ -26,6 +26,7 @@ def serialize_cluster(
     cluster: KubernetesCluster,
     include_project_id: bool = True,
     membership: "tuple[list[int], list[int]] | None" = None,
+    include_bnk_config: bool = True,
 ) -> dict:
     """
     Serialize a KubernetesCluster to dict.
@@ -34,6 +35,13 @@ def serialize_cluster(
     membership: pre-fetched (host_ids, dpu_ids) for BNK clusters in list
     contexts.  When provided, _serialize_bnk_config uses it directly instead
     of issuing per-cluster queries (eliminates the 2N pattern; ADR-424 finding C).
+
+    include_bnk_config: when False, bnk_config is redacted (None). The
+    ADR-424 bnk_config carries cross-project infrastructure membership
+    (host_ids, dpu_ids, control_plane_host_id, tmfifo_pool_cidr); the global
+    instance-wide list must not leak it to any viewer (#116). The
+    project-scoped list and the per-cluster detail keep it (their callers
+    are the surfaces that actually consume it).
     """
     platform_context = PlatformContextService.serialize_cluster_context(cluster)
 
@@ -68,7 +76,11 @@ def serialize_cluster(
         "deployable_release_id": cluster.deployable_release_id,
         "running_release_id": cluster.running_release_id,
         # BNK multi-host cluster configuration side-table (ADR-424)
-        "bnk_config": _serialize_bnk_config(cluster, membership=membership) if getattr(cluster, "bnk_config", None) else None,
+        "bnk_config": (
+            _serialize_bnk_config(cluster, membership=membership)
+            if include_bnk_config and getattr(cluster, "bnk_config", None)
+            else None
+        ),
     }
     if include_project_id:
         result["project_id"] = cluster.project_id
