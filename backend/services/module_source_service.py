@@ -1508,6 +1508,24 @@ class ModuleSourceService:
             return None
 
         blueprint_source, created = self._get_or_create_linked_blueprint_source(module_source)
+        # Mirror of the guard blueprint_sync_service._auto_sync_modules_for_git_source
+        # gained in #404, for the symmetric direction (#87). Without it a module
+        # sync re-synced -- and the sync path re-activates -- a twin blueprint
+        # source an operator had deliberately deactivated. Skip and say so,
+        # with the same sync_status marker the other direction uses.
+        if not blueprint_source.is_active:
+            logger.info(
+                "Skipping blueprint auto-sync for module source %s: linked blueprint source %s is inactive",
+                module_source.name,
+                blueprint_source.name,
+            )
+            return {
+                "source_id": blueprint_source.id,
+                "source_name": blueprint_source.name,
+                "created": created,
+                "sync_status": "skipped_inactive",
+                "results": None,
+            }
         results = BlueprintSyncService(self.db).sync_git_source(blueprint_source, sync_related_modules=False)
         self.db.refresh(blueprint_source)
         return {
