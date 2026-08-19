@@ -258,6 +258,33 @@ class TestListClusters:
         assert result["count"] == 1
         assert result["clusters"][0]["name"] == "c1"
 
+    def test_global_list_redacts_bnk_config_but_project_list_keeps_it(
+        self, db, make_project, make_k8s_cluster
+    ):
+        """#116: the instance-wide global list must not leak ADR-424 bnk_config
+        (host/DPU membership, control-plane host, tmfifo pool CIDR) cross-project
+        to any viewer. The project-scoped list -- whose caller actually renders
+        it -- must still include it."""
+        from models.kubernetes import BnkClusterConfig
+
+        p = make_project()
+        cluster = make_k8s_cluster(project=p, name="bnk-cluster")
+        db.add(BnkClusterConfig(cluster_id=cluster.id, tmfifo_pool_cidr="192.168.100.0/22"))
+        db.commit()
+
+        svc = ClusterManagementService(db)
+
+        global_row = next(
+            c for c in svc.list_all_clusters()["clusters"] if c["name"] == "bnk-cluster"
+        )
+        assert global_row["bnk_config"] is None, "global list leaked bnk_config (#116)"
+
+        project_row = next(
+            c for c in svc.list_project_clusters(p.id)["clusters"] if c["name"] == "bnk-cluster"
+        )
+        assert project_row["bnk_config"] is not None, "project-scoped list must keep bnk_config"
+        assert project_row["bnk_config"]["tmfifo_pool_cidr"] == "192.168.100.0/22"
+
     def test_list_project_clusters_nonexistent_project(self, db):
         svc = ClusterManagementService(db)
         with pytest.raises(NotFoundError):

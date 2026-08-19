@@ -81,7 +81,8 @@ class BnkClusterService:
     ) -> dict[int, tuple[list[int], list[int]]]:
         """Return {cluster_id: (host_ids, dpu_ids)} for multiple clusters in 2 queries.
 
-        Eliminates the 2N query pattern in list_all_clusters / list_project_clusters:
+        Eliminates the 2N query pattern in list_project_clusters (list_all_clusters
+        no longer serializes bnk_config, so it does not call this -- #116):
         instead of 2 queries per BNK cluster, run one grouped host query and one
         grouped DPU query, then bucket by cluster_id.  Single-sources the query
         logic used by cluster_membership (ADR-424 finding C).

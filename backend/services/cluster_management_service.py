@@ -352,30 +352,43 @@ class ClusterManagementService(BaseService):
         }
 
     def list_all_clusters(self) -> dict[str, Any]:
-        """List all Kubernetes clusters (global)."""
+        """List all Kubernetes clusters (global).
+
+        This endpoint is instance-wide (require_viewer, not project-scoped), so
+        it must not expose the ADR-424 bnk_config -- host/DPU membership,
+        control-plane host, tmfifo pool CIDR -- cross-project to any viewer
+        (#116). bnk_config is redacted here; the project-scoped list and the
+        per-cluster detail keep it. No frontend consumer of this global list
+        reads bnk_config (only the project-scoped K8sClusterList does), so this
+        removes the disclosure without losing a feature -- and it also drops the
+        now-unnecessary membership bulk-fetch those fields required.
+        """
         from sqlalchemy.orm import selectinload
 
         from routes.k8s._shared import serialize_cluster
-        from services.bnk_cluster_service import BnkClusterService
 
         clusters = (
             self.db.query(KubernetesCluster)
             .options(selectinload(KubernetesCluster.bnk_config))
             .all()
         )
-        # Bulk-fetch membership for all BNK clusters in 2 queries (not 2N).
-        # selectinload(bnk_config) already avoids the config N+1; this bulk
-        # call eliminates the host+DPU membership N+1 in _serialize_bnk_config.
-        bnk_ids = [c.id for c in clusters if getattr(c, "bnk_config", None)]
-        membership_map = BnkClusterService(self.db).bulk_cluster_membership(bnk_ids)
-        result = [
-            serialize_cluster(c, membership=membership_map.get(c.id))
-            for c in clusters
-        ]
+        result = [serialize_cluster(c, include_bnk_config=False) for c in clusters]
         return {"clusters": result, "count": len(result)}
 
     def list_project_clusters(self, project_id: int) -> dict[str, Any]:
-        """List all Kubernetes clusters for a project."""
+        """List all Kubernetes clusters for a project.
+
+        NOTE (#116): this list still renders bnk_config, and its route is
+        require_viewer (any authenticated user) with NO membership/ownership
+        check -- project_id is a path param anyone may supply. Combined with the
+        global list (which still returns each cluster's project_id), any viewer
+        can read any project's bnk_config in two requests. Redacting bnk_config
+        on the global list (this change) is a strict improvement but does NOT
+        fully close #116: the project list must enforce per-project membership
+        first, and that is a pre-existing tenancy-model decision (require_viewer
+        is role-based across the app) larger than this change. Until that lands,
+        bnk_config here is readable by any authenticated user.
+        """
         from sqlalchemy.orm import selectinload
 
         from routes.k8s._shared import serialize_cluster
@@ -397,7 +410,17 @@ class ClusterManagementService(BaseService):
         return {"clusters": result, "count": len(result)}
 
     def get_cluster_details(self, cluster_id: int) -> dict[str, Any]:
-        """Get cluster details."""
+        """Get cluster details.
+
+        NOTE (#116): GET /k8s/clusters/{cluster_id} is require_viewer with NO
+        project scope (unlike the PUT/DELETE on the same path, which use
+        require_cluster_owner). This handler hand-builds its dict and must NOT
+        gain a bnk_config key -- reusing serialize_cluster here (or adding
+        bnk_config by hand) would reintroduce the cross-project disclosure #116
+        closes, one request further along, and the id needed comes straight from
+        the global list. If bnk_config is ever needed on detail, scope this route
+        to the project first.
+        """
         cluster = self._get_cluster(cluster_id)
         context = PlatformContextService.serialize_cluster_context(cluster)
         return {
