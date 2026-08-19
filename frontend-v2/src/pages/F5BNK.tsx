@@ -925,6 +925,7 @@ export default function F5BNK() {
                   onNavigateView={handleNavigateView}
                   onOpenDialog={handleOpenDialog}
                   borderDefault={borderDefault}
+                  clusterId={selectedCluster ?? undefined}
                 />
               )}
               {/* Topology / Traffic Flow selection */}
@@ -938,6 +939,7 @@ export default function F5BNK() {
                   onNavigateView={handleNavigateView}
                   onOpenDialog={handleOpenDialog}
                   borderDefault={borderDefault}
+                  clusterId={selectedCluster ?? undefined}
                 />
               )}
               {topologyLoading && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW) && (

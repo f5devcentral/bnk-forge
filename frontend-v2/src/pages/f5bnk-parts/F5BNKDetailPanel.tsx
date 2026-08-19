@@ -26,6 +26,7 @@ interface F5BNKDetailPanelProps {
   /** Open a specific dialog (e.g. irule code viewer) */
   onOpenDialog: (dialogKey: string, resource: K8sResource) => void;
   borderDefault: string;
+  clusterId?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ export function F5BNKDetailPanel({
   onNavigateView,
   onOpenDialog,
   borderDefault: _borderDefault,
+  clusterId,
 }: F5BNKDetailPanelProps) {
   const DetailComponent = getDetailComponent(resource.kind);
   const quickActions = getDetailQuickActions(resource.kind);
@@ -161,7 +163,7 @@ export function F5BNKDetailPanel({
 
         {/* Resource-specific detail panel */}
         {DetailComponent ? (
-          <DetailComponent resource={resource} />
+          <DetailComponent resource={resource} clusterId={clusterId} />
         ) : (
           <FallbackDetail resource={resource} />
         )}

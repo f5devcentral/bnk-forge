@@ -81,7 +81,8 @@ import { RunModuleActionDialog } from '@/components/modules/RunModuleActionDialo
 import { SaveAsTemplateDialog } from '@/components/stacks/SaveAsTemplateDialog';
 import { TransferOwnershipDialog } from '@/components/projects/TransferOwnershipDialog';
 import { useStackInstances } from '@/hooks/useStacks';
-import { ProjectSecretsManager } from '@/components/secrets/ProjectSecretsManager';
+// ProjectSecretsManager lives in a gitignored secrets/ directory; stub until published
+const ProjectSecretsManager = (_props: { projectId?: number; requiredSecrets?: unknown[] }) => null;
 import { useRequiredSecrets } from '@/hooks/useProjectSecrets';
 import { ParallelExecutionDialog } from '@/components/execution/ParallelExecutionDialog';
 import { LogViewerModal } from '@/components/deployments/LogViewerModal';

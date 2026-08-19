@@ -183,6 +183,7 @@ nohup.out
 # Node
 node_modules/
 package-lock.json
+!frontend-v2/package-lock.json
 *.pyc
 # Environment
 # OpenCode

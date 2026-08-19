@@ -36,6 +36,8 @@ class ApiGroups:
     MULTUS = "k8s.cni.cncf.io"
     # F5 CIS (Container Ingress Services) — classic BIG-IP integration (D-023)
     F5_CIS = "cis.f5.com"
+    # WAF PLM CRDs: APPolicy, APLogConf, APSignatures, APUserSig
+    APPPROTECT = "appprotect.f5.com"
 
 
 class ResourceCategory:
@@ -54,6 +56,7 @@ class ResourceCategory:
     DPF = "dpf"
     CLUSTER = "cluster"
     F5_CIS = "f5-cis"  # F5 Container Ingress Services (D-023)
+    WAF = "waf"
 
 
 @dataclass

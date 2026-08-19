@@ -70,3 +70,4 @@ export type {
   VersionDrift,
   BnkVersionProfile,
 } from './bare-metal';
+export * from './waf';

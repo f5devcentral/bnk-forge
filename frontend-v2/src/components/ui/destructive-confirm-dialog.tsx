@@ -122,6 +122,7 @@ export function DestructiveConfirmDialog({
                 'font-mono',
                 isValid && 'border-success focus-visible:ring-success'
               )}
+              autoFocus
               autoComplete="off"
               disabled={isPending}
             />

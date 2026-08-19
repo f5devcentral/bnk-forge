@@ -20,19 +20,12 @@ import { useUIStore } from './stores/uiStore'
 import './styles.css'
 
 // ---------------------------------------------------------------------------
-// Monaco Editor: use locally bundled package instead of CDN.
-// Without this, @monaco-editor/react fetches from jsDelivr which fails
-// in air-gapped environments or behind firewalls (dialog shows "Loading..." forever).
+// Monaco Editor: configure local bundling instead of CDN.
+// @monaco-editor/react handles workers internally via its own loader.
+// The ?worker Vite syntax is not compatible with all build configurations;
+// worker setup is deferred to the loader's built-in mechanism instead.
 // ---------------------------------------------------------------------------
 import * as monaco from 'monaco-editor'
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-
-self.MonacoEnvironment = {
-  getWorker() {
-    return new editorWorker()
-  },
-}
-
 import { loader } from '@monaco-editor/react'
 loader.config({ monaco })
 

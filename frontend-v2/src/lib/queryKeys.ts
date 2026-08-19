@@ -161,6 +161,18 @@ export const queryKeys = {
       dpfDetect: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'detect'] as const,
       dpfData: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'data'] as const,
       dpfHealth: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'health'] as const,
+
+      // WAF Policy Manager (appprotect.f5.com CRDs via nap-policy-operator PLM)
+      wafPolicies: (clusterId: number, namespace?: string) =>
+        ['k8s', 'clusters', clusterId, 'waf', 'policies', namespace] as const,
+      wafPolicy: (clusterId: number, name: string, namespace: string) =>
+        ['k8s', 'clusters', clusterId, 'waf', 'policies', namespace, name] as const,
+      wafLogConfs: (clusterId: number, namespace?: string) =>
+        ['k8s', 'clusters', clusterId, 'waf', 'logconfs', namespace] as const,
+      wafSignatures: (clusterId: number, namespace: string) =>
+        ['k8s', 'clusters', clusterId, 'waf', 'signatures', namespace] as const,
+      wafUserSigs: (clusterId: number, namespace?: string) =>
+        ['k8s', 'clusters', clusterId, 'waf', 'usersigs', namespace] as const,
     },
     tunnels: () => ['k8s', 'tunnels'] as const,
   },
