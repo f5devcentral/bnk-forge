@@ -80,7 +80,9 @@ class TestGetDeploymentLogs:
         assert data["source"] == "task"
         assert data["task_id"] == task.id
         assert data["total_logs"] == 3
-        assert "No orphaned resources found" in data["logs"][-1]["message"]
+        # Newest first, matching the DeploymentLog branch's timestamp.desc().
+        assert "No orphaned resources found" in data["logs"][0]["message"]
+        assert "docker run" in data["logs"][-1]["message"]
 
     def test_logs_prefer_deployment_log_rows_when_present(
         self, client, admin_headers, sample_module, db
@@ -126,7 +128,8 @@ class TestGetDeploymentLogs:
 
         data = client.get(f"/api/project-modules/{mod.id}/logs?limit=5", headers=admin_headers).json()
         assert data["total_logs"] == 5
-        assert data["logs"][-1]["message"] == "line 49"  # the tail, like a log should be
+        # Tail of the log (lines 45..49), newest first.
+        assert [r["message"] for r in data["logs"]] == [f"line {i}" for i in range(49, 44, -1)]
 
     def test_get_deployment_logs_module_not_found(
         self, client, admin_headers, sample_user

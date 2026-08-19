@@ -48,10 +48,19 @@ def get_deployment_logs(
     """
     Get historical deployment logs for a module.
 
+    Entries are returned NEWEST FIRST regardless of source. Sources, in
+    preference order:
+      - "deployment_log": DeploymentLog rows (written by the retry path)
+      - "task": the module's newest Task.logs -- where every engine actually
+        streams its step output; `task_id` names it (GET /api/tasks/{task_id})
+      - "none": nothing recorded yet; `hint` says where output will appear
+
     Args:
         module_id: Module ID
-        limit: Maximum number of logs to return (1-10000, default 1000)
-        level: Filter by log level (all, info, error, warning, success)
+        limit: Maximum number of logs to return (1-10000, default 1000);
+            on the "task" source this is a tail of the most recent lines
+        level: Filter by log level (all, info, error, warning, success);
+            best-effort on the "task" source (matched on engine markers)
     """
     from models import DeploymentLog
 
@@ -144,7 +153,11 @@ def get_deployment_logs(
         wanted = markers.get(level, ())
         if wanted:
             lines = [ln for ln in lines if any(m in ln for m in wanted)]
+    # Tail, then NEWEST FIRST -- the same order the DeploymentLog branch has
+    # always returned (timestamp.desc()). A caller treating logs[0] as "most
+    # recent" must get the same answer from either source.
     lines = lines[-limit:]
+    lines.reverse()
 
     logger.info(
         f"No DeploymentLog rows for module {module_id}; served {len(lines)} lines "
