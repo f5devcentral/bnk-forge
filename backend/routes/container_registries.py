@@ -78,17 +78,36 @@ class ContainerRegistryResponse(BaseModel):
         from_attributes = True
 
 
+class ContainerRegistryTestResponse(BaseModel):
+    """Outcome of POST /{id}/test.
+
+    Mirrors what ContainerRegistryService.test_registry returns: the probe's
+    own success/message/error plus the persisted last_test_* fields. Declared
+    so the route carries a response_model like its siblings (#79) and the
+    shape is visible in OpenAPI instead of only in the service body.
+    """
+    success: bool
+    message: str | None = None
+    error: str | None = None
+    type: str | None = None
+    last_test_status: str | None = None
+    last_test_at: str | None = None
+    last_test_message: str | None = None
+
+
 # ============================================================================
 # CRUD Endpoints
 # ============================================================================
 
 @router.get("", response_model=list[ContainerRegistryResponse], dependencies=[Depends(require_viewer)])
+@handle_route_errors("list container registries")
 def list_container_registries(db: Session = Depends(get_db)):
     """List all container registries."""
     return ContainerRegistryService(db).list_registries()
 
 
 @router.get("/{registry_id}", response_model=ContainerRegistryResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("get container registry")
 def get_container_registry(registry_id: int, db: Session = Depends(get_db)):
     """Get a specific container registry by ID."""
     return ContainerRegistryService(db).get_registry(registry_id)
@@ -129,7 +148,11 @@ def delete_container_registry(registry_id: int, db: Session = Depends(get_db)):
 # Testing Endpoint
 # ============================================================================
 
-@router.post("/{registry_id}/test", dependencies=[Depends(require_operator)])
+@router.post(
+    "/{registry_id}/test",
+    response_model=ContainerRegistryTestResponse,
+    dependencies=[Depends(require_operator)],
+)
 @handle_route_errors("test container registry")
 def test_container_registry(registry_id: int, db: Session = Depends(get_db)):
     """Test registry connectivity using this registry's credentials.

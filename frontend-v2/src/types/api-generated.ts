@@ -15396,6 +15396,31 @@ export interface components {
             /** Last Test Message */
             last_test_message?: string | null;
         };
+        /**
+         * ContainerRegistryTestResponse
+         * @description Outcome of POST /{id}/test.
+         *
+         *     Mirrors what ContainerRegistryService.test_registry returns: the probe's
+         *     own success/message/error plus the persisted last_test_* fields. Declared
+         *     so the route carries a response_model like its siblings (#79) and the
+         *     shape is visible in OpenAPI instead of only in the service body.
+         */
+        ContainerRegistryTestResponse: {
+            /** Success */
+            success: boolean;
+            /** Message */
+            message?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Last Test Status */
+            last_test_status?: string | null;
+            /** Last Test At */
+            last_test_at?: string | null;
+            /** Last Test Message */
+            last_test_message?: string | null;
+        };
         /** ContainerRegistryUpdate */
         ContainerRegistryUpdate: {
             /** Name */
@@ -34431,7 +34456,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContainerRegistryTestResponse"];
                 };
             };
             /** @description Validation Error */

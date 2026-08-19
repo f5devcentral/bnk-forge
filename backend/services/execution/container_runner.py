@@ -1055,6 +1055,14 @@ class DockerRunner(ContainerRunner):
             raise ValueError("a workspace mount (workspace_volume or workspace_host_path) is required")
         if not spec.mount_path or not spec.mount_path.startswith("/"):
             raise ValueError("mount_path must be an absolute path inside the container")
+        # mount_path is spliced into `--mount type=volume,...,target=<mount_path>,...`
+        # (comma-delimited options) and `-v <host>:<mount_path>` (colon-delimited),
+        # so ',' or ':' would corrupt the argv the same way they would in the
+        # workspace_* fields above. Same rule, same reason (#79). Not exploitable
+        # -- argv is a list, no shell -- but a malformed mount is a confusing
+        # failure instead of a clear one.
+        if "," in spec.mount_path or ":" in spec.mount_path or " " in spec.mount_path:
+            raise ValueError("mount_path must not contain ',', ':' or whitespace")
 
     @staticmethod
     def _validate_env_key(key: str) -> None:
