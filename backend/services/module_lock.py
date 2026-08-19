@@ -159,6 +159,16 @@ def set_locked_module_fields(
     from_state_machine = fields.pop("_from_state_machine", False)
     if "status" in fields and not from_state_machine:
         new_status = fields.pop("status")
+        # Forward a reason to the audit log. Every engine's failure path writes
+        # the cause into deployment_error in the same call, but nothing passed
+        # it on -- so module_state_transitions recorded THAT a module failed
+        # and never WHY, and diagnosing meant dumping tasks.logs by hand
+        # (#101). Derive it here, once, so no call site has to remember. An
+        # explicit reason= kwarg still wins. Clamped to the column width
+        # (ModuleStateTransition.reason is String(500)); deployment_error can
+        # be a 2000-char log tail.
+        reason = fields.pop("reason", None) or fields.get("deployment_error") or ""
+        reason = str(reason)[:500]
         # Lazy import to avoid module-level cycle (module_state imports us).
         from services.module_state import transition_module_status
         transition_module_status(
@@ -167,6 +177,7 @@ def set_locked_module_fields(
             to_status=new_status,
             lock=lock,
             task_id=lock.task_id,
+            reason=reason,
             extra_fields=fields if fields else None,
         )
         return
