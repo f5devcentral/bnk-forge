@@ -102,6 +102,15 @@ describe('DriftCheckHistory', () => {
     render(<DriftCheckHistory projectId={1} />);
     await user.click(await screen.findByText('vpc-module'));
     expect(await screen.findByText(/provider auth expired/)).toBeInTheDocument();
+
+    // Regression: a failed check has drift_detected:false, but "No Drift" would
+    // be a lie -- tofu plan never completed, so nothing is known. The panel must
+    // report the status, not the boolean. Before the status-aware badge, the
+    // dialog showed a red error alert and a green "No Drift" beside it.
+    expect(screen.queryByText('No Drift')).not.toBeInTheDocument();
+    // And the panel's own header must say Failed (there are now two "Failed"
+    // badges: the row and the panel), never zero.
+    expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(2);
   });
 
   it('shows empty state when no checks exist', async () => {

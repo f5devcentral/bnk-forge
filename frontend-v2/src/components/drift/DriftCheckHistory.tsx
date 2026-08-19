@@ -259,15 +259,17 @@ export function DriftCheckHistory({ projectId, moduleId }: DriftCheckHistoryProp
           <DialogHeader>
             <DialogTitle>Drift Check Details</DialogTitle>
             <DialogDescription>
-              {/* The panel below renders the module name as its own heading;
-                  keep only the timestamp here so each fact appears once. */}
-              {selectedCheck?.created_at && `Checked ${formatTimeAgo(selectedCheck.created_at)}`}
+              {/* The panel renders the module name as its own heading, and a
+                  "Last checked" time from last_check_at (when the check last ran).
+                  This shows created_at (when the check was requested) -- a distinct
+                  fact, so it complements rather than duplicates the panel. */}
+              {selectedCheck?.created_at && `Requested ${formatTimeAgo(selectedCheck.created_at)}`}
             </DialogDescription>
           </DialogHeader>
           {selectedCheck && (
             <div className="space-y-4">
               {/* The full drift panel -- diff, severity, and the Reconcile /
-                  Accept / View-module actions (#70). Previously this dialog
+                  View-module actions (#70). Previously this dialog
                   hand-rolled a read-only subset (status, summary, counts,
                   changed resources) and DriftDetailPanel -- which carries
                   the working Reconcile button -- was mounted nowhere in the
