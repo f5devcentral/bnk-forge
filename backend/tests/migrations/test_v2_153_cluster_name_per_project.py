@@ -27,7 +27,6 @@ _REVISION = (
     Path(__file__).resolve().parents[2]
     / "alembic" / "versions" / "v2_153_cluster_name_unique_per_project.py"
 )
-PG_URL = os.environ.get("TEST_POSTGRES_URL")
 
 
 def _load_revision():
@@ -146,8 +145,12 @@ class TestSqlitePath:
 # ── Postgres (CI migration round-trip) ──────────────────────────────────────
 
 @pytest.mark.integration
-@pytest.mark.skipif(not PG_URL, reason="TEST_POSTGRES_URL not set")
 class TestPostgresPath:
+    # No class-level skipif: pg_scratch_engine (tests/migrations/conftest.py)
+    # owns the skip-vs-fail decision. A skipif here would fire BEFORE the
+    # fixture and turn the hard fail under BNK_REQUIRE_MIGRATION_TESTS back
+    # into a silent skip -- the "gate passes while asserting nothing" hole
+    # that fixture exists to close.
     @pytest.fixture
     def pg_engine(self, pg_scratch_engine):
         """A throwaway database, not the one CI hands us via TEST_POSTGRES_URL.
