@@ -371,12 +371,7 @@ export interface TopologyRouteBackend {
   name: string;
   namespace?: string | null;
   port: number | null;
-  weight: number | null;          // declared spec weight (backendRefs[].weight)
-  // Analyzer-computed weights from the k8s.f5.com/service-settings annotation.
-  // effectiveWeight is the number the UI should show; it's null when the
-  // analyzer didn't weight this service, in which case fall back to `weight` (#8).
-  effectiveWeight?: number | null;
-  analyzerWeights?: Record<string, number> | null;   // {pod_ip: weight}
+  weight: number | null;
   kind?: string;   // "Service" (default), "ServiceImport", etc.
   group?: string;   // "" = core API group
 }
@@ -575,11 +570,7 @@ export interface BnkBackendRouteRef {
   gatewayName: string;
   listenerName: string;
   port?: number | null;
-  weight?: number | null;             // declared spec weight
-  // Carried through from the topology backend so the backends view prefers the
-  // analyzer's number over the declared weight, same as the topology tree (#8).
-  effectiveWeight?: number | null;
-  analyzerWeights?: Record<string, number> | null;
+  weight?: number | null;
 }
 
 export interface BnkBackendEntry {

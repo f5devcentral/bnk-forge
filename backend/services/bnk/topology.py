@@ -191,13 +191,19 @@ def _match_routes_to_listener(
         route_spec = route.get("spec", {})
         route_ns = route_meta.get("namespace", "")
 
-        # The analyzer records the weights it actually computed per backend
-        # service in the k8s.f5.com/service-settings annotation, NOT in
-        # spec.rules[].backendRefs[].weight (which is the author's declared
-        # intent, often a placeholder). The topology surfaced only the declared
-        # weight, so the UI showed the wrong numbers (#8). Parse the annotation
-        # once per route and attach the analyzer weight to each backend.
-        analyzer_weights = _parse_service_settings(route_meta)
+        # The analyzer records the weights it actually computed in the
+        # k8s.f5.com/service-settings annotation, NOT in
+        # spec.rules[].backendRefs[].weight (the author's declared intent). We
+        # surface the annotation faithfully at the route level as
+        # ``serviceSettings`` -- the same pool-keyed shape F5AIAnalyzerViewer
+        # already reads -- so a validated consumer can reinterpret it without
+        # another backend change (#8). We deliberately do NOT collapse it into a
+        # per-backendRef ``effectiveWeight`` here: the annotation is keyed by
+        # POOL, a backendRef is a Service, and the per-pod weights may be a
+        # within-pool distribution rather than a between-service share -- so the
+        # pool->service attribution and the collapse both need a real
+        # multi-backend/multi-pod cluster sample to settle (see PR discussion).
+        service_settings = _parse_service_settings(route_meta)
 
         for parent in route_spec.get("parentRefs", []):
             parent_ns = parent.get("namespace", route_ns)
@@ -208,7 +214,14 @@ def _match_routes_to_listener(
                 continue
 
             backends = [
-                _build_backend(br, analyzer_weights)
+                {
+                    "name": br.get("name", ""),
+                    "namespace": br.get("namespace"),
+                    "port": br.get("port"),
+                    "weight": br.get("weight"),
+                    "kind": br.get("kind", "Service"),
+                    "group": br.get("group", ""),
+                }
                 for rule in route_spec.get("rules", [])
                 for br in rule.get("backendRefs", [])
             ]
@@ -220,6 +233,7 @@ def _match_routes_to_listener(
                 "kind": route_kind,
                 "hostnames": route_spec.get("hostnames", []),
                 "backends": backends,
+                "serviceSettings": service_settings or None,
                 "analyzers": _match_analyzers(
                     analyzers, route_name, route_kind, route_ns, gw_ns,
                 ),
@@ -231,14 +245,39 @@ def _match_routes_to_listener(
 SERVICE_SETTINGS_ANNOTATION = "k8s.f5.com/service-settings"
 
 
-def _parse_service_settings(route_meta: dict) -> dict[str, dict[str, int]]:
-    """Analyzer-computed weights from the k8s.f5.com/service-settings annotation.
+def _coerce_weight(value: Any) -> float | None:
+    """Tolerant numeric coercion, matching F5AIAnalyzerViewer's ``Number(w)``.
 
-    Shape (from a live L4Route): ``{service_name: {pod_ip: weight}}`` -- e.g.
-    ``{"vlm-vllm-agg-vlmfrontend": {"10.244.123.12": 99}}``. Returns {} when the
-    annotation is absent or unparseable; the caller then falls back to the
-    declared weight, so a route the analyzer has not yet processed still shows
-    something.
+    The annotation's weights arrive as ints in the samples we have, but the
+    existing frontend consumer accepts floats and numeric strings too, and the
+    two readers of this annotation must not disagree on what counts as a weight
+    (a stricter reader silently drops values and falls back to the declared
+    weight -- invisibly). bool is excluded: it is an int subclass but never a
+    weight.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_service_settings(route_meta: dict) -> dict[str, dict[str, float]]:
+    """Faithful parse of the k8s.f5.com/service-settings annotation.
+
+    Per F5 docs the shape is ``{pool_name: {pod_ip: weight}}`` -- e.g.
+    ``{"pool-3": {"10.244.114.53": 33, "10.244.114.54": 34, "10.244.99.91": 33}}``.
+    The top-level key is a POOL, not necessarily a Service name; the per-pod
+    weights may be a within-pool distribution. We return the structure as-is
+    (keys preserved, weights coerced tolerantly) rather than interpreting it,
+    because the interpretation is exactly what's unsettled (#8) and the existing
+    consumer, F5AIAnalyzerViewer, already reads the same annotation this way.
+    Returns {} when the annotation is absent or unparseable.
     """
     raw = (route_meta.get("annotations") or {}).get(SERVICE_SETTINGS_ANNOTATION)
     if not raw:
@@ -251,38 +290,17 @@ def _parse_service_settings(route_meta: dict) -> dict[str, dict[str, int]]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    # Keep only the well-formed {service: {ip: int}} entries.
-    out: dict[str, dict[str, int]] = {}
-    for service, ip_weights in parsed.items():
+    out: dict[str, dict[str, float]] = {}
+    for pool, ip_weights in parsed.items():
         if isinstance(ip_weights, dict):
-            clean = {ip: w for ip, w in ip_weights.items() if isinstance(w, int)}
+            clean = {}
+            for ip, w in ip_weights.items():
+                cw = _coerce_weight(w)
+                if cw is not None:
+                    clean[str(ip)] = cw
             if clean:
-                out[str(service)] = clean
+                out[str(pool)] = clean
     return out
-
-
-def _build_backend(br: dict, analyzer_weights: dict[str, dict[str, int]]) -> dict:
-    """One backendRef, with the analyzer's computed weight surfaced.
-
-    ``weight`` remains the DECLARED value for backward compatibility. The
-    analyzer's per-pod weights for this backend's service are added as
-    ``analyzerWeights`` ({pod_ip: weight}), and ``effectiveWeight`` collapses
-    them to the single number the UI should show -- the sum across the
-    service's pods, or None when the analyzer has not weighted this service
-    (in which case the UI should fall back to the declared ``weight``).
-    """
-    name = br.get("name", "")
-    per_pod = analyzer_weights.get(name)
-    return {
-        "name": name,
-        "namespace": br.get("namespace"),
-        "port": br.get("port"),
-        "weight": br.get("weight"),
-        "analyzerWeights": per_pod,
-        "effectiveWeight": (sum(per_pod.values()) if per_pod else None),
-        "kind": br.get("kind", "Service"),
-        "group": br.get("group", ""),
-    }
 
 
 def _match_analyzers(

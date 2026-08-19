@@ -93,36 +93,6 @@ class TestBuildRouteRefMap:
         ref_map = _build_route_ref_map(topology)
         assert len(ref_map[("ns", "svc")]) == 2
 
-    def test_propagates_analyzer_weights_from_backend(self):
-        """#8: the backends view must carry effectiveWeight/analyzerWeights so it
-        can prefer the analyzer's number over the declared spec weight, exactly
-        as the topology tree does. topology._build_backend puts them on the
-        backend dict; this map must not drop them."""
-        topology = [{
-            "name": "gw",
-            "listeners": [{"name": "http", "routes": [{
-                "name": "r1", "namespace": "ns", "kind": "L4Route",
-                "backends": [{
-                    "name": "svc", "namespace": "ns", "port": 80,
-                    "weight": 1,                       # declared spec weight
-                    "effectiveWeight": 99,             # what the analyzer computed
-                    "analyzerWeights": {"10.1.2.3": 99},
-                }],
-            }]}],
-        }]
-        ref = _build_route_ref_map(topology)[("ns", "svc")][0]
-        assert ref["weight"] == 1                      # declared preserved
-        assert ref["effectiveWeight"] == 99            # analyzer value carried
-        assert ref["analyzerWeights"] == {"10.1.2.3": 99}
-
-    def test_absent_analyzer_weights_carry_through_as_none(self):
-        """No annotation -> the keys are present and None, so the UI falls back
-        to the declared weight rather than seeing undefined."""
-        topology = _topology_with_route("svc-1")
-        ref = _build_route_ref_map(topology)[("f5-bnk", "svc-1")][0]
-        assert ref["effectiveWeight"] is None
-        assert ref["analyzerWeights"] is None
-
 
 # ---------------------------------------------------------------------------
 # analyze_backends
