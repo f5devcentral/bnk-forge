@@ -179,7 +179,14 @@ class TestTimeLimitDerivationReadsCanonicalSteps:
         """
         from services.module_metadata import canonical_step_sets
 
-        manifest = {"execution": {"steps": {"apply": self._STEPS, "destroy": self._STEPS[:1]}}}
+        # Give BOTH phases a budget over the global limit. A sub-limit phase
+        # derives {} on every code path, so comparing {} == {} would pass
+        # vacuously and assert nothing about which step-set was read.
+        manifest = {"execution": {"steps": {
+            "apply": self._STEPS,
+            "destroy": [{"name": "teardown", "timeout_seconds": 5000,
+                         "retry": {"max_attempts": 2}}],
+        }}}
         module = self._module(db, manifest)
 
         for phase in ("apply", "destroy"):
@@ -188,10 +195,12 @@ class TestTimeLimitDerivationReadsCanonicalSteps:
             # at the top level; if the derivation reads the canonical set, the
             # two budgets are identical.
             reference = self._module(db, {"steps": {phase: engine_steps}})
-            assert (
-                task_dispatch._derive_container_time_limits(module, phase)
-                == task_dispatch._derive_container_time_limits(reference, phase)
-            ), f"derivation disagrees with the engine's resolved {phase} steps"
+            derived = task_dispatch._derive_container_time_limits(module, phase)
+            expected = task_dispatch._derive_container_time_limits(reference, phase)
+            assert expected, f"sanity: the {phase} reference must derive a real budget"
+            assert derived == expected, (
+                f"derivation disagrees with the engine's resolved {phase} steps"
+            )
 
     def test_destroy_budget_is_derived_from_execution_steps(self, db):
         """destroy goes through the same resolver as apply (issue #463 F5)."""
