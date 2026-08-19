@@ -56,8 +56,16 @@ jobs:
           # how-to) otherwise closes the issues it is merely talking about --
           # #158's own description parsed as issues=94 128 7, two of them open
           # with their real fixes still unmerged. Fences first (they may contain
-          # backticks), then spans.
-          body = re.sub(r'```.*?```', '', body, flags=re.S)
+          # backticks), then spans. Both fence styles -- ``` and ~~~ -- since ~~~
+          # is what an author reaches for when the example itself contains
+          # backticks, i.e. exactly the case this exists for. Like-to-like: a
+          # ~~~ block must close with ~~~ (backreference), so a stray ~~~ cannot
+          # "close" a ``` fence and over-strip. Indented (4-space) code blocks
+          # are NOT stripped: they need a line-based pass and nobody in this
+          # repo writes them. Known safe-direction gap: an unbalanced backtick
+          # in prose can swallow a real closing line -> the issue simply stays
+          # open (the pre-Action status quo), never wrongly closes.
+          body = re.sub(r'(```|~~~).*?\1', '', body, flags=re.S)
           body = re.sub(r'`[^`]*`', '', body)
           kw_pat = re.compile(r'(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b')
           ref_pat = re.compile(r'([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#(\d+)')
