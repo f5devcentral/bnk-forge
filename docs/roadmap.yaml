@@ -17,7 +17,7 @@
 #                     "AUTO:planned" are computed from item counts; any other
 #                     value (e.g. "25+") is a static meta number.
 # status_legend:      key -> { emoji, dot, label } used for BOTH md + html.
-#   keys: shipped | in_progress | blocked | deferred | planned
+#   keys: shipped | merged | in_progress | blocked | deferred | planned
 # sections: ordered list of
 #   - id:       stable slug (used by roadmap-add.py --section)
 #     number:   section number for the md heading "## N. ..."
@@ -77,6 +77,10 @@ status_legend:
     emoji: ✅
     dot: d-ship
     label: Shipped
+  merged:
+    emoji: 🟢
+    dot: d-ship
+    label: Merged (unreleased)
   in_progress:
     emoji: 🟡
     dot: d-prog
