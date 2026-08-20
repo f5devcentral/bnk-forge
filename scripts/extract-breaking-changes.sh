@@ -19,12 +19,11 @@ while IFS= read -r sha; do
   body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
   # Uppercase footer/marker only (spec form), so body prose like "not a
   # breaking change" does not false-trigger.
-  if printf '%s\n' "$body" | grep -qE '\bBREAKING[[:space:] -]+CHANGE\b'; then
+  if grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$body"; then
     subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
     # The BREAKING CHANGE line and its paragraph (up to the next blank line),
     # flattened to one line and stripped of markdown bold.
-    note=$(printf '%s\n' "$body" \
-      | awk '/BREAKING[[:space:] -]+CHANGE/{p=1} p{print} p&&/^$/{exit}' \
+    note=$(awk '/BREAKING[[:space:] -]+CHANGE/{p=1} p{print} p&&/^$/{exit}' <<< "$body" \
       | tr '\n' ' ' | sed 's/\*\*//g; s/  */ /g; s/ *$//')
     block="${block}- **${subj}**
   ${note}

@@ -120,19 +120,42 @@ while IFS= read -r sha; do
 
   # Major: `type!:` in the subject, OR a BREAKING CHANGE / BREAKING-CHANGE marker
   # anywhere in the message (footer or deliberate prose).
-  if echo "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
-     || printf '%s\n%s\n' "$subject" "$body" | grep -qE '\bBREAKING[[:space:] -]+CHANGE\b'; then
+  #
+  # Pipe-free on purpose (PR #177 review): `foo | grep -q` under `set -o
+  # pipefail` returns SIGPIPE (141) when grep matches early and the writer still
+  # has a large body to push, which pipefail turns into a failed test -- so
+  # *finding* the marker made the branch evaluate false and the bump silently
+  # stayed patch (non-deterministic, ~14/20 wrong on a big body). Here-strings
+  # have no writer process to signal, so the result is deterministic.
+  msg="${subject}"$'\n'"${body}"
+  if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subject" \
+     || grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$msg"; then
     BUMP_TYPE="major"
     break
   fi
 
   # Minor: feat: in the subject (type is declared in the subject, never the body).
   if [[ "$BUMP_TYPE" != "major" ]]; then
-    if echo "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
+    if grep -qE '^feat(\([^)]*\))?:' <<< "$subject"; then
       BUMP_TYPE="minor"
     fi
   fi
 done <<< "$RANGE_HASHES"
+
+# ── Consistency guard (defence-in-depth) ──────────────────────────────────────
+# Independent of the loop above and pipe-free: if any commit in the range
+# declares a breaking change, the bump MUST be major. This would have caught the
+# SIGPIPE race (marker present, bump silently patch) by aborting rather than
+# shipping a mis-versioned release. Same shape for feat -> at least minor.
+if [[ -n "$SINCE_TAG" ]]; then
+  ALL_MSGS=$(git log "${SINCE_TAG}..HEAD" --format='%B' 2>/dev/null || true)
+else
+  ALL_MSGS=$(git log --format='%B' 2>/dev/null || true)
+fi
+if grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$ALL_MSGS" && [[ "$BUMP_TYPE" != "major" ]]; then
+  echo "::error::Derived bump '$BUMP_TYPE' but a BREAKING CHANGE marker exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
+  exit 1
+fi
 
 # ── Compute target version ────────────────────────────────────────────────────
 TARGET_VERSION=$(bump_version "$BASELINE" "$BUMP_TYPE")
@@ -226,6 +249,15 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   # (case-sensitive marker, so reading bodies can't false-positive on prose).
   run_test "lowercase breaking change in body → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
     "fix: tidy up~~BODY~~this is explicitly not a breaking change"
+
+  # Test 7: large body, marker early with a long tail after it -- the exact
+  # SIGPIPE race from the PR #177 review. `printf | grep -q` flaked here
+  # (~14/20 wrong) because grep matched then died before draining the tail; the
+  # here-string form must bump major deterministically. ~94 KB single-line body.
+  _hd=$(head -c 4000 </dev/zero | tr '\0' x)
+  _tl=$(head -c 90000 </dev/zero | tr '\0' y)
+  run_test "large body, early marker → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: big commit~~BODY~~${_hd} BREAKING CHANGE: boom ${_tl}"
 
   echo "=== END SELF-TEST ==="
 fi
