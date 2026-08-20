@@ -343,7 +343,7 @@ done
 docker compose up -d
 
 # 9. Wait for backend health then drop a ready marker
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -sf http://localhost:8000/api/system/health >/dev/null 2>&1 && break || sleep 5
 done
 touch /opt/bnk-forge/.bnk-forge-ready
@@ -650,7 +650,7 @@ VM_ID="$(echo "${INST_JSON}" | jq -r '.id')"
 [ -n "${VM_ID}" ] && [ "${VM_ID}" != "null" ] || die "Instance creation failed."
 
 log "Waiting for the VSI to reach 'running'..."
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   ST="$(ibmcloud is instance "${VM_ID}" --output json | jq -r '.status')"
   [ "${ST}" = "running" ] && break
   [ "${ST}" = "failed" ] && die "Instance entered 'failed' state."
@@ -684,7 +684,7 @@ log "Floating IP: ${FIP}"
 URL="https://${FIP}"
 log "Installing bnk-forge on the VSI (this can take 5–10 minutes)..."
 READY=0
-for i in $(seq 1 90); do
+for _ in $(seq 1 90); do
   CODE="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 "${URL}/api/system/health" 2>/dev/null || true)"
   if [ "${CODE}" = "200" ]; then READY=1; break; fi
   sleep 10

@@ -46,4 +46,9 @@ paths = [
   '''backend/tests/component/test_agent_host_candidates\.py''',
   '''backend/tests/integration/test_routes_project_secrets\.py''',
   '''backend/tests/unit/test_infrastructure_access_service\.py''',
+  # Generated build artifacts, never source. The .py sources above are scanned;
+  # their compiled .pyc and the built frontend bundle are not credentials.
+  '''.*__pycache__/.*''',
+  '''.*\.pyc$''',
+  '''frontend-v2/dist/.*''',
 ]
