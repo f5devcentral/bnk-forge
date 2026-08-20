@@ -24,29 +24,16 @@ name: CI
 on:
   pull_request:
     branches: [main, staging, develop]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.agent/**'
-      - '.opencode/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.trivyignore'
-      - 'USER_GUIDE.md'
+    # No workflow-level paths-ignore: secret scanning (gitleaks) and the CI Gate
+    # must see EVERY change, doc-only PRs included — a secret lands in a .md as
+    # easily as in code, and this is a public repo (#182 review). Expensive jobs
+    # still skip on irrelevant paths via the per-job `changes` filter below; path
+    # filtering lives there (one source of truth), not at the trigger.
   push:
     # main (deploy trigger) + staging (release-automation preflight needs a
     # push-triggered CI run to match by SHA — see release.yml preflight);
-    # develop skipped.
+    # develop skipped. No paths-ignore, same reason as above.
     branches: [main, staging]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.agent/**'
-      - '.opencode/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.trivyignore'
-      - 'USER_GUIDE.md'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -171,7 +158,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: compute_version_bump SELF_TEST
-        run: SELF_TEST=1 bash scripts/compute_version_bump.sh
+        run: |
+          # Fail on a non-zero exit OR a FAIL: line. The harness historically
+          # printed FAIL: but still exited 0, so trusting the exit code alone
+          # made this job unable to catch a broken self-test until the exit-code
+          # fix landed (#182 review). Checking both decouples the two.
+          set +e
+          out="$(SELF_TEST=1 bash scripts/compute_version_bump.sh 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::compute_version_bump self-test exited $rc"; exit "$rc"
+          fi
+          if grep -qE '(^|[[:space:]])FAIL:' <<< "$out"; then
+            echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1
+          fi
 
   lint-frontend:
     name: "P1 · Lint Frontend"
