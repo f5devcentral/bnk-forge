@@ -90,13 +90,13 @@ Rekor transparency log entry), and `<digest>` with the image digest.
 # Verify the signature
 cosign verify \
   ghcr.io/f5devcentral/bnk-forge-api@<digest> \
-  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/.*' \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Verify + extract the SBOM attestation
 cosign verify-attestation \
   --type cyclonedx \
-  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/.*' \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/f5devcentral/bnk-forge-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .
@@ -104,7 +104,7 @@ cosign verify-attestation \
 # Verify + extract the SLSA provenance attestation
 cosign verify-attestation \
   --type slsaprovenance \
-  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/.*' \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/f5devcentral/bnk-forge-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .

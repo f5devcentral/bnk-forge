@@ -32,7 +32,7 @@
 #
 # Consumer verification (see docs/DOCKER.md for full details):
 #   cosign verify <image>@<digest> \
-#     --certificate-identity <signer-email> \
+#     --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 set -euo pipefail
@@ -294,13 +294,13 @@ else
   echo "  Verify a signed image:"
   echo "    cosign verify \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest> \\"
-  echo "      --certificate-identity <your-email> \\"
+  echo "      --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/.github/workflows/release.yml@.*' \\"
   echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com"
   echo ""
   echo "  Verify the SBOM attestation:"
   echo "    cosign verify-attestation \\"
   echo "      --type cyclonedx \\"
-  echo "      --certificate-identity <your-email> \\"
+  echo "      --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/.github/workflows/release.yml@.*' \\"
   echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest>"
 fi

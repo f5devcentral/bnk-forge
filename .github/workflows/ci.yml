@@ -668,12 +668,17 @@ jobs:
           # dependencies. No `|| true` here: if this cannot run, the job has
           # nothing to say and must fail loudly rather than silently continue.
           #
-          # Known fragility, accepted deliberately: the floor's models are
-          # imported under CURRENT pins, so the gap widens every time a
-          # dependency moves. v3.0.1 pins cryptography 44 and staging is on 50 —
-          # six majors — and it holds only because the floor tree touches just
-          # Fernet, hazmat.primitives.serialization and Ed25519PrivateKey, all
-          # unchanged across that range. When it does bite, it bites as a
+          # Known limitation on this repo: f5devcentral/bnk-forge is a squashed
+          # public mirror and carries exactly ONE final tag, v3.1.6, so the floor
+          # is currently that tag and the upgrade window is one release wide —
+          # the degenerate case this check otherwise warns against. It can't be
+          # widened by naming an older tag (v3.0.1 etc. from the upstream history
+          # aren't reachable here); it widens only as more finals are cut on this
+          # repo. Accepted deliberately.
+          #
+          # The floor's models are imported under CURRENT pins, so a dependency
+          # gap can still bite once the window does widen. When it does, it bites
+          # as a
           # MANDATORY gate failing hard on a commit that changed nothing
           # relevant. The fix then is to raise MIN_UPGRADE_FROM to a release
           # whose models import cleanly, not to add `|| true` here: a floor that
