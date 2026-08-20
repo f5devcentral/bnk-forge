@@ -355,6 +355,10 @@ jobs:
           if git ls-files --error-unmatch dist/VERSION 2>/dev/null; then
             echo "$NEW" > dist/VERSION
           fi
+          # Keep the Helm chart tag/appVersion and frontend package.json in
+          # lockstep so the chart never pins an image tag the release doesn't
+          # publish (#177 Blocker 2).
+          bash scripts/sync-version-artifacts.sh --write "$NEW"
 
       - name: Update CHANGELOG.md
         run: |
@@ -413,8 +417,10 @@ jobs:
           NEW="${{ needs.preflight.outputs.new_version }}"
           BUMP="${{ needs.preflight.outputs.bump_type }}"
 
-          # Stage VERSION, dist/VERSION (if tracked), CHANGELOG
+          # Stage VERSION, dist/VERSION (if tracked), CHANGELOG, and the
+          # version-bearing artifacts synced above (#177 Blocker 2).
           git add VERSION CHANGELOG.md
+          git add helm/bnk-forge/values.yaml helm/bnk-forge/Chart.yaml frontend-v2/package.json
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${NEW} [skip ci]
@@ -515,6 +521,7 @@ jobs:
           if git ls-files --error-unmatch dist/VERSION 2>/dev/null; then
             echo "${{ needs.preflight.outputs.new_version }}" > dist/VERSION
           fi
+          bash scripts/sync-version-artifacts.sh --write "${{ needs.preflight.outputs.new_version }}"
 
       - name: Update changelog
         run: |
@@ -548,6 +555,7 @@ jobs:
       - name: Commit and tag
         run: |
           git add VERSION CHANGELOG.md
+          git add helm/bnk-forge/values.yaml helm/bnk-forge/Chart.yaml frontend-v2/package.json
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]

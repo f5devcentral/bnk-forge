@@ -126,6 +126,19 @@ jobs:
       - name: Run lint
         run: make lint-backend
 
+  version-consistency:
+    name: "P1 · Version Consistency"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert version-bearing artifacts agree with VERSION
+        # Helm chart tag/appVersion and frontend package.json must equal VERSION,
+        # or the release (which publishes only :${VERSION}) yields ImagePullBackOff
+        # / silent drift (#177 Blocker 2).
+        run: bash scripts/sync-version-artifacts.sh --check
+
   lint-frontend:
     name: "P1 · Lint Frontend"
     needs: changes
@@ -1063,6 +1076,7 @@ jobs:
       - changes
       # Phase 1
       - lint-backend
+      - version-consistency
       - lint-frontend
       - typecheck-backend
       - openapi-check
@@ -1096,6 +1110,7 @@ jobs:
           failed=false
           for job in \
             "lint-backend:${{ needs.lint-backend.result }}" \
+            "version-consistency:${{ needs.version-consistency.result }}" \
             "lint-frontend:${{ needs.lint-frontend.result }}" \
             "typecheck-backend:${{ needs.typecheck-backend.result }}" \
             "openapi-check:${{ needs.openapi-check.result }}" \
