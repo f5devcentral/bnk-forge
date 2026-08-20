@@ -54,6 +54,11 @@ on:
         description: "Release notes (one-line summary)"
         required: true
         type: string
+      publish_only:
+        description: "Recovery: republish images for an EXISTING tag (e.g. v4.0.0). Leave empty for a normal release."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -74,8 +79,8 @@ jobs:
         run: |
           MSG="$HEAD_COMMIT_MSG"
           # Skip if triggered by our own release commit or [skip ci] sentinel
-          if echo "$MSG" | grep -qE '^release: |^\[skip ci\]|\[skip ci\]$'; then
-            echo "Skipping: head commit is a release commit or has [skip ci]"
+          if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$MSG"; then
+            echo "::warning::Release suppressed by the loop guard: head commit '\''${MSG%%$'\n'*}'\'' begins with 'release: ' or carries [skip ci]. If this was a normal change (not an automated release commit), nothing was published -- rename the commit or re-run the workflow."
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -100,7 +105,9 @@ jobs:
       - name: Determine release kind
         id: kind
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.publish_only }}" ]; then
+            echo "kind=publish_only" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "kind=manual" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.ref_name }}" = "main" ]; then
             echo "kind=final" >> "$GITHUB_OUTPUT"
@@ -109,6 +116,7 @@ jobs:
           fi
 
       - name: Check CI status on this branch
+        if: steps.kind.outputs.kind != 'publish_only'
         run: |
           BRANCH="${{ github.ref_name }}"
           SHA="${{ github.sha }}"
@@ -183,7 +191,12 @@ jobs:
           CURRENT=$(cat VERSION)
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
-          if [ "$RELEASE_KIND" = "manual" ]; then
+          if [ "$RELEASE_KIND" = "publish_only" ]; then
+            # Recovery path: no derivation, no bump. Republish an existing tag.
+            TAG="${{ inputs.publish_only }}"
+            NEW="${TAG#v}"
+            BUMP="republish"
+          elif [ "$RELEASE_KIND" = "manual" ]; then
             # Manual override: use the dropdown input directly
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             case "${{ inputs.version_bump }}" in
@@ -207,8 +220,18 @@ jobs:
           echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
           echo "Version: $CURRENT -> $NEW (bump: $BUMP)"
 
+      - name: Check republish tag exists
+        if: steps.kind.outputs.kind == 'publish_only'
+        run: |
+          TAG="v${{ steps.version.outputs.new }}"
+          if ! git tag -l "$TAG" | grep -q "^${TAG}$"; then
+            echo "::error::publish_only requested tag $TAG, which does not exist. Republish only targets an already-created tag."
+            exit 1
+          fi
+          echo "Republishing images for existing tag $TAG"
+
       - name: Check final tag doesn't already exist
-        if: steps.kind.outputs.kind != 'rc'
+        if: steps.kind.outputs.kind != 'rc' && steps.kind.outputs.kind != 'publish_only'
         run: |
           TAG="v${{ steps.version.outputs.new }}"
           if git tag -l "$TAG" | grep -q "^${TAG}$"; then
@@ -249,9 +272,14 @@ jobs:
         id: rc
         run: |
           TARGET="${{ needs.preflight.outputs.new_version }}"
-          # Count existing rc tags for this target version
-          RC_COUNT=$(git tag -l "v${TARGET}-rc.*" | wc -l | tr -d ' ')
-          RC_NUM=$((RC_COUNT + 1))
+          # Highest existing rc number for this target + 1. Max-based, not
+          # count-based (#177 review): counting breaks if any rc tag is ever
+          # deleted -- the count drops and the next push recomputes an existing
+          # tag, which then fails to create.
+          RC_MAX=$(git tag -l "v${TARGET}-rc.*" \
+            | sed -E "s|^v${TARGET}-rc\.([0-9]+)$|\1|" \
+            | grep -E '^[0-9]+$' | sort -n | tail -1)
+          RC_NUM=$(( ${RC_MAX:-0} + 1 ))
           echo "rc_num=${RC_NUM}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=v${TARGET}-rc.${RC_NUM}" >> "$GITHUB_OUTPUT"
           echo "RC tag will be: v${TARGET}-rc.${RC_NUM}"
@@ -609,8 +637,14 @@ jobs:
       - release-manual
     if: |
       always() &&
-      (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
-      (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+      (
+        (
+          (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
+          (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+        )
+        ||
+        needs.preflight.outputs.release_kind == 'publish_only'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
