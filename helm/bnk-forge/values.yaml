@@ -25,6 +25,9 @@ secrets:
   redisPassword: ""
   jwtSecretKey: ""
   encryptionKey: ""
+  # Empty -> generated on first install and reused on upgrade. The seeded admin
+  # account is must_change_password; retrieve this to log in the first time.
+  adminPassword: ""
   mcpUsername: admin
   mcpPassword: changeme
 

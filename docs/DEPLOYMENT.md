@@ -56,9 +56,12 @@ Need the host itself provisioned too? [`vm-bnk-forge/`](../vm-bnk-forge/README.m
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup_ |
 
-**You must change the admin password on first login.** Navigate to Settings → Change Password.
+No default password ships (#184). Retrieve the generated one:
+`docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"` (compose) or
+`kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d` (Helm).
+**The API refuses all other calls until you change it on first login** — Settings → Change Password.
 
 ---
 
@@ -247,7 +250,7 @@ MCP has two distinct readiness layers:
 A deployment can pass layer 1 and still fail layer 2 if MCP credentials are out
 of sync with backend credentials.
 
-Current compose defaults assume backend seeded admin credentials (`admin/changeme`).
+The backend seeds `admin` with a generated password (no shipped default).
 If you rotate the admin password (recommended), also set MCP credentials in your
 runtime environment before deploy/restart:
 

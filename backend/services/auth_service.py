@@ -3,6 +3,7 @@ Authentication service for BNK-Forge.
 Handles user management, password hashing, and JWT token generation.
 """
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -140,17 +141,38 @@ def seed_admin_user(db: Session) -> User | None:
     if existing_users > 0:
         return None
 
+    # #184: never seed a known/published default. If DEFAULT_ADMIN_PASSWORD is
+    # unset, generate a strong random one and log it ONCE so the operator can
+    # retrieve it from the boot logs. The account is must_change_password, so it
+    # only survives until first login regardless.
+    seed_password = settings.DEFAULT_ADMIN_PASSWORD
+    generated = False
+    if not seed_password:
+        seed_password = secrets.token_urlsafe(18)
+        generated = True
+
     admin = create_user(
         db=db,
         username="admin",
         email="admin@bnk-forge.local",
-        password=settings.DEFAULT_ADMIN_PASSWORD,
+        password=seed_password,
         role="admin",
         must_change_password=True,
     )
     # ENG-006: Startup seed manages its own transaction
     db.commit()
-    logger.info("Seeded default admin user — password change required on first login")
+    if generated:
+        logger.warning(
+            "=" * 60 + "\n"
+            "  Seeded admin user 'admin' with a GENERATED password:\n"
+            "      %s\n"
+            "  Save it now -- it is shown only this once. You will be required\n"
+            "  to change it on first login. Set DEFAULT_ADMIN_PASSWORD to choose\n"
+            "  your own instead.\n" + "=" * 60,
+            seed_password,
+        )
+    else:
+        logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
     return admin
 
 

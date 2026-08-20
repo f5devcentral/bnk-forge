@@ -240,3 +240,54 @@ class TestUserCRUD:
         """Deleting nonexistent user returns 404."""
         response = client.delete("/api/auth/users/99999", headers=admin_headers)
         assert response.status_code == 404
+
+
+class TestMustChangePasswordEnforcement:
+    """#184: must_change_password must gate the API server-side, not just the UI.
+
+    A seeded/admin-created must-change user gets a valid token, so without a
+    server gate a client could skip the change-password screen and call every
+    endpoint directly with the seed credential.
+    """
+
+    def _make_must_change_admin(self, db):
+        from services.auth_service import create_user
+        u = create_user(
+            db, "mustchange", "mustchange@test.com", "startpw",
+            role="admin", must_change_password=True,
+        )
+        db.commit()
+        return u
+
+    def _login(self, client, username, password):
+        r = client.post("/api/auth/login", json={"username": username, "password": password})
+        assert r.status_code == 200, r.text
+        assert r.json()["must_change_password"] is True
+        return r.json()["token"]
+
+    def test_protected_endpoint_refused_until_password_changed(self, client, db):
+        self._make_must_change_admin(db)
+        token = self._login(client, "mustchange", "startpw")
+        hdr = {"Authorization": f"Bearer {token}"}
+
+        # A normal protected endpoint is refused with 403 while must-change.
+        blocked = client.get("/api/auth/users", headers=hdr)
+        assert blocked.status_code == 403, blocked.text
+
+        # The exempt endpoints still work: read own state and change password.
+        assert client.get("/api/auth/me", headers=hdr).status_code == 200
+
+        changed = client.post(
+            "/api/auth/change-password",
+            headers=hdr,
+            json={"current_password": "startpw", "new_password": "BrandNewPw123!"},
+        )
+        assert changed.status_code == 200, changed.text
+
+        # After the change the flag clears, so the same endpoint now works.
+        after = client.get("/api/auth/users", headers=hdr)
+        assert after.status_code == 200, after.text
+
+    def test_non_must_change_user_is_not_gated(self, client, admin_headers, sample_user):
+        # Regression guard: an ordinary user (must_change False) reaches the API.
+        assert client.get("/api/auth/users", headers=admin_headers).status_code == 200

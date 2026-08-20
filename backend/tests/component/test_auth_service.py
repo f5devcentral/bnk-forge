@@ -192,10 +192,23 @@ class TestSeedAdminUser:
         result = seed_admin_user(db)
         assert result is None
 
-    def test_seeded_admin_can_login(self, db):
+    def test_seeded_admin_can_login_with_explicit_password(self, db, monkeypatch):
+        # When DEFAULT_ADMIN_PASSWORD is set, the seed uses it.
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", "explicit-admin-pw")
         seed_admin_user(db)
-        user = authenticate_user(db, "admin", settings.DEFAULT_ADMIN_PASSWORD)
+        user = authenticate_user(db, "admin", "explicit-admin-pw")
         assert user.username == "admin"
+
+    def test_seeded_admin_generates_random_password_when_unset(self, db, monkeypatch):
+        # #184: with DEFAULT_ADMIN_PASSWORD unset, the seed must NOT use a known
+        # default -- it generates a random one, so the published "changeme"
+        # never authenticates.
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        admin = seed_admin_user(db)
+        assert admin is not None
+        assert admin.must_change_password is True
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "admin", "changeme")
 
 
 # ── ensure_service_user ──────────────────────────────────────────────

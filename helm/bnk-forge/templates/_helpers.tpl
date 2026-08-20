@@ -96,6 +96,14 @@ in-cluster services and pulls secrets from the generated Secret.
     secretKeyRef:
       name: {{ include "bnk-forge.fullname" . }}-secrets
       key: encryption-key
+# #184: seed the admin account from a generated secret, never a shipped
+# default. Retrieve with:
+#   kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
+- name: DEFAULT_ADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: admin-password
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

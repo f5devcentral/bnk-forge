@@ -140,9 +140,17 @@ For first-time destructive bootstrap only (wipes existing BNK Forge volumes), us
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup — see below_ |
 
-You'll be prompted to change the password on first login.
+The admin password is generated randomly on first startup (there is no shipped
+default). Retrieve it once from the backend logs:
+
+```bash
+docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"
+```
+
+Or choose your own beforehand by setting `DEFAULT_ADMIN_PASSWORD` in `.env`. You
+will be **required** to change it on first login (enforced server-side).
 
 ---
 

@@ -97,8 +97,14 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str | None = None
     ENCRYPTION_KEY: str | None = None
 
-    # Seed credentials — distinct vars so admin rotation never affects MCP
-    DEFAULT_ADMIN_PASSWORD: str = "changeme"
+    # DEFAULT_ADMIN_PASSWORD defaults to None, never a hardcoded value: a
+    # shipped default like "changeme" is a live, publicly-known admin credential
+    # on every fresh deployment (#184). When unset, seed_admin_user generates a
+    # random one and logs it once (the account is must_change_password anyway).
+    DEFAULT_ADMIN_PASSWORD: str | None = None
+    # NOTE (#184 follow-up): MCP_SERVICE_PASSWORD is the same class of shipped
+    # default (the seeded 'mcp' service account is role=admin), but its fix is
+    # entangled with the chart's mcp-password wiring — tracked separately.
     MCP_SERVICE_USERNAME: str = "mcp"
     MCP_SERVICE_PASSWORD: str = "mcp-service-changeme"
 

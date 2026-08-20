@@ -106,9 +106,40 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         # Re-clamp to the owner's *current* role too, so demoting a user
         # immediately narrows every token they already issued.
         user.request_role = clamp_role(api_token.role, user.role)
+        _enforce_password_change(request, user)
         return user
 
-    return get_user_from_token(db, token)
+    user = get_user_from_token(db, token)
+    _enforce_password_change(request, user)
+    return user
+
+
+# Endpoints a user must still reach while must_change_password is set: change
+# the password, read their own state, and log out. Everything else is refused.
+_PASSWORD_CHANGE_EXEMPT_SUFFIXES = (
+    "/auth/change-password",
+    "/auth/me",
+    "/auth/logout",
+)
+
+
+def _enforce_password_change(request: Request, user: User) -> None:
+    """#184: must_change_password must gate the API, not just the UI.
+
+    The seeded admin (and any admin-created must-change user) gets a fully-valid
+    token, so without a server-side gate a client can skip the change-password
+    screen and call every endpoint directly with the seed credential. Refuse all
+    but the exempt endpoints until the password is rotated.
+    """
+    if not getattr(user, "must_change_password", False):
+        return
+    path = request.url.path
+    if any(path.endswith(suffix) for suffix in _PASSWORD_CHANGE_EXEMPT_SUFFIXES):
+        return
+    raise ForbiddenError(
+        "Password change required before using the API. "
+        "POST /api/auth/change-password with your current and new password."
+    )
 
 
 def require_role(*allowed_roles: str):

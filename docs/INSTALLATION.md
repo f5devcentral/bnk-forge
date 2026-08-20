@@ -124,9 +124,18 @@ A default admin account is created automatically on first startup:
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup_ |
 
-You will be prompted to change the password on first login.
+No default password ships. On first startup the backend generates a random admin
+password and logs it once — retrieve it with:
+
+```bash
+docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"
+```
+
+Or set `DEFAULT_ADMIN_PASSWORD` in your environment to choose your own. You will
+be **required** to change it on first login (the API refuses other calls until
+you do).
 
 ### Managing Your Local Deployment
 
@@ -348,11 +357,11 @@ After starting BNK Forge for the first time:
 
 ### 1. Log In
 
-Open the application URL and log in with the default credentials:
-- **Username:** `admin`
-- **Password:** `changeme`
-
-You will be prompted to set a new password on first login.
+Open the application URL and log in as **`admin`**. There is no default
+password: retrieve the one generated on first startup —
+`docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"` (compose),
+or `kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d` (Helm).
+You will be **required** to set a new password before the API accepts other calls.
 
 ### 2. Connect a Kubernetes Cluster
 
