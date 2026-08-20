@@ -87,6 +87,14 @@ def token_user_state(token: str) -> User | None:
     (invalid/expired token, deleted or disabled account, a transient DB error).
     The caller refuses on None: fail CLOSED, so a resolution failure never
     re-opens pod exec / BMC SSH the way returning "no change owed" would.
+
+    NOTE: the returned instance is read (``must_change_password``) by the caller
+    AFTER this session has closed. That is only safe because get_db_context()
+    closes WITHOUT committing, so the loaded column stays readable on the
+    detached instance. If get_db_context ever gains a db.commit(),
+    expire_on_commit=True would expire that attribute and every WebSocket would
+    then fail closed with no obvious cause -- read must_change_password here, or
+    disable expire_on_commit, if that changes.
     """
     from database import get_db_context
     try:
