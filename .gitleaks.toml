@@ -46,9 +46,12 @@ paths = [
   '''backend/tests/component/test_agent_host_candidates\.py''',
   '''backend/tests/integration/test_routes_project_secrets\.py''',
   '''backend/tests/unit/test_infrastructure_access_service\.py''',
-  # Generated build artifacts, never source. The .py sources above are scanned;
-  # their compiled .pyc and the built frontend bundle are not credentials.
+  # Compiled bytecode of the sources above, which ARE scanned. Not a blanket
+  # directory skip of hand-written code, and it buys a clean local run without
+  # blinding CI (these are gitignored -- zero tracked files -- so a fresh
+  # checkout has none). frontend-v2/dist is deliberately NOT allowlisted: a
+  # built JS bundle is where VITE_*-style build-time secret injection lands, so
+  # it is the highest-value thing to scan, not to skip (#182 review).
   '''.*__pycache__/.*''',
   '''.*\.pyc$''',
-  '''frontend-v2/dist/.*''',
 ]
