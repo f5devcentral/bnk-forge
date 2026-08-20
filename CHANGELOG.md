@@ -1,8 +1,26 @@
 # Changelog
 
-All notable changes to BNK-Forge v2.
+All notable changes to BNK-Forge.
 
 ---
+
+## v3.1.6 (2026-08-10) — 3.1.x line
+
+Milestone tag `v3.1.6` — the last release before 4.0.0, and the initial public
+release on `f5devcentral`. This entry bridges a gap where the 3.x line was not
+recorded here; for the per-change detail see the `v3.0.1..v3.1.6` git range and
+the PRs merged into it. Notable across 3.1.x: the container-runner hardening
+series (#408) and the ADR-424 bare-metal/DPU work.
+
+> **Heads-up for the 4.0.0 upgrade:** the container runner's non-root gate now
+> refuses *named* users — an image using the distroless-standard `USER nonroot`
+> is rejected. Switch it to a numeric uid (`USER 65532`, or `USER 1000`). See
+> the 4.0.0 entry for the full note.
+
+## v3.0.1 (2026-04-09) — 3.0.x line
+
+Milestone tag `v3.0.1`, the first 3.x release after the 2.x line below. Bridged
+entry; see the `v2.10.74..v3.0.1` git range for the per-change detail.
 
 ## v2.10.74 (2026-03-04) — TMM Debug Panel Enhancements: F5 Docs Commands, Netkvest, Bug Fix
 

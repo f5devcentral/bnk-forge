@@ -33,7 +33,7 @@ CVE-2026-33186
 # malicious remote SSH server, which our HTTP backend never does.
 # Upstream: no Debian backport yet (Trivy reports empty fix column).
 # REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-7598
-#          escalate to pin-from-sid if no fix by 2026-08-12
+#          escalate to pin-from-sid if no fix by 2026-10-31 (prior 2026-08-12 deadline passed; still no upstream fix)
 # Tracked: memory/followup_trivyignore_cve_2026_7598_revisit.md
 # Added: 2026-05-12
 CVE-2026-7598

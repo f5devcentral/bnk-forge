@@ -20,7 +20,7 @@
 #   BNK_FORGE_REGISTRY=ghcr.io/your-org BNK_FORGE_VERSION=3.1.6 ./scripts/publish-signed-images.sh --execute
 #
 # Environment variables:
-#   BNK_FORGE_REGISTRY  — required; e.g. ghcr.io/jlcode-tech
+#   BNK_FORGE_REGISTRY  — required; e.g. ghcr.io/f5devcentral
 #   BNK_FORGE_VERSION   — optional; defaults to contents of ./VERSION
 #   DRY_RUN             — set to 0 to execute (equivalent to --execute)
 #
@@ -33,7 +33,7 @@
 # Consumer verification (see docs/DOCKER.md for full details):
 #   cosign verify <image>@<digest> \
 #     --certificate-identity <signer-email> \
-#     --certificate-oidc-issuer https://github.com/login/oauth
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 set -euo pipefail
 
@@ -295,13 +295,13 @@ else
   echo "    cosign verify \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest> \\"
   echo "      --certificate-identity <your-email> \\"
-  echo "      --certificate-oidc-issuer https://github.com/login/oauth"
+  echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com"
   echo ""
   echo "  Verify the SBOM attestation:"
   echo "    cosign verify-attestation \\"
   echo "      --type cyclonedx \\"
   echo "      --certificate-identity <your-email> \\"
-  echo "      --certificate-oidc-issuer https://github.com/login/oauth \\"
+  echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest>"
 fi
 echo "========================================================"

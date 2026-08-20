@@ -550,7 +550,9 @@ class DockerRunner(ContainerRunner):
         An image that never declares USER reports an empty string and runs as
         root — that is the common case and must be caught.
 
-        Closes the numeric bypass only — see the KNOWN GAP note in the body.
+        Fails closed on anything that is not a bare non-zero decimal uid,
+        which also subsumes the named-alias case (see the body) — there is no
+        remaining KNOWN GAP.
 
         Only the uid half decides this. Docker's USER is ``<user>[:<group>]``,
         so an image declaring ``USER 0:100`` or ``USER root:wheel`` runs as uid 0

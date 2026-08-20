@@ -353,7 +353,7 @@ sections:
     - '#419'
     note: 'Fresh install / volume wipe leaves the git module catalog (bnk/app/infra packs) un-synced, so BNK/app blueprints are DOA until an operator runs Catalog→Advanced→Modules→''Sync all''. The wizard''s ''requires sync'' prompt is wired to no endpoint. Fix: (1) boot-time auto-sync step (non-fatal, ref-aware) after builtin seeders; (2) wire wizard CTA to POST /api/module-library/sync. Separate from the d019/adr-204 execution_engine seeder-guard fix.'
   - title: CI container runner engine — security hardening follow-ups
-    status: planned
+    status: shipped
     refs:
     - '#408'
     - 'PR #340'
