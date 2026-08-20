@@ -170,6 +170,7 @@ fi
 if [[ "${SELF_TEST:-0}" == "1" ]]; then
   echo ""
   echo "=== SELF-TEST ==="
+  SELFTEST_FAILURES=0
 
   # SELF_TEST is an inherited environment variable — without unsetting it
   # here, run_test's recursive script invocations below would also enter
@@ -222,6 +223,7 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
       echo "  FAIL: $desc"
       echo "        expected bump=$expected_bump ver=$expected_ver"
       echo "        got     bump=$got_bump ver=$got_ver"
+      SELFTEST_FAILURES=$((SELFTEST_FAILURES + 1))
     fi
   }
 
@@ -260,4 +262,8 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     "fix: big commit~~BODY~~${_hd} BREAKING CHANGE: boom ${_tl}"
 
   echo "=== END SELF-TEST ==="
+  if [[ "$SELFTEST_FAILURES" -ne 0 ]]; then
+    echo "SELF-TEST: ${SELFTEST_FAILURES} failure(s)" >&2
+    exit 1
+  fi
 fi
