@@ -82,5 +82,19 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
+## Commit conventions
+
+Conventional Commits (`type: subject`, optional body, `BREAKING CHANGE:` footer for a
+major). One repo-specific trap worth stating outright:
+
+- **Never write a CI-control marker as literal text anywhere in a commit message —
+  subject *or* body — even when quoting it in prose.** GitHub scans the whole message,
+  so a `[skip ci]` / `[ci skip]` sitting in a sentence suppresses the run for that
+  commit. This has bitten us twice, most recently on a shell-script change where the
+  gates that got skipped (ShellCheck, Script Self-Tests, Secret Scan) were exactly the
+  ones that mattered. Refer to it indirectly instead: "CI suppressed", "the skip-CI
+  marker", or split it across backticks. The release job's *deliberate* skip is the
+  only legitimate use, and it lands on the subject line where the release loop reads it.
+
 ---
 
