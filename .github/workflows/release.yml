@@ -22,9 +22,13 @@ on:
     branches:
       - staging
       - main
-    # MUST stay in sync with ci.yml's push-trigger paths-ignore list — a
-    # divergence lets a push trigger Release without a matching CI run,
-    # which then times out the preflight SHA poll below (PR #297 review).
+    # Release's own skip list — doc-only pushes shouldn't cut a release. The
+    # preflight SHA poll below depends on the invariant CI ⊇ Release: every SHA
+    # that triggers Release must also trigger a CI run for it to match against.
+    # Keep this a SUBSET of whatever ci.yml runs on — never let Release trigger
+    # on a path CI skips, or the poll times out (PR #297 review). (ci.yml runs on
+    # every push, so any subset here satisfies that; do NOT re-add a ci.yml
+    # paths-ignore to "match" this list — that would break the invariant.)
     paths-ignore:
       - '**.md'
       - 'docs/**'
