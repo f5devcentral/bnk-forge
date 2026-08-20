@@ -27,7 +27,7 @@ cleanup behavior.
 | **Duration** | Under 5 minutes |
 | **Data isolation** | Fresh DB per run (Docker volume reset) |
 | **Cleanup** | Automatic — containers torn down after run |
-| **Auth** | Default `admin/changeme` credentials |
+| **Auth** | `admin` + DEFAULT_ADMIN_PASSWORD (set at deploy; generated if unset, #184) |
 | **Specs** | `tests/00-*.spec.ts` through `tests/11-*.spec.ts` |
 | **Parallelism** | Serial (single worker) to avoid port/resource conflicts |
 

@@ -278,3 +278,6 @@ next-session-prompt
 agent-selection
 handoffs/
 *.code-workspace
+
+# Generated secret material (JWT/encryption keys, initial admin password)
+backend/keys/

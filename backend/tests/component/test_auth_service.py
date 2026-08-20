@@ -240,3 +240,25 @@ class TestEnsureServiceUser:
         from models import User
         count = db.query(User).filter(User.username == "mcp").count()
         assert count == 1
+
+
+class TestTokenRequiresPasswordChange:
+    """#184: the WS gate helper -- must load the User row, not trust JWT claims."""
+
+    def test_true_for_must_change_user(self, db):
+        from services.auth_service import token_requires_password_change
+        create_user(db, "wsmust", "wsmust@test.com", "pw", role="admin", must_change_password=True)
+        db.commit()
+        token = create_access_token(data={"sub": "wsmust", "role": "admin"})
+        assert token_requires_password_change(token) is True
+
+    def test_false_for_normal_user(self, db):
+        from services.auth_service import token_requires_password_change
+        create_user(db, "wsok", "wsok@test.com", "pw", role="admin", must_change_password=False)
+        db.commit()
+        token = create_access_token(data={"sub": "wsok", "role": "admin"})
+        assert token_requires_password_change(token) is False
+
+    def test_false_on_garbage_token(self):
+        from services.auth_service import token_requires_password_change
+        assert token_requires_password_change("not-a-token") is False

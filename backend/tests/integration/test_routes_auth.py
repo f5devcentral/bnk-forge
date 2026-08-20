@@ -291,3 +291,14 @@ class TestMustChangePasswordEnforcement:
     def test_non_must_change_user_is_not_gated(self, client, admin_headers, sample_user):
         # Regression guard: an ordinary user (must_change False) reaches the API.
         assert client.get("/api/auth/users", headers=admin_headers).status_code == 200
+
+    def test_path_route_with_auth_me_suffix_is_not_exempted(self, client, db):
+        # #184 review: a ':path' route (e.g. /api/state/.../resource/{addr:path})
+        # takes an attacker-chosen tail. Exact-path matching on request.url.path
+        # must NOT exempt "/api/state/module/1/resource/x/auth/me" just because it
+        # ends in /auth/me -- the gate refuses it (403) before the handler runs.
+        self._make_must_change_admin(db)
+        token = self._login(client, "mustchange", "startpw")
+        hdr = {"Authorization": f"Bearer {token}"}
+        r = client.get("/api/state/module/1/resource/x/auth/me", headers=hdr)
+        assert r.status_code == 403, r.text

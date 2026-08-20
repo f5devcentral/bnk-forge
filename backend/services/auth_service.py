@@ -75,6 +75,25 @@ def authenticate_user(db: Session, username: str, password: str) -> User:
     return user
 
 
+def token_requires_password_change(token: str) -> bool:
+    """#184: True when the JWT's user still owes a password change.
+
+    WebSocket validators (k8s/dpus) authenticate off JWT claims alone and never
+    load the User, so must_change_password is invisible there -- a must-change
+    admin could otherwise reach pod exec / DPU console / BMC SSH with the seed
+    credential while REST refuses /api/auth/users. This loads the row so the WS
+    and REST paths enforce the same gate from one place. Returns False on any
+    resolution failure (an invalid/expired token is refused by the caller).
+    """
+    from database import get_db_context
+    try:
+        with get_db_context() as db:
+            user = get_user_from_token(db, token)
+            return bool(getattr(user, "must_change_password", False))
+    except Exception:
+        return False
+
+
 def get_user_from_token(db: Session, token: str) -> User:
     """Get the user associated with a JWT token. Raises UnauthorizedError on failure."""
     payload = decode_token(token)
@@ -162,15 +181,38 @@ def seed_admin_user(db: Session) -> User | None:
     # ENG-006: Startup seed manages its own transaction
     db.commit()
     if generated:
-        logger.warning(
-            "=" * 60 + "\n"
-            "  Seeded admin user 'admin' with a GENERATED password:\n"
-            "      %s\n"
-            "  Save it now -- it is shown only this once. You will be required\n"
-            "  to change it on first login. Set DEFAULT_ADMIN_PASSWORD to choose\n"
-            "  your own instead.\n" + "=" * 60,
-            seed_password,
-        )
+        # Persist the one-time password to the (mode-600, volume-backed) keys
+        # dir rather than only logging it: a single boot-log line is easy to
+        # miss (log rotation, JSON formatting) and logging the plaintext is a
+        # known aggregation-exposure risk. Log a POINTER, not the secret. Safe
+        # to delete after first login (the account is must_change_password).
+        import os
+        keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
+        pw_path = os.path.join(keys_dir, "initial_admin_password")
+        persisted = False
+        try:
+            os.makedirs(keys_dir, exist_ok=True)
+            with open(pw_path, "w") as fh:
+                fh.write(seed_password + "\n")
+            os.chmod(pw_path, 0o600)
+            persisted = True
+        except (OSError, PermissionError) as exc:
+            logger.warning("Could not write %s: %s", pw_path, exc)
+        if persisted:
+            logger.warning(
+                "Seeded admin user 'admin' with a GENERATED password, written to "
+                "%s (retrieve it, then delete it — you must change it on first login). "
+                "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
+                pw_path,
+            )
+        else:
+            # Last resort if the file couldn't be written: log the secret so the
+            # operator isn't locked out. Prefer the file path above.
+            logger.warning(
+                "Seeded admin user 'admin' with GENERATED password (could not persist "
+                "to disk): %s -- save it now; change required on first login.",
+                seed_password,
+            )
     else:
         logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
     return admin
