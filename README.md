@@ -88,6 +88,11 @@ make deploy
 
 Open **https://localhost** and accept the self-signed certificate warning.
 
+> **Enabling MCP:** the MCP server and backend share a service credential you must
+> set — put `MCP_SERVICE_PASSWORD` in `.env` before starting. Without it the stack
+> still comes up, but the MCP server can't authenticate and MCP tools return auth
+> errors until you set the variable and restart. See [.env.example](.env.example).
+
 `make deploy` detects macOS/WSL and switches to bridge networking with published
 ports (`docker-compose.local.yml`); on a Linux server it uses host networking. You
 do not pick — it picks.
