@@ -250,23 +250,45 @@ class TestEnsureServiceUser:
         assert count == 1
 
 
-class TestTokenRequiresPasswordChange:
-    """#184: the WS gate helper -- must load the User row, not trust JWT claims."""
+class TestTokenUserState:
+    """#184: the WS gate helper -- resolve the User row and fail CLOSED.
 
-    def test_true_for_must_change_user(self, db):
-        from services.auth_service import token_requires_password_change
+    Returns the User on success, None on any resolution failure; the WS
+    validators refuse on None OR must_change_password.
+    """
+
+    def test_resolves_must_change_user(self, db):
+        from services.auth_service import token_user_state
         create_user(db, "wsmust", "wsmust@test.com", "pw", role="admin", must_change_password=True)
         db.commit()
         token = create_access_token(data={"sub": "wsmust", "role": "admin"})
-        assert token_requires_password_change(token) is True
+        user = token_user_state(token)
+        assert user is not None and user.must_change_password is True
 
-    def test_false_for_normal_user(self, db):
-        from services.auth_service import token_requires_password_change
+    def test_resolves_normal_user(self, db):
+        from services.auth_service import token_user_state
         create_user(db, "wsok", "wsok@test.com", "pw", role="admin", must_change_password=False)
         db.commit()
         token = create_access_token(data={"sub": "wsok", "role": "admin"})
-        assert token_requires_password_change(token) is False
+        user = token_user_state(token)
+        assert user is not None and user.must_change_password is False
 
-    def test_false_on_garbage_token(self):
-        from services.auth_service import token_requires_password_change
-        assert token_requires_password_change("not-a-token") is False
+    def test_none_on_garbage_token(self):
+        from services.auth_service import token_user_state
+        assert token_user_state("not-a-token") is None
+
+    def test_none_for_deactivated_account(self, db):
+        # #184 review: a disabled account must fail closed on WS, matching
+        # get_current_user. get_user_from_token raises "Account is disabled",
+        # which token_user_state turns into None (-> WS refuses).
+        u = create_user(db, "wsdisabled", "wsdisabled@test.com", "pw", role="admin")
+        u.is_active = False
+        db.commit()
+        from services.auth_service import token_user_state
+        token = create_access_token(data={"sub": "wsdisabled", "role": "admin"})
+        assert token_user_state(token) is None
+
+    def test_none_for_deleted_account(self, db):
+        from services.auth_service import token_user_state
+        token = create_access_token(data={"sub": "ghost", "role": "admin"})
+        assert token_user_state(token) is None

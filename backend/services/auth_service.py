@@ -75,23 +75,25 @@ def authenticate_user(db: Session, username: str, password: str) -> User:
     return user
 
 
-def token_requires_password_change(token: str) -> bool:
-    """#184: True when the JWT's user still owes a password change.
+def token_user_state(token: str) -> User | None:
+    """#184: resolve the JWT's user for the WebSocket auth gate, or None.
 
     WebSocket validators (k8s/dpus) authenticate off JWT claims alone and never
-    load the User, so must_change_password is invisible there -- a must-change
-    admin could otherwise reach pod exec / DPU console / BMC SSH with the seed
-    credential while REST refuses /api/auth/users. This loads the row so the WS
-    and REST paths enforce the same gate from one place. Returns False on any
-    resolution failure (an invalid/expired token is refused by the caller).
+    load the User, so must_change_password -- and account existence/active state
+    -- are invisible there. This loads the row so the WS paths enforce the same
+    gate as get_current_user, from one place.
+
+    Returns the User on success, or None if it cannot be resolved for ANY reason
+    (invalid/expired token, deleted or disabled account, a transient DB error).
+    The caller refuses on None: fail CLOSED, so a resolution failure never
+    re-opens pod exec / BMC SSH the way returning "no change owed" would.
     """
     from database import get_db_context
     try:
         with get_db_context() as db:
-            user = get_user_from_token(db, token)
-            return bool(getattr(user, "must_change_password", False))
+            return get_user_from_token(db, token)
     except Exception:
-        return False
+        return None
 
 
 def get_user_from_token(db: Session, token: str) -> User:
@@ -192,9 +194,13 @@ def seed_admin_user(db: Session) -> User | None:
         persisted = False
         try:
             os.makedirs(keys_dir, exist_ok=True)
-            with open(pw_path, "w") as fh:
+            # Open with 0o600 at creation so the plaintext credential is never
+            # momentarily group/world-readable (open()+chmod would create it at
+            # 0644 under the usual umask, then narrow it). O_TRUNC handles a
+            # stale file from a prior seed without failing.
+            fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
                 fh.write(seed_password + "\n")
-            os.chmod(pw_path, 0o600)
             persisted = True
         except (OSError, PermissionError) as exc:
             logger.warning("Could not write %s: %s", pw_path, exc)

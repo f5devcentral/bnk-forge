@@ -43,11 +43,13 @@ async def _validate_ws_token(websocket: WebSocket, token: str | None) -> bool:
         if role not in ("admin", "operator", "viewer"):
             await websocket.close(code=4401, reason="Unauthorized — insufficient role")
             return False
-        # #184: the JWT is valid but the user may still owe a password change --
-        # WS must enforce it too, or a seed-credential admin gets a pod shell.
-        from services.auth_service import token_requires_password_change
-        if token_requires_password_change(token):
-            await websocket.close(code=4401, reason="Unauthorized — password change required")
+        # #184: fail closed on the actual User row -- refuse if it can't be
+        # resolved (deleted/disabled account, DB error) OR still owes a password
+        # change, so a seed-credential admin never reaches pod exec / DPU console.
+        from services.auth_service import token_user_state
+        ws_user = token_user_state(token)
+        if ws_user is None or ws_user.must_change_password:
+            await websocket.close(code=4401, reason="Unauthorized")
             return False
         return True
     except Exception:
