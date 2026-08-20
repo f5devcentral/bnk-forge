@@ -381,6 +381,9 @@ x-backend-env: &backend-env
   # Artifact (container-image) engine reaches the Docker daemon through the
   # scoped socket proxy below (loopback-published), never the raw host socket.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # MCP service account — no shipped default (#187). Set MCP_PASSWORD.
+  MCP_SERVICE_USERNAME: ${MCP_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -581,8 +584,8 @@ services:
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      BNK_FORGE_USERNAME: ${MCP_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
