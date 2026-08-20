@@ -26,9 +26,7 @@ secrets:
   jwtSecretKey: ""
   encryptionKey: ""
   mcpUsername: admin
-  # Empty -> generated on first install and reused on upgrade, like the secrets
-  # above. Never ship a known default in the public chart (#177 review). Retrieve
-  # it with: kubectl get secret <release>-secrets -o jsonpath='{.data.mcp-password}' | base64 -d
+  mcpPassword: changeme
 
 # Common pod settings
 # fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).

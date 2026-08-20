@@ -30,6 +30,19 @@ case "${1:-}" in
     sed -i -E "s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
     sed -i -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$CHART"
     sed -i -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
+    # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
+    # caller commits the unchanged file [skip ci] believing it synced (#180
+    # review). Re-read each artifact with the same helpers --check trusts and
+    # confirm it actually took ${V}.
+    rc=0
+    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)"; do
+      name="${pair%%:*}"; got="${pair#*:}"
+      if [ "$got" != "$V" ]; then
+        echo "::error::--write did not take on $name: it is '$got', expected '$V' (the sed pattern matched nothing — the artifact's format changed)" >&2
+        rc=1
+      fi
+    done
+    [ "$rc" -eq 0 ] || exit 1
     echo "synced helm tag, appVersion, frontend package.json -> ${V}"
     ;;
   --check)
