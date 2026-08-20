@@ -55,7 +55,7 @@ on:
         required: true
         type: string
       publish_only:
-        description: "Recovery: republish images for an EXISTING tag (e.g. v4.0.0). Leave empty for a normal release."
+        description: "Recovery: republish images for an EXISTING tag (e.g. v4.0.0). Leave empty for a normal release. When set, version_bump / run_e2e / release_notes are ignored."
         required: false
         type: string
         default: ""
@@ -80,7 +80,16 @@ jobs:
           MSG="$HEAD_COMMIT_MSG"
           # Skip if triggered by our own release commit or [skip ci] sentinel
           if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$MSG"; then
-            echo "::warning::Release suppressed by the loop guard: head commit '\''${MSG%%$'\n'*}'\'' begins with 'release: ' or carries [skip ci]. If this was a normal change (not an automated release commit), nothing was published -- rename the commit or re-run the workflow."
+            FIRST="${MSG%%$'\n'*}"
+            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST"; then
+              # Our own release-commit re-triggers Release (it touches VERSION,
+              # not in paths-ignore). The release it names was already published
+              # by the run that created it, so this is expected -- a notice, not
+              # a warning telling the operator to "re-run" something that worked.
+              echo "::notice::Loop guard: skipping our own release commit \"$FIRST\" (expected -- it was published by the previous run)."
+            else
+              echo "::warning::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. If this was a normal change, rename the commit or dispatch the workflow manually."
+            fi
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -276,6 +285,10 @@ jobs:
           # count-based (#177 review): counting breaks if any rc tag is ever
           # deleted -- the count drops and the next push recomputes an existing
           # tag, which then fails to create.
+          # NB: this step must NOT `set -o pipefail`. `grep -E` returns 1 when a
+          # version has no rc tags yet; without pipefail the substitution takes
+          # tail's status and ${RC_MAX:-0} yields the first rc as 1. Adding
+          # pipefail here would fail rc.1 of every new version.
           RC_MAX=$(git tag -l "v${TARGET}-rc.*" \
             | sed -E "s|^v${TARGET}-rc\.([0-9]+)$|\1|" \
             | grep -E '^[0-9]+$' | sort -n | tail -1)
