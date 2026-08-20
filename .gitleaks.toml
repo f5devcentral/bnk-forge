@@ -54,4 +54,21 @@ paths = [
   # it is the highest-value thing to scan, not to skip (#182 review).
   '''.*__pycache__/.*''',
   '''.*\.pyc$''',
+  # gitleaks was never enforced in CI before, so these private-key false
+  # positives were never catalogued. All are PEM headers wrapped around a
+  # placeholder body -- synthetic keys / "..." / "SECRETCONTENT" in tests, and
+  # the textarea hint "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END..."
+  # in the key-input UI. Verified 2026-08: no live key material.
+  '''backend/tests/component/test_ssh_credential_service\.py''',
+  '''backend/tests/component/test_ssh_service\.py''',
+  '''backend/tests/integration/test_routes_discovery\.py''',
+  '''backend/tests/integration/test_routes_ssh_credentials\.py''',
+  '''backend/tests/unit/test_proxy_translate_cis_service\.py''',
+  '''backend/tests/unit/test_tmos_engine\.py''',
+  '''frontend-v2/src/components/settings/SSHCredentials\.tsx''',
+  '''frontend-v2/src/components/settings/__tests__/SSHCredentials\.test\.tsx''',
+  '''frontend-v2/src/components/dpu/DpuFormDialog\.tsx''',
+  '''frontend-v2/src/components/dpu/RshimInstallDialog\.tsx''',
+  '''frontend-v2/src/components/dpu/DpuProjectSettingsCard\.tsx''',
+  '''frontend-v2/src/components/discovery/NodeDiscoveryPanel\.tsx''',
 ]
