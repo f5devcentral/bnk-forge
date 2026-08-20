@@ -7,10 +7,12 @@ All notable changes to BNK-Forge.
 ## v3.1.6 (2026-08-10) — 3.1.x line
 
 Milestone `v3.1.6` — the last release before 4.0.0, and the initial public
-release tag on `f5devcentral` (the one final tag this squashed mirror carries). This entry bridges a gap where the 3.x line was not
-recorded here; for the per-change detail see the `v3.0.1..v3.1.6` git range and
-the PRs merged into it. Notable across 3.1.x: the container-runner hardening
-series (#408) and the ADR-424 bare-metal/DPU work.
+release tag on `f5devcentral`. This mirror is squashed: the `v3.1.6` tag is a
+single `feat: initial public release` commit, so there is no per-change history
+behind it to link here. Work that came *after* this tag — including the
+container-runner hardening series (#2, #123, #161) and the ADR-424 bare-metal/DPU
+work — is part of 4.0.0, not v3.1.6, and is recorded under the 4.0.0 entry when
+that release is cut.
 
 > **Heads-up for the 4.0.0 upgrade:** the container runner's non-root gate now
 > refuses *named* users — an image using the distroless-standard `USER nonroot`

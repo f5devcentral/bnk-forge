@@ -83,8 +83,15 @@ The script signs each image by digest (not tag) and attaches two attestations:
 
 ### Verifying signatures (consumers)
 
-Replace `<signer-email>` with the email of the person who signed the images (visible in the
-Rekor transparency log entry), and `<digest>` with the image digest.
+Replace `<digest>` with the image digest you're verifying. You do **not** fill in a
+signer — official images are signed by the release workflow (`release.yml`), and the
+commands below already pin that identity with `--certificate-identity-regexp … release.yml@…`.
+
+> **Note:** this verifies images published by CI. If a maintainer signed an image
+> locally via the manual path above (`SIGN_EXECUTE=1`), it is bound to *that
+> person's* OIDC identity, not the workflow's, so it will not match the regexp
+> here — verify it with `--certificate-identity <their-email>` instead. Official
+> releases always go through `release.yml`.
 
 ```bash
 # Verify the signature

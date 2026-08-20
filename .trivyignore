@@ -32,8 +32,13 @@ CVE-2026-33186
 # The vulnerable code path requires libssh2 to negotiate auth with a
 # malicious remote SSH server, which our HTTP backend never does.
 # Upstream: no Debian backport yet (Trivy reports empty fix column).
-# REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-7598
-#          escalate to pin-from-sid if no fix by 2026-10-31 (prior 2026-08-12 deadline passed; still no upstream fix)
+# REVISIT: monthly. Do not extend this entry on the assertion that no fix exists —
+#          confirm it: re-run `trivy image` (or check the tracker) and only keep
+#          the ignore while the fix column is still empty for our base image's
+#          libssh2. https://security-tracker.debian.org/tracker/CVE-2026-7598
+#          The 2026-08-12 deadline lapsed without that re-check; next check by
+#          2026-09-12, and escalate to pin-from-sid if a fixed version is then
+#          available and we're still ignoring it.
 # Tracked: memory/followup_trivyignore_cve_2026_7598_revisit.md
 # Added: 2026-05-12
 CVE-2026-7598
