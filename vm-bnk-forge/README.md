@@ -16,7 +16,7 @@ make-vm.sh ─┐                         Ubuntu 24.04 minimal cloudimg
 ```
 
 VMs bridge onto the host's bridge interface, get DHCP from the LAN, and
-serve bnk-forge on `https://<vm-ip>:8443` (login `admin` / `changeme`).
+serve bnk-forge on `https://<vm-ip>:8443` (login `admin`; the password is generated on first boot — see Default credentials below).
 Port 8443, not 443: `make install` deploys the server topology, where the
 proxy runs with `network_mode: host` and binds 8443 (HTTPS) / 8082 (HTTP
 redirect) directly — see the `proxy` service in `docker-compose.yml`.
@@ -189,7 +189,8 @@ from).
 The local KVM flow lands on a LAN. The cloud flow can land on a public
 address, where three properties of this image stack up badly:
 
-1. **Default credentials.** The stack comes up with `admin` / `changeme`.
+1. **Default credentials.** The stack comes up with a generated `admin` password
+   (at `/app/keys/initial_admin_password`, or set `DEFAULT_ADMIN_PASSWORD`).
    Log in and change it immediately — or don't attach a public IP until you
    have.
 2. **Docker socket is mounted into the backend.** `make install` writes a

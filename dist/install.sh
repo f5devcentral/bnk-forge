@@ -359,7 +359,7 @@ if [ "$URL" != "https://localhost" ]; then
   echo "        (accept the self-signed certificate warning)"
 fi
 echo ""
-echo "  Login: admin / changeme"
+echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else run: docker compose exec backend cat /app/keys/initial_admin_password)"
 echo ""
 echo "  Next steps:"
 echo "    1. Change your password on first login"

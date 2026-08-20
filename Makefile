@@ -206,7 +206,7 @@ _install-info:
 	  echo "        (accept the self-signed certificate warning)"; \
 	fi; \
 	echo ""; \
-	echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme' — change on first login)"; \
+	echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password — change on first login)"; \
 	echo ""; \
 	echo "  Next steps:"; \
 	echo "    1. Change your password on first login"; \
@@ -426,7 +426,7 @@ deploy: build ensure-artifact-network
 	@echo ""
 ifeq ($(UNAME_S),Darwin)
 	@echo "  Open:  https://localhost"
-	@echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme'; change on first login)"
+	@echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password; change on first login)"
 endif
 	@echo "  Recommended next step: make mcp-readiness"
 	@echo "========================================="

@@ -64,7 +64,7 @@ chmod +x install.sh
 - **Mac/Windows (`--local`):** open **https://localhost**
 - **Linux server:** open **https://\<server-ip\>** — the installer prints the exact URL at the end
 
-Accept the self-signed certificate warning. Login: **admin** / **changeme**
+Accept the self-signed certificate warning. Login as **admin** — retrieve the generated password with `docker compose exec backend cat /app/keys/initial_admin_password`, or set `DEFAULT_ADMIN_PASSWORD` before install. You'll change it on first login.
 
 ---
 

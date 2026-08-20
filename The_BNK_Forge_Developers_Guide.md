@@ -198,7 +198,7 @@ make install
 
 # 4. Open the UI
 #    macOS / WSL / Linux desktop:  https://localhost/
-#    Default login: admin / changeme  (change it on first login)
+#    Default login: admin  (password: set DEFAULT_ADMIN_PASSWORD, else the generated one at /app/keys/initial_admin_password; change on first login)
 ```
 
 That is it. The platform detection in the Makefile does the right thing on Darwin (macOS), WSL2, and native Linux without further configuration.
@@ -276,7 +276,7 @@ When the install finishes you will see something like:
 =========================================
 
   URL:   https://localhost/
-  Login: admin / changeme
+  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else generated — see /app/keys/initial_admin_password)
 ```
 
 Open the URL in your browser. Self-signed cert warnings are expected; accept once.

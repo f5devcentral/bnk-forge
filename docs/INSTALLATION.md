@@ -27,7 +27,7 @@ cd bnk-forge
 make local-deploy
 ```
 
-Open **https://localhost** and accept the self-signed certificate warning. Log in with **admin** / **changeme**.
+Open **https://localhost** and accept the self-signed certificate warning. Log in as **admin** — no default password ships; retrieve the generated one from `/app/keys/initial_admin_password` (or the backend logs), or set `DEFAULT_ADMIN_PASSWORD`. You'll change it on first login.
 
 ### Linux Server
 
@@ -39,7 +39,7 @@ make deploy
 
 For first-time clean-slate bootstrap only (destructive), run `make install`.
 
-Log in with **admin** / **changeme** (you'll be prompted to change the password).
+Log in as **admin** using the generated password from `/app/keys/initial_admin_password` (or set `DEFAULT_ADMIN_PASSWORD`); you'll be prompted to change it on first login.
 
 ---
 
@@ -127,10 +127,12 @@ A default admin account is created automatically on first startup:
 | **Password** | _generated on first startup_ |
 
 No default password ships. On first startup the backend generates a random admin
-password and logs it once — retrieve it with:
+password and writes it to `/app/keys/initial_admin_password` (mode 600); the boot
+log points there too. Retrieve it with either:
 
 ```bash
-docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"
+docker exec bnk-forge-backend cat /app/keys/initial_admin_password
+docker logs bnk-forge-backend 2>&1 | grep "GENERATED password"
 ```
 
 Or set `DEFAULT_ADMIN_PASSWORD` in your environment to choose your own. You will
@@ -234,7 +236,7 @@ sudo firewall-cmd --reload
 
 Access from any browser: `https://your-server-ip`
 
-Log in with **admin** / **changeme** (you'll be prompted to change the password).
+Log in as **admin** using the generated password from `/app/keys/initial_admin_password` (or set `DEFAULT_ADMIN_PASSWORD`); you'll be prompted to change it on first login.
 
 Accept the self-signed certificate warning, or replace the certs with your own (see proxy/Dockerfile).
 
@@ -273,7 +275,7 @@ server topology). The VM path applies the same hardening this guide describes:
 key-only with root login disabled, and the GitHub deploy key is shredded once
 the clone completes.
 
-The default credentials (`admin` / `changeme`) and the Docker-socket mount
+The generated admin credentials (see the setup notes above) and the Docker-socket mount
 still apply — read the README's security notes before giving such a VM a
 public address.
 
