@@ -187,8 +187,10 @@
     </tr>
     <tr>
       <td><code>MCP_PASSWORD</code></td>
-      <td><em>your choice</em></td>
-      <td><b>Change from the default.</b> Used by the MCP integration layer.</td>
+      <td><em>required</em></td>
+      <td><b>Set a value — no default ships.</b> Shared by the backend and the MCP server;
+          leaving it empty disables MCP (the backend logs why). Unlike the two above it is
+          re-applied on every boot, so you can rotate it later by changing it and restarting.</td>
     </tr>
     <tr>
       <td><code>DEFAULT_ADMIN_PASSWORD</code></td>
@@ -199,10 +201,13 @@
   </table>
 
   <div class="callout-warn">
-    <div class="callout-title">Change all three passwords</div>
-    The defaults in <code>.env.example</code> are well-known placeholders.
-    Replace <code>POSTGRES_PASSWORD</code>, <code>REDIS_PASSWORD</code>, and <code>MCP_PASSWORD</code>
-    before running the installer — they cannot be changed easily after the stack first starts.
+    <div class="callout-title">Set strong passwords before first start</div>
+    <code>POSTGRES_PASSWORD</code> and <code>REDIS_PASSWORD</code> replace well-known
+    placeholder defaults, and they are baked in when the database and cache first
+    initialize — get them right before running the installer, as they cannot be changed
+    easily afterward. <code>MCP_PASSWORD</code> has no default and must be set (empty
+    disables MCP); unlike the other two it is reconciled on every boot, so it can be
+    rotated later by editing <code>.env</code> and restarting.
   </div>
 
   <!-- ── Step 3 ── -->
