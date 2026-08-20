@@ -224,13 +224,22 @@ def seed_auth_step():
     else:
         logger.info("  Users already exist")
 
-    # Unconditional: ensure MCP service account exists and its password hash matches
-    # current MCP_SERVICE_PASSWORD — prevents auth drift when the env var is rotated.
-    with get_db_context() as db:
-        ensure_service_user(
-            db,
-            username=settings.MCP_SERVICE_USERNAME,
-            password=settings.MCP_SERVICE_PASSWORD,
+    # Ensure the MCP service account exists and its password hash matches the
+    # current MCP_SERVICE_PASSWORD — prevents auth drift when the env var is
+    # rotated. #187: only when a password is actually configured; never seed the
+    # account with a shipped default. Unset -> MCP is simply unavailable until an
+    # operator sets MCP_SERVICE_PASSWORD (and gives the MCP server the same value).
+    if settings.MCP_SERVICE_PASSWORD:
+        with get_db_context() as db:
+            ensure_service_user(
+                db,
+                username=settings.MCP_SERVICE_USERNAME,
+                password=settings.MCP_SERVICE_PASSWORD,
+            )
+    else:
+        logger.warning(
+            "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
+            "the MCP server will be unable to authenticate until you set it"
         )
 
     if settings.REQUIRE_AUTH:

@@ -144,7 +144,7 @@ services:
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
       # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
 
   postgres-backup:

@@ -100,7 +100,14 @@ class Settings(BaseSettings):
     # Seed credentials — distinct vars so admin rotation never affects MCP
     DEFAULT_ADMIN_PASSWORD: str = "changeme"
     MCP_SERVICE_USERNAME: str = "mcp"
-    MCP_SERVICE_PASSWORD: str = "mcp-service-changeme"
+    # #187: shared secret between the backend (which seeds the `mcp` service
+    # account) and the MCP server (which authenticates with it). Defaults to
+    # None -- never a shipped value like "mcp-service-changeme", which is a live
+    # admin credential. It can't be auto-generated (both sides must receive the
+    # same value), so it must be set explicitly; validate_production fails fast
+    # in staging/prod, and when unset the backend simply doesn't seed the account
+    # (MCP is unavailable until it's configured).
+    MCP_SERVICE_PASSWORD: str | None = None
 
     # Benchmark agent auth flag.
     # When False (default): register/ingest/WS are open (preserves the documented curl flow).
@@ -197,6 +204,15 @@ class Settings(BaseSettings):
         if self._encryption_key_auto_generated:
             issues.append(
                 "ENCRYPTION_KEY was not explicitly set — set it as an environment variable"
+            )
+
+        # #187: the MCP service password is a shared secret and cannot be
+        # auto-generated -- it must be set explicitly and identically on the
+        # backend and the MCP server. Refuse an unset or known-default value.
+        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD == "mcp-service-changeme":
+            issues.append(
+                "MCP_SERVICE_PASSWORD was not set to a real value — set it (the same "
+                "value the MCP server gets as BNK_FORGE_PASSWORD) as an environment variable"
             )
 
         if "*" in self.ALLOWED_ORIGINS:

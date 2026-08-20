@@ -96,6 +96,20 @@ in-cluster services and pulls secrets from the generated Secret.
     secretKeyRef:
       name: {{ include "bnk-forge.fullname" . }}-secrets
       key: encryption-key
+# #187: the backend seeds the MCP service account from the SAME secret the MCP
+# server authenticates with (mcp.yaml -> BNK_FORGE_USERNAME/PASSWORD), so the two
+# always agree. Was previously unset here, which -- combined with mcpUsername:
+# admin -- made the MCP server try to log in as the human admin.
+- name: MCP_SERVICE_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-username
+- name: MCP_SERVICE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-password
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

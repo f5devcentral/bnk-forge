@@ -25,8 +25,11 @@ secrets:
   redisPassword: ""
   jwtSecretKey: ""
   encryptionKey: ""
-  mcpUsername: admin
-  mcpPassword: changeme
+  # #187: the MCP server logs in as this dedicated service account (role=admin,
+  # not the human admin) with a generated password shared by both sides.
+  mcpUsername: mcp
+  # Empty -> generated on first install and reused on upgrade.
+  mcpPassword: ""
 
 # Common pod settings
 # fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).

@@ -457,9 +457,10 @@ services:
       BNK_FORGE_API_URL: http://localhost:8000
       BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       # MCP authenticates as the dedicated service account seeded by the backend.
-      # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
+      # Set MCP_SERVICE_PASSWORD in .env (#187: no shipped default). The backend
+      # seeds the 'mcp' service account with the same value and reconciles its hash on
       # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
