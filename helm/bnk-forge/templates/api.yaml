@@ -28,6 +28,12 @@ spec:
       {{- include "bnk-forge.componentLabels" (list . "api") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # #187: roll the pod when the Secret changes, so the backend (which
+        # re-seeds the mcp account) and the MCP server (which authenticates with
+        # it) pick up a rotated mcp-password together instead of drifting for a
+        # restart cycle.
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
       labels:
         {{- include "bnk-forge.componentLabels" (list . "api") | nindent 8 }}
     spec:
