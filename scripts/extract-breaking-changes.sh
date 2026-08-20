@@ -23,13 +23,13 @@ while IFS= read -r sha; do
     subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
     # The BREAKING CHANGE line and its paragraph (up to the next blank line),
     # flattened to one line and stripped of markdown bold.
-    note=$(awk '/BREAKING[[:space:] -]+CHANGE/{p=1} p{print} p&&/^$/{exit}' <<< "$body" \
+    note=$(awk '/^[[:space:]*_-]*BREAKING[[:space:] -]+CHANGE/{p=1} p{print} p&&/^$/{exit}' <<< "$body" \
       | tr '\n' ' ' | sed 's/\*\*//g; s/  */ /g; s/ *$//')
     block="${block}- **${subj}**
   ${note}
 "
   fi
-done < <(git log "${SINCE}..${UNTIL}" --pretty=format:"%H" 2>/dev/null || true)
+done < <(git log "${SINCE}..${UNTIL}" --format='%H' 2>/dev/null || true)
 
 if [[ -n "$block" ]]; then
   printf '### ⚠️ Breaking Changes\n\n%s\n' "$block"

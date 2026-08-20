@@ -88,6 +88,15 @@ else
   SINCE_TAG=$(last_final_tag)
 fi
 
+# Fail closed on an unresolvable SINCE_TAG. Without this, an unknown ref makes
+# `git log <bad>..HEAD` empty (2>/dev/null || true), so BOTH the bump loop and
+# the consistency guard read nothing and silently return patch -- a typo in the
+# floor tag would ship a release derived from a range that was never read.
+if [[ -n "$SINCE_TAG" ]] && ! git rev-parse --verify --quiet "${SINCE_TAG}^{commit}" >/dev/null; then
+  echo "::error::SINCE_TAG '${SINCE_TAG}' does not resolve to a commit in this repo -- refusing to derive a version from an empty range." >&2
+  exit 1
+fi
+
 if [[ -n "$BASELINE_OVERRIDE" ]]; then
   BASELINE="$BASELINE_OVERRIDE"
 elif [[ -n "$SINCE_TAG" ]]; then
@@ -108,9 +117,9 @@ fi
 BUMP_TYPE="patch"
 
 if [[ -z "$SINCE_TAG" ]]; then
-  RANGE_HASHES=$(git log --pretty=format:"%H" 2>/dev/null || true)
+  RANGE_HASHES=$(git log --format='%H' 2>/dev/null || true)
 else
-  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --pretty=format:"%H" 2>/dev/null || true)
+  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null || true)
 fi
 
 while IFS= read -r sha; do
@@ -146,7 +155,7 @@ done <<< "$RANGE_HASHES"
 # Independent of the loop above and pipe-free: if any commit in the range
 # declares a breaking change, the bump MUST be major. This would have caught the
 # SIGPIPE race (marker present, bump silently patch) by aborting rather than
-# shipping a mis-versioned release. Same shape for feat -> at least minor.
+# shipping a mis-versioned release.
 if [[ -n "$SINCE_TAG" ]]; then
   ALL_MSGS=$(git log "${SINCE_TAG}..HEAD" --format='%B' 2>/dev/null || true)
 else
@@ -199,8 +208,12 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     while IFS= read -r entry; do
       [[ -z "$entry" ]] && continue
       if [[ "$entry" == *"~~BODY~~"* ]]; then
+        # A body may use a literal \n escape for a real newline: entries are
+        # split on newlines, so a raw one would fork into extra commits.
+        _b="${entry#*~~BODY~~}"
+        _b=${_b//\\n/$'\n'}
         git -C "$tmpdir" commit --allow-empty \
-          -m "${entry%%~~BODY~~*}" -m "${entry#*~~BODY~~}" -q
+          -m "${entry%%~~BODY~~*}" -m "$_b" -q
       else
         git -C "$tmpdir" commit --allow-empty -m "$entry" -q
       fi
@@ -252,14 +265,17 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   run_test "lowercase breaking change in body → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
     "fix: tidy up~~BODY~~this is explicitly not a breaking change"
 
-  # Test 7: large body, marker early with a long tail after it -- the exact
-  # SIGPIPE race from the PR #177 review. `printf | grep -q` flaked here
-  # (~14/20 wrong) because grep matched then died before draining the tail; the
-  # here-string form must bump major deterministically. ~94 KB single-line body.
-  _hd=$(head -c 4000 </dev/zero | tr '\0' x)
-  _tl=$(head -c 90000 </dev/zero | tr '\0' y)
-  run_test "large body, early marker → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
-    "fix: big commit~~BODY~~${_hd} BREAKING CHANGE: boom ${_tl}"
+  # Test 7: marker on an early LINE with ~90 KB of lines after it -- the real
+  # SIGPIPE race (PR #177 review). grep is line-oriented, so with the marker on
+  # line 1 it matches and exits while the writer still has the tail to push; the
+  # pipe form takes SIGPIPE (141) and reads it as "no match". Deterministically
+  # wrong once the tail clears the 64 KB pipe buffer. A single ~94 KB *line*
+  # would NOT reproduce it (grep must read the whole line before deciding), so
+  # the tail must be many lines.
+  _line=$(head -c 60 </dev/zero | tr '\0' y)
+  _tl=$(for _ in $(seq 1 1500); do printf '%s\\n' "$_line"; done)
+  run_test "early marker + long multi-line tail → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: big commit~~BODY~~BREAKING CHANGE: boom\\n${_tl}"
 
   echo "=== END SELF-TEST ==="
   if [[ "$SELFTEST_FAILURES" -ne 0 ]]; then
