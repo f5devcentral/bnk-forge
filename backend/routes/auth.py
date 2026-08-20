@@ -114,13 +114,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-# Endpoints a user must still reach while must_change_password is set: change
-# the password, read their own state, and log out. Everything else is refused.
-_PASSWORD_CHANGE_EXEMPT_SUFFIXES = (
-    "/auth/change-password",
-    "/auth/me",
-    "/auth/logout",
-)
+# The only endpoints a must-change user needs before rotating: submit the new
+# password, and read their own state so the UI can show the change screen.
+# (There is no server-side logout endpoint -- logout is discarding the token
+# client-side.) Exact full paths, not suffixes: this is a security gate, so it
+# should not accept some unrelated route that merely ends in "/auth/me".
+_PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
+    "/api/auth/change-password",
+    "/api/auth/me",
+})
 
 
 def _enforce_password_change(request: Request, user: User) -> None:
@@ -133,8 +135,7 @@ def _enforce_password_change(request: Request, user: User) -> None:
     """
     if not getattr(user, "must_change_password", False):
         return
-    path = request.url.path
-    if any(path.endswith(suffix) for suffix in _PASSWORD_CHANGE_EXEMPT_SUFFIXES):
+    if request.url.path.rstrip("/") in _PASSWORD_CHANGE_EXEMPT_PATHS:
         return
     raise ForbiddenError(
         "Password change required before using the API. "
