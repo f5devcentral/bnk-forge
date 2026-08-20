@@ -179,6 +179,12 @@ class TestGetUserFromToken:
 
 
 class TestSeedAdminUser:
+    @pytest.fixture(autouse=True)
+    def _isolate_keys_dir(self, monkeypatch, tmp_path):
+        # seed_admin_user may generate + persist a password to KEYS_DIR; keep it
+        # out of the working tree (default is /app/keys) for every test here.
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+
     def test_seeds_when_no_users(self, db):
         admin = seed_admin_user(db)
         assert admin is not None
@@ -199,12 +205,14 @@ class TestSeedAdminUser:
         user = authenticate_user(db, "admin", "explicit-admin-pw")
         assert user.username == "admin"
 
-    def test_seeded_admin_generates_random_password_when_unset(self, db, monkeypatch):
+    def test_seeded_admin_generates_random_password_when_unset(self, db, monkeypatch, tmp_path):
         # #184: with DEFAULT_ADMIN_PASSWORD unset, the seed must NOT use a known
         # default -- it generates a random one, so the published "changeme"
-        # never authenticates.
+        # never authenticates. KEYS_DIR -> tmp so the generated-password file
+        # doesn't land in the working tree.
         monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
         admin = seed_admin_user(db)
+        assert (tmp_path / "initial_admin_password").exists()
         assert admin is not None
         assert admin.must_change_password is True
         with pytest.raises(UnauthorizedError):
