@@ -60,9 +60,7 @@ class TestValidateWsToken:
     async def test_valid_admin_token_returns_true(self, db):
         """Should return True for a valid admin JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
-        from services.auth_service import create_user
+        from services.auth_service import create_access_token, create_user
         create_user(db, "testadmin", "testadmin@t.com", "pw", role="admin", must_change_password=False)
         db.commit()
         token = create_access_token(data={"sub": "testadmin", "role": "admin"})
@@ -75,9 +73,7 @@ class TestValidateWsToken:
     async def test_valid_operator_token_returns_true(self, db):
         """Should return True for a valid operator JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
-        from services.auth_service import create_user
+        from services.auth_service import create_access_token, create_user
         create_user(db, "testop", "testop@t.com", "pw", role="operator", must_change_password=False)
         db.commit()
         token = create_access_token(data={"sub": "testop", "role": "operator"})
@@ -89,9 +85,7 @@ class TestValidateWsToken:
     async def test_valid_viewer_token_returns_true(self, db):
         """Should return True for a valid viewer JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
-        from services.auth_service import create_user
+        from services.auth_service import create_access_token, create_user
         create_user(db, "testviewer", "testviewer@t.com", "pw", role="viewer", must_change_password=False)
         db.commit()
         token = create_access_token(data={"sub": "testviewer", "role": "viewer"})
