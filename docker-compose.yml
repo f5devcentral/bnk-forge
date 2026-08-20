@@ -18,6 +18,14 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
+  # #187: the backend seeds the `mcp` service account from these, and the MCP
+  # server authenticates with the SAME .env values (BNK_FORGE_USERNAME/PASSWORD).
+  # They must be sourced identically -- the backend was previously never given
+  # MCP_SERVICE_PASSWORD, so a rotated value only reached the MCP server. Unset ->
+  # empty -> the account isn't seeded and the MCP server can't auth (clean, not a
+  # weak default).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume
