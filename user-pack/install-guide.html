@@ -113,7 +113,7 @@
     <span class="f5mark">F5</span>
     <div>
       <h1>BNK Forge &mdash; Install Guide</h1>
-      <div class="sub">Private registry edition &nbsp;|&nbsp; customer-build distribution &nbsp;|&nbsp; registry: ghcr.io/f5devcentral</div>
+      <div class="sub">Public registry edition &nbsp;|&nbsp; customer-build distribution &nbsp;|&nbsp; registry: ghcr.io/f5devcentral</div>
     </div>
   </div>
 </header>
@@ -122,9 +122,9 @@
 
   <!-- ── Intro ── -->
   <div class="intro">
-    This guide walks you through installing BNK Forge from the private GitHub Container Registry.
-    You will authenticate to the registry using the read-only bot credential you were provided,
-    download the install package, make a small configuration change, and run a single script.
+    This guide walks you through installing BNK Forge from the public GitHub Container Registry.
+    You download the install package, make a small configuration change, and run a single
+    script. The images are public, so no registry login is required.
     The entire process takes under ten minutes on a fast connection; the first image pull may
     take a few minutes depending on bandwidth.
   </div>
@@ -134,40 +134,12 @@
   <ul class="prereqs">
     <li><b>Docker Engine 24+</b> — on macOS or Windows, Docker Desktop satisfies both this and the Compose requirement.</li>
     <li><b>Docker Compose v2 (≥ 2.24)</b> — verify with <code>docker compose version</code>.</li>
-    <li><b>Read-access token</b> — the <code>&lt;READ_TOKEN&gt;</code> provided to you separately (see Step 1).</li>
     <li><b>~5–10 GB free disk space</b> — for images and persistent data volumes.</li>
     <li><b>Network access to <code>ghcr.io</code></b> — outbound HTTPS (port 443) must be allowed.</li>
   </ul>
 
   <!-- ── Step 1 ── -->
-  <h2>Step 1 &mdash; Authenticate to the registry</h2>
-
-  <div class="callout-cred">
-    <div class="callout-title">Credentials — handle with care</div>
-    Your read-access token is provided separately (out-of-band). It is a GitHub PAT scoped to
-    <code>read:packages</code> for the <code>ghcr.io/f5devcentral</code> registry.
-    <b>Do not share it, commit it to version control, or embed it in scripts.</b>
-    If you believe the token has been exposed, contact the person who gave it to you immediately.
-  </div>
-
-  <p>Run the following command, replacing <code>&lt;READ_TOKEN&gt;</code> with the token you received.
-     The bot username is fixed — use it exactly as shown:</p>
-
-  <pre><span class="prompt">$ </span>echo '<span style="color:#f97316">&lt;READ_TOKEN&gt;</span>' | docker login ghcr.io -u jlcode-forgebot --password-stdin</pre>
-
-  <p>Expected output:</p>
-  <div class="expected">Login Succeeded</div>
-
-  <div class="callout-info">
-    <div class="callout-title">Token stays cached</div>
-    Docker stores the credential in your OS keychain (or <code>~/.docker/config.json</code>).
-    You only need to log in once per machine. If you later see a <code>denied</code> or
-    <code>unauthorized</code> error during a pull, re-run the command above — the token may have been
-    rotated. See the Troubleshooting section for details.
-  </div>
-
-  <!-- ── Step 2 ── -->
-  <h2>Step 2 &mdash; Download &amp; extract the package</h2>
+  <h2>Step 1 &mdash; Download &amp; extract the package</h2>
 
   <p>You should have received a <code>bnk-forge-&lt;version&gt;.tar.gz</code> archive alongside this
      guide. Save it to a convenient location, then extract it:</p>
@@ -177,8 +149,8 @@
 
   <p>All subsequent commands are run from inside this directory.</p>
 
-  <!-- ── Step 3 ── -->
-  <h2>Step 3 &mdash; Configure</h2>
+  <!-- ── Step 2 ── -->
+  <h2>Step 2 &mdash; Configure</h2>
 
   <p>Copy the example environment file and open it in your editor:</p>
 
@@ -196,7 +168,7 @@
     <tr>
       <td><code>BNK_FORGE_REGISTRY</code></td>
       <td><code>ghcr.io/f5devcentral</code></td>
-      <td>Points to the private registry.</td>
+      <td>Points to the public registry.</td>
     </tr>
     <tr>
       <td><code>BNK_FORGE_VERSION</code></td>
@@ -218,6 +190,12 @@
       <td><em>your choice</em></td>
       <td><b>Change from the default.</b> Used by the MCP integration layer.</td>
     </tr>
+    <tr>
+      <td><code>DEFAULT_ADMIN_PASSWORD</code></td>
+      <td><em>your choice (recommended)</em></td>
+      <td>Initial <code>admin</code> login password. If you leave it unset, a random one is
+          generated on first launch (see Step 4). Either way you must change it on first login.</td>
+    </tr>
   </table>
 
   <div class="callout-warn">
@@ -227,8 +205,8 @@
     before running the installer — they cannot be changed easily after the stack first starts.
   </div>
 
-  <!-- ── Step 4 ── -->
-  <h2>Step 4 &mdash; Install</h2>
+  <!-- ── Step 3 ── -->
+  <h2>Step 3 &mdash; Install</h2>
 
   <p>Run the installer for your platform. It will pull the images and bring the full stack up.
      The first run may take a few minutes while images download.</p>
@@ -251,8 +229,8 @@
   <p>When the installer finishes you will see:</p>
   <div class="expected">✅ Installation complete!</div>
 
-  <!-- ── Step 5 ── -->
-  <h2>Step 5 &mdash; First login</h2>
+  <!-- ── Step 4 ── -->
+  <h2>Step 4 &mdash; First login</h2>
 
   <ol class="steps">
     <li>
@@ -267,12 +245,20 @@
          (Firefox). This is expected.</p>
     </li>
     <li>
-      <p><b>Log in with the default credentials:</b><br>
-         Username: <code>admin</code> &nbsp;/&nbsp; Password: <code>changeme</code></p>
+      <p><b>Log in as the admin user:</b><br>
+         Username: <code>admin</code> &nbsp;/&nbsp; Password: the value you set for
+         <code>DEFAULT_ADMIN_PASSWORD</code> in Step 2.</p>
+      <div class="callout-info">
+        <div class="callout-title">Didn't set <code>DEFAULT_ADMIN_PASSWORD</code>?</div>
+        If you left it unset, BNK Forge generated a random initial password on first launch and
+        wrote it to <code>/app/keys/initial_admin_password</code> inside the backend container;
+        the startup logs also point to it. Retrieve it with:
+        <pre style="margin:6px 0;"><span class="prompt">$ </span>docker compose exec backend cat /app/keys/initial_admin_password</pre>
+      </div>
       <div class="callout-warn">
-        <div class="callout-title">Change the admin password immediately</div>
-        The default password is well-known. Go to <b>User menu → Change Password</b> as your
-        very first action after login.
+        <div class="callout-title">You must change the password on first login</div>
+        The admin account is flagged to require a password change — set a strong one when prompted
+        (or via <b>User menu → Change Password</b>) before doing anything else.
       </div>
     </li>
     <li>
@@ -335,10 +321,10 @@
 
   <ul class="trouble">
     <li>
-      <b><code>denied: denied</code> or <code>unauthorized: unauthenticated</code> during pull</b>
-      Your <code>docker login</code> session has lapsed, or the token does not have the
-      <code>read:packages</code> scope. Re-run Step 1 with your current token.
-      If the problem persists, contact the person who issued the token.
+      <b><code>manifest unknown</code>, or a pull that hangs or times out</b>
+      The images are public, so no login is required. Check that <code>BNK_FORGE_REGISTRY</code>
+      is <code>ghcr.io/f5devcentral</code> and that the version tag exists, and that outbound
+      HTTPS to <code>ghcr.io</code> (port 443) is allowed through any proxy or firewall.
     </li>
     <li>
       <b>Backend service not <code>healthy</code></b>
