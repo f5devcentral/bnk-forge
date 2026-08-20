@@ -7,6 +7,12 @@
 # place that writes them, and the same code checks them in CI so drift can't
 # reappear silently.
 #
+# Synced: the Helm image tag (values.yaml), Chart `appVersion`, and frontend
+# package.json. NOT synced, deliberately: Chart.yaml's own `version:` — Helm
+# treats the chart version and appVersion as independent, and release.yml neither
+# packages nor pushes the chart, so a static chart version publishes nothing
+# wrong. Leave it alone rather than "fixing" it to match VERSION.
+#
 # Usage:
 #   sync-version-artifacts.sh --write <version>   # set all artifacts to <version>
 #   sync-version-artifacts.sh --check             # verify all == VERSION; exit 1 if not
