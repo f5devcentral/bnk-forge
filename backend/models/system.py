@@ -152,6 +152,10 @@ class User(Base):
     role = Column(String(50), nullable=False, default="operator")
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    # bonnyr-f5 #188: provenance for service accounts (mcp). ensure_service_user
+    # refuses to reconcile a row it did NOT create as a service account, so
+    # pointing MCP_SERVICE_USERNAME at a human row can't take it over.
+    is_service_account = Column(Boolean, default=False, nullable=False)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

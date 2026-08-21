@@ -16,6 +16,10 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+# Passwords ever shipped as the MCP service default. Treated as "not set" on
+# both the fail-fast (validate_production) and the boot-rotation path (bonnyr-f5 #188).
+MCP_KNOWN_DEFAULT_PASSWORDS = ("mcp-service-changeme", "changeme")
+
 # BE-007: Directory for persisting auto-generated keys across restarts
 _KEYS_DIR = os.environ.get("KEYS_DIR", "/app/keys")
 
@@ -211,7 +215,7 @@ class Settings(BaseSettings):
         # backend and the MCP server. Refuse an unset or known-default value.
         # bonnyr-f5: the actually-shipped default across dist/helm/scripts was
         # "changeme", not just "mcp-service-changeme" — reject both.
-        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD in ("mcp-service-changeme", "changeme"):
+        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD in MCP_KNOWN_DEFAULT_PASSWORDS:
             issues.append(
                 "MCP_SERVICE_PASSWORD was not set to a real value — set it (the same "
                 "value the MCP server gets as BNK_FORGE_PASSWORD) as an environment variable"
@@ -237,6 +241,7 @@ class Settings(BaseSettings):
             logger.error("To fix: set these as environment variables in docker-compose.yml.")
             logger.error("  JWT_SECRET_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(32))\")")
             logger.error("  ENCRYPTION_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(16))\")")
+            logger.error("  MCP_SERVICE_PASSWORD=<strong shared secret; the SAME value the MCP server gets as BNK_FORGE_PASSWORD>")
             logger.error("See: docs/DEPLOYMENT.md")
             logger.error("=" * 60)
             raise SystemExit(1)

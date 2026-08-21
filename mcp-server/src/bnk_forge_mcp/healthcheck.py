@@ -34,10 +34,12 @@ def probe() -> int:
     config = load_config()
 
     if not config.has_credentials:
-        # No credentials at all — can't probe; treat as healthy so we don't
-        # flip unhealthy on token-only deployments.
-        logger.info("no credentials configured; skipping auth probe")
-        return 0
+        # bonnyr-f5 #188: with MCP_SERVICE_PASSWORD now shipping empty by default,
+        # "no credentials" means the MCP server CANNOT authenticate — every tool
+        # call 401s. Reporting healthy here made a default `make deploy` show a
+        # green mcp container that does nothing. Fail the probe instead.
+        logger.error("no MCP credentials configured — cannot authenticate to the backend")
+        return 1
 
     try:
         resp = httpx.post(

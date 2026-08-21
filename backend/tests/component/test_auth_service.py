@@ -246,12 +246,26 @@ class TestEnsureServiceUser:
     def test_disable_stale_service_user_deactivates_mcp(self, db):
         # #188: upgrade with MCP_SERVICE_PASSWORD unset must not leave the old
         # mcp/'mcp-service-changeme' account authenticating.
-        from services.auth_service import create_user, disable_stale_service_user
-        create_user(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme", role="admin")
-        db.commit()
+        from services.auth_service import disable_stale_service_user, ensure_service_user
+        ensure_service_user(db, username="mcp", password="mcp-service-changeme")  # sets is_service_account
         disable_stale_service_user(db, "mcp")
         from models import User
         assert db.query(User).filter(User.username == "mcp").first().is_active is False
+
+    def test_refuses_to_reconcile_a_non_reserved_human(self, db):
+        # bonnyr-f5 #188 r2: the guard was a one-name denylist. Point the service
+        # username at ANY existing human row (here 'operator') and the reconcile
+        # would take it over. Provenance (is_service_account) refuses it.
+        from services.auth_service import create_user, verify_password
+        create_user(db, "operator", "operator@bnk-forge.local", "human-op-pw",
+                    role="operator", must_change_password=False)
+        db.commit()
+        with pytest.raises(ValueError, match="not a service account"):
+            ensure_service_user(db, username="operator", password="mcp-secret")
+        from models import User
+        op = db.query(User).filter(User.username == "operator").first()
+        assert op.role == "operator"                         # NOT promoted to admin
+        assert verify_password("human-op-pw", op.hashed_password)  # password intact
 
     def test_disable_stale_never_touches_admin(self, db):
         from services.auth_service import create_user, disable_stale_service_user

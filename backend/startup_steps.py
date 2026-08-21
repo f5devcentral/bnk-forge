@@ -229,7 +229,12 @@ def seed_auth_step():
     # rotated. #187: only when a password is actually configured; never seed the
     # account with a shipped default. Unset -> MCP is simply unavailable until an
     # operator sets MCP_SERVICE_PASSWORD (and gives the MCP server the same value).
-    if settings.MCP_SERVICE_PASSWORD:
+    from core.config import MCP_KNOWN_DEFAULT_PASSWORDS
+    # bonnyr-f5 #188: a shipped default (changeme) is truthy, so the reconcile
+    # branch would re-seed the mcp account to a known password on every dist/IBM
+    # upgrade. Treat a known default as unset -> take the disable-stale path.
+    _mcp_pw_usable = bool(settings.MCP_SERVICE_PASSWORD) and settings.MCP_SERVICE_PASSWORD not in MCP_KNOWN_DEFAULT_PASSWORDS
+    if _mcp_pw_usable:
         try:
             with get_db_context() as db:
                 ensure_service_user(

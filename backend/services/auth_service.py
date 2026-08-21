@@ -180,7 +180,7 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
         )
     user = db.query(User).filter(User.username == username).first()
     if user is None:
-        create_user(
+        svc = create_user(
             db=db,
             username=username,
             email=f"{username}@bnk-forge.local",
@@ -188,15 +188,23 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
             role=role,
             must_change_password=False,
         )
+        svc.is_service_account = True  # type: ignore[assignment]  # provenance
         # ENG-006: Startup seed manages its own transaction
         db.commit()
         logger.info(f"Created service account: {username} (role={role})")
     else:
-        # Reconcile: update hash to match current env var; never requires current password
+        # bonnyr-f5 #188: refuse to reconcile a pre-existing row this seeder did
+        # NOT create as a service account -- a name collision must never take over
+        # a human account. Gate on provenance, not the username.
+        if not user.is_service_account:
+            raise ValueError(
+                f"refusing to reconcile '{username}': it is not a service account. "
+                f"Point MCP_USERNAME at a dedicated name that isn't an existing user."
+            )
+        # Narrowed mutation (bonnyr-f5 #188): keeping the hash in sync does NOT
+        # require widening privilege, so role / is_active are left untouched.
         user.hashed_password = hash_password(password)  # type: ignore[assignment]
         user.must_change_password = False  # type: ignore[assignment]
-        user.role = role  # type: ignore[assignment]
-        user.is_active = True  # type: ignore[assignment]
         # ENG-006: Startup seed manages its own transaction
         db.commit()
         logger.info(f"Reconciled service account: {username}")
@@ -212,7 +220,11 @@ def disable_stale_service_user(db: Session, username: str) -> None:
     """
     if username in _RESERVED_HUMAN_USERNAMES:
         return
-    user = db.query(User).filter(User.username == username, User.is_active.is_(True)).first()
+    user = db.query(User).filter(
+        User.username == username,
+        User.is_active.is_(True),
+        User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
+    ).first()
     if user is not None:
         user.is_active = False  # type: ignore[assignment]
         db.commit()
