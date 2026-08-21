@@ -63,12 +63,6 @@
   code{background:#eef0f2;border:1px solid var(--bd);border-radius:3px;padding:1px 5px;
        font-size:12.5px;color:var(--ink2);font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;}
 
-  /* ── Callout: credentials (red left border) ── */
-  .callout-cred{background:#fff5f5;border-left:4px solid var(--f5red);border-radius:0 6px 6px 0;
-                padding:14px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(20,30,40,.04);}
-  .callout-cred .callout-title{font-weight:700;color:var(--f5red);font-size:13px;
-                                text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
-
   /* ── Callout: warning (amber) ── */
   .callout-warn{background:var(--warn-bg);border-left:4px solid var(--warn-bd);border-radius:0 6px 6px 0;
                 padding:14px 18px;margin:14px 0;color:var(--warn);}
@@ -100,7 +94,7 @@
   @media print{
     header{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     pre{white-space:pre-wrap;word-break:break-all;}
-    .callout-cred,.callout-warn,.callout-info{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .callout-warn,.callout-info{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     body{font-size:13px;}
     main{padding:10px 20px 30px;}
   }
@@ -187,11 +181,17 @@
     </tr>
     <tr>
       <td><code>MCP_PASSWORD</code></td>
-      <td><em>your choice</em></td>
-      <td><b>Change from the well-known default.</b> Credential the bundled MCP server uses to
-          authenticate to BNK Forge; it must match a real BNK Forge user (the default
-          <code>MCP_USERNAME</code> is <code>admin</code>). It is re-read from <code>.env</code>
-          on every boot, so if you change that user's password, update this to match and restart.</td>
+      <td><em>match the admin password</em></td>
+      <td><b>Must equal the password of the user in <code>MCP_USERNAME</code>.</b> Credential the
+          bundled MCP server uses to authenticate to BNK Forge; it must match a real BNK Forge user
+          (the default <code>MCP_USERNAME</code> is <code>admin</code>, whose initial password is
+          <code>changeme</code>). Leave it at <code>changeme</code> for the first boot so it matches
+          the seeded admin account; it is re-read from <code>.env</code> on every boot, so after you
+          change the admin password (Step 4) set this to the same value and re-run
+          <code>docker compose up -d</code> (a plain <code>docker compose restart</code> does not
+          re-read <code>.env</code>). Setting it to an
+          independent secret before first login makes the MCP server 401 against the still-default
+          admin credential.</td>
     </tr>
   </table>
 
@@ -200,9 +200,12 @@
     <code>POSTGRES_PASSWORD</code> and <code>REDIS_PASSWORD</code> replace well-known
     placeholder defaults, and they are baked in when the database and cache first
     initialize — get them right before running the installer, as they cannot be changed
-    easily afterward. <code>MCP_PASSWORD</code> also ships as a well-known default and should
-    be changed; unlike the other two it is re-read on every boot, so it can be changed later
-    by editing <code>.env</code> and restarting.
+    easily afterward. <code>MCP_PASSWORD</code> is different: it must always equal the password
+    of the admin account it authenticates as, so leave it at the shipped <code>changeme</code>
+    for first boot and rotate it <em>together with</em> the admin password afterward — it is
+    re-read on every boot, so edit <code>.env</code> and re-run <code>docker compose up -d</code>
+    to apply the new value (a plain <code>docker compose restart</code> does not re-read
+    <code>.env</code>).
   </div>
 
   <!-- ── Step 3 ── -->
@@ -312,10 +315,11 @@
       <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
           <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
           your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
-      <li><b>MCP service credential.</b> In staging/production the backend now refuses to boot if
-          <code>MCP_SERVICE_PASSWORD</code> is unset or still the shipped default. Set it to a real
-          secret (the same value the MCP server receives as <code>BNK_FORGE_PASSWORD</code>) before
-          upgrading, or the stack will exit at startup.</li>
+      <li><b>MCP service credential (from 4.0.0).</b> Starting with 4.0.0 the backend refuses to
+          boot in staging/production if <code>MCP_SERVICE_PASSWORD</code> is unset or still a shipped
+          default. Set it to a real secret (the same value the MCP server receives as
+          <code>BNK_FORGE_PASSWORD</code>) before upgrading, or the stack will exit at startup once
+          that check is in the tree.</li>
     </ul>
   </div>
 

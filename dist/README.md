@@ -228,7 +228,7 @@ make push-images BNK_FORGE_REGISTRY=ghcr.io/f5devcentral
 make push-images BNK_FORGE_REGISTRY=ghcr.io/f5devcentral PLATFORMS=linux/amd64
 ```
 
-This uses `docker buildx build --push` to build all 6 images (api, worker, beat, frontend, proxy, mcp) for both architectures and push **multi-arch manifest lists** to the registry. Each tag (e.g., `bnk-forge-api:3.1.6`) is a manifest that Docker automatically resolves to the correct platform on `docker pull`.
+This uses `docker buildx build --push` to build all 7 images (api, worker, beat, frontend, proxy, mcp, operator) for both architectures and push **multi-arch manifest lists** to the registry. Each tag (e.g., `bnk-forge-api:3.1.6`) is a manifest that Docker automatically resolves to the correct platform on `docker pull`.
 
 **Verify the manifest:**
 ```bash

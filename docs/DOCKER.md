@@ -119,7 +119,7 @@ cosign verify-attestation \
 
 Apply the same commands to the other image names:
 `bnk-forge-worker`, `bnk-forge-beat`, `bnk-forge-frontend`, `bnk-forge-proxy`,
-`bnk-forge-mcp`.
+`bnk-forge-mcp`, `bnk-forge-operator`.
 
 ### OCI Labels
 

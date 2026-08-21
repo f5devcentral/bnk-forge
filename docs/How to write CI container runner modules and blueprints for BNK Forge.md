@@ -661,8 +661,7 @@ The container engine is deliberately constrained:
   If you were on `USER nonroot`, switch to `USER 1000` — it matches the workspace owner (chowned
   `1000:1000`), so your state writes under `mount_path` succeed. A higher uid such as `65532` clears
   the non-root gate but cannot write the host-mounted workspace.
-  Forge does **not** silently remap you with `--user`. This mirrors Kubernetes `runAsNonRoot`,
-  which the Kubernetes runner applies to the same artifacts.
+  This mirrors Kubernetes `runAsNonRoot`, which the Kubernetes runner applies to the same artifacts.
 - **A dedicated network** — steps attach to the `bnk-forge-artifacts` bridge network rather
   than the daemon's default bridge, so artifact containers don't sit alongside unrelated
   containers. Egress still works (you can reach cloud control planes); you just don't share

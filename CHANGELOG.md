@@ -22,12 +22,15 @@ that release is cut.
 >    and chowned `1000:1000`, so uid 1000 is the only value that clears the gate
 >    *and* can write it. A higher uid such as `65532` passes the non-root gate but
 >    cannot write the workspace, so the step fails on its first write.
-> 2. **`MCP_SERVICE_PASSWORD` is now required (bonnyr-f5 #188):** in
->    staging/production the backend refuses to boot if it is unset or still the
->    shipped default (`changeme` / `mcp-service-changeme`). Every existing
->    install has one of those values, so **set `MCP_SERVICE_PASSWORD` to a real
->    secret (the same value the MCP server gets as `BNK_FORGE_PASSWORD`) before
->    upgrading**, or the stack will `SystemExit` at startup.
+> 2. **`MCP_SERVICE_PASSWORD` becomes required in 4.0.0 (via bonnyr-f5 #188):**
+>    starting with 4.0.0 the backend refuses to boot in staging/production if it
+>    is unset or still a shipped default (`changeme` / `mcp-service-changeme`).
+>    That boot-time check ships in #188 — it is *not* in the 3.1.x line and is
+>    called out here only so the upgrade step is ready before #188 lands. Every
+>    existing install still carries one of those defaults, so before upgrading to
+>    4.0.0 **set `MCP_SERVICE_PASSWORD` to a real secret** (the same value the MCP
+>    server receives as `BNK_FORGE_PASSWORD`); once #188 is in the tree, leaving
+>    it at a default will `SystemExit` the stack at startup.
 
 ## v3.0.1 — 3.0.x line
 
