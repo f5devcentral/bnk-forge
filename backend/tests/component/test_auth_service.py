@@ -248,9 +248,34 @@ class TestEnsureServiceUser:
         # mcp/'mcp-service-changeme' account authenticating.
         from services.auth_service import disable_stale_service_user, ensure_service_user
         ensure_service_user(db, username="mcp", password="mcp-service-changeme")  # sets is_service_account
-        disable_stale_service_user(db, "mcp")
+        disable_stale_service_user(db)
         from models import User
         assert db.query(User).filter(User.username == "mcp").first().is_active is False
+
+    def test_disable_stale_is_keyed_on_provenance_not_configured_username(self, db):
+        # bonnyr-f5 #188 round 4 (INV-11): on the dist/IBM upgrade path
+        # MCP_SERVICE_USERNAME resolves from a legacy .env to 'admin', so a
+        # name-keyed disable early-returned and left the legacy 'mcp' service row
+        # (mcp-service-changeme, role=admin) still authenticating. The disable must
+        # deactivate the service account by provenance regardless of the configured
+        # name, while never touching the human admin.
+        from models import User
+        from services.auth_service import (
+            authenticate_user,
+            create_user,
+            disable_stale_service_user,
+            ensure_service_user,
+        )
+        ensure_service_user(db, username="mcp", password="mcp-service-changeme")  # legacy service row
+        create_user(db, "admin", "admin@bnk-forge.local", "human-admin-pw", role="admin")
+        db.commit()
+        disable_stale_service_user(db)  # startup no longer passes a username at all
+        assert db.query(User).filter(User.username == "mcp").first().is_active is False
+        assert db.query(User).filter(User.username == "admin").first().is_active is True
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")  # default no longer works
+        # Human admin login is untouched.
+        assert authenticate_user(db, "admin", "human-admin-pw").username == "admin"
 
     def test_refuses_to_reconcile_a_non_reserved_human(self, db):
         # bonnyr-f5 #188 r2: the guard was a one-name denylist. Point the service
@@ -268,10 +293,12 @@ class TestEnsureServiceUser:
         assert verify_password("human-op-pw", op.hashed_password)  # password intact
 
     def test_disable_stale_never_touches_admin(self, db):
+        # A human admin carries is_service_account=False, so provenance-keyed
+        # disable leaves it active even though its name is 'admin'.
         from services.auth_service import create_user, disable_stale_service_user
         create_user(db, "admin", "admin@bnk-forge.local", "pw", role="admin")
         db.commit()
-        disable_stale_service_user(db, "admin")  # reserved -> no-op
+        disable_stale_service_user(db)  # provenance-keyed -> human admin untouched
         from models import User
         assert db.query(User).filter(User.username == "admin").first().is_active is True
 
@@ -284,7 +311,7 @@ class TestEnsureServiceUser:
         from models import User
         from services.auth_service import disable_stale_service_user, ensure_service_user
         ensure_service_user(db, username="mcp", password="mcp-service-changeme")
-        disable_stale_service_user(db, "mcp")
+        disable_stale_service_user(db)
         assert db.query(User).filter(User.username == "mcp").first().is_active is False
         # Operator now configures a real secret -> reconcile must revive the account.
         ensure_service_user(db, username="mcp", password="a-real-strong-secret")

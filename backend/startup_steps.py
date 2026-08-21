@@ -249,7 +249,11 @@ def seed_auth_step():
     else:
         from services.auth_service import disable_stale_service_user
         with get_db_context() as db:
-            disable_stale_service_user(db, settings.MCP_SERVICE_USERNAME)
+            # bonnyr-f5 #188 round 4 (INV-11): disable by provenance, not by the
+            # configured username — on the dist upgrade path MCP_SERVICE_USERNAME
+            # resolves to 'admin' and a name-keyed disable would no-op, leaving the
+            # legacy 'mcp' row authenticating with the shipped default.
+            disable_stale_service_user(db)
         logger.warning(
             "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
             "the MCP server will be unable to authenticate until you set it"

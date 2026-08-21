@@ -217,27 +217,37 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
         logger.info(f"Reconciled service account: {username}")
 
 
-def disable_stale_service_user(db: Session, username: str) -> None:
-    """#188 (bonnyr-f5): on upgrade with MCP_SERVICE_PASSWORD unset, an mcp
+def disable_stale_service_user(db: Session) -> None:
+    """#188 (bonnyr-f5): on upgrade with no usable MCP_SERVICE_PASSWORD, a service
     account seeded by a prior release still holds the shipped
     'mcp-service-changeme' default and keeps authenticating (the reconcile branch
-    only runs when a password IS set). Deactivate the stale account so the known
-    default can't be used until the operator configures a real one (which
-    re-seeds and re-activates it). Never touches a reserved human username.
+    only runs when a real password IS set). Deactivate EVERY active service-account
+    row so no known default can be used until the operator configures a real
+    password (which re-seeds and re-activates the account).
+
+    Keyed on provenance (is_service_account), NOT on the configured username
+    (bonnyr-f5 #188 round 4, INV-11): on the dist/IBM upgrade path
+    MCP_SERVICE_USERNAME resolves from a legacy .env to 'admin', so matching the
+    configured name would early-return and leave the stale 'mcp' row still
+    authenticating with the shipped default. The provenance flag is set only on
+    rows this seeder created, never on a human account, so disabling all service
+    accounts can never touch a human login — which is also why no reserved-username
+    guard is needed (or wanted: that guard is exactly what made this a no-op).
     """
-    if username in _RESERVED_HUMAN_USERNAMES:
-        return
-    user = db.query(User).filter(
-        User.username == username,
+    rows = db.query(User).filter(
         User.is_active.is_(True),
         User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
-    ).first()
-    if user is not None:
+    ).all()
+    if not rows:
+        return
+    for user in rows:
         user.is_active = False  # type: ignore[assignment]
-        db.commit()
+    db.commit()
+    for user in rows:
         logger.warning(
-            "Disabled stale MCP service account '%s' — MCP_SERVICE_PASSWORD is "
-            "unset, so its pre-existing (possibly default) credential must not "
-            "keep authenticating. Set MCP_SERVICE_PASSWORD to re-enable MCP.",
-            username,
+            "Disabled stale MCP service account '%s' — no usable "
+            "MCP_SERVICE_PASSWORD is set, so its pre-existing (possibly default) "
+            "credential must not keep authenticating. Set MCP_SERVICE_PASSWORD to "
+            "re-enable MCP.",
+            user.username,
         )

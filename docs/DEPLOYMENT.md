@@ -247,13 +247,18 @@ MCP has two distinct readiness layers:
 A deployment can pass layer 1 and still fail layer 2 if MCP credentials are out
 of sync with backend credentials.
 
-Current compose defaults assume backend seeded admin credentials (`admin/changeme`).
-If you rotate the admin password (recommended), also set MCP credentials in your
-runtime environment before deploy/restart:
+MCP authenticates with its own dedicated **service account**, never the human
+admin login (#187). The backend seeds/reconciles that account from
+`MCP_SERVICE_PASSWORD` (mapped from `MCP_PASSWORD` in the dist compose); no default
+ships, so MCP stays disabled until you set a real value. Do **not** point
+`MCP_USERNAME`/`MCP_SERVICE_USERNAME` at `admin` — the backend now refuses to
+reconcile a reserved human username as a service account (it would otherwise take
+over the admin row), so that leaves MCP down. Keep the dedicated default name `mcp`
+and set a strong password before deploy/restart:
 
 ```bash
-MCP_USERNAME=admin
-MCP_PASSWORD=<current-admin-password>
+MCP_USERNAME=mcp
+MCP_PASSWORD=<a-strong-secret-shared-with-the-MCP-server>
 ```
 
 Then recreate MCP:
@@ -340,7 +345,7 @@ Before deploying to production:
 - [ ] Configure `MODULE_LIBRARY_GIT_URL` and `MODULE_LIBRARY_GIT_REF`
 - [ ] Set `HOST_REPO_PATH` if you want GUI upgrades
 - [ ] Set strong `POSTGRES_PASSWORD` and `REDIS_PASSWORD` in `.env`
-- [ ] If backend admin password changed, set matching `MCP_USERNAME` / `MCP_PASSWORD` for MCP runtime
+- [ ] Set a strong `MCP_PASSWORD` (backend `MCP_SERVICE_PASSWORD`) with the dedicated `MCP_USERNAME=mcp` — never `admin` (reserved; the backend refuses it and MCP stays down)
 - [ ] After MCP credential changes, recreate MCP (`make mcp-recreate` or `make local-mcp-recreate`)
 - [ ] Run `make mcp-readiness` and confirm runtime tool calls pass
 - [ ] Ensure firewall rules allow ports 80/443 only from trusted networks
