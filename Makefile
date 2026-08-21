@@ -524,7 +524,7 @@ smoke-mcp-live:
 	@echo ""
 	@echo "=== MCP Live Smoke Validation ==="
 	@echo "  NOTE: ping/tools-list reachability != runtime readiness; tool calls require valid MCP backend credentials."
-	@echo "  Configure MCP_USERNAME/MCP_PASSWORD if backend admin password was rotated."
+	@echo "  Configure MCP_USERNAME=mcp / MCP_PASSWORD (backend MCP_SERVICE_PASSWORD) — the dedicated MCP service account, never the admin login (#187)."
 	@python3 scripts/mcp_live_smoke.py --mcp-url "$${MCP_SMOKE_URL:-http://localhost:8081/mcp}" $${MCP_SMOKE_INSECURE_TLS:+--insecure-tls}
 
 mcp-readiness:

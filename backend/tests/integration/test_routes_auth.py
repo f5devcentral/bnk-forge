@@ -240,3 +240,71 @@ class TestUserCRUD:
         """Deleting nonexistent user returns 404."""
         response = client.delete("/api/auth/users/99999", headers=admin_headers)
         assert response.status_code == 404
+
+
+class TestServiceAccountReEnableGuard:
+    """bonnyr-f5 #188 (round 4): re-enabling a disabled service account via
+    PUT /api/auth/users/{id} must not resurrect a shipped default credential.
+    disable_stale_service_user only flips is_active; the bcrypt hash of
+    'mcp-service-changeme' stays, so a naive re-enable brought the default back.
+    """
+
+    def _seed_disabled_default_mcp(self, db):
+        from services.auth_service import (
+            disable_stale_service_user,
+            ensure_service_user,
+        )
+        ensure_service_user(db, username="mcp", password="mcp-service-changeme")
+        disable_stale_service_user(db)
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert mcp.is_active is False
+        assert mcp.is_service_account is True
+        return mcp
+
+    def test_reenable_refused_while_default_hash_present(
+        self, client, admin_headers, sample_user, db
+    ):
+        from core.errors import UnauthorizedError
+        from services.auth_service import authenticate_user
+
+        mcp = self._seed_disabled_default_mcp(db)
+        resp = client.put(
+            f"/api/auth/users/{mcp.id}",
+            json={"is_active": True},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 400
+        assert "known default password" in resp.json()["error"]["message"]
+
+        db.refresh(mcp)
+        assert mcp.is_active is False  # re-enable refused
+
+        # Mutation test: the shipped default must NOT authenticate.
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")
+
+    def test_reenable_allowed_after_real_password_rotation(
+        self, client, admin_headers, sample_user, db
+    ):
+        """A service account carrying a real (non-default) hash re-enables fine —
+        the guard is scoped to known-default hashes only."""
+        from core.errors import UnauthorizedError
+        from services.auth_service import authenticate_user, ensure_service_user
+
+        self._seed_disabled_default_mcp(db)
+        # Operator rotates to a strong secret (startup re-seeds + re-activates).
+        ensure_service_user(db, username="mcp", password="a-real-strong-secret")
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert mcp.is_active is True
+
+        # Admin may still toggle it via the route now that no default hash remains.
+        resp = client.put(
+            f"/api/auth/users/{mcp.id}", json={"is_active": True}, headers=admin_headers
+        )
+        assert resp.status_code == 200
+        db.refresh(mcp)
+        assert mcp.is_active is True
+        assert authenticate_user(db, "mcp", "a-real-strong-secret").is_active is True
+        # And the old default is gone for good.
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")

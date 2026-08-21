@@ -10,7 +10,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from core.config import settings
+from core.config import MCP_KNOWN_DEFAULT_PASSWORDS, settings
 from core.errors import BadRequestError, ConflictError, UnauthorizedError
 from models import User
 
@@ -32,6 +32,20 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plaintext password against a hash."""
     return cast(bool, pwd_context.verify(plain_password, hashed_password))
+
+
+def holds_known_default_password(user: User) -> bool:
+    """True if the user's stored hash still matches a shipped default password.
+
+    bonnyr-f5 #188 (round 4): disable_stale_service_user only flips is_active — it
+    never touches the hash. So a disabled service account still carries
+    bcrypt("mcp-service-changeme"), and simply re-activating the row (e.g. via
+    PUT /api/auth/users/{id}) would bring the published default credential back to
+    life. The re-enable path checks this so a known default can never be revived
+    without first rotating to a real secret.
+    """
+    stored = str(user.hashed_password)
+    return any(verify_password(candidate, stored) for candidate in MCP_KNOWN_DEFAULT_PASSWORDS)
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:

@@ -365,12 +365,18 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # Auth-probe healthcheck (bonnyr-f5 #188, INV-10): log in to the backend with
+    # the configured MCP credentials and exit non-zero on 401 OR when no credential
+    # is configured. MCP_PASSWORD ships empty (see .env.example), so without this the
+    # container would report green while every tool call 401s. A bare liveness ping
+    # can't see that — it only proves the HTTP port answers. Same probe the dev
+    # compose uses, so the "no creds -> unhealthy" signal fires on the shipped path too.
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; req=urllib.request.Request('http://localhost:8081/mcp',headers={'Accept':'application/json,text/event-stream','Content-Type':'application/json'},data=b'{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"method\\\":\\\"ping\\\",\\\"id\\\":1}'); urllib.request.urlopen(req)\" 2>/dev/null || exit 1"]
+      test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
     deploy:
       resources:
         limits:

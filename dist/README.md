@@ -31,6 +31,7 @@ nano .env   # Set BNK_FORGE_REGISTRY and passwords
 | `BNK_FORGE_VERSION` | Image version tag | `3.0.1` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | *(change for production)* |
 | `REDIS_PASSWORD` | Redis password | *(change for production)* |
+| `MCP_PASSWORD` | Password for the dedicated `mcp` service account (backend `MCP_SERVICE_PASSWORD`). Ships **empty** — MCP stays disabled until you set a strong secret. Never `admin`. | *(required to enable MCP)* |
 
 ### 3. Authenticate to registry (if private)
 

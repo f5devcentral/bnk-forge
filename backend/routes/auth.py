@@ -32,6 +32,7 @@ from services.auth_service import (
     create_access_token,
     create_user,
     get_user_from_token,
+    holds_known_default_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -355,6 +356,25 @@ def update_user(
         target.email = request.email
 
     if request.is_active is not None:
+        # bonnyr-f5 #188: re-enabling a service account that still holds a shipped
+        # default password would resurrect the published default credential (disable
+        # only flips is_active — the bcrypt("mcp-service-changeme") hash is left in
+        # place). Refuse the re-enable until the secret is rotated; the operator sets
+        # MCP_SERVICE_PASSWORD (startup re-seeds and re-activates the row with a real
+        # hash) or changes the password explicitly. Never restore a known default.
+        if (
+            request.is_active
+            and not target.is_active
+            and target.is_service_account
+            and holds_known_default_password(target)
+        ):
+            from core.errors import BadRequestError
+            raise BadRequestError(
+                f"Cannot re-enable service account '{target.username}': it still "
+                "holds a known default password. Rotate the credential first — set "
+                "MCP_SERVICE_PASSWORD to a strong secret and restart the backend "
+                "(it re-seeds and re-activates the account with a real hash)."
+            )
         target.is_active = request.is_active
 
     db.commit()
