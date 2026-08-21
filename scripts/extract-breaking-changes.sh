@@ -27,7 +27,7 @@ _is_breaking_subject() { grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$1"; }
 # non-line-start marker, silently dropping the break from the CHANGELOG and
 # Release body (#179 review).
 _breaking_note() {
-  awk '/\\yBREAKING[[:space:] -]+CHANGE\\y/{p=1} p{print;n++} p&&(/^$/||n>=40){exit}' <<< "$1" \
+  awk '/(^|[^[:alnum:]])BREAKING[[:space:] -]+CHANGE([^[:alnum:]]|$)/{p=1} p{print;n++} p&&(/^$/||n>=40){exit}' <<< "$1" \
     | tr '\n' ' ' | sed 's/\*\*//g; s/  */ /g; s/ *$//'
 }
 
@@ -71,7 +71,7 @@ while IFS= read -r sha; do
   ${note}
 "
   fi
-done < <(git log "${SINCE}..${UNTIL}" --first-parent --format='%H' 2>/dev/null || true)
+done < <(git log "${SINCE}..${UNTIL}" --format='%H' 2>/dev/null || true)
 
 if [[ -n "$block" ]]; then
   printf '### ⚠️ Breaking Changes\n\n%s\n' "$block"

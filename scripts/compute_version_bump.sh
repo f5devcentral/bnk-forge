@@ -99,7 +99,7 @@ fi
 
 # A resolvable SINCE_TAG whose range is empty (tag == HEAD) still slips through as
 # patch -- a phantom duplicate release (bonnyr-f5 #179). Refuse the empty range.
-if [[ -n "$SINCE_TAG" ]] && [[ -z "$(git log "${SINCE_TAG}..HEAD" --first-parent --format='%H' 2>/dev/null)" ]]; then
+if [[ -n "$SINCE_TAG" ]] && [[ -z "$(git log "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null)" ]]; then
   echo "::error::Range ${SINCE_TAG}..HEAD is empty (tag == HEAD?) -- refusing to derive a duplicate release." >&2
   exit 1
 fi
@@ -124,9 +124,9 @@ fi
 BUMP_TYPE="patch"
 
 if [[ -z "$SINCE_TAG" ]]; then
-  RANGE_HASHES=$(git log --first-parent --format='%H' 2>/dev/null || true)
+  RANGE_HASHES=$(git log --format='%H' 2>/dev/null || true)
 else
-  RANGE_HASHES=$(git log --first-parent "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null || true)
+  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null || true)
 fi
 
 while IFS= read -r sha; do
@@ -143,9 +143,12 @@ while IFS= read -r sha; do
   # *finding* the marker made the branch evaluate false and the bump silently
   # stayed patch (non-deterministic, ~14/20 wrong on a big body). Here-strings
   # have no writer process to signal, so the result is deterministic.
-  msg="${subject}"$'\n'"${body}"
+  # bonnyr-f5 #179: honour the marker only in the BODY (its spec footer home),
+  # not the subject -- else `docs: explain BREAKING CHANGE` in a subject bumps
+  # major with no note, disagreeing with the extractor. A real breaking change is
+  # a `type!:` subject OR a BREAKING CHANGE body footer.
   if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subject" \
-     || grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$msg"; then
+     || grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$body"; then
     BUMP_TYPE="major"
     break
   fi
@@ -164,9 +167,9 @@ done <<< "$RANGE_HASHES"
 # SIGPIPE race (marker present, bump silently patch) by aborting rather than
 # shipping a mis-versioned release.
 if [[ -n "$SINCE_TAG" ]]; then
-  ALL_MSGS=$(git log --first-parent "${SINCE_TAG}..HEAD" --format='%B' 2>/dev/null || true)
+  ALL_MSGS=$(git log "${SINCE_TAG}..HEAD" --format='%b' 2>/dev/null || true)
 else
-  ALL_MSGS=$(git log --first-parent --format='%B' 2>/dev/null || true)
+  ALL_MSGS=$(git log --format='%b' 2>/dev/null || true)
 fi
 if grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$ALL_MSGS" && [[ "$BUMP_TYPE" != "major" ]]; then
   echo "::error::Derived bump '$BUMP_TYPE' but a BREAKING CHANGE marker exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
@@ -232,8 +235,8 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
       ${since:+--since-tag "$since"} --baseline "$baseline" 2>/dev/null || true)
 
     local got_bump got_ver
-    got_bump=$(echo "$result" | grep BUMP_TYPE | cut -d= -f2)
-    got_ver=$(echo "$result" | grep TARGET_VERSION | cut -d= -f2)
+    got_bump=$(echo "$result" | grep BUMP_TYPE | cut -d= -f2 || true)
+    got_ver=$(echo "$result" | grep TARGET_VERSION | cut -d= -f2 || true)
 
     rm -rf "$tmpdir"
 
@@ -259,8 +262,11 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   run_test "breaking ! → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "feat!: redesign API,fix(ui): icon"
 
-  # Test 4: no commits → patch bump
-  run_test "no commits → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" ""
+  # Test 4: empty range (tag == HEAD) → the guard refuses (no output).
+  run_test "empty range (tag==HEAD) → refused" "" "" "v1.2.3" "1.2.3" ""
+
+  # Test 4b (bonnyr-f5 INV-15): a marker in SUBJECT prose only must NOT bump.
+  run_test "marker in subject prose → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" "docs: explain the BREAKING CHANGE footer"
 
   # Test 5: BREAKING CHANGE footer in the BODY → major (the PR #177 bug: a
   # fix-subject commit whose body declares the break must still bump major).
