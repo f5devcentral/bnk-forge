@@ -14,10 +14,19 @@ container-runner hardening series (#2, #123, #161) and the ADR-424 bare-metal/DP
 work — is part of 4.0.0, not v3.1.6, and is recorded under the 4.0.0 entry when
 that release is cut.
 
-> **Heads-up for the 4.0.0 upgrade:** the container runner's non-root gate now
-> refuses *named* users — an image using the distroless-standard `USER nonroot`
-> is rejected. Switch it to a numeric uid (`USER 65532`, or `USER 1000`). See
-> the 4.0.0 entry for the full note.
+> **Heads-up for the 4.0.0 upgrade — two breaking changes:**
+>
+> 1. **Container runner non-root gate:** it now refuses *named* users — an image
+>    using the distroless-standard `USER nonroot` is rejected. Switch it to a
+>    numeric uid. Use **`USER 1000`** (it can write the workspace, which is
+>    chowned `1000:1000`); `USER 65532` clears the gate but cannot write the
+>    workspace without a relaxed mount mode.
+> 2. **`MCP_SERVICE_PASSWORD` is now required (bonnyr-f5 #188):** in
+>    staging/production the backend refuses to boot if it is unset or still the
+>    shipped default (`changeme` / `mcp-service-changeme`). Every existing
+>    install has one of those values, so **set `MCP_SERVICE_PASSWORD` to a real
+>    secret (the same value the MCP server gets as `BNK_FORGE_PASSWORD`) before
+>    upgrading**, or the stack will `SystemExit` at startup.
 
 ## v3.0.1 — 3.0.x line
 
