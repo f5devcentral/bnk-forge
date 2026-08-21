@@ -123,7 +123,7 @@ All images carry standard OCI labels injected at build time via `docker-bake.hcl
 | `org.opencontainers.image.source` | `https://github.com/f5devcentral/bnk-forge` |
 | `org.opencontainers.image.revision` | git commit SHA (`GIT_REVISION` bake arg) |
 | `org.opencontainers.image.version` | `VERSION` file contents |
-| `org.opencontainers.image.created` | RFC 3339 timestamp of the build |
+| `org.opencontainers.image.created` | RFC 3339 build timestamp (`CREATED` bake arg). Emitted only when set — CI release builds set it to the release commit's committer date; a plain `make push-images` leaves it unset and the label is omitted rather than written empty. |
 
 Inject `GIT_REVISION` when calling bake:
 

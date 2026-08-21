@@ -34,10 +34,14 @@ variable "SOURCE_URL" {
 #   same tag can produce different layer diff_ids and a different image digest
 #   (bonnyr-f5 #181 round 4, verified: two SOURCE_DATE_EPOCH-pinned builds gave
 #   divergent digests). Because a republish may not resolve to the original
-#   digest, the immutable :VERSION tag is protected the honest way — the release
-#   workflow's existence probe REFUSES a republish by default and requires an
-#   explicit force= to overwrite (see release.yml "Refuse to overwrite an
-#   already-published tag"), rather than by relying on determinism we do not have.
+#   digest, the immutable :VERSION tag is protected the honest way — an existence
+#   probe REFUSES a republish by default and requires an explicit force to
+#   overwrite — rather than by relying on determinism we do not have. That probe
+#   guards BOTH paths that bake --push this file: the release workflow (see
+#   release.yml "Refuse to overwrite an already-published tag") and the operator
+#   `make push-images` command (Makefile, FORCE_LATEST=1 to override). Both call
+#   scripts/registry-tag-probe.sh, so the protection is not fixed at one call
+#   site only (bonnyr-f5 #181 round 5, F3).
 variable "CREATED" {
   default = ""
 }
@@ -48,12 +52,21 @@ group "default" {
 
 target "_common" {
   platforms = split(",", PLATFORMS)
-  labels = {
-    "org.opencontainers.image.source"   = SOURCE_URL
-    "org.opencontainers.image.revision" = GIT_REVISION
-    "org.opencontainers.image.version"  = VERSION
-    "org.opencontainers.image.created"  = CREATED
-  }
+  # Omit org.opencontainers.image.created entirely when CREATED is empty instead
+  # of stamping an empty-string label: an empty value is spec-invalid and
+  # falsifies the label table in docs/DOCKER.md. A plain `docker buildx bake`
+  # (e.g. `make push-images`, which does not set CREATED) must not emit the key
+  # at all; CI sets CREATED to the release commit's committer date. This is the
+  # same conditional shape the ROLLING_TAG tags use below (bonnyr-f5 #181 round
+  # 5, F7).
+  labels = merge(
+    {
+      "org.opencontainers.image.source"   = SOURCE_URL
+      "org.opencontainers.image.revision" = GIT_REVISION
+      "org.opencontainers.image.version"  = VERSION
+    },
+    CREATED != "" ? { "org.opencontainers.image.created" = CREATED } : {},
+  )
 }
 
 target "_backend" {

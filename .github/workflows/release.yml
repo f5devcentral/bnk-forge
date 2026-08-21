@@ -79,6 +79,11 @@ on:
         required: false
         type: boolean
         default: false
+      sign_only:
+        description: "Recovery for a publish that pushed all images but failed at signing (e.g. cosign/OIDC error AFTER the bake succeeded). Re-runs cosign sign + SBOM + provenance against the ALREADY-pushed :VERSION digests WITHOUT rebuilding or re-pushing — cosign sign is idempotent and the immutable tag never moves. Requires publish_only=<tag>. Use this instead of force=true for a sign-only recovery: force rebuilds all images to possibly-different digests and moves the immutable tag (the exact INV-24 harm the overwrite guard exists to prevent)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -177,7 +182,16 @@ jobs:
         id: kind
         env:
           PUBLISH_ONLY: ${{ inputs.publish_only }}
+          SIGN_ONLY: ${{ inputs.sign_only }}
         run: |
+          # sign_only is a recovery MODE of publish_only (re-sign already-pushed
+          # images), not a release path of its own. Refuse it without a target
+          # tag so it can never be dispatched against a from-scratch build
+          # (bonnyr-f5 #181 round 5, F2).
+          if [ "$SIGN_ONLY" = "true" ] && [ -z "$PUBLISH_ONLY" ]; then
+            echo "::error::sign_only requires publish_only=<tag>: it re-signs the images already published for an EXISTING tag, it does not build a release."
+            exit 1
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$PUBLISH_ONLY" ]; then
             echo "kind=publish_only" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -582,9 +596,13 @@ jobs:
 
           # Cap the commit list but say so on truncation -- a silent `head -50`
           # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
-          # The `|| true` guards the FILTER only (an all-"release:" range leaves
-          # grep -v with no output, rc 1 under pipefail); it does NOT mask the
-          # breaking-change detector, which stays fail-closed.
+          # The `|| true` here guards the FILTER only (an all-"release:" range
+          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
+          # claim extract-breaking-changes.sh is fail-closed: on this ref that
+          # script still ends its own range query with `|| true` (line 33), so a
+          # bogus range there yields rc 0 and an empty section. The fail-closed
+          # fix for that script lands with #179, which owns it — this PR does not
+          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
           CAP=300
           if [ -n "$LAST_FINAL" ]; then
             FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
@@ -666,9 +684,13 @@ jobs:
 
           # Cap the commit list but say so on truncation -- a silent `head -50`
           # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
-          # The `|| true` guards the FILTER only (an all-"release:" range leaves
-          # grep -v with no output, rc 1 under pipefail); it does NOT mask the
-          # breaking-change detector, which stays fail-closed.
+          # The `|| true` here guards the FILTER only (an all-"release:" range
+          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
+          # claim extract-breaking-changes.sh is fail-closed: on this ref that
+          # script still ends its own range query with `|| true` (line 33), so a
+          # bogus range there yields rc 0 and an empty section. The fail-closed
+          # fix for that script lands with #179, which owns it — this PR does not
+          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
           CAP=300
           if [ -n "$LAST_FINAL" ]; then
             FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
@@ -879,6 +901,22 @@ jobs:
           ref: v${{ needs.preflight.outputs.new_version }}
           fetch-depth: 0
 
+      - name: Fetch the tag-safety probe from the workflow ref
+        # The step above checks out the RELEASE TAG so bake builds that tree.
+        # But scripts/registry-tag-probe.sh must be run from the CURRENT
+        # workflow ref, not the tag: a publish_only recovery of a tag cut BEFORE
+        # this probe existed would otherwise find no script in the tag's tree and
+        # the guard would error. github.sha (the ref running this workflow) always
+        # carries the probe once these changes land, so source it from there into
+        # a side path, leaving the tag checkout at the workspace root untouched.
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: |
+            scripts/registry-tag-probe.sh
+          sparse-checkout-cone-mode: false
+
       - name: Resolve release commit
         id: rev
         run: |
@@ -918,6 +956,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0
 
       - name: Re-check recency inside the publish critical section
+        if: inputs.sign_only != true
         env:
           RELEASE_KIND: ${{ needs.preflight.outputs.release_kind }}
         run: |
@@ -935,7 +974,31 @@ jobs:
           # publish_only republish still emit its :VERSION tags when it is behind
           # the newest release — it just does NOT move :latest — instead of being
           # stranded (bonnyr-f5 #181 round 4).
-          git fetch --tags --force --quiet origin || true
+          # The tag probe must fail CLOSED when it is indeterminate. `git fetch
+          # … || true` swallows a network/permission failure; if the local tag
+          # set is then empty or stale, the else-branch below would set
+          # ROLLING_TAG=latest and move the floating tag on an UNVERIFIED guess
+          # that this release is the newest — the same fail-OPEN class the round-4
+          # lesson closed for the registry probe, on the adjacent line (bonnyr-f5
+          # #181 round 5, F5). So capture the fetch result and, when it fails,
+          # never move :latest on a guess: a publish_only republish still owes
+          # consumers the immutable :VERSION tags (proceed with ROLLING_TAG="",
+          # which does NOT touch :latest), while a final/manual release that
+          # cannot prove recency goes RED.
+          if git fetch --tags --force --quiet origin; then
+            FETCH_OK=1
+          else
+            FETCH_OK=0
+          fi
+          if [ "$FETCH_OK" != "1" ]; then
+            if [ "$RELEASE_KIND" = "publish_only" ]; then
+              echo "::warning::Could not fetch tags to re-check recency; republishing the immutable :$VERSION tags but NOT moving :latest."
+              echo "ROLLING_TAG=" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::Could not fetch tags to confirm v$VERSION is still the newest release before repointing :latest. Refusing to move the floating tag on an unverifiable tag set — re-run once origin is reachable."
+            exit 1
+          fi
           HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
           HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$VERSION" | sort -V | tail -1)"
           if [ -n "$HIGHEST_TAG" ] && [ "$VERSION" != "$HIGHEST" ]; then
@@ -954,8 +1017,16 @@ jobs:
           fi
 
       - name: Refuse to overwrite an already-published tag
+        if: inputs.sign_only != true
         env:
           FORCE: ${{ inputs.force }}
+          # Basic creds for the registry's Bearer-token challenge, so the probe
+          # reads manifests as this authenticated identity (packages: write),
+          # not anonymously — an anonymous probe of a not-yet-existing package
+          # returns 401/denied, which fails closed and would strand the first
+          # release in a namespace.
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # docker-bake pushes ${REGISTRY}/<img>:${VERSION} unconditionally and
           # the tag is declared IMMUTABLE. Probe the registry first: if the
@@ -966,28 +1037,42 @@ jobs:
           # normal recovery case — a tag whose publish never completed — has no
           # manifest yet, so it passes through untouched.
           #
-          # A non-zero `docker manifest inspect` is ambiguous: it means either
-          # "manifest genuinely not found" (safe to publish) OR a transient
-          # failure — auth expiry, GHCR 5xx/429, DNS/network blip, malformed
-          # ref — under which the tag may well exist and we simply could not
-          # see it. Reading every non-zero exit as "tag is free" fails OPEN and
-          # would overwrite an immutable tag on any transient error. So we
-          # capture the probe output and treat ONLY a definitive registry
-          # not-found signal as safe; every other failure is "unknown" and
-          # fails CLOSED — refuse unless force=true (bonnyr-f5 #181 round 4,
-          # INV-24).
+          # The probe is scripts/registry-tag-probe.sh, which classifies each
+          # image by the registry's HTTP STATUS, not by grepping the docker CLI's
+          # error text. That text CANNOT tell "package does not exist yet" (the
+          # first release in a fork/mirror namespace — SAFE) apart from "no
+          # permission on an existing package" (MUST fail closed): both print
+          # `denied` (bonnyr-f5 #181 round 5, F1). The HTTP API is unambiguous —
+          # 200 exists, 404 absent (tag OR repo not found → safe), 401/403 auth,
+          # everything else transient. Only a definitive 404 is "safe to
+          # publish"; auth / network / rate-limit / 5xx all classify UNKNOWN and
+          # fail CLOSED — refuse unless force=true (INV-24). This same probe
+          # guards the operator `make push-images` path (F3), so the class is
+          # fixed everywhere, not at one call site.
+          # Capture the probe's OUTPUT and EXIT STATUS. A bare
+          # `while … done < <(probe)` would ignore a non-zero exit — if the
+          # script itself failed (missing dependency, bad REGISTRY, no output)
+          # the loop would read zero lines, find nothing existing, and conclude
+          # "safe to publish": a fail-OPEN. So treat any probe that does not
+          # cleanly classify EVERY image as inconclusive and fail CLOSED.
+          IMAGES_N="$(bash .release-tooling/scripts/registry-tag-probe.sh --images | grep -c . || true)"
+          if ! PROBE_OUT="$(bash .release-tooling/scripts/registry-tag-probe.sh)"; then
+            PROBE_OUT=""
+          fi
+          PROBE_N="$(printf '%s\n' "$PROBE_OUT" | grep -c . || true)"
           EXISTING=""
           UNKNOWN=""
-          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
-            REF="${REGISTRY}/${name}:${VERSION}"
-            if probe="$(docker manifest inspect "$REF" 2>&1)"; then
-              EXISTING="${EXISTING}  ${REF}"$'\n'
-            elif printf '%s' "$probe" | grep -qiE 'no such manifest|manifest unknown|manifest_unknown|name unknown|name_unknown'; then
-              : # registry says the manifest/repo genuinely does not exist — safe
-            else
-              UNKNOWN="${UNKNOWN}  ${REF}: ${probe}"$'\n'
-            fi
-          done
+          if [ "$PROBE_N" -ne "$IMAGES_N" ]; then
+            UNKNOWN="  the registry existence probe did not classify all ${IMAGES_N} images (classified ${PROBE_N}); treating as inconclusive"$'\n'
+          else
+            while IFS=$'\t' read -r status ref detail; do
+              case "$status" in
+                exists)  EXISTING="${EXISTING}  ${ref}"$'\n' ;;
+                absent)  : ;; # 404 — the immutable tag is free
+                unknown) UNKNOWN="${UNKNOWN}  ${ref}: ${detail}"$'\n' ;;
+              esac
+            done <<< "$PROBE_OUT"
+          fi
           if [ -n "$UNKNOWN" ]; then
             printf 'Registry existence probe was inconclusive (a non-not-found error) for:\n%s' "$UNKNOWN"
             if [ "$FORCE" = "true" ]; then
@@ -1010,6 +1095,11 @@ jobs:
           fi
 
       - name: Build and push all images (docker-bake.hcl)
+        # Skipped in sign_only recovery: the images are already pushed, and the
+        # signing step below re-signs those exact digests. Rebuilding would
+        # produce possibly-different digests and move the immutable tag — the
+        # INV-24 harm sign_only exists to avoid (bonnyr-f5 #181 round 5, F2).
+        if: inputs.sign_only != true
         run: docker buildx bake --push default
         env:
           REGISTRY: ${{ env.REGISTRY }}
@@ -1037,12 +1127,18 @@ jobs:
           BNK_FORGE_VERSION: ${{ env.VERSION }}
 
       - name: Publish summary
+        env:
+          SIGN_ONLY: ${{ inputs.sign_only }}
         run: |
           # ROLLING_TAG comes from GITHUB_ENV (set by "Re-check recency"): empty
           # for a publish_only republish behind the newest release, which pushed
           # only the immutable :VERSION tags and did NOT move :latest. Report the
-          # tags actually pushed rather than always claiming :latest.
-          if [ -n "${ROLLING_TAG:-}" ]; then
+          # tags actually pushed rather than always claiming :latest. In
+          # sign_only recovery nothing was pushed at all — the existing digests
+          # were only (re-)signed — so say exactly that.
+          if [ "$SIGN_ONLY" = "true" ]; then
+            TAGS=":${{ needs.preflight.outputs.new_version }} (re-signed existing digests — no image pushed, :latest NOT moved)"
+          elif [ -n "${ROLLING_TAG:-}" ]; then
             TAGS=":${{ needs.preflight.outputs.new_version }}, :${ROLLING_TAG}"
           else
             TAGS=":${{ needs.preflight.outputs.new_version }} (floating :latest NOT moved — this republish is behind the newest release)"
@@ -1051,6 +1147,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
+          # Single-source the image list from the probe script (F6).
+          while IFS= read -r name; do
             echo "| ${name} | ${{ env.REGISTRY }}/${name}${TAGS} |" >> "$GITHUB_STEP_SUMMARY"
-          done
+          done < <(bash .release-tooling/scripts/registry-tag-probe.sh --images)
