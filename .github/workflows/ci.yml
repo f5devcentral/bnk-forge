@@ -254,22 +254,40 @@ jobs:
           # (both scripts use the SAME form as each other in either state). That
           # keeps this gate meaningful on this PR today AND on the merged stack.
           set -euo pipefail
+          E=scripts/extract-breaking-changes.sh
+          C=scripts/compute_version_bump.sh
+          # Adaptive check. #179 factors detection into _is_breaking_subject and
+          # _is_breaking_body FUNCTIONS (the body one is a paragraph-aware awk, not
+          # a single grep). When those functions exist, diff their full bodies --
+          # that guards the awk detector too, and answers bonnyr-f5 #179 r4's nit
+          # that compute had no function to diff. On the pre-#179 tree (inline
+          # greps, no functions) fall back to extracting the detector regex, so the
+          # gate stays meaningful on this PR before the stack merges.
+          _fn() { sed -n "/^$2()/,/^}/p" "$1"; }        # print a function definition
           _regex() {
             grep -oE "grep -qE '[^']*BREAKING[^']*CHANGE[^']*'" "$1" \
               | sed -E "s/^grep -qE '//; s/'\$//" | sort -u
           }
-          ex="$(_regex scripts/extract-breaking-changes.sh)"
-          cv="$(_regex scripts/compute_version_bump.sh)"
-          if [ -z "$ex" ] || [ -z "$cv" ]; then
-            echo "::error::could not extract a BREAKING CHANGE detector regex from one of the scripts (extract='$ex' compute='$cv')"; exit 1
+          if grep -q '^_is_breaking_body()' "$E" && grep -q '^_is_breaking_body()' "$C"; then
+            for fn in _is_breaking_subject _is_breaking_body; do
+              if [ "$(_fn "$E" "$fn")" != "$(_fn "$C" "$fn")" ]; then
+                echo "::error::INV-15 violated: $fn differs between the two scripts"
+                diff <(_fn "$E" "$fn") <(_fn "$C" "$fn") || true
+                exit 1
+              fi
+            done
+            echo "INV-15 OK: _is_breaking_subject + _is_breaking_body are byte-identical functions in both scripts"
+          else
+            ex="$(_regex "$E")"; cv="$(_regex "$C")"
+            if [ -z "$ex" ] || [ -z "$cv" ]; then
+              echo "::error::could not extract a BREAKING CHANGE detector from one of the scripts (extract='$ex' compute='$cv')"; exit 1
+            fi
+            if [ "$ex" != "$cv" ]; then
+              echo "::error::INV-15 violated: the BREAKING CHANGE detector regex differs between the two scripts"
+              echo "  extract: $ex"; echo "  compute: $cv"; exit 1
+            fi
+            echo "INV-15 OK (pre-#179 tree): detector regex identical across both scripts -> $ex"
           fi
-          if [ "$ex" != "$cv" ]; then
-            echo "::error::INV-15 violated: the BREAKING CHANGE detector differs between the two scripts"
-            echo "  extract-breaking-changes.sh: $ex"
-            echo "  compute_version_bump.sh:     $cv"
-            exit 1
-          fi
-          echo "INV-15 OK: BREAKING CHANGE detector identical across both scripts -> $ex"
           # Run the extractor's own self-test once #179's anchored extractor (which
           # adds --self-test) is in the tree. Until #179 merges to staging, this
           # PR's base carries the older extractor; warn LOUDLY (not a silent skip)
