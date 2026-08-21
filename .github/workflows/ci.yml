@@ -156,6 +156,17 @@ jobs:
         with:
           fetch-depth: 0   # full history so the range scan sees add-then-remove
       - name: gitleaks
+        env:
+          # bonnyr-f5 #182 r3 BLOCKER root-cause fix: the gitleaks image runs as
+          # root while the checkout is owned by `runner`, so git 2.35.2+ refuses
+          # the mount ("detected dubious ownership"), gitleaks then scans 0 commits
+          # and EXITS 0 -- a silently blind green gate. Whitelisting /repo via
+          # GIT_CONFIG_* env (no writable HOME needed, unlike `git config --global`)
+          # makes git trust the mount so the scan actually runs. The assertions in
+          # the step STILL run, so a future regression is caught, not masked.
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: /repo
         run: |
           # bonnyr-f5 #182 r2: scan the PR/push COMMIT RANGE in git mode, not the
           # working tree. --no-git misses a secret added then REMOVED within the
@@ -169,9 +180,46 @@ jobs:
             RANGE=""   # first push / no base — scan all reachable history
           fi
           echo "gitleaks scanning range: ${RANGE:-<all history>}"
-          docker run --rm -v "$PWD:/repo:ro" -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 detect \
+
+          # bonnyr-f5 #182 r3 BLOCKER: the gate must FAIL when it did not actually
+          # scan. On a bad revision range OR a dubious-ownership refusal, gitleaks
+          # prints "ERR [git] ..." + "0 commits scanned" and STILL exits 0 -- so a
+          # bare `docker run` gate goes green having scanned NOTHING; "0 commits
+          # scanned" and "11 commits scanned" are indistinguishable to it. Same
+          # lesson already applied to script-selftests (positive evidence + no
+          # silent pass). We capture the output and assert on it.
+          set +e
+          out="$(docker run --rm \
+            -e GIT_CONFIG_COUNT -e GIT_CONFIG_KEY_0 -e GIT_CONFIG_VALUE_0 \
+            -v "$PWD:/repo:ro" -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 detect \
             --source=/repo --config=/repo/.gitleaks.toml --redact --verbose \
-            ${RANGE:+--log-opts=$RANGE}
+            ${RANGE:+--log-opts=$RANGE} 2>&1)"
+          rc=$?
+          printf '%s\n' "$out"
+
+          # Strip ANSI so parsing is robust whether or not gitleaks colourises.
+          clean="$(printf '%s\n' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')"
+
+          # 1) Any git error (bad range, dubious ownership) means the scan never
+          #    saw the repo/range -- fail even though gitleaks exited 0.
+          if grep -qE 'ERR \[git\]' <<< "$clean"; then
+            echo "::error::gitleaks hit a git error (bad revision range or dubious ownership) -- the scan did not run"; exit 1
+          fi
+          # 2) Positive evidence the scan ran: gitleaks always prints "<N> commits
+          #    scanned" in git mode. No such line == silence == must not pass.
+          scanned="$(grep -oE '[0-9]+ commits scanned' <<< "$clean" | grep -oE '^[0-9]+' | tail -n1)"
+          echo "gitleaks reported commits scanned: ${scanned:-<none>}"
+          if [ -z "$scanned" ]; then
+            echo "::error::gitleaks printed no 'commits scanned' line -- no evidence the scan ran"; exit 1
+          fi
+          # 3) A non-empty range that scanned 0 commits scanned NOTHING.
+          if [ -n "$RANGE" ] && [ "$scanned" -eq 0 ]; then
+            echo "::error::gitleaks scanned 0 commits for range $RANGE -- the gate would have passed blind"; exit 1
+          fi
+          # 4) Real leaks make gitleaks exit non-zero -- that must still fail here.
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gitleaks exited $rc (leaks found or scan error)"; exit "$rc"
+          fi
 
   script-selftests:
     name: "P1 · Script Self-Tests"
