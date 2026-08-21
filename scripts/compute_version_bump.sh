@@ -77,15 +77,22 @@ bump_version() {
 
 # ── Breaking-change detectors ────────────────────────────────────────────────
 # INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
-# the copies in extract-breaking-changes.sh (#182's script-selftests asserts it).
-# A marker counts as a real footer when its line is preceded by a blank line OR by
-# another trailer line -- the footer block is "a blank line then a run of trailers",
-# and a footer may directly follow another footer (conventional-commits' own
-# canonical example, bonnyr-f5 #179 r5 Major 1). Wrapped prose (a marker after a
-# PROSE line) is still rejected. _is_breaking_subject is now BANG-ONLY: the folded-
-# footer-in-subject is caught by running _is_breaking_body on %B (which preserves
-# the newline git folds into %s), and scanning the raw subject for the marker
-# over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
+# the copies in extract-breaking-changes.sh. This is an invariant these two files
+# must uphold themselves; the CI job that DIFFS the two copies and fails on any
+# drift lands with #182 (bonnyr-f5 #179 r6 F4) and is NOT present in this tree, so
+# until #182 merges keep the two copies in lock-step by hand.
+#
+# A marker counts as a real footer under two anchors:
+#   * preceded by a BLANK line -> accepted with OR without a colon (keeps the #2
+#     no-colon paragraph break);
+#   * preceded by another TRAILER, or folded directly onto a conventional-commit
+#     SUBJECT -> accepted ONLY with a colon (catches a footer folded onto a scoped
+#     subject `fix(core): x`, bonnyr-f5 #179 r6 F1, while rejecting a prose header
+#     `Before:` / `Note:` followed by colon-less prose, r6 F2).
+# Wrapped prose (a marker after a PROSE line) is still rejected. _is_breaking_subject
+# is BANG-ONLY: the folded-footer-in-subject is caught by running _is_breaking_body
+# on %B (which preserves the newline git folds into %s), and scanning the raw subject
+# for the marker over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
 _is_breaking_subject() {
   grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
 }
@@ -94,10 +101,13 @@ _is_breaking_body() {
     BEGIN { prev_blank = 1; prev_trailer = 0 }
     /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
     {
-      is_marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
+      is_marker  = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE/)
+      is_colon   = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE(\*\*)?:/)
       is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
-      if ((prev_blank || prev_trailer) && is_marker) found = 1
-      prev_blank = 0; prev_trailer = is_trailer
+      if (prev_blank && is_marker) found = 1
+      else if (prev_trailer && is_colon) found = 1
+      is_subject = (NR == 1 && $0 ~ /^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]/)
+      prev_blank = 0; prev_trailer = (is_trailer || is_subject)
     }
     END { exit(found ? 0 : 1) }
   ' <<< "$1"
@@ -185,27 +195,14 @@ while IFS= read -r sha; do
   fi
 done <<< "$RANGE_HASHES"
 
-# ── Consistency guard (defence-in-depth) ──────────────────────────────────────
-# Re-derive "is any commit in the range breaking" INDEPENDENTLY of the loop above,
-# so a control-flow bug there (a bad break/assignment) can't ship a mis-versioned
-# release. It iterates PER COMMIT and calls the same detectors: paragraph-initial
-# body detection cannot run on concatenated %b (commit boundaries would form false
-# paragraphs), and folding means the signal can be in %s -- so this reads each
-# commit's %s AND %B, exactly as the loop does (bonnyr-f5 #179 r3/r4/r5).
-guard_breaking=0
-while IFS= read -r sha; do
-  [[ -z "$sha" ]] && continue
-  gsub=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
-  gmsg=$(git log -1 --format='%B' "$sha" 2>/dev/null || true)
-  if _is_breaking_subject "$gsub" || _is_breaking_body "$gmsg"; then
-    guard_breaking=1
-    break
-  fi
-done <<< "$RANGE_HASHES"
-if [[ "$guard_breaking" -eq 1 && "$BUMP_TYPE" != "major" ]]; then
-  echo "::error::Derived bump '$BUMP_TYPE' but a breaking change (type!: / folded footer subject, or a paragraph-initial BREAKING CHANGE body footer) exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
-  exit 1
-fi
+# NOTE (bonnyr-f5 #179 r6 F6): a second "consistency guard" loop used to sit here,
+# re-deriving "is any commit breaking" and refusing to ship if it disagreed with
+# BUMP_TYPE. It was REMOVED as provably dead code: it iterated the SAME
+# RANGE_HASHES in the SAME order, called the SAME detectors, and broke on the SAME
+# first hit -- so guard_breaking=1 implies the loop above already saw that commit
+# first and set BUMP_TYPE=major, making the `guard_breaking && != major` condition
+# unsatisfiable. It could never fire and no fixture could reach it, so it added a
+# full second range re-scan for zero defence rather than genuine independence.
 
 # ── Compute target version ────────────────────────────────────────────────────
 TARGET_VERSION=$(bump_version "$BASELINE" "$BUMP_TYPE")
@@ -336,9 +333,11 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   # pipe form takes SIGPIPE (141) and reads it as "no match". Deterministically
   # wrong once the tail clears the 64 KB pipe buffer. A single ~94 KB *line*
   # would NOT reproduce it (grep must read the whole line before deciding), so
-  # the tail must be many lines.
-  _line=$(head -c 60 </dev/zero | tr '\0' y)
-  _tl=$(for _ in $(seq 1 1500); do printf '%s\\n' "$_line"; done)
+  # the tail must be many lines. 400 lines x ~200 bytes = ~80 KB comfortably
+  # clears the 64 KB buffer while running ~4x fewer loop iterations than the old
+  # 1500x60 form (bonnyr-f5 #179 r6 runtime nit).
+  _line=$(head -c 200 </dev/zero | tr '\0' y)
+  _tl=$(for _ in $(seq 1 400); do printf '%s\\n' "$_line"; done)
   run_test "early marker + long multi-line tail → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "fix: big commit~~BODY~~BREAKING CHANGE: boom\\n${_tl}"
 
@@ -365,6 +364,40 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   # shape) must still derive major.
   run_test "paragraph-initial no-colon break → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "fix: harden the gate~~BODY~~context line about the change\\n\\nBREAKING CHANGE called out deliberately USER must become 1000"
+
+  # Test 9 (bonnyr-f5 #179 r6 F1 BLOCKER): a footer folded onto a SCOPED subject
+  # (two-line message, no blank) must derive major. The r5 anchor only reached the
+  # colon on UNSCOPED subjects (`(` broke the trailer regex); the r6 is_subject
+  # anchor makes any conventional-commit subject, scoped or not, arm the trailer->
+  # colon path. Red under r5, green under r6.
+  run_test "F1: scoped folded footer → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "feat(api): drop v1\\nBREAKING CHANGE: all /api/v1 removed"
+
+  # Test 9b (F1 control): the same folded footer WITHOUT a colon on a scoped subject
+  # must NOT trigger major -- the trailer/subject anchor demands a colon (only the
+  # blank-line anchor accepts a colon-less marker), which is what keeps F2 inert. A
+  # `fix(...)` subject is used (not `feat`) so the expected floor is a clean patch
+  # rather than the minor a feat subject would independently earn.
+  run_test "F1 control: scoped folded colonless → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
+    "fix(api): drop v1\\nBREAKING CHANGE happened here"
+
+  # Test 10 (bonnyr-f5 #179 r6 F2 MAJOR): a prose section header (`Before:`) is
+  # trailer-shaped, but a colon-LESS marker following it is prose, not a footer, so
+  # it must stay patch. This is the round-4 false positive the r6 trailer->colon
+  # rule closes. Green only because the marker below has no colon.
+  run_test "F2: prose header + colonless marker → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
+    "docs: explain migration~~BODY~~Before:\\nBREAKING CHANGE was matched anywhere before."
+
+  # Test 11 (bonnyr-f5 #179 r6 F7 MINOR): a real footer with the separator widened
+  # -- a DOUBLE space `BREAKING  CHANGE:` -- must still derive major (the base regex
+  # only allowed a single space/hyphen).
+  run_test "F7: double-space marker → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: rework flags~~BODY~~BREAKING  CHANGE: the --legacy flag was removed"
+
+  # Test 11b (F7): a markdown BULLET marker `- BREAKING CHANGE:` (release notes copy
+  # bullets footers) must still derive major.
+  run_test "F7: dash-bullet marker → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: rework flags~~BODY~~- BREAKING CHANGE: the --legacy flag was removed"
 
   # Test 8 (guard coverage — bonnyr-f5 #179 r3): an unresolvable --since-tag must
   # fail CLOSED (rc 1, no BUMP_TYPE output), not derive patch from an empty range.
