@@ -58,7 +58,7 @@ docker build --target worker --build-arg INSTALL_INFRACOST=true -t bnk-forge-wor
 
 ## Keyless Image Signing, SBOM, and Provenance
 
-BNK Forge images published to the registry are signed with **keyless cosign** (Sigstore Fulcio +
+BNK Forge images published **from v4.0.0 onward** (the first release cut through the signing pipeline) are signed with **keyless cosign** (Sigstore Fulcio +
 Rekor transparency log). No long-lived signing key is stored — the signature is bound to the
 OIDC identity of whoever ran the publish script at the time of signing.
 

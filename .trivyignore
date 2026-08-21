@@ -41,7 +41,7 @@ CVE-2026-33186
 #          available and we're still ignoring it.
 # Tracked: memory/followup_trivyignore_cve_2026_7598_revisit.md
 # Added: 2026-05-12
-CVE-2026-7598
+CVE-2026-7598 exp:2026-09-12
 
 # CVE-2026-42010: GnuTLS Authentication Bypass via NUL Character in DN parsing
 # Affects: libgnutls30t64 in our Debian Trixie base image (3.8.9-3+deb13u2)

@@ -216,7 +216,7 @@ sections:
     refs:
     - 'PR #285'
     - 'PR #288'
-    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/jlcode-tech) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
+    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/f5devcentral) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
     group: Top of queue — PRs open (CI-green)
   - title: Alembic migration deduplication (v2_131)
     status: shipped
