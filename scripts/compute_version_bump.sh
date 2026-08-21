@@ -134,21 +134,27 @@ while IFS= read -r sha; do
   subject=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
   body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
 
-  # Major: `type!:` in the subject, OR a BREAKING CHANGE / BREAKING-CHANGE marker
-  # anywhere in the message (footer or deliberate prose).
+  # Major: `type!:` in the subject, OR a line-start `BREAKING CHANGE` /
+  # `BREAKING-CHANGE` footer in the body (see the anchored detector note below).
   #
   # Pipe-free on purpose (PR #177 review): `foo | grep -q` under `set -o
   # pipefail` returns SIGPIPE (141) when grep matches early and the writer still
   # has a large body to push, which pipefail turns into a failed test -- so
   # *finding* the marker made the branch evaluate false and the bump silently
-  # stayed patch (non-deterministic, ~14/20 wrong on a big body). Here-strings
-  # have no writer process to signal, so the result is deterministic.
+  # stayed patch. It is DETERMINISTIC once the untransmitted tail exceeds the
+  # ~64 KB pipe buffer (12/12 on a >90 KB body, per the #179 r3 audit); only
+  # bodies sitting right at the buffer threshold look flaky. Here-strings have no
+  # writer process to signal SIGPIPE, so the read is always correct.
   # bonnyr-f5 #179: honour the marker only in the BODY (its spec footer home),
   # not the subject -- else `docs: explain BREAKING CHANGE` in a subject bumps
   # major with no note, disagreeing with the extractor. A real breaking change is
   # a `type!:` subject OR a BREAKING CHANGE body footer.
-  if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subject" \
-     || grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$body"; then
+  # INV-15: the footer detector is anchored to line-start (^) and byte-identical
+  # to _is_breaking in extract-breaking-changes.sh -- an unanchored match fired on
+  # uppercase prose anywhere in a body. The bang detector is case-insensitive on
+  # the type so `Feat!:` is not silently shipped as a patch (bonnyr-f5 #179 r3).
+  if grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$subject" \
+     || grep -qE '^(\*\*)?BREAKING[ -]CHANGE' <<< "$body"; then
     BUMP_TYPE="major"
     break
   fi
@@ -164,15 +170,24 @@ done <<< "$RANGE_HASHES"
 # ── Consistency guard (defence-in-depth) ──────────────────────────────────────
 # Independent of the loop above and pipe-free: if any commit in the range
 # declares a breaking change, the bump MUST be major. This would have caught the
-# SIGPIPE race (marker present, bump silently patch) by aborting rather than
+# SIGPIPE bug (marker present, bump silently patch) by aborting rather than
 # shipping a mis-versioned release.
+# Re-derive "any breaking commit in range" INDEPENDENTLY of the loop, checking
+# BOTH signals the loop honours: a `type!:` subject AND a `^BREAKING CHANGE` body
+# footer. Reading only bodies (%b) here left the guard blind to subject-declared
+# breaks -- drop the loop's subject detector and `feat!:` would derive patch with
+# the guard silent, the exact failure mode the guard exists to catch (#179 r3).
 if [[ -n "$SINCE_TAG" ]]; then
-  ALL_MSGS=$(git log "${SINCE_TAG}..HEAD" --format='%b' 2>/dev/null || true)
+  ALL_SUBJECTS=$(git log "${SINCE_TAG}..HEAD" --format='%s' 2>/dev/null || true)
+  ALL_BODIES=$(git log "${SINCE_TAG}..HEAD" --format='%b' 2>/dev/null || true)
 else
-  ALL_MSGS=$(git log --format='%b' 2>/dev/null || true)
+  ALL_SUBJECTS=$(git log --format='%s' 2>/dev/null || true)
+  ALL_BODIES=$(git log --format='%b' 2>/dev/null || true)
 fi
-if grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$ALL_MSGS" && [[ "$BUMP_TYPE" != "major" ]]; then
-  echo "::error::Derived bump '$BUMP_TYPE' but a BREAKING CHANGE marker exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
+if { grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$ALL_SUBJECTS" \
+     || grep -qE '^(\*\*)?BREAKING[ -]CHANGE' <<< "$ALL_BODIES"; } \
+   && [[ "$BUMP_TYPE" != "major" ]]; then
+  echo "::error::Derived bump '$BUMP_TYPE' but a breaking change (type!: subject or BREAKING CHANGE footer) exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
   exit 1
 fi
 
@@ -190,6 +205,12 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   echo ""
   echo "=== SELF-TEST ==="
   SELFTEST_FAILURES=0
+  SELFTEST_ASSERTIONS=0
+
+  # Resolve this script's own absolute path from BASH_SOURCE BEFORE unsetting
+  # SELF_TEST, so the recursive invocations below can find it regardless of cwd
+  # (the old "$OLDPWD/$(dirname "$0")" broke any non-cwd-relative call).
+  SELFTEST_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
   # SELF_TEST is an inherited environment variable — without unsetting it
   # here, run_test's recursive script invocations below would also enter
@@ -199,6 +220,8 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   run_test() {
     local desc="$1" expected_bump="$2" expected_ver="$3"
     local since="$4" baseline="$5" commits_str="$6"
+    local _b
+    SELFTEST_ASSERTIONS=$((SELFTEST_ASSERTIONS + 1))
     # Create a temp dir with a fake git repo for deterministic testing
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -231,7 +254,10 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
 
     # Run the version computer inside the temp repo so it scans the fake range.
     local result
-    result=$(cd "$tmpdir" && bash "$OLDPWD/$(dirname "$0")/$(basename "$0")" \
+    # Invoke by absolute path resolved from BASH_SOURCE, so the self-test works
+    # regardless of cwd or how the script was called ($OLDPWD/$0 broke any
+    # non-cwd-relative invocation -- bonnyr-f5 #179 r3 nit).
+    result=$(cd "$tmpdir" && bash "$SELFTEST_SCRIPT" \
       ${since:+--since-tag "$since"} --baseline "$baseline" 2>/dev/null || true)
 
     local got_bump got_ver
@@ -279,7 +305,7 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     "fix: tidy up~~BODY~~this is explicitly not a breaking change"
 
   # Test 7: marker on an early LINE with ~90 KB of lines after it -- the real
-  # SIGPIPE race (PR #177 review). grep is line-oriented, so with the marker on
+  # SIGPIPE bug (PR #177 review). grep is line-oriented, so with the marker on
   # line 1 it matches and exits while the writer still has the tail to push; the
   # pipe form takes SIGPIPE (141) and reads it as "no match". Deterministically
   # wrong once the tail clears the 64 KB pipe buffer. A single ~94 KB *line*
@@ -290,9 +316,37 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   run_test "early marker + long multi-line tail → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "fix: big commit~~BODY~~BREAKING CHANGE: boom\\n${_tl}"
 
+  # Test 8 (guard coverage — bonnyr-f5 #179 r3): an unresolvable --since-tag must
+  # fail CLOSED (rc 1, no BUMP_TYPE output), not derive patch from an empty range.
+  # This exercises the unresolvable-SINCE_TAG guard, which previously had none.
+  _grd_tmp=$(mktemp -d)
+  git init -q "$_grd_tmp"
+  git -C "$_grd_tmp" config user.email "selftest@bnk-forge.local"
+  git -C "$_grd_tmp" config user.name "bnk-forge self-test"
+  git -C "$_grd_tmp" commit --allow-empty -m "initial" -q
+  SELFTEST_ASSERTIONS=$((SELFTEST_ASSERTIONS + 1))
+  _grd_rc=0
+  _grd_out=$(cd "$_grd_tmp" && bash "$SELFTEST_SCRIPT" --since-tag v9.9.9 --baseline 1.0.0 2>/dev/null) || _grd_rc=$?
+  rm -rf "$_grd_tmp"
+  if [[ "$_grd_rc" -ne 0 && -z "$_grd_out" ]]; then
+    echo "  PASS: unresolvable --since-tag fails closed (rc=$_grd_rc, no output)"
+  else
+    echo "  FAIL: unresolvable --since-tag should refuse (got rc=$_grd_rc out='$_grd_out')"
+    SELFTEST_FAILURES=$((SELFTEST_FAILURES + 1))
+  fi
+
   echo "=== END SELF-TEST ==="
+  # INV-16: a harness that runs zero assertions must not report success. This
+  # catches a self-test that silently no-ops (e.g. a renamed run_test); #182's
+  # script-selftests job additionally asserts the PASS count and this END marker
+  # externally, so renaming the SELF_TEST guard itself is caught there too.
+  if [[ "$SELFTEST_ASSERTIONS" -eq 0 ]]; then
+    echo "SELF-TEST: zero assertions ran — harness is dead" >&2
+    exit 1
+  fi
   if [[ "$SELFTEST_FAILURES" -ne 0 ]]; then
     echo "SELF-TEST: ${SELFTEST_FAILURES} failure(s)" >&2
     exit 1
   fi
+  echo "compute_version_bump self-test: OK (${SELFTEST_ASSERTIONS} assertions)"
 fi
