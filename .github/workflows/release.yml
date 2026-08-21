@@ -11,8 +11,10 @@
 # ║    feat                    → minor                                          ║
 # ║    fix / other             → patch                                          ║
 # ║                                                                             ║
-# ║  Infinite-loop guard: commits starting with "release: " have [skip ci]    ║
-# ║  appended and are filtered out by the head-commit check below.             ║
+# ║  Loop guard: our automated release commits carry [skip ci] in the SUBJECT, ║
+# ║  so GitHub drops their push runs before this workflow even starts. The job ║
+# ║  below is a backstop that FAILS the run on any OTHER suppressed commit — a ║
+# ║  release that published nothing must never read as green.                  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 name: Release
@@ -22,9 +24,13 @@ on:
     branches:
       - staging
       - main
-    # MUST stay in sync with ci.yml's push-trigger paths-ignore list — a
-    # divergence lets a push trigger Release without a matching CI run,
-    # which then times out the preflight SHA poll below (PR #297 review).
+    # ci.yml has NO push paths-ignore any more: it runs CI on EVERY push to
+    # main/staging (ci.yml:31-36, #182). That is a strict superset of the pushes
+    # that reach Release here, so any push that starts a release is guaranteed a
+    # matching CI run for the preflight SHA poll below to find — regardless of
+    # what this list ignores. This paths-ignore therefore only spares docs-only
+    # pushes from kicking off a release at all (PR #297 review; premise updated
+    # for #182, which removed ci.yml's paths-ignore).
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -47,17 +53,43 @@ on:
           - major   # 2.10.49 → 3.0.0
       run_e2e:
         description: "Run E2E tests before release"
-        required: true
+        # Not required: a publish_only recovery run ignores it (it has a default
+        # and never gates the republish path) — bonnyr-f5 #181 round 2.
+        required: false
         default: true
         type: boolean
       release_notes:
-        description: "Release notes (one-line summary)"
-        required: true
+        description: "Release notes (one-line summary). Ignored when publish_only is set."
+        # Not required for the same reason: publish_only recovery runs ignore it.
+        required: false
+        default: ""
         type: string
+      publish_only:
+        description: "Recovery: republish images for an EXISTING tag (e.g. v4.0.0). Leave empty for a normal release. When set, version_bump / run_e2e / release_notes are ignored."
+        required: false
+        type: string
+        default: ""
+      force:
+        description: "Overwrite images that ALREADY exist in the registry for this tag. Off by default: publishing refuses when the :VERSION manifest is already present, so a republish can't silently move an immutable tag and orphan its cosign/SBOM/SLSA attestations. Only a recovery of a tag whose publish never completed needs this off; set it on to deliberately re-push."
+        required: false
+        type: boolean
+        default: false
+      sign_only:
+        description: "Recovery for a publish that pushed all images but failed at signing (e.g. cosign/OIDC error AFTER the bake succeeded). Re-runs cosign sign + SBOM + provenance against the ALREADY-pushed :VERSION digests WITHOUT rebuilding or re-pushing — cosign sign is idempotent and the immutable tag never moves. Requires publish_only=<tag>. Use this instead of force=true for a sign-only recovery: force rebuilds all images to possibly-different digests and moves the immutable tag (the exact INV-24 harm the overwrite guard exists to prevent)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false  # Never cancel a release in progress
+
+# Least-privilege default so guard/preflight don't inherit the repo-default
+# token scope (bonnyr-f5 #181 round 2). Jobs that need more (contents: write to
+# push tags, packages/id-token to publish) declare it themselves below; a job's
+# own permissions: block replaces this one rather than merging.
+permissions:
+  contents: read
 
 jobs:
   # ── Guard: skip release: commits on main (prevents infinite loop) ────────────
@@ -73,13 +105,48 @@ jobs:
           HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           MSG="$HEAD_COMMIT_MSG"
-          # Skip if triggered by our own release commit or [skip ci] sentinel
-          if echo "$MSG" | grep -qE '^release: |^\[skip ci\]|\[skip ci\]$'; then
-            echo "Skipping: head commit is a release commit or has [skip ci]"
+          FIRST="${MSG%%$'\n'*}"
+          # Match the SUBJECT line only. grep is line-oriented, so testing the
+          # whole message let a [skip ci] line buried in the body — a quoted CI
+          # snippet, a changelog paste — suppress a legitimate release while the
+          # message below quoted a subject carrying no marker (bonnyr-f5 #181
+          # round 2). On a normal push GitHub's own [skip ci] handling already
+          # drops our release commits (their subject is "release: vX.Y.Z
+          # [skip ci]") before this workflow starts, and on workflow_dispatch
+          # head_commit is null so FIRST is empty and nothing matches — this
+          # guard is a backstop, not the primary suppressor.
+          if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$FIRST"; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            # Only OUR OWN automated release commit is exempt (a silent, green
+            # skip). It has a distinguishing fingerprint that a human commit does
+            # not: the subject is EXACTLY "release: vX.Y.Z [skip ci]" — a version
+            # AND the skip marker we ourselves append (see the two `git commit`
+            # calls below). Matching "release:" + a version alone was wrong: a
+            # hand-written commit like "release: v3.2.0 notes" (a human writing
+            # release notes, no marker) also matched and was silently skipped
+            # green, publishing nothing while reporting success — the exact
+            # silent-green class this guard exists to prevent (bonnyr-f5 #181
+            # round 4). Requiring the trailing [skip ci] marker restricts the
+            # exemption to commits we minted.
+            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST" && grep -qE '\[skip ci\]$' <<< "$FIRST"; then
+              # Our own automated release commit reached the guard anyway (e.g.
+              # a re-tag or a replay that kept the marker). The release it names
+              # was already published by the run that created it, so suppressing
+              # it is expected -- a notice, and the run stays green.
+              echo "::notice::Loop guard: skipping our own release commit \"$FIRST\" (expected -- it was published by the previous run)."
+              exit 0
+            fi
+            # Any OTHER suppressed commit is unexpected: a hand-written
+            # [skip ci], a human "release: ..." subject with no marker, or a
+            # squash-merged PR titled "release: …(#N)". The run publishes
+            # nothing, so it must NOT report success -- a release that did not
+            # happen has to be loud, not a silent green (bonnyr-f5 #181 round 3
+            # and 4). Fail the guard; downstream jobs are gated on should_run and
+            # stay skipped, so nothing is published either way.
+            echo "::error::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. To cut a NEW release, push a normal commit whose subject does NOT begin with 'release: ' and carries no skip marker (it will release on merge to main). To re-publish images for an EXISTING tag, dispatch this workflow with publish_only=<tag> — do not manually dispatch a final release on a skip-marked head, GitHub creates no CI run for it and the CI-status check cannot pass."
+            exit 1
           fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
   # ── Pre-flight: verify CI passed + derive version ────────────────────────────
   preflight:
@@ -87,11 +154,20 @@ jobs:
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout + read VERSION/tags
+      actions: read    # gh run list --workflow=ci.yml (the CI-status poll)
     outputs:
       current_version: ${{ steps.version.outputs.current }}
       new_version: ${{ steps.version.outputs.new }}
       bump_type: ${{ steps.version.outputs.bump_type }}
       release_kind: ${{ steps.kind.outputs.kind }}
+    env:
+      # Env-indirect the ref name (bonnyr-f5 #181 round 2): a branch name can
+      # legally carry $(), backticks, ; and | (workflow_dispatch targets any
+      # branch), so it's read from env in run: blocks, never interpolated —
+      # same rule this PR applies to release_notes/publish_only.
+      REF_NAME: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -99,20 +175,81 @@ jobs:
 
       - name: Determine release kind
         id: kind
+        env:
+          PUBLISH_ONLY: ${{ inputs.publish_only }}
+          SIGN_ONLY: ${{ inputs.sign_only }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # sign_only is a recovery MODE of publish_only (re-sign already-pushed
+          # images), not a release path of its own. Refuse it without a target
+          # tag so it can never be dispatched against a from-scratch build
+          # (bonnyr-f5 #181 round 5, F2).
+          if [ "$SIGN_ONLY" = "true" ] && [ -z "$PUBLISH_ONLY" ]; then
+            echo "::error::sign_only requires publish_only=<tag>: it re-signs the images already published for an EXISTING tag, it does not build a release."
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$PUBLISH_ONLY" ]; then
+            echo "kind=publish_only" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "kind=manual" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "main" ]; then
+          elif [ "$REF_NAME" = "main" ]; then
             echo "kind=final" >> "$GITHUB_OUTPUT"
           else
             echo "kind=rc" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check CI status on this branch
+      - name: Restrict manual release to main
+        if: steps.kind.outputs.kind == 'manual'
+        env:
+          DISPATCH_REF: ${{ github.ref }}
         run: |
-          BRANCH="${{ github.ref_name }}"
+          # A manual (non-publish_only) dispatch builds THIS ref's tree, commits
+          # the version bump to it, tags it, and publishes it as :latest.
+          # Dispatching from staging or a side branch would ship an unreviewed
+          # tree as the released :latest, and the recency guard would not catch
+          # it (a numerically higher version passes: measured ALLOW new=5.0.0
+          # highest=v4.0.5).
+          #
+          # The dispatched ref must BE main itself (refs/heads/main). An earlier
+          # "ancestor of main" exemption was WRONG: staging sits 0-ahead/1-behind
+          # main, so `git merge-base --is-ancestor origin/staging origin/main` is
+          # true, and a manual dispatch on staging slipped through — the exact ref
+          # this step names as the hazard (release commit+tag+GitHub Release land
+          # on staging, :latest built from it, main never bumped) (bonnyr-f5 #181
+          # round 4). Any ancestor of main is by definition already ON main's
+          # first-parent history if it was merged, so requiring the ref to be main
+          # loses nothing legitimate. publish_only is exempt (kind != manual): it
+          # republishes an existing tag by checking that tag out, independent of
+          # the dispatched ref.
+          if [ "$DISPATCH_REF" = "refs/heads/main" ]; then
+            echo "Dispatched from main."
+            exit 0
+          fi
+          echo "::error::A manual final release must be dispatched from main itself (refs/heads/main). '$REF_NAME' (ref '$DISPATCH_REF') is not main — dispatching it would publish an unreviewed tree as :latest. Merge to main and dispatch from there, or use publish_only to republish an existing tag."
+          exit 1
+
+      - name: Check CI status on this branch
+        if: steps.kind.outputs.kind != 'publish_only'
+        run: |
+          BRANCH="$REF_NAME"
           SHA="${{ github.sha }}"
           echo "Checking CI status for branch '$BRANCH' at commit $SHA"
+
+          # Fail FAST on a CI-skip-marked head instead of polling for 2700s.
+          # After every automated release, main's head is
+          # "release: vX.Y.Z [skip ci]"; GitHub creates NO CI run for a commit
+          # carrying a skip marker, so a manual final dispatch on that head would
+          # poll for a run that will never appear and only surface the problem
+          # after the full 45-minute timeout. There is no CI to wait for and none
+          # is coming, so refuse immediately with the real recovery, rather than
+          # advising a wait (bonnyr-f5 #181 round 4). A genuine change never
+          # reaches here skip-marked: GitHub drops skip-marked pushes before the
+          # workflow starts, so this only trips on a manual dispatch of a
+          # skip-marked head.
+          HEAD_SUBJECT="$(git log -1 --format=%s HEAD)"
+          if grep -qiE '\[skip ci\]|\[ci skip\]|\[skip actions\]' <<< "$HEAD_SUBJECT"; then
+            echo "::error::The head commit \"$HEAD_SUBJECT\" carries a CI-skip marker, so GitHub created no CI run for it and none ever will — waiting would only time out after ${CI_POLL_TIMEOUT_SECONDS}s. This is the state main is left in immediately after an automated release. To cut a NEW release, push a normal (non-skip-marked) commit and let it release on merge to main. To re-publish images for the EXISTING tag, dispatch this workflow with publish_only=<tag>, which skips this CI check."
+            exit 1
+          fi
 
           # Match the CI run by the exact commit SHA that triggered this
           # release, not by "--limit=1 --branch=X" (which is racy: on main,
@@ -148,12 +285,16 @@ jobs:
                   exit 0
                 fi
                 if [ "$RUN_CONCLUSION" = "cancelled" ]; then
-                  # ci.yml runs with cancel-in-progress: true, so a rapid
-                  # follow-up push to the same branch cancels this SHA's CI
-                  # run. That's not a CI failure for this SHA — it means a
-                  # newer push superseded it, so fail fast instead of
-                  # reporting a generic non-success error.
-                  echo "::error::CI run for $SHA was cancelled — superseded by a newer push; this release attempt is stale, the newer push will release instead."
+                  # A cancelled CI run is not a success for this SHA, so fail
+                  # fast rather than reporting a generic non-success error.
+                  # NOTE (premise updated for #182): ci.yml does NOT cancel
+                  # in-progress runs on main/staging — cancel-in-progress is
+                  # false for exactly these release branches (ci.yml:48), each
+                  # push gets its own concurrency group. So a cancellation here
+                  # is no longer necessarily "a newer push superseded it"; it may
+                  # have been cancelled by other means (e.g. a manual cancel).
+                  # Either way the run is stale — do not release on it.
+                  echo "::error::CI run for $SHA was cancelled — this release attempt is stale (a newer push, if any, will release instead)."
                   exit 1
                 fi
                 echo "::error::CI run for commit $SHA on branch '$BRANCH' completed with conclusion '$RUN_CONCLUSION'."
@@ -176,14 +317,34 @@ jobs:
 
       - name: Derive version from conventional commits
         id: version
+        env:
+          PUBLISH_ONLY: ${{ inputs.publish_only }}
         run: |
           chmod +x scripts/compute_version_bump.sh
 
           RELEASE_KIND="${{ steps.kind.outputs.kind }}"
           CURRENT=$(cat VERSION)
+          # Validate before it reaches $GITHUB_OUTPUT: a newline in VERSION would
+          # inject a second output key, and current_version is interpolated into
+          # several later run: blocks (bonnyr-f5 #181 round 2).
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION file contents '$CURRENT' are not a valid MAJOR.MINOR.PATCH version."
+            exit 1
+          fi
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
-          if [ "$RELEASE_KIND" = "manual" ]; then
+          if [ "$RELEASE_KIND" = "publish_only" ]; then
+            # Recovery path: no derivation, no bump. Republish an existing tag.
+            # publish_only is free-text, so read it from env (never inline it into
+            # the script) and validate its shape before use (#181 review).
+            TAG="$PUBLISH_ONLY"
+            if [[ ! "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::publish_only='$TAG' is not a final release tag (vMAJOR.MINOR.PATCH). Republish repoints :latest across all images and must not point it at an rc/pre-release or an arbitrary string."
+              exit 1
+            fi
+            NEW="${TAG#v}"
+            BUMP="republish"
+          elif [ "$RELEASE_KIND" = "manual" ]; then
             # Manual override: use the dropdown input directly
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             case "${{ inputs.version_bump }}" in
@@ -203,12 +364,50 @@ jobs:
             BUMP="$BUMP_TYPE"
           fi
 
+          # :latest recency guard — covers the paths that both MINT a new tag and
+          # repoint :latest to it: final and manual. A version below the highest
+          # final tag would drag :latest backward (bonnyr-f5 #181 round 2 —
+          # release-manual from a maintenance branch could tag+publish a version
+          # below the highest final tag). rc tags are pre-releases and never touch
+          # :latest, so they're exempt.
+          #
+          # publish_only is NOT hard-failed here: a republish re-emits the
+          # IMMUTABLE :VERSION tags of an ALREADY-released version whose original
+          # publish half-completed, and it owes those tags to consumers regardless
+          # of what has been released since. Failing it on recency stranded it
+          # forever — once any newer tag existed, the half-published version's
+          # images could never be produced by ANY path (bonnyr-f5 #181 round 4).
+          # A republish must still never move :latest backward, but that is a
+          # decision about the FLOATING tag only, and it is made authoritatively
+          # inside the publish job's critical section (see "Re-check recency"),
+          # not here. :latest is set by whatever release-publish last ran, not by
+          # this ref's VERSION file, so that check compares against the highest
+          # FINAL tag at push time.
+          if [ "$RELEASE_KIND" = "final" ] || [ "$RELEASE_KIND" = "manual" ]; then
+            HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$NEW" | sort -V | tail -1)"
+            if [ -n "$HIGHEST_TAG" ] && [ "$NEW" != "$HIGHEST" ]; then
+              echo "::error::Release v$NEW is older than the highest released tag $HIGHEST_TAG; publishing would move :latest backward."
+              exit 1
+            fi
+          fi
+
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
           echo "Version: $CURRENT -> $NEW (bump: $BUMP)"
 
+      - name: Check republish tag exists
+        if: steps.kind.outputs.kind == 'publish_only'
+        run: |
+          TAG="v${{ steps.version.outputs.new }}"
+          if ! git tag -l "$TAG" | grep -q "^${TAG}$"; then
+            echo "::error::publish_only requested tag $TAG, which does not exist. Republish only targets an already-created tag."
+            exit 1
+          fi
+          echo "Republishing images for existing tag $TAG"
+
       - name: Check final tag doesn't already exist
-        if: steps.kind.outputs.kind != 'rc'
+        if: steps.kind.outputs.kind != 'rc' && steps.kind.outputs.kind != 'publish_only'
         run: |
           TAG="v${{ steps.version.outputs.new }}"
           if git tag -l "$TAG" | grep -q "^${TAG}$"; then
@@ -234,6 +433,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -249,9 +450,22 @@ jobs:
         id: rc
         run: |
           TARGET="${{ needs.preflight.outputs.new_version }}"
-          # Count existing rc tags for this target version
-          RC_COUNT=$(git tag -l "v${TARGET}-rc.*" | wc -l | tr -d ' ')
-          RC_NUM=$((RC_COUNT + 1))
+          # Highest existing rc number for this target + 1. Max-based, not
+          # count-based (#177 review): counting breaks if any rc tag is ever
+          # deleted -- the count drops and the next push recomputes an existing
+          # tag, which then fails to create.
+          # NB: this step must NOT `set -o pipefail`. `grep -E` returns 1 when a
+          # version has no rc tags yet; without pipefail the substitution takes
+          # tail's status and ${RC_MAX:-0} yields the first rc as 1. Adding
+          # pipefail here would fail rc.1 of every new version.
+          # Escape TARGET's dots so the sed anchor matches them literally, not
+          # as "any char" (bonnyr-f5 #181 round 2). The grep -l glob already
+          # pre-filters to real tags, but a literal-dot pattern is correct.
+          TARGET_RE="${TARGET//./\\.}"
+          RC_MAX=$(git tag -l "v${TARGET}-rc.*" \
+            | sed -E "s|^v${TARGET_RE}-rc\.([0-9]+)$|\1|" \
+            | grep -E '^[0-9]+$' | sort -n | tail -1)
+          RC_NUM=$(( ${RC_MAX:-0} + 1 ))
           echo "rc_num=${RC_NUM}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=v${TARGET}-rc.${RC_NUM}" >> "$GITHUB_OUTPUT"
           echo "RC tag will be: v${TARGET}-rc.${RC_NUM}"
@@ -265,7 +479,7 @@ jobs:
           git tag -a "$RC_TAG" \
             -m "Pre-release ${RC_TAG}
           Target: v${TARGET} (${BUMP} bump)
-          Branch: ${{ github.ref_name }}
+          Branch: ${REF_NAME}
           Commit: ${{ github.sha }}"
 
           git push origin "$RC_TAG"
@@ -285,18 +499,28 @@ jobs:
           NOTES="## Pre-release ${RC_TAG}
 
           **Target release:** v${TARGET} (${BUMP} bump)
-          **Branch:** ${{ github.ref_name }}
+          **Branch:** ${REF_NAME}
           **Commit:** ${{ github.sha }}
 
           ### Commits since ${LAST_FINAL:-initial}
           "
 
+          # Cap the commit list, but say so when it truncates -- a silent `head`
+          # dropped 17 of 67 commits from published notes with no indication
+          # (bonnyr-f5 #179 r3). CAP is generous enough that normal ranges are
+          # complete; a larger range appends an explicit "and N more" line.
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMIT_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | head -40)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s")
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMIT_LOG=$(git log --pretty=format:"- %s" | head -40)
+            FULL_LOG=$(git log --pretty=format:"- %s")
             BREAKING=""
+          fi
+          COMMIT_LOG=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMIT_LOG=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMIT_LOG" "$((TOTAL - CAP))")
           fi
 
           if [ -n "$BREAKING" ]; then
@@ -312,7 +536,7 @@ jobs:
             --title "${{ steps.rc.outputs.rc_tag }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
             --prerelease \
-            --target "${{ github.ref_name }}"
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -325,7 +549,7 @@ jobs:
           echo "| RC Tag | ${{ steps.rc.outputs.rc_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Target Version | v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump Type | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Final Release (main push) ─────────────────────────────────────────────────
@@ -336,6 +560,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -355,6 +581,10 @@ jobs:
           if git ls-files --error-unmatch dist/VERSION 2>/dev/null; then
             echo "$NEW" > dist/VERSION
           fi
+          # Keep the Helm chart tag/appVersion and frontend package.json in
+          # lockstep so the chart never pins an image tag the release doesn't
+          # publish (#177 Blocker 2).
+          bash scripts/sync-version-artifacts.sh --write "$NEW"
 
       - name: Update CHANGELOG.md
         run: |
@@ -367,14 +597,27 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V | tail -1)
 
+          # Cap the commit list but say so on truncation -- a silent `head -50`
+          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
+          # The `|| true` here guards the FILTER only (an all-"release:" range
+          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
+          # claim extract-breaking-changes.sh is fail-closed: on this ref that
+          # script still ends its own range query with `|| true` (line 33), so a
+          # bogus range there yields rc 0 and an empty section. The fail-closed
+          # fix for that script lands with #179, which owns it — this PR does not
+          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
+            FULL_LOG=$(git log --pretty=format:"- %s" | { grep -v "^- release: " || true; })
             BREAKING=""
+          fi
+          COMMITS=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMITS=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMITS" "$((TOTAL - CAP))")
           fi
 
           # Build the entry in a temp file rather than interpolating COMMITS
@@ -413,8 +656,32 @@ jobs:
           NEW="${{ needs.preflight.outputs.new_version }}"
           BUMP="${{ needs.preflight.outputs.bump_type }}"
 
-          # Stage VERSION, dist/VERSION (if tracked), CHANGELOG
+          # Stage VERSION, dist/VERSION (if tracked), CHANGELOG, and the
+          # version-bearing artifacts synced above (#177 Blocker 2).
           git add VERSION CHANGELOG.md
+          # Stage EXACTLY the artifacts sync-version-artifacts.sh owns, from its
+          # own --list, so a newly-synced file can never be left unstaged and die
+          # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
+          # files, the hard-coded `git add` staged three).
+          staged=0
+          while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
+          # if --list ever yields fewer paths (script broke / was truncated) the
+          # add + verify loops both go silent and we would commit a bare VERSION
+          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
+          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
+          # per-file "not fully staged" check below cannot catch this: it runs the
+          # same possibly-empty --list, so an empty list makes it vacuously pass.
+          if [ "$staged" -lt 5 ]; then
+            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          fi
+          # Verify the INDEX, not the files: --write's post-write check re-reads
+          # the files (correct on disk even when unstaged), so assert each synced
+          # artifact has no unstaged residue — i.e. the sync is actually in the
+          # commit we are about to make.
+          while IFS= read -r f; do
+            git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
+          done < <(bash scripts/sync-version-artifacts.sh --list)
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${NEW} [skip ci]
@@ -429,7 +696,7 @@ jobs:
 
       - name: Push commit and tag
         run: |
-          git push origin "${{ github.ref_name }}"
+          git push origin "${REF_NAME}"
           git push origin "v${{ needs.preflight.outputs.new_version }}"
 
       - name: Generate final release notes
@@ -442,14 +709,27 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V | tail -2 | head -1)
 
+          # Cap the commit list but say so on truncation -- a silent `head -50`
+          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
+          # The `|| true` here guards the FILTER only (an all-"release:" range
+          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
+          # claim extract-breaking-changes.sh is fail-closed: on this ref that
+          # script still ends its own range query with `|| true` (line 33), so a
+          # bogus range there yields rc 0 and an empty section. The fail-closed
+          # fix for that script lands with #179, which owns it — this PR does not
+          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
+            FULL_LOG=$(git log --pretty=format:"- %s" | { grep -v "^- release: " || true; })
             BREAKING=""
+          fi
+          COMMITS=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMITS=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMITS" "$((TOTAL - CAP))")
           fi
 
           {
@@ -469,7 +749,7 @@ jobs:
           gh release create "v${{ needs.preflight.outputs.new_version }}" \
             --title "v${{ needs.preflight.outputs.new_version }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            --target "${{ github.ref_name }}"
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -481,7 +761,7 @@ jobs:
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | ${{ needs.preflight.outputs.current_version }} -> v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Manual Release (workflow_dispatch) ───────────────────────────────────────
@@ -498,6 +778,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # bonnyr-f5 #181: release_notes is free-text; read it from env so a value
+      # with " or $() can't break out of a run: script (same rule as publish_only).
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -515,12 +800,13 @@ jobs:
           if git ls-files --error-unmatch dist/VERSION 2>/dev/null; then
             echo "${{ needs.preflight.outputs.new_version }}" > dist/VERSION
           fi
+          bash scripts/sync-version-artifacts.sh --write "${{ needs.preflight.outputs.new_version }}"
 
       - name: Update changelog
         run: |
           NEW_VERSION="${{ needs.preflight.outputs.new_version }}"
           DATE=$(date +%Y-%m-%d)
-          NOTES="${{ inputs.release_notes }}"
+          NOTES="${RELEASE_NOTES}"
 
           # See the "Update CHANGELOG.md" step in release-final for why this
           # goes through a temp file + awk instead of an inline sed s-command
@@ -548,11 +834,34 @@ jobs:
       - name: Commit and tag
         run: |
           git add VERSION CHANGELOG.md
+          # Stage EXACTLY the artifacts sync-version-artifacts.sh owns, from its
+          # own --list, so a newly-synced file can never be left unstaged and die
+          # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
+          # files, the hard-coded `git add` staged three).
+          staged=0
+          while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
+          # if --list ever yields fewer paths (script broke / was truncated) the
+          # add + verify loops both go silent and we would commit a bare VERSION
+          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
+          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
+          # per-file "not fully staged" check below cannot catch this: it runs the
+          # same possibly-empty --list, so an empty list makes it vacuously pass.
+          if [ "$staged" -lt 5 ]; then
+            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          fi
+          # Verify the INDEX, not the files: --write's post-write check re-reads
+          # the files (correct on disk even when unstaged), so assert each synced
+          # artifact has no unstaged residue — i.e. the sync is actually in the
+          # commit we are about to make.
+          while IFS= read -r f; do
+            git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
+          done < <(bash scripts/sync-version-artifacts.sh --list)
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]
 
-          ${{ inputs.release_notes }}
+          ${RELEASE_NOTES}
 
           Bump: ${{ inputs.version_bump }}
           Previous: v${{ needs.preflight.outputs.current_version }}
@@ -560,19 +869,19 @@ jobs:
           E2E: ${{ needs.e2e-gate.result || 'skipped' }}"
 
           git tag -a "v${{ needs.preflight.outputs.new_version }}" \
-            -m "Release v${{ needs.preflight.outputs.new_version }}: ${{ inputs.release_notes }}"
+            -m "Release v${{ needs.preflight.outputs.new_version }}: ${RELEASE_NOTES}"
 
       - name: Push
         run: |
-          git push origin "${{ github.ref_name }}"
+          git push origin "${REF_NAME}"
           git push origin "v${{ needs.preflight.outputs.new_version }}"
 
       - name: Create GitHub Release
         run: |
           gh release create "v${{ needs.preflight.outputs.new_version }}" \
             --title "v${{ needs.preflight.outputs.new_version }}" \
-            --notes "${{ inputs.release_notes }}" \
-            --target "${{ github.ref_name }}"
+            --notes "${RELEASE_NOTES}" \
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -584,10 +893,10 @@ jobs:
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | ${{ needs.preflight.outputs.current_version }} -> ${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump | ${{ inputs.version_bump }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| CI | passed |" >> "$GITHUB_STEP_SUMMARY"
           echo "| E2E | ${{ needs.e2e-gate.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Notes | ${{ inputs.release_notes }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Notes | ${RELEASE_NOTES} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Publish images to ghcr (final releases only) ──────────────────────────────
   # Two problems, one job:
@@ -609,10 +918,24 @@ jobs:
       - release-manual
     if: |
       always() &&
-      (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
-      (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+      (
+        (
+          (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
+          (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+        )
+        ||
+        (needs.preflight.outputs.release_kind == 'publish_only' && needs.preflight.result == 'success')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The workflow-level group above is per-ref, but :latest is a single global
+    # registry resource: a republish from one ref and a final release from
+    # another could otherwise push :latest concurrently, a TOCTOU that defeats
+    # the recency guard. Serialize the actual :latest writer on one global queue
+    # so those pushes can never interleave (bonnyr-f5 #181 round 2).
+    concurrency:
+      group: release-publish-latest
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -629,9 +952,40 @@ jobs:
           ref: v${{ needs.preflight.outputs.new_version }}
           fetch-depth: 0
 
+      - name: Fetch the tag-safety probe from the workflow ref
+        # The step above checks out the RELEASE TAG so bake builds that tree.
+        # But scripts/registry-tag-probe.sh must be run from the CURRENT
+        # workflow ref, not the tag: a publish_only recovery of a tag cut BEFORE
+        # this probe existed would otherwise find no script in the tag's tree and
+        # the guard would error. github.sha (the ref running this workflow) always
+        # carries the probe once these changes land, so source it from there into
+        # a side path, leaving the tag checkout at the workspace root untouched.
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: |
+            scripts/registry-tag-probe.sh
+          sparse-checkout-cone-mode: false
+
       - name: Resolve release commit
         id: rev
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          # Pinned build inputs, NOT a reproducibility guarantee. The release
+          # commit's committer date is fixed for a given tag, so baking with it
+          # (CREATED) instead of the removed timestamp() default, plus
+          # SOURCE_DATE_EPOCH, removes two obvious sources of build-to-build
+          # variance. It does NOT make the rebuild byte-identical: the images run
+          # apt/apk/pip/npm against live indexes and there is no buildkit
+          # rewrite-timestamp pass, so a rebuild of the same tag can and does
+          # resolve to a DIFFERENT digest (bonnyr-f5 #181 round 4). That is
+          # exactly why a republish is refused by default and gated behind
+          # force= — see the "Refuse to overwrite an already-published tag" step.
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "created=$(git log -1 --format=%cI HEAD)"
+            echo "epoch=$(git log -1 --format=%ct HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -652,7 +1006,151 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@v0
 
+      - name: Re-check recency inside the publish critical section
+        if: inputs.sign_only != true
+        env:
+          RELEASE_KIND: ${{ needs.preflight.outputs.release_kind }}
+        run: |
+          # preflight's recency guard runs OUTSIDE this job's concurrency group,
+          # so two releases can both pass it and then race to write the single
+          # global :latest. This job is serialized on release-publish-latest, so
+          # re-checking the highest final tag HERE — after acquiring the slot,
+          # immediately before the push — is the authoritative gate: a release
+          # that is no longer the newest must not repoint :latest backward
+          # (bonnyr-f5 #181 round 3). rc never reaches this job.
+          #
+          # This step OWNS the :latest-move decision: it writes ROLLING_TAG to
+          # GITHUB_ENV, and the bake step below tags :$ROLLING_TAG (empty ==>
+          # push only the immutable :VERSION, see docker-bake.hcl). That lets a
+          # publish_only republish still emit its :VERSION tags when it is behind
+          # the newest release — it just does NOT move :latest — instead of being
+          # stranded (bonnyr-f5 #181 round 4).
+          # The tag probe must fail CLOSED when it is indeterminate. `git fetch
+          # … || true` swallows a network/permission failure; if the local tag
+          # set is then empty or stale, the else-branch below would set
+          # ROLLING_TAG=latest and move the floating tag on an UNVERIFIED guess
+          # that this release is the newest — the same fail-OPEN class the round-4
+          # lesson closed for the registry probe, on the adjacent line (bonnyr-f5
+          # #181 round 5, F5). So capture the fetch result and, when it fails,
+          # never move :latest on a guess: a publish_only republish still owes
+          # consumers the immutable :VERSION tags (proceed with ROLLING_TAG="",
+          # which does NOT touch :latest), while a final/manual release that
+          # cannot prove recency goes RED.
+          if git fetch --tags --force --quiet origin; then
+            FETCH_OK=1
+          else
+            FETCH_OK=0
+          fi
+          if [ "$FETCH_OK" != "1" ]; then
+            if [ "$RELEASE_KIND" = "publish_only" ]; then
+              echo "::warning::Could not fetch tags to re-check recency; republishing the immutable :$VERSION tags but NOT moving :latest."
+              echo "ROLLING_TAG=" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::Could not fetch tags to confirm v$VERSION is still the newest release before repointing :latest. Refusing to move the floating tag on an unverifiable tag set — re-run once origin is reachable."
+            exit 1
+          fi
+          HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$VERSION" | sort -V | tail -1)"
+          if [ -n "$HIGHEST_TAG" ] && [ "$VERSION" != "$HIGHEST" ]; then
+            if [ "$RELEASE_KIND" = "publish_only" ]; then
+              # Behind the newest tag: re-emit the immutable :VERSION tags but do
+              # NOT touch the floating :latest (ROLLING_TAG="").
+              echo "::notice::v$VERSION is behind the highest tag $HIGHEST_TAG; republishing the immutable :$VERSION tags but NOT moving :latest."
+              echo "ROLLING_TAG=" >> "$GITHUB_ENV"
+            else
+              echo "::error::Refusing to publish v$VERSION: the highest released tag is now $HIGHEST_TAG, so repointing :latest would move it backward."
+              exit 1
+            fi
+          else
+            echo "v$VERSION is the highest final tag; safe to repoint :latest."
+            echo "ROLLING_TAG=latest" >> "$GITHUB_ENV"
+          fi
+
+      - name: Refuse to overwrite an already-published tag
+        if: inputs.sign_only != true
+        env:
+          FORCE: ${{ inputs.force }}
+          # Basic creds for the registry's Bearer-token challenge, so the probe
+          # reads manifests as this authenticated identity (packages: write),
+          # not anonymously — an anonymous probe of a not-yet-existing package
+          # returns 401/denied, which fails closed and would strand the first
+          # release in a namespace.
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # docker-bake pushes ${REGISTRY}/<img>:${VERSION} unconditionally and
+          # the tag is declared IMMUTABLE. Probe the registry first: if the
+          # :VERSION manifest already exists, republishing moves that immutable
+          # tag under anyone who pinned it AND orphans the cosign / SBOM / SLSA
+          # attestations bound to the OLD digest. Refuse by default; require the
+          # force input to overwrite deliberately (bonnyr-f5 #181 round 3). The
+          # normal recovery case — a tag whose publish never completed — has no
+          # manifest yet, so it passes through untouched.
+          #
+          # The probe is scripts/registry-tag-probe.sh, which classifies each
+          # image by the registry's HTTP STATUS, not by grepping the docker CLI's
+          # error text. That text CANNOT tell "package does not exist yet" (the
+          # first release in a fork/mirror namespace — SAFE) apart from "no
+          # permission on an existing package" (MUST fail closed): both print
+          # `denied` (bonnyr-f5 #181 round 5, F1). The HTTP API is unambiguous —
+          # 200 exists, 404 absent (tag OR repo not found → safe), 401/403 auth,
+          # everything else transient. Only a definitive 404 is "safe to
+          # publish"; auth / network / rate-limit / 5xx all classify UNKNOWN and
+          # fail CLOSED — refuse unless force=true (INV-24). This same probe
+          # guards the operator `make push-images` path (F3), so the class is
+          # fixed everywhere, not at one call site.
+          # Capture the probe's OUTPUT and EXIT STATUS. A bare
+          # `while … done < <(probe)` would ignore a non-zero exit — if the
+          # script itself failed (missing dependency, bad REGISTRY, no output)
+          # the loop would read zero lines, find nothing existing, and conclude
+          # "safe to publish": a fail-OPEN. So treat any probe that does not
+          # cleanly classify EVERY image as inconclusive and fail CLOSED.
+          IMAGES_N="$(bash .release-tooling/scripts/registry-tag-probe.sh --images | grep -c . || true)"
+          if ! PROBE_OUT="$(bash .release-tooling/scripts/registry-tag-probe.sh)"; then
+            PROBE_OUT=""
+          fi
+          PROBE_N="$(printf '%s\n' "$PROBE_OUT" | grep -c . || true)"
+          EXISTING=""
+          UNKNOWN=""
+          if [ "$PROBE_N" -ne "$IMAGES_N" ]; then
+            UNKNOWN="  the registry existence probe did not classify all ${IMAGES_N} images (classified ${PROBE_N}); treating as inconclusive"$'\n'
+          else
+            while IFS=$'\t' read -r status ref detail; do
+              case "$status" in
+                exists)  EXISTING="${EXISTING}  ${ref}"$'\n' ;;
+                absent)  : ;; # 404 — the immutable tag is free
+                unknown) UNKNOWN="${UNKNOWN}  ${ref}: ${detail}"$'\n' ;;
+              esac
+            done <<< "$PROBE_OUT"
+          fi
+          if [ -n "$UNKNOWN" ]; then
+            printf 'Registry existence probe was inconclusive (a non-not-found error) for:\n%s' "$UNKNOWN"
+            if [ "$FORCE" = "true" ]; then
+              echo "::warning::force=true — publishing despite an inconclusive existence probe; if any of these tags were in fact already published this overwrites the immutable :${VERSION} tag and orphans its cosign/SBOM/SLSA attestations."
+            else
+              echo "::error::Could not confirm whether the :${VERSION} tag is free: the registry probe failed with a non-not-found error (auth / network / rate-limit / bad ref). Refusing to publish because an existing immutable tag cannot be ruled out. Re-run once the registry is reachable, or re-dispatch with force=true only if you intend to overwrite."
+              exit 1
+            fi
+          fi
+          if [ -z "$EXISTING" ]; then
+            echo "No existing :${VERSION} manifests found — safe to publish."
+            exit 0
+          fi
+          printf 'Images already published for this tag:\n%s' "$EXISTING"
+          if [ "$FORCE" = "true" ]; then
+            echo "::warning::force=true — overwriting the existing :${VERSION} manifests; the cosign/SBOM/SLSA attestations bound to the previous digests are now orphaned."
+          else
+            echo "::error::Images for v${VERSION} already exist in ${REGISTRY}. Republishing would move the immutable :${VERSION} tag and orphan its attestations. Re-dispatch with force=true only if you intend to overwrite them."
+            exit 1
+          fi
+
       - name: Build and push all images (docker-bake.hcl)
+        # Skipped in sign_only recovery: the images are already pushed, and the
+        # signing step below re-signs those exact digests. Rebuilding would
+        # produce possibly-different digests and move the immutable tag — the
+        # INV-24 harm sign_only exists to avoid (bonnyr-f5 #181 round 5, F2).
+        if: inputs.sign_only != true
         run: docker buildx bake --push default
         env:
           REGISTRY: ${{ env.REGISTRY }}
@@ -661,7 +1159,17 @@ jobs:
           # OCI source label tracks whichever remote actually built the image.
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
           GIT_REVISION: ${{ steps.rev.outputs.sha }}
-          ROLLING_TAG: latest
+          # Pinned build inputs: fixed created label + SOURCE_DATE_EPOCH. These
+          # reduce build-to-build variance but do NOT guarantee an identical
+          # digest (see docker-bake.hcl and "Resolve release commit") — which is
+          # why the immutable-tag probe above refuses a republish by default.
+          CREATED: ${{ steps.rev.outputs.created }}
+          SOURCE_DATE_EPOCH: ${{ steps.rev.outputs.epoch }}
+          # ROLLING_TAG is NOT hardcoded here: the "Re-check recency" step wrote
+          # it to GITHUB_ENV — "latest" to move the floating tag, or "" for a
+          # publish_only republish that is behind the newest release (push only
+          # the immutable :VERSION tags). A step-level env: entry would override
+          # that GITHUB_ENV value, so it is intentionally omitted.
 
       - name: Sign, SBOM, and attest all images (keyless cosign)
         run: bash scripts/publish-signed-images.sh --execute
@@ -670,11 +1178,27 @@ jobs:
           BNK_FORGE_VERSION: ${{ env.VERSION }}
 
       - name: Publish summary
+        env:
+          SIGN_ONLY: ${{ inputs.sign_only }}
         run: |
+          # ROLLING_TAG comes from GITHUB_ENV (set by "Re-check recency"): empty
+          # for a publish_only republish behind the newest release, which pushed
+          # only the immutable :VERSION tags and did NOT move :latest. Report the
+          # tags actually pushed rather than always claiming :latest. In
+          # sign_only recovery nothing was pushed at all — the existing digests
+          # were only (re-)signed — so say exactly that.
+          if [ "$SIGN_ONLY" = "true" ]; then
+            TAGS=":${{ needs.preflight.outputs.new_version }} (re-signed existing digests — no image pushed, :latest NOT moved)"
+          elif [ -n "${ROLLING_TAG:-}" ]; then
+            TAGS=":${{ needs.preflight.outputs.new_version }}, :${ROLLING_TAG}"
+          else
+            TAGS=":${{ needs.preflight.outputs.new_version }} (floating :latest NOT moved — this republish is behind the newest release)"
+          fi
           echo "## Published images v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
-            echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
-          done
+          # Single-source the image list from the probe script (F6).
+          while IFS= read -r name; do
+            echo "| ${name} | ${{ env.REGISTRY }}/${name}${TAGS} |" >> "$GITHUB_STEP_SUMMARY"
+          done < <(bash .release-tooling/scripts/registry-tag-probe.sh --images)

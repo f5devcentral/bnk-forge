@@ -17,7 +17,7 @@
 #                     "AUTO:planned" are computed from item counts; any other
 #                     value (e.g. "25+") is a static meta number.
 # status_legend:      key -> { emoji, dot, label } used for BOTH md + html.
-#   keys: shipped | in_progress | blocked | deferred | planned
+#   keys: shipped | merged | in_progress | blocked | deferred | planned
 # sections: ordered list of
 #   - id:       stable slug (used by roadmap-add.py --section)
 #     number:   section number for the md heading "## N. ..."
@@ -55,7 +55,7 @@ meta:
 
     **2026-06-09 sync:** D-021/D-022 fleet epics shipped (PRs #276/#277); D-027 zero-toast shipped (PRs #260/#261/#278); D-028 unified blueprint catalog shipped (PR #274); D-001 Phase 3 / D-019 E1/E3/E6 / Ops MCP+celery / AWS cred-expiry UX all shipped. D-023 (classic BIG-IP) + D-020 (F5 design-system) + benchmark experience remain in-flight.
 
-    **2026-06-12 sync:** cb-rebuild → staging de-stacking COMPLETE; new `customer-build` integration line live on localhost (staging + all open PRs + customer deltas); multi-arch images published `ghcr.io/jlcode-tech 3.1.6-cb.72b29dbb` + rolling `customer-build`. D-023 P1-P3 shipped (PR #280); alembic dedupe shipped (PR #283). 13 PRs in review: #282 (scenario override guard), #284 (BNK registry-driven GA/ReleaseRegistry), #285 (multiarch publish), #286 (benchmark remote agent-host + Slice-4 auth), #287 (AI-Analyzer rename + Migration tab fix), #288 (dist uninstall-purge fix), #290 (D-023 P4 CIS coverage), #291 (Dashboard Command Center fleet section), #292 (bfb-cache atime/LRU fix), #293 (runtime brand flag #289), #295 (CIS IngressClass kind-aware classify), #296 (top-level Infrastructure section), #297 (release automation — team decision pending). D-020 reskin branch fully rebuilt 2026-06-10/11 (complete reskin + anvil ForgeLogo general rebrand).
+    **2026-06-12 sync:** cb-rebuild → staging de-stacking COMPLETE; new `customer-build` integration line live on localhost (staging + all open PRs + customer deltas); multi-arch images published `ghcr.io/f5devcentral 3.1.6-cb.72b29dbb` + rolling `customer-build`. D-023 P1-P3 shipped (PR #280); alembic dedupe shipped (PR #283). 13 PRs in review: #282 (scenario override guard), #284 (BNK registry-driven GA/ReleaseRegistry), #285 (multiarch publish), #286 (benchmark remote agent-host + Slice-4 auth), #287 (AI-Analyzer rename + Migration tab fix), #288 (dist uninstall-purge fix), #290 (D-023 P4 CIS coverage), #291 (Dashboard Command Center fleet section), #292 (bfb-cache atime/LRU fix), #293 (runtime brand flag #289), #295 (CIS IngressClass kind-aware classify), #296 (top-level Infrastructure section), #297 (release automation — team decision pending). D-020 reskin branch fully rebuilt 2026-06-10/11 (complete reskin + anvil ForgeLogo general rebrand).
 
     **Human view (clickable):** `docs/roadmap.html` · **Contribution flow:** `docs/ROADMAP_PROCESS.md` · (local per-clone agent queue: `.agent/backlog/BACKLOG.md`).
 
@@ -77,6 +77,10 @@ status_legend:
     emoji: ✅
     dot: d-ship
     label: Shipped
+  merged:
+    emoji: 🟢
+    dot: d-ship
+    label: Merged (unreleased)
   in_progress:
     emoji: 🟡
     dot: d-prog
@@ -212,7 +216,7 @@ sections:
     refs:
     - 'PR #285'
     - 'PR #288'
-    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/jlcode-tech) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
+    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/f5devcentral) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
     group: Top of queue — PRs open (CI-green)
   - title: Alembic migration deduplication (v2_131)
     status: shipped
@@ -353,7 +357,7 @@ sections:
     - '#419'
     note: 'Fresh install / volume wipe leaves the git module catalog (bnk/app/infra packs) un-synced, so BNK/app blueprints are DOA until an operator runs Catalog→Advanced→Modules→''Sync all''. The wizard''s ''requires sync'' prompt is wired to no endpoint. Fix: (1) boot-time auto-sync step (non-fatal, ref-aware) after builtin seeders; (2) wire wizard CTA to POST /api/module-library/sync. Separate from the d019/adr-204 execution_engine seeder-guard fix.'
   - title: CI container runner engine — security hardening follow-ups
-    status: planned
+    status: merged
     refs:
     - '#408'
     - 'PR #340'

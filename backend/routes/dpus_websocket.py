@@ -58,6 +58,14 @@ async def _validate_ws_token(websocket: WebSocket, token: str | None) -> bool:
         if role not in ("admin", "operator"):
             await websocket.close(code=4401, reason="Unauthorized — operator role required")
             return False
+        # #184: fail closed on the actual User row (see k8s_websocket) -- refuse
+        # if it can't be resolved or still owes a password change, so a
+        # seed-credential admin never reaches the DPU console / BMC SSH.
+        from services.auth_service import token_user_state
+        ws_user = token_user_state(token)
+        if ws_user is None or ws_user.must_change_password:
+            await websocket.close(code=4401, reason="Unauthorized")
+            return False
         return True
     except Exception:
         await websocket.close(code=4401, reason="Unauthorized — invalid token")

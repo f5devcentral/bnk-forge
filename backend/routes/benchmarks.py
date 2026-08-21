@@ -122,6 +122,29 @@ def _require_agent_bearer(request: Request) -> dict:
             f"Token role '{role or 'none'}' may not write to agent endpoints",
             code="AGENT_AUTH_FORBIDDEN",
         )
+    # bonnyr-f5 #186 r2: a human (operator/admin) token owed a password change
+    # must not write here either -- this path skipped the gate entirely (a
+    # must-change admin could create an agent). Agent tokens carry no User row,
+    # and this endpoint is role-based by design, so only gate a token that
+    # resolves to a REAL user: if that user owes a password change, refuse.
+    if role != "agent":
+        from core.errors import ForbiddenError
+        from services.auth_service import enforce_password_change, token_user_state
+        agent_user = token_user_state(token)
+        # token_user_state's contract: the caller refuses on None -- fail CLOSED.
+        # A non-agent role that resolves to no live User (deleted/disabled row, or
+        # a signed token whose subject never existed) must be rejected here, not
+        # waved through. Without this else the gate is skipped for exactly that
+        # case (proven fail-open: a nonexistent user's admin JWT -> 201).
+        if agent_user is None:
+            raise BadRequestError(
+                "Token does not resolve to an active user",
+                code="AGENT_AUTH_INVALID",
+            )
+        try:
+            enforce_password_change(request.url.path, agent_user)
+        except ForbiddenError as exc:
+            raise BadRequestError(str(exc), code="AGENT_AUTH_PASSWORD_CHANGE_REQUIRED")
     return payload
 
 
@@ -1483,10 +1506,27 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     try:
         from services.auth_service import decode_token
 
-        decode_token(token)
-        return None
+        payload = decode_token(token)
     except Exception:
         return 4001
+    # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
+    # only, so this path waved a must-change human admin straight through — the
+    # one JWT-resolving entry point that skipped the gate the other five enforce.
+    # Agent tokens (role=agent) carry no User row and legitimately reach this
+    # branch when agent auth is off, so gate ONLY a token that resolves to a real
+    # user: refuse if that user owes a password change or no longer resolves
+    # (deleted/disabled). Mirrors the POST /api/benchmarks/agents gate above.
+    if payload.get("role") != "agent":
+        from services.auth_service import token_user_state
+
+        ws_user = token_user_state(token)
+        if ws_user is None or ws_user.must_change_password:
+            logger.warning(
+                "Agent %d WS rejected: token owes a password change or does not resolve to an active user",
+                agent_id,
+            )
+            return 4001
+    return None
 
 
 @ws_router.websocket("/ws/benchmarks/agents/{agent_id}")

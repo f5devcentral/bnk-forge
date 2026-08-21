@@ -63,12 +63,6 @@
   code{background:#eef0f2;border:1px solid var(--bd);border-radius:3px;padding:1px 5px;
        font-size:12.5px;color:var(--ink2);font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;}
 
-  /* ── Callout: credentials (red left border) ── */
-  .callout-cred{background:#fff5f5;border-left:4px solid var(--f5red);border-radius:0 6px 6px 0;
-                padding:14px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(20,30,40,.04);}
-  .callout-cred .callout-title{font-weight:700;color:var(--f5red);font-size:13px;
-                                text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
-
   /* ── Callout: warning (amber) ── */
   .callout-warn{background:var(--warn-bg);border-left:4px solid var(--warn-bd);border-radius:0 6px 6px 0;
                 padding:14px 18px;margin:14px 0;color:var(--warn);}
@@ -100,7 +94,7 @@
   @media print{
     header{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     pre{white-space:pre-wrap;word-break:break-all;}
-    .callout-cred,.callout-warn,.callout-info{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .callout-warn,.callout-info{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     body{font-size:13px;}
     main{padding:10px 20px 30px;}
   }
@@ -113,7 +107,7 @@
     <span class="f5mark">F5</span>
     <div>
       <h1>BNK Forge &mdash; Install Guide</h1>
-      <div class="sub">Private registry edition &nbsp;|&nbsp; customer-build distribution &nbsp;|&nbsp; registry: ghcr.io/jlcode-tech</div>
+      <div class="sub">Public registry edition &nbsp;|&nbsp; current-release distribution &nbsp;|&nbsp; registry: ghcr.io/f5devcentral</div>
     </div>
   </div>
 </header>
@@ -122,9 +116,9 @@
 
   <!-- ── Intro ── -->
   <div class="intro">
-    This guide walks you through installing BNK Forge from the private GitHub Container Registry.
-    You will authenticate to the registry using the read-only bot credential you were provided,
-    download the install package, make a small configuration change, and run a single script.
+    This guide walks you through installing BNK Forge from the public GitHub Container Registry.
+    You download the install package, make a small configuration change, and run a single
+    script. The images are public, so no registry login is required.
     The entire process takes under ten minutes on a fast connection; the first image pull may
     take a few minutes depending on bandwidth.
   </div>
@@ -134,40 +128,12 @@
   <ul class="prereqs">
     <li><b>Docker Engine 24+</b> — on macOS or Windows, Docker Desktop satisfies both this and the Compose requirement.</li>
     <li><b>Docker Compose v2 (≥ 2.24)</b> — verify with <code>docker compose version</code>.</li>
-    <li><b>Read-access token</b> — the <code>&lt;READ_TOKEN&gt;</code> provided to you separately (see Step 1).</li>
     <li><b>~5–10 GB free disk space</b> — for images and persistent data volumes.</li>
     <li><b>Network access to <code>ghcr.io</code></b> — outbound HTTPS (port 443) must be allowed.</li>
   </ul>
 
   <!-- ── Step 1 ── -->
-  <h2>Step 1 &mdash; Authenticate to the registry</h2>
-
-  <div class="callout-cred">
-    <div class="callout-title">Credentials — handle with care</div>
-    Your read-access token is provided separately (out-of-band). It is a GitHub PAT scoped to
-    <code>read:packages</code> for the <code>ghcr.io/jlcode-tech</code> registry.
-    <b>Do not share it, commit it to version control, or embed it in scripts.</b>
-    If you believe the token has been exposed, contact the person who gave it to you immediately.
-  </div>
-
-  <p>Run the following command, replacing <code>&lt;READ_TOKEN&gt;</code> with the token you received.
-     The bot username is fixed — use it exactly as shown:</p>
-
-  <pre><span class="prompt">$ </span>echo '<span style="color:#f97316">&lt;READ_TOKEN&gt;</span>' | docker login ghcr.io -u jlcode-forgebot --password-stdin</pre>
-
-  <p>Expected output:</p>
-  <div class="expected">Login Succeeded</div>
-
-  <div class="callout-info">
-    <div class="callout-title">Token stays cached</div>
-    Docker stores the credential in your OS keychain (or <code>~/.docker/config.json</code>).
-    You only need to log in once per machine. If you later see a <code>denied</code> or
-    <code>unauthorized</code> error during a pull, re-run the command above — the token may have been
-    rotated. See the Troubleshooting section for details.
-  </div>
-
-  <!-- ── Step 2 ── -->
-  <h2>Step 2 &mdash; Download &amp; extract the package</h2>
+  <h2>Step 1 &mdash; Download &amp; extract the package</h2>
 
   <p>You should have received a <code>bnk-forge-&lt;version&gt;.tar.gz</code> archive alongside this
      guide. Save it to a convenient location, then extract it:</p>
@@ -177,8 +143,8 @@
 
   <p>All subsequent commands are run from inside this directory.</p>
 
-  <!-- ── Step 3 ── -->
-  <h2>Step 3 &mdash; Configure</h2>
+  <!-- ── Step 2 ── -->
+  <h2>Step 2 &mdash; Configure</h2>
 
   <p>Copy the example environment file and open it in your editor:</p>
 
@@ -195,13 +161,13 @@
     </tr>
     <tr>
       <td><code>BNK_FORGE_REGISTRY</code></td>
-      <td><code>ghcr.io/jlcode-tech</code></td>
-      <td>Points to the private registry.</td>
+      <td><code>ghcr.io/f5devcentral</code></td>
+      <td>Points to the public registry.</td>
     </tr>
     <tr>
       <td><code>BNK_FORGE_VERSION</code></td>
-      <td><code>customer-build</code></td>
-      <td>Rolling latest build. To pin a specific build, use a tag like <code>3.0.1-cb.&lt;sha&gt;</code>.</td>
+      <td><code>latest</code></td>
+      <td>Rolling latest release. To pin a specific version, use its tag, e.g. <code>3.1.6</code>.</td>
     </tr>
     <tr>
       <td><code>POSTGRES_PASSWORD</code></td>
@@ -214,21 +180,46 @@
       <td><b>Change from the default.</b> Used for the internal cache/queue.</td>
     </tr>
     <tr>
-      <td><code>MCP_PASSWORD</code></td>
+      <td><code>MCP_SERVICE_PASSWORD</code></td>
       <td><em>your choice</em></td>
-      <td><b>Change from the default.</b> Used by the MCP integration layer.</td>
+      <td>Credential the bundled MCP server uses to authenticate to BNK Forge. MCP logs in as its
+          own dedicated, non-human service account (<code>MCP_SERVICE_USERNAME</code>, default
+          <code>mcp</code>) &mdash; <b>never</b> the human <code>admin</code> login. No default
+          ships: choose a strong value here and the backend seeds/reconciles the <code>mcp</code>
+          account to it on every boot, so the two always agree. Leave it empty and MCP stays
+          unavailable until you set it (the backend refuses to seed a guessable credential, and
+          the old <code>mcp-service-changeme</code> default can no longer authenticate). It is
+          re-read from <code>.env</code> on every boot, so to rotate it edit <code>.env</code> and
+          re-run <code>docker compose up -d</code> (a plain <code>docker compose restart</code>
+          does not re-read <code>.env</code>).</td>
     </tr>
   </table>
 
   <div class="callout-warn">
-    <div class="callout-title">Change all three passwords</div>
-    The defaults in <code>.env.example</code> are well-known placeholders.
-    Replace <code>POSTGRES_PASSWORD</code>, <code>REDIS_PASSWORD</code>, and <code>MCP_PASSWORD</code>
-    before running the installer — they cannot be changed easily after the stack first starts.
+    <div class="callout-title">Set strong passwords before first start</div>
+    <code>POSTGRES_PASSWORD</code> and <code>REDIS_PASSWORD</code> replace well-known
+    placeholder defaults, and they are baked in when the database and cache first
+    initialize — get them right before running the installer, as they cannot be changed
+    easily afterward. <code>MCP_SERVICE_PASSWORD</code> is independent of the admin password:
+    MCP authenticates as its own dedicated <code>mcp</code> service account, so set it to a strong
+    secret of your choosing (no shipped default) and the backend provisions the <code>mcp</code>
+    account from it. It is re-read on every boot, so to rotate it edit <code>.env</code> and re-run
+    <code>docker compose up -d</code> (a plain <code>docker compose restart</code> does not re-read
+    <code>.env</code>).
+    <p><b>A dedicated MCP service account — <code>mcp</code>.</b> Besides the human
+    <code>admin</code>, this build seeds a non-human, admin-role service account named
+    <code>mcp</code> that the bundled MCP server authenticates as. It carries <em>no shipped
+    default</em>: the backend provisions it from <code>MCP_SERVICE_PASSWORD</code> and reconciles
+    the stored hash to that value on every boot, so rotating the secret is simply a matter of
+    editing <code>.env</code> and re-running <code>docker compose up -d</code>. The old shipped
+    <code>mcp-service-changeme</code> default has been removed and can no longer authenticate, and
+    MCP no longer borrows the human <code>admin</code> login (#186). If you leave
+    <code>MCP_SERVICE_PASSWORD</code> unset, the backend disables any stale service account carried
+    over from an upgrade and MCP stays unavailable until you configure it.</p>
   </div>
 
-  <!-- ── Step 4 ── -->
-  <h2>Step 4 &mdash; Install</h2>
+  <!-- ── Step 3 ── -->
+  <h2>Step 3 &mdash; Install</h2>
 
   <p>Run the installer for your platform. It will pull the images and bring the full stack up.
      The first run may take a few minutes while images download.</p>
@@ -251,8 +242,8 @@
   <p>When the installer finishes you will see:</p>
   <div class="expected">✅ Installation complete!</div>
 
-  <!-- ── Step 5 ── -->
-  <h2>Step 5 &mdash; First login</h2>
+  <!-- ── Step 4 ── -->
+  <h2>Step 4 &mdash; First login</h2>
 
   <ol class="steps">
     <li>
@@ -267,12 +258,16 @@
          (Firefox). This is expected.</p>
     </li>
     <li>
-      <p><b>Log in with the default credentials:</b><br>
-         Username: <code>admin</code> &nbsp;/&nbsp; Password: <code>changeme</code></p>
+      <p><b>Log in as <code>admin</code>.</b><br>
+         No default password ships. Unless you set <code>DEFAULT_ADMIN_PASSWORD</code> before
+         install, the backend generates a random one on first start and writes it to a file
+         (the plaintext is never written to the logs). Retrieve it with:</p>
+      <pre><span class="prompt">$ </span>docker compose exec backend cat /app/keys/initial_admin_password</pre>
       <div class="callout-warn">
         <div class="callout-title">Change the admin password immediately</div>
-        The default password is well-known. Go to <b>User menu → Change Password</b> as your
-        very first action after login.
+        This generated password is a one-time bootstrap credential. Go to
+        <b>User menu → Change Password</b> as your very first action after login — the API
+        refuses every other call until you do.
       </div>
     </li>
     <li>
@@ -309,7 +304,7 @@
   <!-- ── Updating ── -->
   <h2>Updating to a newer build</h2>
 
-  <p>Because <code>BNK_FORGE_VERSION=customer-build</code> is a rolling tag, updating is simple.
+  <p>Because <code>BNK_FORGE_VERSION=latest</code> is a rolling tag, updating is simple.
      From the install directory:</p>
 
   <pre><span class="comment"># Recommended — uses the installer for any migration steps:</span>
@@ -321,6 +316,31 @@
 
   <p>If you pinned a specific build tag in <code>.env</code>, update <code>BNK_FORGE_VERSION</code>
      to the new tag before running the command above.</p>
+
+  <div class="callout-warn">
+    <div class="callout-title">Before upgrading an older install to 4.0.0</div>
+    If your <code>.env</code> predates this release, reconcile it first, or the upgrade will fail
+    to pull or refuse to boot:
+    <ul>
+      <li><b>Registry &amp; version.</b> Set <code>BNK_FORGE_REGISTRY=ghcr.io/f5devcentral</code>
+          (older packages pointed at a private org that no longer resolves), and replace any pinned
+          <code>BNK_FORGE_VERSION</code> such as <code>3.0.1</code> with <code>latest</code> or a
+          current tag like <code>3.1.6</code> — a stale pin pulls a tag that no longer exists.</li>
+      <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
+          <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
+          your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
+      <li><b>MCP service credential (from 4.0.0).</b> The bundled MCP server now authenticates as a
+          dedicated <code>mcp</code> service account, not the human <code>admin</code>. Set
+          <code>MCP_SERVICE_PASSWORD</code> to a strong secret in this <code>.env</code>: this
+          compose file passes it to the backend (which provisions the <code>mcp</code> account from
+          it) <em>and</em> to the MCP container (as <code>BNK_FORGE_PASSWORD</code>), so the two stay
+          in sync. The old <code>MCP_PASSWORD</code>/admin-password coupling is gone, and the shipped
+          <code>mcp-service-changeme</code> default can no longer authenticate. Under
+          <code>ENVIRONMENT=staging</code>/<code>production</code> the backend refuses to start while
+          <code>MCP_SERVICE_PASSWORD</code> is unset or set to a shipped default
+          (#186&nbsp;+&nbsp;#188), so set it to a real secret before upgrading.</li>
+    </ul>
+  </div>
 
   <!-- ── Uninstall ── -->
   <h2>Uninstall</h2>
@@ -335,10 +355,10 @@
 
   <ul class="trouble">
     <li>
-      <b><code>denied: denied</code> or <code>unauthorized: unauthenticated</code> during pull</b>
-      Your <code>docker login</code> session has lapsed, or the token does not have the
-      <code>read:packages</code> scope. Re-run Step 1 with your current token.
-      If the problem persists, contact the person who issued the token.
+      <b><code>manifest unknown</code>, or a pull that hangs or times out</b>
+      The images are public, so no login is required. Check that <code>BNK_FORGE_REGISTRY</code>
+      is <code>ghcr.io/f5devcentral</code> and that the version tag exists, and that outbound
+      HTTPS to <code>ghcr.io</code> (port 443) is allowed through any proxy or firewall.
     </li>
     <li>
       <b>Backend service not <code>healthy</code></b>
@@ -358,8 +378,8 @@
 </main>
 
 <footer>
-  BNK Forge install guide &mdash; generated for customer-build distribution &nbsp;&middot;&nbsp;
-  Registry: <code>ghcr.io/jlcode-tech</code> &nbsp;&middot;&nbsp; Tag: <code>customer-build</code>
+  BNK Forge install guide &mdash; generated for the current release &nbsp;&middot;&nbsp;
+  Registry: <code>ghcr.io/f5devcentral</code> &nbsp;&middot;&nbsp; Tag: <code>latest</code>
 </footer>
 
 </body>

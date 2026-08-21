@@ -550,7 +550,9 @@ class DockerRunner(ContainerRunner):
         An image that never declares USER reports an empty string and runs as
         root — that is the common case and must be caught.
 
-        Closes the numeric bypass only — see the KNOWN GAP note in the body.
+        Fails closed on anything that is not a bare non-zero decimal uid,
+        which also subsumes the named-alias case (see the body) — there is no
+        remaining KNOWN GAP.
 
         Only the uid half decides this. Docker's USER is ``<user>[:<group>]``,
         so an image declaring ``USER 0:100`` or ``USER root:wheel`` runs as uid 0
@@ -647,7 +649,8 @@ class DockerRunner(ContainerRunner):
                 f"Artifact image {spec.image_digest} runs as root "
                 f"(USER={image_user or '<unset>'}). Refusing to start it: the workspace is "
                 f"mounted from the host, so a root container is a host-root write primitive. "
-                f"Rebuild the image with a NUMERIC non-root USER (e.g. `USER 65532`). "
+                f"Rebuild the image with a NUMERIC non-root USER — `USER 1000` matches "
+                f"the workspace owner (chowned 1000:1000), so the step can write it. "
                 f"A named user is refused because it cannot be resolved to a uid "
                 f"without the image's own /etc/passwd — `USER toor` may well be uid 0. "
                 f"The Kubernetes substrate already enforces this: runAsNonRoot is "

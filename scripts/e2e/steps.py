@@ -169,10 +169,11 @@ def step_login(ctx: Context) -> StepResult:
     """Log in as admin and store JWT on the client.
 
     Handles the freshly-seeded `must_change_password=True` case by
-    rotating the password to itself. After `make install` the admin
-    user is `admin` / `changeme` with the flag set; without this the
-    harness would deadlock on the first authed request, and operators
-    would have to bounce through the UI before re-running."""
+    rotating the password to itself. The admin password is no longer a
+    fixed default (#184): set DEFAULT_ADMIN_PASSWORD when deploying the
+    target to the same value as `bnk_forge_admin_password` (BNK_FORGE_PASSWORD),
+    or point that config at the generated password. Without the rotation
+    the harness would deadlock on the first authed request."""
     with StepRecorder("login") as r:
         body = ctx.client.login(
             ctx.cfg.bnk_forge_admin_user,

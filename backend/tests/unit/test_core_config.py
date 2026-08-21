@@ -116,6 +116,7 @@ class TestProductionValidation:
             ENVIRONMENT="production",
             JWT_SECRET_KEY="explicit-jwt-key-for-production-use",
             ENCRYPTION_KEY="explicit-encryption-key-for-production",
+            MCP_SERVICE_PASSWORD="explicit-mcp-service-secret",  # #187: required
             ALLOWED_ORIGINS="https://my-app.example.com",
         )
         # Explicit keys set _auto_generated to False
@@ -123,6 +124,30 @@ class TestProductionValidation:
         assert s._encryption_key_auto_generated is False
         # Should not raise
         s.validate_production()
+
+    def test_production_without_mcp_service_password_fails(self):
+        """#187: MCP_SERVICE_PASSWORD unset in prod must fail fast."""
+        s = Settings(
+            ENVIRONMENT="production",
+            JWT_SECRET_KEY="explicit-jwt-key-for-production-use",
+            ENCRYPTION_KEY="explicit-encryption-key-for-production",
+            ALLOWED_ORIGINS="https://my-app.example.com",
+            MCP_SERVICE_PASSWORD=None,
+        )
+        with pytest.raises(SystemExit):
+            s.validate_production()
+
+    def test_production_with_default_mcp_password_fails(self):
+        """#187: the known shipped default must also fail, not just unset."""
+        s = Settings(
+            ENVIRONMENT="production",
+            JWT_SECRET_KEY="explicit-jwt-key-for-production-use",
+            ENCRYPTION_KEY="explicit-encryption-key-for-production",
+            ALLOWED_ORIGINS="https://my-app.example.com",
+            MCP_SERVICE_PASSWORD="mcp-service-changeme",
+        )
+        with pytest.raises(SystemExit):
+            s.validate_production()
 
     def test_production_wildcard_cors_fails(self):
         """Production with wildcard CORS should fail."""
@@ -152,6 +177,7 @@ class TestProductionValidation:
             ENVIRONMENT="staging",
             JWT_SECRET_KEY="explicit-key",
             ENCRYPTION_KEY="explicit-key",
+            MCP_SERVICE_PASSWORD="explicit-mcp-service-secret",  # #187: required
             ALLOWED_ORIGINS="http://localhost:3000",
         )
         # Should not raise — staging allows localhost

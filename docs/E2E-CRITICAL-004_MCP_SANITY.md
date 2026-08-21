@@ -87,8 +87,8 @@ mcp-server/tests/
 |----------|----------|---------|---------|
 | `MCP_E2E` | Yes | `false` | Gate for E2E tests (skip in unit runs) |
 | `API_BASE_URL` | Yes | `http://localhost:8000` | Backend API target |
-| `MCP_USERNAME` | Yes | `admin` | Auth credentials |
-| `MCP_PASSWORD` | Yes | `changeme` | Auth credentials |
+| `MCP_USERNAME` | Yes | `mcp` | Dedicated MCP service-account username (never `admin`, #187) |
+| `MCP_SERVICE_PASSWORD` | Yes | _(no default, #187)_ | Shared secret: backend seeds the mcp account, MCP server authenticates with it |
 
 ---
 

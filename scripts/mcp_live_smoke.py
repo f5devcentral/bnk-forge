@@ -144,8 +144,8 @@ def _extract_tool_payload(result: dict[str, Any], tool_name: str) -> dict[str, A
                         if "/api/auth/login" in text or "Invalid username or password" in text:
                             hint = (
                                 " Hint: MCP backend credentials are likely invalid. "
-                                "Set correct MCP_USERNAME/MCP_PASSWORD for the MCP container/service "
-                                "(seeded backend default is admin/changeme unless rotated)."
+                                "Set correct MCP_SERVICE_USERNAME/MCP_SERVICE_PASSWORD for the MCP container/service "
+                                "(MCP authenticates as the mcp service account, not admin; set MCP_SERVICE_PASSWORD or read /app/keys/initial_mcp_password) (#186)."
                             )
                         raise SmokeFailure(
                             f"Tool '{tool_name}' execution failed before returning MCP JSON payload: {text}.{hint}"
@@ -228,8 +228,8 @@ def _auth_bootstrap_hint(tool_name: str, payload: dict[str, Any]) -> str:
     if "invalid username or password" in detail or "/api/auth/login" in str(error.get("url", "")):
         return (
             " Hint: MCP endpoint is reachable, but MCP runtime auth/bootstrap failed. "
-            "Verify MCP_USERNAME/MCP_PASSWORD match current backend credentials "
-            "(default seeded admin password is changeme, unless rotated), then recreate the mcp container."
+            "Verify MCP_SERVICE_USERNAME/MCP_SERVICE_PASSWORD match the mcp service account the backend reconciles "
+            "(set MCP_SERVICE_PASSWORD or read /app/keys/initial_mcp_password), then recreate the mcp container (#186)."
         )
 
     return (

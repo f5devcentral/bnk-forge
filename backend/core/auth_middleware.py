@@ -4,15 +4,20 @@ Protects all API routes except auth endpoints, health checks, and WebSocket.
 Can be disabled via REQUIRE_AUTH=false for backward compatibility.
 """
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from jose import JWTError
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
 from core.config import settings
 from core.errors import UnauthorizedError
+
+if TYPE_CHECKING:
+    from models import User
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +26,23 @@ logger = logging.getLogger(__name__)
 API_TOKEN_PREFIX = "bnk_"
 
 
-def _verify_api_token(token: str) -> None:
-    """Raise UnauthorizedError unless ``token`` is a live API token.
+def _verify_api_token(token: str) -> "User":
+    """Return the owning User for a live API token, or raise UnauthorizedError.
 
     Opens its own session: middleware runs outside FastAPI's dependency
-    injection, so ``get_db`` is not available here.
+    injection, so ``get_db`` is not available here. The User is refreshed before
+    the session closes so the caller can read ``must_change_password`` off the
+    detached instance (same pattern as token_user_state).
     """
     from database import SessionLocal
     from services.api_token_service import ApiTokenService
 
     db = SessionLocal()
     try:
-        ApiTokenService(db).verify(token)  # raises UnauthorizedError if invalid
+        user, _api_token = ApiTokenService(db).verify(token)  # raises if invalid
         db.commit()  # verify() stamps last_used_at
+        db.refresh(user)
+        return user
     except Exception:
         db.rollback()
         raise
@@ -146,15 +155,53 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Validate the token
         token = auth_header.split(" ", 1)[1]
         try:
+            from core.errors import ForbiddenError
+            from services.auth_service import enforce_password_change
             if token.startswith(API_TOKEN_PREFIX):
                 # Long-lived CLI / CI-CD token — a DB-backed hash, not a JWT, so
-                # decode_token() would reject it. 21 /api routes have no auth
+                # decode_token() would reject it. ~32 /api routes have no auth
                 # dependency of their own and rely on this middleware alone, so
                 # it must fully verify the token here, not defer to the route.
-                _verify_api_token(token)
+                #
+                # bonnyr-f5 #186 r5 (Major): _verify_api_token opens a SYNC DB
+                # session; awaiting it directly on the event-loop thread would
+                # block every concurrent request for the duration of the query.
+                # Off-load the blocking I/O to a worker thread so dispatch stays
+                # non-blocking (same treatment as token_user_state below).
+                user = await run_in_threadpool(_verify_api_token, token)
+                enforce_password_change(path, user)
             else:
-                from services.auth_service import decode_token
+                from services.auth_service import decode_token, token_user_state
                 decode_token(token)  # Will raise UnauthorizedError if invalid
+                # #184/#186: the dependency-only gate is bypassed on routes that
+                # declare no get_current_user; enforce must_change here too, where
+                # auth is actually resolved. decode_token already succeeded, so a
+                # None from token_user_state is a VALID JWT whose user can't be
+                # resolved (deleted/disabled/DB error) -- the fail-CLOSED case, per
+                # its own contract and the WS validators. Refuse it, don't skip the
+                # gate (bonnyr-f5 #186 r2: skipping was a fail-open bypass on the
+                # ~32 dependency-less routes).
+                # bonnyr-f5 #186 r5 (Major): token_user_state opens a SYNC DB
+                # session on every authenticated request. Run it in a worker
+                # thread so the blocking DB round-trip never stalls the event
+                # loop (the gate previously only paid this cost for rare bnk_
+                # tokens; it now runs for every JWT request).
+                jwt_user = await run_in_threadpool(token_user_state, token)
+                if jwt_user is None:
+                    raise UnauthorizedError("Token subject could not be resolved")
+                enforce_password_change(path, jwt_user)
+        except ForbiddenError as exc:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "PASSWORD_CHANGE_REQUIRED",
+                        "message": str(exc),
+                        "details": {},
+                        "path": path,
+                    }
+                },
+            )
         except (JWTError, UnauthorizedError):
             return JSONResponse(
                 status_code=401,

@@ -16,6 +16,10 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+# Passwords ever shipped as the MCP service default. Treated as "not set" on
+# both the fail-fast (validate_production) and the boot-rotation path (bonnyr-f5 #188).
+MCP_KNOWN_DEFAULT_PASSWORDS = ("mcp-service-changeme", "changeme")
+
 # BE-007: Directory for persisting auto-generated keys across restarts
 _KEYS_DIR = os.environ.get("KEYS_DIR", "/app/keys")
 
@@ -97,10 +101,39 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str | None = None
     ENCRYPTION_KEY: str | None = None
 
-    # Seed credentials — distinct vars so admin rotation never affects MCP
-    DEFAULT_ADMIN_PASSWORD: str = "changeme"
+    # DEFAULT_ADMIN_PASSWORD defaults to None, never a hardcoded value: a
+    # shipped default like "changeme" is a live, publicly-known admin credential
+    # on every fresh deployment (#184). When unset, seed_admin_user generates a
+    # random one and logs it once (the account is must_change_password anyway).
+    DEFAULT_ADMIN_PASSWORD: str | None = None
+    # Test/ephemeral environments (e2e) seed a KNOWN admin and skip the
+    # must-change gate so the suite can reach protected routes. Defaults True;
+    # never set false on a real deployment.
+    DEFAULT_ADMIN_MUST_CHANGE: bool = True
+    # #186 BLOCKER 1: MCP_SERVICE_PASSWORD is the same class of shipped default as
+    # DEFAULT_ADMIN_PASSWORD above (the seeded 'mcp' account is role=admin and
+    # exempt from the must-change gate), so it must NEVER carry a published value.
+    # Defaults to None; when unset ensure_service_user generates a random secret
+    # and surfaces it once, and a published default (mcp-service-changeme) is
+    # refused as a seed value and rotated out of any existing row.
+    #
+    # #186 BLOCKER 1 (bonnyr-f5 r5): the BACKEND now receives MCP_SERVICE_PASSWORD
+    # on every deploy mode (the backend-env anchors in every compose file, the
+    # ibm installer, and the Helm shared-env in _helpers.tpl sourced from the
+    # release Secret's mcp-password key), so it reconciles the mcp account to the
+    # same per-install secret the mcp client uses instead of generating a private
+    # one the client can never match. The reserved-name guard in
+    # ensure_service_user and #188's Helm mcp-secret work share this credential
+    # surface; see the PR discussion for the #186/#188 integration split.
     MCP_SERVICE_USERNAME: str = "mcp"
-    MCP_SERVICE_PASSWORD: str = "mcp-service-changeme"
+    # #187: shared secret between the backend (which seeds the `mcp` service
+    # account) and the MCP server (which authenticates with it). Defaults to
+    # None -- never a shipped value like "mcp-service-changeme", which is a live
+    # admin credential. It can't be auto-generated (both sides must receive the
+    # same value), so it must be set explicitly; validate_production fails fast
+    # in staging/prod, and when unset the backend simply doesn't seed the account
+    # (MCP is unavailable until it's configured).
+    MCP_SERVICE_PASSWORD: str | None = None
 
     # Benchmark agent auth flag.
     # When False (default): register/ingest/WS are open (preserves the documented curl flow).
@@ -199,6 +232,17 @@ class Settings(BaseSettings):
                 "ENCRYPTION_KEY was not explicitly set — set it as an environment variable"
             )
 
+        # #187: the MCP service password is a shared secret and cannot be
+        # auto-generated -- it must be set explicitly and identically on the
+        # backend and the MCP server. Refuse an unset or known-default value.
+        # bonnyr-f5: the actually-shipped default across dist/helm/scripts was
+        # "changeme", not just "mcp-service-changeme" — reject both.
+        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD in MCP_KNOWN_DEFAULT_PASSWORDS:
+            issues.append(
+                "MCP_SERVICE_PASSWORD was not set to a real value — set it (the same "
+                "value the MCP server gets as BNK_FORGE_PASSWORD) as an environment variable"
+            )
+
         if "*" in self.ALLOWED_ORIGINS:
             issues.append(
                 "ALLOWED_ORIGINS contains '*' (wildcard) — set specific origins"
@@ -219,6 +263,7 @@ class Settings(BaseSettings):
             logger.error("To fix: set these as environment variables in docker-compose.yml.")
             logger.error("  JWT_SECRET_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(32))\")")
             logger.error("  ENCRYPTION_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(16))\")")
+            logger.error("  MCP_SERVICE_PASSWORD=<strong shared secret; the SAME value the MCP server gets as BNK_FORGE_PASSWORD>")
             logger.error("See: docs/DEPLOYMENT.md")
             logger.error("=" * 60)
             raise SystemExit(1)

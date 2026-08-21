@@ -56,10 +56,11 @@ readiness verification explicit and repeatable.
 
 - `ping` + `tools/list` pass, but `system_version`/`list_clusters` fail with `auth_error`:
   MCP transport is up, but runtime auth/bootstrap is not ready.
-- Typical cause: MCP container credentials do not match current backend credentials
-  (for example after rotating admin password).
-- Action: set `MCP_USERNAME` / `MCP_PASSWORD` for the MCP service and recreate the
-  `mcp` container, then rerun smoke.
+- Typical cause: the MCP service-account password drifted from the backend's seeded
+  value (e.g. `MCP_SERVICE_PASSWORD` changed on one side only). MCP uses its own
+  dedicated `mcp` service account, never the human admin login (#187).
+- Action: set `MCP_USERNAME=mcp` / `MCP_PASSWORD` (backend `MCP_SERVICE_PASSWORD`) for
+  the MCP service and recreate the `mcp` container, then rerun smoke.
 
 ### Scope boundaries (intentional)
 
@@ -94,14 +95,15 @@ pytest tests/
 - MCP runtime is healthy only when **both** conditions are true:
   1. MCP JSON-RPC endpoint responds (`ping`)
   2. MCP can authenticate to backend and execute governed read-only tools
-- If backend admin password is changed (recommended), MCP credentials must be
-  updated too (`MCP_USERNAME` / `MCP_PASSWORD` or `BNK_FORGE_TOKEN`).
+- The MCP service-account password (`MCP_SERVICE_PASSWORD`, exposed to MCP as
+  `MCP_PASSWORD`/`BNK_FORGE_PASSWORD`) must match what the backend seeded, or use
+  `BNK_FORGE_TOKEN`. It is decoupled from the human admin password (#187).
 - Without this alignment, the MCP container may look healthy at protocol level
   while tool execution fails with backend login 401.
 
 ### Credential rotation runbook (bounded)
 
-When backend admin password is rotated:
+When the MCP service-account password (`MCP_SERVICE_PASSWORD`) is rotated:
 
 1. Update MCP runtime credentials in environment (`MCP_USERNAME`, `MCP_PASSWORD`)
 2. Recreate MCP so new env values are applied:

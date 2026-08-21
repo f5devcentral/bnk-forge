@@ -101,3 +101,45 @@ class TestNonExemptBenchmarkEndpointsStillRequireJWT:
     def test_get_benchmark_agent_by_id_no_auth_returns_401(self, client):
         resp = client.get("/api/benchmarks/agents/1")
         assert resp.status_code == 401
+
+
+# ── API-token (bnk_) branch: verified + gated via the middleware ─────────────
+
+
+class TestApiTokenBranchGatedByMiddleware:
+    """#186 r5 (bonnyr-f5, Minor): the bnk_ API-token branch had no coverage.
+
+    It is verified in the middleware (not deferred to the route) and runs the
+    must-change gate. Both the verify and the gate now run through
+    run_in_threadpool so the sync DB session never blocks the event loop; these
+    tests exercise that path end to end with a stubbed verifier.
+    """
+
+    def _client_with_verifier(self, monkeypatch, user):
+        from core import auth_middleware as mw_module
+        app = _make_app(require_auth=True)
+
+        @app.get("/api/projects")
+        async def _projects(request: Request):  # a dependency-less /api route
+            return JSONResponse({"ok": True})
+
+        # monkeypatch auto-restores the real verifier after the test, so this stub
+        # never leaks into the other TestMiddlewareVerifiesApiTokens cases.
+        monkeypatch.setattr(mw_module, "_verify_api_token", lambda token: user)
+        return TestClient(app, raise_server_exceptions=True)
+
+    def test_api_token_must_change_user_is_403(self, monkeypatch):
+        class _U:
+            must_change_password = True
+        client = self._client_with_verifier(monkeypatch, _U())
+        resp = client.get("/api/projects", headers={"Authorization": "Bearer bnk_deadbeef"})
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "PASSWORD_CHANGE_REQUIRED"
+
+    def test_api_token_settled_user_passes(self, monkeypatch):
+        class _U:
+            must_change_password = False
+        client = self._client_with_verifier(monkeypatch, _U())
+        resp = client.get("/api/projects", headers={"Authorization": "Bearer bnk_deadbeef"})
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}

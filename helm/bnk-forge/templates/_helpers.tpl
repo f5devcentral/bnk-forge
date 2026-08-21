@@ -96,6 +96,42 @@ in-cluster services and pulls secrets from the generated Secret.
     secretKeyRef:
       name: {{ include "bnk-forge.fullname" . }}-secrets
       key: encryption-key
+# #184: seed the admin account from a generated secret, never a shipped
+# default. Retrieve with:
+#   kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
+- name: DEFAULT_ADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: admin-password
+# #186: plumb the must-change gate alongside its sibling, or the seeded admin
+# owes a password change no route accepts (login is exempt; every other /api
+# route 403s). Not a secret -- a plain value. Quote so the bool renders "true"/
+# "false" (do NOT `default` it: a bool false collapses back to the default).
+- name: DEFAULT_ADMIN_MUST_CHANGE
+  # #186 (bonnyr-f5 r4): fall back to the secure "true" only when the value is
+  # nil/unset -- `| default true` cannot be used here because sprig `default`
+  # treats a bool false as empty and would silently flip an intentional false
+  # back to true. kindIs "invalid" is true only for nil, so an explicit false
+  # still renders "false"; nil no longer renders a bare `value:` that makes
+  # pydantic reject an empty string and the backend crashloop.
+  value: {{ if kindIs "invalid" .Values.secrets.adminMustChange }}{{ "true" | quote }}{{ else }}{{ .Values.secrets.adminMustChange | quote }}{{ end }}
+# #186 BLOCKER 1 / #187 (bonnyr-f5 r5): the backend reconciles the mcp service
+# account to MCP_SERVICE_PASSWORD on every boot, so it must read the SAME
+# per-install secret the mcp client (mcp.yaml) reads -- otherwise removing the
+# shipped `changeme` default just makes the backend generate its own secret the
+# client can never match ("removes the default without plumbing the replacement").
+# Source both from the release Secret's mcp-* keys, identical to mcp.yaml.
+- name: MCP_SERVICE_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-username
+- name: MCP_SERVICE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-password
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

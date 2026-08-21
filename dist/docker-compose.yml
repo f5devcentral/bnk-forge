@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - Docker Engine 24+ with Compose v2.24+
-#   - Authenticated to the container registry (if private)
+#   - Network access to ghcr.io (images are public — no registry login required)
 #
 # Configuration:
 #   Copy .env.example to .env and set your passwords before first start.
@@ -19,8 +19,8 @@
 
 # ── Registry configuration ──────────────────────────────────────────────────
 # Set BNK_FORGE_REGISTRY and BNK_FORGE_VERSION in .env or environment:
-#   BNK_FORGE_REGISTRY=ghcr.io/your-org    (no trailing slash)
-#   BNK_FORGE_VERSION=3.0.1                (or "latest")
+#   BNK_FORGE_REGISTRY=ghcr.io/f5devcentral    (no trailing slash)
+#   BNK_FORGE_VERSION=3.1.6                (or "latest")
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
@@ -32,6 +32,21 @@ x-backend-env: &backend-env
   # networking the proxy publishes to the host loopback, so services reach it
   # at 127.0.0.1:2375. Overridable via DOCKER_HOST in .env.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # #186: plumb the must-change gate too, or the seeded admin owes a password
+  # change no route accepts (login is exempt; every other /api route 403s).
+  # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
+  # e2e suite reach protected routes.
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186/#187 (bonnyr-f5 r5): the backend reconciles the mcp account to
+  # MCP_SERVICE_PASSWORD on every boot and seeds it from the same value the MCP
+  # server authenticates with; plumb it (and the username) here or the backend
+  # generates a random secret the mcp client can never match. No shipped default —
+  # the operator sets MCP_SERVICE_PASSWORD in .env (see .env.example).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -160,7 +175,7 @@ services:
           memory: 32M
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -201,7 +216,7 @@ services:
           memory: 256M
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -233,7 +248,7 @@ services:
           memory: 512M
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -265,7 +280,7 @@ services:
           memory: 512M
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -295,7 +310,7 @@ services:
           memory: 64M
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -321,7 +336,7 @@ services:
           memory: 32M
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -347,26 +362,37 @@ services:
           memory: 32M
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: MCP authenticates as the dedicated 'mcp' service account, NOT the
+      # human admin. admin/changeme is gone (#184 generates the admin password
+      # and gates it), so the old admin/changeme wiring 403s every tool call.
+      # Set MCP_SERVICE_PASSWORD in .env (no shipped default — the published one
+      # can no longer authenticate); the backend reconciles the account to it.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # Auth-probe healthcheck (bonnyr-f5 #188, INV-10): log in to the backend with
+    # the configured MCP credentials and exit non-zero on 401 OR when no credential
+    # is configured. MCP_SERVICE_PASSWORD ships empty (see .env.example), so without this the
+    # container would report green while every tool call 401s. A bare liveness ping
+    # can't see that — it only proves the HTTP port answers. Same probe the dev
+    # compose uses, so the "no creds -> unhealthy" signal fires on the shipped path too.
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; req=urllib.request.Request('http://localhost:8081/mcp',headers={'Accept':'application/json,text/event-stream','Content-Type':'application/json'},data=b'{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"method\\\":\\\"ping\\\",\\\"id\\\":1}'); urllib.request.urlopen(req)\" 2>/dev/null || exit 1"]
+      test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
     deploy:
       resources:
         limits:

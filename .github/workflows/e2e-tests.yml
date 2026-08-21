@@ -108,6 +108,12 @@ jobs:
       # ── Start app (local mode) ──────────────────────────────────────────
       - name: Start application stack
         if: inputs.environment != 'staging'
+        env:
+          # bonnyr-f5 #186 r2: the seeded admin is now generated + must-change, so
+          # the suite's hardcoded login would fail. Seed a KNOWN, non-default admin
+          # with the gate off -- ephemeral CI stack only, never a real deployment.
+          DEFAULT_ADMIN_PASSWORD: e2e-Admin-Pass-1
+          DEFAULT_ADMIN_MUST_CHANGE: "false"
         run: |
           docker compose up -d
           echo "Waiting for application to be healthy..."

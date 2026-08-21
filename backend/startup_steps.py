@@ -215,23 +215,82 @@ def seed_deployable_releases_step():
 def seed_auth_step():
     """Seed default admin user if no users exist; always reconcile MCP service account."""
     from database import get_db_context
-    from services.auth_service import ensure_service_user, seed_admin_user
-    with get_db_context() as db:
-        admin = seed_admin_user(db)
-    if admin:
-        logger.info("  Created default admin user — change password on first login")
-        logger.info("  See docs/INSTALLATION.md for first-login instructions")
-    else:
-        logger.info("  Users already exist")
+    from services.auth_service import (
+        GeneratedCredentialPersistError,
+        ensure_service_user,
+        seed_admin_user,
+    )
+    try:
+        with get_db_context() as db:
+            admin = seed_admin_user(db)
+        if admin:
+            logger.info("  Created default admin user — change password on first login")
+            logger.info("  See docs/INSTALLATION.md for first-login instructions")
+        else:
+            logger.info("  Users already exist")
 
-    # Unconditional: ensure MCP service account exists and its password hash matches
-    # current MCP_SERVICE_PASSWORD — prevents auth drift when the env var is rotated.
-    with get_db_context() as db:
-        ensure_service_user(
-            db,
-            username=settings.MCP_SERVICE_USERNAME,
-            password=settings.MCP_SERVICE_PASSWORD,
-        )
+
+        # bonnyr-f5 #188: treat a shipped known default (changeme) as "unset" so a
+        # dist/IBM upgrade doesn't re-seed the mcp account to a known password.
+        from core.config import MCP_KNOWN_DEFAULT_PASSWORDS
+        _mcp_pw_usable = bool(settings.MCP_SERVICE_PASSWORD) and settings.MCP_SERVICE_PASSWORD not in MCP_KNOWN_DEFAULT_PASSWORDS
+
+        # bonnyr-f5 #188 round 5 (BLOCKER-1): disable stale service accounts
+        # UNCONDITIONALLY, before any reconcile — never only on the no-password
+        # path. The reconcile below touches ONLY the row whose name matches
+        # MCP_SERVICE_USERNAME; on the diligent-operator upgrade path that name
+        # resolves from a legacy .env to 'admin', so ensure_service_user raises a
+        # reserved-name ValueError and returns WITHOUT disabling the legacy 'mcp'
+        # row — leaving it active with the shipped default even though the operator
+        # did the right thing. Running the provenance-keyed disable first (round 4,
+        # INV-11: keyed on is_service_account, not the configured username) neutralises
+        # every stale default; the reconcile then re-activates the one account whose
+        # credentials we actually manage.
+        from services.auth_service import disable_stale_service_user
+        with get_db_context() as db:
+            disable_stale_service_user(db)
+
+        # #187/#188: only reconcile when a real password is configured; never seed
+        # the account with a shipped default. When unset, MCP is simply unavailable
+        # (the stale default row was already disabled above) until an operator sets
+        # MCP_SERVICE_PASSWORD (and gives the MCP server the same value). When it IS
+        # set, ensure_service_user reconciles the stored hash to it — preventing auth
+        # drift when the env var is rotated. (#186's generate-a-secret fallback for
+        # the unset case is deliberately NOT taken here: #188's disable-stale is the
+        # chosen behaviour for an unset MCP password. See the integration notes.)
+        if _mcp_pw_usable:
+            try:
+                with get_db_context() as db:
+                    ensure_service_user(
+                        db,
+                        username=settings.MCP_SERVICE_USERNAME,
+                        password=settings.MCP_SERVICE_PASSWORD,
+                    )
+            except ValueError as exc:
+                # Reserved-username refusal (e.g. MCP_USERNAME still 'admin'): loud,
+                # not fatal — MCP stays down but the human admin is not taken over,
+                # and the stale default row was already disabled above.
+                logger.error("  MCP service account NOT seeded: %s", exc)
+        else:
+            logger.warning(
+                "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
+                "the MCP server will be unable to authenticate until you set it"
+            )
+    except GeneratedCredentialPersistError as exc:
+        # #186 (bonnyr-f5): a generated admin/service credential could not be
+        # written to the keys dir. We refuse to fall back to LOGGING the plaintext
+        # (a real secret-into-logs leak). Fail closed instead: SystemExit escapes
+        # the best-effort step handler in main.py (which only catches Exception),
+        # so the process refuses to start rather than run with an unretrievable
+        # generated credential — no plaintext ever reaches the logs. The operator
+        # makes the keys volume (KEYS_DIR, default /app/keys) writable, or sets an
+        # explicit DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD (which skips
+        # generation entirely), then restarts.
+        raise SystemExit(
+            f"Cannot start: {exc}. Refusing to log the generated plaintext secret. "
+            "Make the keys volume (KEYS_DIR, default /app/keys) writable, or set "
+            "DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD, then restart."
+        ) from exc
 
     if settings.REQUIRE_AUTH:
         logger.info("  Authentication ENABLED (REQUIRE_AUTH=true)")

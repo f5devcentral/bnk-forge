@@ -3,6 +3,7 @@ Authentication service for BNK-Forge.
 Handles user management, password hashing, and JWT token generation.
 """
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -10,7 +11,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from core.config import settings
+from core.config import MCP_KNOWN_DEFAULT_PASSWORDS, settings
 from core.errors import BadRequestError, ConflictError, UnauthorizedError
 from models import User
 
@@ -32,6 +33,20 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plaintext password against a hash."""
     return cast(bool, pwd_context.verify(plain_password, hashed_password))
+
+
+def holds_known_default_password(user: User) -> bool:
+    """True if the user's stored hash still matches a shipped default password.
+
+    bonnyr-f5 #188 (round 4): disable_stale_service_user only flips is_active — it
+    never touches the hash. So a disabled service account still carries
+    bcrypt("mcp-service-changeme"), and simply re-activating the row (e.g. via
+    PUT /api/auth/users/{id}) would bring the published default credential back to
+    life. The re-enable path checks this so a known default can never be revived
+    without first rotating to a real secret.
+    """
+    stored = str(user.hashed_password)
+    return any(verify_password(candidate, stored) for candidate in MCP_KNOWN_DEFAULT_PASSWORDS)
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
@@ -72,6 +87,66 @@ def authenticate_user(db: Session, username: str, password: str) -> User:
     # ENG-006: No commit — caller (route) owns the transaction
 
     return user
+
+
+def token_user_state(token: str) -> User | None:
+    """#184: resolve the JWT's user for the WebSocket auth gate, or None.
+
+    WebSocket validators (k8s/dpus) authenticate off JWT claims alone and never
+    load the User, so must_change_password -- and account existence/active state
+    -- are invisible there. This loads the row so the WS paths enforce the same
+    gate as get_current_user, from one place.
+
+    Returns the User on success, or None if it cannot be resolved for ANY reason
+    (invalid/expired token, deleted or disabled account, a transient DB error).
+    The caller refuses on None: fail CLOSED, so a resolution failure never
+    re-opens pod exec / BMC SSH the way returning "no change owed" would.
+
+    NOTE: the returned instance is read (``must_change_password``) by the caller
+    AFTER this session has closed. That is only safe because get_db_context()
+    closes WITHOUT committing, so the loaded column stays readable on the
+    detached instance. If get_db_context ever gains a db.commit(),
+    expire_on_commit=True would expire that attribute and every WebSocket would
+    then fail closed with no obvious cause -- read must_change_password here, or
+    disable expire_on_commit, if that changes.
+    """
+    from database import get_db_context
+    try:
+        with get_db_context() as db:
+            return get_user_from_token(db, token)
+    except Exception:
+        return None
+
+
+# The only endpoints a must-change user needs before rotating: submit the new
+# password, and read their own state so the UI can show the change screen.
+# Exact full paths, not suffixes: this is a security gate, so it must not accept
+# an unrelated route that merely ends in "/auth/me".
+PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
+    "/api/auth/change-password",
+    "/api/auth/me",
+})
+
+
+def enforce_password_change(path: str, user: User) -> None:
+    """#184/#186: refuse a must-change user everything but the exempt endpoints.
+
+    Enforced at BOTH auth-resolution points -- the get_current_user dependency
+    AND AuthMiddleware -- so a route that declares no dependency of its own (there
+    are ~32 such /api routes) still inherits the gate. Without the middleware half
+    the seed credential can skip the change-password screen and call those routes
+    directly (proven: DELETE /api/benchmarks/configs/{id} -> 204 with the seed
+    token). Raises ForbiddenError; callers translate it to 403.
+    """
+    if not getattr(user, "must_change_password", False):
+        return
+    if path.rstrip("/") in PASSWORD_CHANGE_EXEMPT_PATHS:
+        return
+    from core.errors import ForbiddenError
+    raise ForbiddenError(
+        "Password change required before using the API. "
+        "POST /api/auth/change-password with your current and new password."
+    )
 
 
 def get_user_from_token(db: Session, token: str) -> User:
@@ -134,52 +209,412 @@ def change_password(db: Session, user: User, current_password: str, new_password
     logger.info(f"Password changed for user: {user.username}")
 
 
+# Passwords this project has shipped as an admin default at some point. An
+# existing account still authenticating with one of these is an upgrade left
+# holding a publicly-known credential.
+_KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
+
+# Passwords this project has shipped as a default for the mcp SERVICE account
+# (role=admin, must_change bypassed) at some point -- the exact same #184 hazard
+# class as the admin defaults above, just a second account. Published in
+# config.py, the compose files, and .env.example, so any account still
+# authenticating with one of these holds a publicly-known admin credential.
+# ``changeme`` is here too because the old shipped compose pointed the MCP client
+# at admin/changeme. Refused as a seed value and rotated out of any existing row.
+_KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
+
+# #186 BLOCKER 3 (bonnyr-f5 r5): usernames that belong to a HUMAN identity and
+# must never be resolved by ensure_service_user. That function locates its target
+# purely by ``User.username`` and then force-sets role=admin / is_active=True /
+# must_change_password=False. If MCP_SERVICE_USERNAME (or the Helm chart's
+# mcpUsername) is pointed at "admin", it would REWRITE the human admin row --
+# clearing the #184 must-change gate and handing the mcp secret full admin access
+# (probe: "mcp secret now authenticates as admin? YES role=admin must_change=False").
+# Refuse the co-option: a service account may not adopt a reserved human identity.
+# (Name kept identical to #188's guard so the two land cleanly on the integration
+# branch.)
+_RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
+
+
+class GeneratedCredentialPersistError(RuntimeError):
+    """A generated credential could not be written to the keys dir.
+
+    #186 (bonnyr-f5): the docs promise "the plaintext is never logged". The old
+    code broke that promise — on an unwritable ``/app/keys`` it fell back to
+    logging the generated plaintext, leaking a live secret into the logs (a real
+    aggregation-exposure risk). We now fail closed instead: raise this
+    (WITHOUT the plaintext in the message) so startup refuses to proceed and the
+    operator remediates. Because the credential is persisted BEFORE the DB row is
+    created/rotated, a failure leaves nothing committed and the next boot retries
+    cleanly once the keys volume is writable (or an explicit password env var is
+    set, which skips generation entirely).
+    """
+
+
+def _persist_generated_password(password: str, filename: str = "initial_admin_password") -> str:
+    """Write a generated credential to a mode-0600 file in the keys dir.
+
+    Returns the path on success. Raises :class:`GeneratedCredentialPersistError`
+    if the keys dir is unwritable — the plaintext is NEVER logged or included in
+    the exception, so an unwritable ``/app/keys`` can never leak the secret. The
+    caller logs a POINTER to the returned path; there is deliberately no
+    "log the secret instead" fallback.
+
+    The file is created with 0o600 at open() time so the plaintext credential is
+    never momentarily group/world-readable (open()+chmod would create it 0644
+    under the usual umask, then narrow it). O_TRUNC handles a stale file from a
+    prior seed/rotation without failing.
+
+    Shared by the fresh-install admin seed (#184), the upgrade remediation
+    (#186), and the mcp service-account seed/rotation (#186 BLOCKER 1) so a
+    generated credential is surfaced identically on every path — ``filename``
+    keeps the admin and mcp secrets in distinct files so neither clobbers the
+    other.
+    """
+    import os
+    keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
+    pw_path = os.path.join(keys_dir, filename)
+    try:
+        os.makedirs(keys_dir, exist_ok=True)
+        fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(password + "\n")
+    except OSError as exc:  # PermissionError/NotADirectoryError are OSError subclasses
+        # Fail closed. NEVER put `password` in this message: it propagates into
+        # logs, which is exactly the leak we are closing (#186).
+        raise GeneratedCredentialPersistError(
+            f"could not persist generated credential to {pw_path}: {exc}"
+        ) from exc
+    return pw_path
+
+
+def _rotate_known_default_admin(db: Session) -> None:
+    """#186 (bonnyr-f5): make a published default credential UNUSABLE on upgrade.
+
+    A deployment seeded before #184 holds admin/'changeme' with
+    must_change_password=False. The new seed logic never runs for it (users
+    already exist), so it keeps the published default.
+
+    Merely flagging must_change_password does NOT remove the capability:
+    /api/auth/change-password is exempt from the gate and verifies
+    current_password against the stored hash, so anyone holding the published
+    'changeme' (it's in dist/README.md, user-pack/install-guide.html and
+    scripts/ibm_cloud_bnk_forge.sh) could rotate the password before the operator
+    does and take over the account. A mitigation must remove the capability, not
+    request its removal.
+
+    So we OVERWRITE the hash -- the published default stops working the moment
+    this runs -- and leave the account must_change_password so the replacement
+    only survives until first login.
+
+    Provenance (bonnyr-f5 r4): the replacement follows the SAME source-of-truth
+    rule as a fresh seed, so the documented retrieval instructions stay correct
+    on upgrade too:
+      * DEFAULT_ADMIN_PASSWORD set to a non-published value (Helm wires it from
+        the ``admin-password`` Secret) -> rotate TO that value, so the Secret /
+        env the docs tell operators to read is what now authenticates. No
+        keys-file is written (nothing was generated).
+      * otherwise -> generate a fresh random secret and surface it exactly like a
+        fresh install (mode-0600 keys-file, pointer logged once).
+    Rotating to a *published* default (e.g. DEFAULT_ADMIN_PASSWORD=changeme) is
+    refused -- that would just re-publish the hole -- so such a value falls
+    through to generation.
+    """
+    # #186 (bonnyr-f5 r4, INV-8): lock the row for the read-then-write. Two `api`
+    # replicas booting together would otherwise both read admin/'changeme', each
+    # generate a DIFFERENT secret, and interleave file-write vs DB-commit so the
+    # keys-file and the stored hash end up from different runs -> permanent admin
+    # lockout. FOR UPDATE serializes them: the loser blocks, then re-reads the
+    # already-rotated hash (no longer a known default) and no-ops. (Silently
+    # ignored on SQLite, which the tests use and which has no concurrent writers.)
+    admin = db.query(User).filter(User.username == "admin").with_for_update().first()
+    if admin is None:
+        return
+    if not any(verify_password(p, admin.hashed_password) for p in _KNOWN_DEFAULT_ADMIN_PASSWORDS):
+        return
+
+    configured = settings.DEFAULT_ADMIN_PASSWORD
+    if configured and configured not in _KNOWN_DEFAULT_ADMIN_PASSWORDS:
+        # Rotate to the operator/chart-supplied secret so the documented source
+        # (Helm admin-password Secret / DEFAULT_ADMIN_PASSWORD env) is authoritative.
+        admin.hashed_password = hash_password(configured)  # type: ignore[assignment]
+        admin.must_change_password = True  # type: ignore[assignment]
+        db.commit()
+        logger.warning(
+            "Existing 'admin' still held a known shipped default password; "
+            "OVERWROTE it with DEFAULT_ADMIN_PASSWORD (the published default no "
+            "longer works) -- retrieve it from the same source you configured "
+            "(Helm: the admin-password Secret) and change it on first login (#186).",
+        )
+        return
+
+    new_password = secrets.token_urlsafe(18)
+    # Persist the new secret BEFORE overwriting the hash: if the keys dir is
+    # unwritable this raises (fail closed, no plaintext logged) with the row's
+    # published-default hash untouched, so the next boot retries the whole
+    # remediation cleanly. Never fall back to logging the plaintext (#186).
+    pw_path = _persist_generated_password(new_password)
+    admin.hashed_password = hash_password(new_password)  # type: ignore[assignment]
+    admin.must_change_password = True  # type: ignore[assignment]
+    db.commit()
+    logger.warning(
+        "Existing 'admin' still held a known shipped default password; "
+        "OVERWROTE it with a generated secret (the published default no longer "
+        "works) and wrote the new one to %s -- retrieve it, then change it on "
+        "first login (#186).",
+        pw_path,
+    )
+
+
 def seed_admin_user(db: Session) -> User | None:
     """Create default admin user if no users exist. Returns the user or None if already exists."""
     existing_users = db.query(User).count()
     if existing_users > 0:
+        _rotate_known_default_admin(db)  # #186: upgrade safety for pre-#184 installs
         return None
+
+    # #184: never seed a known/published default. If DEFAULT_ADMIN_PASSWORD is
+    # unset, generate a strong random one and persist it to the (mode-600,
+    # volume-backed) keys dir so the operator can retrieve it. The account is
+    # must_change_password, so it only survives until first login regardless.
+    seed_password = settings.DEFAULT_ADMIN_PASSWORD
+    generated = False
+    if not seed_password:
+        seed_password = secrets.token_urlsafe(18)
+        generated = True
+
+    pw_path = None
+    if generated:
+        # Persist the one-time password BEFORE creating the row: a single boot-log
+        # line is easy to miss (log rotation, JSON formatting) and logging the
+        # plaintext is a known aggregation-exposure risk, so we surface a POINTER,
+        # never the secret. Persisting first means an unwritable keys dir raises
+        # here (fail closed, no plaintext logged) with NO admin row committed, so
+        # the next boot retries the seed cleanly instead of stranding an admin
+        # account whose generated password nobody can read (#186).
+        pw_path = _persist_generated_password(seed_password)
 
     admin = create_user(
         db=db,
         username="admin",
         email="admin@bnk-forge.local",
-        password=settings.DEFAULT_ADMIN_PASSWORD,
+        password=seed_password,
         role="admin",
-        must_change_password=True,
+        must_change_password=settings.DEFAULT_ADMIN_MUST_CHANGE,
     )
     # ENG-006: Startup seed manages its own transaction
     db.commit()
-    logger.info("Seeded default admin user — password change required on first login")
+    if generated:
+        logger.warning(
+            "Seeded admin user 'admin' with a GENERATED password, written to "
+            "%s (retrieve it, then delete it — you must change it on first login). "
+            "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
+            pw_path,
+        )
+    else:
+        logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
     return admin
 
 
-def ensure_service_user(db: Session, username: str, password: str, role: str = "admin") -> None:
+# NOTE: _RESERVED_HUMAN_USERNAMES is defined once, above (near the config
+# constants), and shared by ensure_service_user below — the #188 and #186 guards
+# use the identical frozenset, so the integration keeps a single definition.
+def _log_generated_service_password(username: str, pw_path: str, action: str) -> None:
+    """Log a POINTER to a persisted generated service-account secret (#186).
+
+    The plaintext is never logged — the caller persisted it via
+    :func:`_persist_generated_password` (which fails closed) and passes only the
+    resulting file path here.
+    """
+    logger.warning(
+        "%s service account '%s' with a GENERATED password, written to %s "
+        "(retrieve it and point the MCP client at it via MCP_SERVICE_PASSWORD). "
+        "Set MCP_SERVICE_PASSWORD to choose your own instead (#186).",
+        action, username, pw_path,
+    )
+
+
+def ensure_service_user(
+    db: Session, username: str, password: str | None, role: str = "admin"
+) -> None:
     """Idempotent create-or-reconcile a non-human service account.
 
-    Called unconditionally on every startup so the stored password hash always
-    matches the current MCP_SERVICE_PASSWORD env var — prevents auth drift when
-    the env var is rotated without the DB being updated.
+    Called unconditionally on every startup. A genuine operator-supplied password
+    is reconciled onto the row so the stored hash always matches the current
+    MCP_SERVICE_PASSWORD env var — prevents auth drift when the env var is rotated
+    without the DB being updated.
+
+    Combined credential model (#186 + bonnyr-f5 #188):
+      * provenance (#188): a freshly-created row is flagged is_service_account so
+        disable_stale_service_user can find it and a later reconcile can prove it
+        is ours. A pre-existing row that is NOT a service account is refused —
+        UNLESS it still authenticates with a shipped published default, which is
+        by definition a stale service credential from a pre-provenance install
+        (the v2_155 backfill flags the known legacy 'mcp' row, but a row seeded
+        under another path may still lack the flag); neutralising it is exactly
+        the upgrade remediation, so we adopt and rotate/reconcile it.
+      * published-default handling (#186): the mcp service account is role=admin
+        and must_change_password=False, so it is EXEMPT from the #184 must-change
+        gate. Seeding/reconciling it to a shipped published default
+        (mcp-service-changeme / changeme) would republish a live, publicly-known
+        admin credential. So a published default (or an absent password) is
+        treated as "no usable secret":
+          - fresh row  -> a strong random secret is generated and surfaced like
+            the admin seed (mode-0600 file + one-time pointer log).
+          - existing row still holding a known published default -> OVERWRITTEN
+            with a fresh random secret (upgrade remediation).
+          - existing row already holding a generated/operator secret -> left
+            intact, so the reconcile is idempotent and does not churn the secret.
+
+    #186 BLOCKER 1 (bonnyr-f5 r5): the backend now receives MCP_SERVICE_PASSWORD on
+    every deploy mode (compose backend-env anchors, the ibm installer, and the Helm
+    shared-env sourced from the release Secret's mcp-password key), so this
+    reconcile binds the mcp account to the SAME per-install secret the mcp client
+    uses. A reserved-name guard refuses to run against a human username such as
+    ``admin``.
     """
-    user = db.query(User).filter(User.username == username).first()
+    # #186 BLOCKER 3 / #188 (bonnyr-f5): fail closed BEFORE any lookup if the
+    # caller points a service account at a reserved human username. Without this,
+    # a deployment that sets MCP_SERVICE_USERNAME=admin (or ships the chart's old
+    # mcpUsername: admin) silently rewrites the human admin row and grants the mcp
+    # secret admin access. A service account may never co-opt a human identity.
+    if username in _RESERVED_HUMAN_USERNAMES:
+        raise ValueError(
+            f"refusing to reconcile reserved human username '{username}' as a "
+            f"service account — set MCP_SERVICE_USERNAME to a dedicated name like "
+            f"'mcp' (a service account must not co-opt the human admin identity)"
+        )
+
+    published_default = bool(password) and password in _KNOWN_DEFAULT_SERVICE_PASSWORDS
+    # An operator secret we may actually store, or None if there is nothing usable.
+    usable_password = None if (not password or published_default) else password
+
+    # #186 (bonnyr-f5 r4/r5, INV-8): lock the row for the read-then-write on the
+    # RECONCILE/ROTATE (existing-row) paths, so two `api` replicas cannot desync
+    # the stored hash from the keys-file. No-op on SQLite (tests). with_for_update()
+    # cannot lock a not-yet-existing row, so the FIRST-CREATE path is serialised by
+    # the username UNIQUE constraint instead (a losing racer's INSERT raises and
+    # that boot's seed retries).
+    user = db.query(User).filter(User.username == username).with_for_update().first()
+
     if user is None:
-        create_user(
+        generated = usable_password is None
+        seed_password = usable_password if usable_password is not None else secrets.token_urlsafe(18)
+        # Persist the generated secret BEFORE creating the row (fail closed on an
+        # unwritable keys dir, never logging the plaintext) so a failure leaves
+        # nothing committed and the next boot retries cleanly (#186).
+        pw_path = (
+            _persist_generated_password(seed_password, filename=f"initial_{username}_password")
+            if generated
+            else None
+        )
+        svc = create_user(
             db=db,
             username=username,
             email=f"{username}@bnk-forge.local",
-            password=password,
+            password=seed_password,
             role=role,
             must_change_password=False,
         )
+        svc.is_service_account = True  # type: ignore[assignment]  # provenance (#188)
         # ENG-006: Startup seed manages its own transaction
         db.commit()
-        logger.info(f"Created service account: {username} (role={role})")
-    else:
-        # Reconcile: update hash to match current env var; never requires current password
-        user.hashed_password = hash_password(password)  # type: ignore[assignment]
+        if generated:
+            _log_generated_service_password(username, pw_path, "Seeded")
+        else:
+            logger.info(f"Created service account: {username} (role={role})")
+        return
+
+    # Existing row. bonnyr-f5 #188: refuse to reconcile a row this seeder did NOT
+    # provision as a service account — a name collision must never take over a
+    # human account. Gate on provenance, not the username. EXCEPTION (#186
+    # integration): a row still authenticating with a shipped published default is
+    # a stale service credential from a pre-provenance install; neutralising it is
+    # the upgrade remediation, so we adopt it (and re-flag it below) rather than
+    # leave the published default live.
+    if not user.is_service_account:
+        holds_published_default = any(
+            verify_password(p, str(user.hashed_password))
+            for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS
+        )
+        if not holds_published_default:
+            raise ValueError(
+                f"refusing to reconcile '{username}': it is not a service account. "
+                f"Point MCP_SERVICE_USERNAME at a dedicated name that isn't an "
+                f"existing user."
+            )
+
+    if usable_password is not None:
+        # Operator supplied a genuine (non-default) password: reconcile to it.
+        # Re-activation is required and safe (disable_stale_service_user may have
+        # deactivated this row when no real password was configured; its docstring
+        # promises that configuring one "re-seeds and re-activates it"). Role is
+        # left untouched — we do NOT widen privilege on reconcile (bonnyr-f5 #188).
+        user.hashed_password = hash_password(usable_password)  # type: ignore[assignment]
         user.must_change_password = False  # type: ignore[assignment]
-        user.role = role  # type: ignore[assignment]
-        user.is_active = True  # type: ignore[assignment]
-        # ENG-006: Startup seed manages its own transaction
-        db.commit()
+        user.is_active = True  # type: ignore[assignment]  # revive a disabled-stale row
+        user.is_service_account = True  # type: ignore[assignment]  # adopt a backfilled/legacy row
+        db.commit()  # ENG-006: Startup seed manages its own transaction
         logger.info(f"Reconciled service account: {username}")
+        return
+
+    # No usable secret configured. Only touch the row if it still holds a known
+    # published default (an upgrade left holding the shipped credential); rotate it
+    # to a fresh random secret so the published value stops working. A row that
+    # already holds a generated/operator secret is left untouched (idempotent).
+    if any(verify_password(p, str(user.hashed_password)) for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS):
+        new_password = secrets.token_urlsafe(18)
+        # Persist BEFORE overwriting the hash: fail closed on an unwritable keys
+        # dir (no plaintext logged), leaving the published-default hash untouched
+        # so the next boot retries the rotation cleanly (#186).
+        pw_path = _persist_generated_password(new_password, filename=f"initial_{username}_password")
+        user.hashed_password = hash_password(new_password)  # type: ignore[assignment]
+        user.must_change_password = False  # type: ignore[assignment]
+        user.is_active = True  # type: ignore[assignment]
+        user.is_service_account = True  # type: ignore[assignment]  # adopt the stale row
+        db.commit()  # ENG-006: Startup seed manages its own transaction
+        _log_generated_service_password(username, pw_path, "Rotated")
+
+
+def disable_stale_service_user(db: Session) -> None:
+    """#188 (bonnyr-f5): a service account seeded by a prior release still holds
+    the shipped 'mcp-service-changeme' default and keeps authenticating on upgrade.
+    Deactivate EVERY active service-account row so no known default can be used
+    until the operator configures a real password (which re-seeds and re-activates
+    the account).
+
+    Round 5 (BLOCKER-1): seed_auth_step now calls this UNCONDITIONALLY, before the
+    reconcile — not only on the no-password path. The reconcile is name-keyed, so
+    on the diligent-operator path (strong MCP_SERVICE_PASSWORD but MCP_USERNAME
+    left at the legacy 'admin') it raises a reserved-name ValueError and never
+    reaches a disable; running this first is what closes that hole. When a usable
+    password IS set for a dedicated username, the reconcile re-activates that one
+    row immediately after, so the net effect is: exactly the configured service
+    account stays active, every stale default is revoked.
+
+    Keyed on provenance (is_service_account), NOT on the configured username
+    (bonnyr-f5 #188 round 4, INV-11): on the dist/IBM upgrade path
+    MCP_SERVICE_USERNAME resolves from a legacy .env to 'admin', so matching the
+    configured name would early-return and leave the stale 'mcp' row still
+    authenticating with the shipped default. The provenance flag is set only on
+    rows this seeder created, never on a human account, so disabling all service
+    accounts can never touch a human login — which is also why no reserved-username
+    guard is needed (or wanted: that guard is exactly what made this a no-op).
+    """
+    rows = db.query(User).filter(
+        User.is_active.is_(True),
+        User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
+    ).all()
+    if not rows:
+        return
+    for user in rows:
+        user.is_active = False  # type: ignore[assignment]
+    db.commit()
+    for user in rows:
+        logger.warning(
+            "Disabled stale MCP service account '%s' — no usable "
+            "MCP_SERVICE_PASSWORD is set, so its pre-existing (possibly default) "
+            "credential must not keep authenticating. Set MCP_SERVICE_PASSWORD to "
+            "re-enable MCP.",
+            user.username,
+        )

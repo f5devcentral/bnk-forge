@@ -24,6 +24,9 @@ x-local-backend-env: &local-backend-env
   # Bridge mode: reach the socket proxy by service DNS (the base compose's
   # 127.0.0.1:2375 is the container's own loopback here, not the host).
   DOCKER_HOST: tcp://docker-socket-proxy:2375
+  # MCP service account (see base compose): no shipped default (#186/#187).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 networks:
   bnk-local:
@@ -124,8 +127,12 @@ services:
       - "8081:8081"
     environment:
       BNK_FORGE_API_URL: http://backend:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: MCP authenticates as the dedicated 'mcp' service account, NOT the
+      # human admin. admin/changeme is gone (#184 generates the admin password
+      # and gates it). Set MCP_SERVICE_PASSWORD in .env (no shipped default — the
+      # published one can no longer authenticate); the backend reconciles to it.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
 
   postgres-backup:

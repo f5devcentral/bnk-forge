@@ -4,26 +4,28 @@
 # projects rebuild with a patched Go version.
 #
 # Review this file periodically and remove entries when upstream fixes are available.
+# Each entry carries an `exp:` review-by date — Trivy drops the suppression after it,
+# forcing a re-check. Extend an entry only after re-confirming no upstream fix exists.
 
 # CVE-2025-68121: Go stdlib crypto/tls - Unexpected session resumption
 # Fixed in Go >= 1.24.13 / 1.25.7 / 1.26.0-rc.3
 # Affects: helm (Go 1.25.0), kubectl, tofu (Go 1.25.6), infracost (Go 1.25.4)
 # All current latest releases use Go < 1.25.7 — no upstream fix available yet
 # Added: 2026-02-23
-CVE-2025-68121
+CVE-2025-68121 exp:2026-11-30
 
 # CVE-2024-45337: golang.org/x/crypto/ssh - Misuse of ServerConfig.PublicKeyCallback
 # Present in infracost binary's bundled dependencies
 # Not exploitable in our context (we don't run an SSH server via infracost)
 # Added: 2026-02-23
-CVE-2024-45337
+CVE-2024-45337 exp:2026-11-30
 
 # CVE-2026-33186: gRPC authorization bypass (google.golang.org/grpc < 1.79.3)
 # Affects: helm and tofu binaries in Docker image (grpc v1.76.0)
 # Status: Waiting for upstream helm/tofu releases with fixed grpc
 # Tracked: GitHub issue #50
 # Added: 2026-04-15
-CVE-2026-33186
+CVE-2026-33186 exp:2026-11-30
 
 # CVE-2026-7598: libssh2 — integer overflow via large username/password
 # Affects: libssh2-1t64 1.11.1-1 in Debian trixie base image
@@ -32,11 +34,16 @@ CVE-2026-33186
 # The vulnerable code path requires libssh2 to negotiate auth with a
 # malicious remote SSH server, which our HTTP backend never does.
 # Upstream: no Debian backport yet (Trivy reports empty fix column).
-# REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-7598
-#          escalate to pin-from-sid if no fix by 2026-08-12
+# REVISIT: monthly. Do not extend this entry on the assertion that no fix exists —
+#          confirm it: re-run `trivy image` (or check the tracker) and only keep
+#          the ignore while the fix column is still empty for our base image's
+#          libssh2. https://security-tracker.debian.org/tracker/CVE-2026-7598
+#          The 2026-08-12 deadline lapsed without that re-check; next check by
+#          2026-09-12, and escalate to pin-from-sid if a fixed version is then
+#          available and we're still ignoring it.
 # Tracked: memory/followup_trivyignore_cve_2026_7598_revisit.md
 # Added: 2026-05-12
-CVE-2026-7598
+CVE-2026-7598 exp:2026-09-12
 
 # CVE-2026-42010: GnuTLS Authentication Bypass via NUL Character in DN parsing
 # Affects: libgnutls30t64 in our Debian Trixie base image (3.8.9-3+deb13u2)
@@ -49,7 +56,7 @@ CVE-2026-7598
 # REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-42010
 # Pattern mirror of CVE-2026-33845 / CVE-2026-7598 suppressions.
 # Added: 2026-05-14
-CVE-2026-42010
+CVE-2026-42010 exp:2026-11-30
 
 # CVE-2026-42496: perl — Archive::Tar < 3.08 extracts symlinks unsafely
 # CVE-2026-8376:  perl — heap buffer overflow in the interpreter (<= 5.43.10)
@@ -69,8 +76,8 @@ CVE-2026-42010
 #   https://security-tracker.debian.org/tracker/CVE-2026-8376
 # Drop once Debian ships a trixie point-release with patched perl.
 # Added: 2026-06-02
-CVE-2026-42496
-CVE-2026-8376
+CVE-2026-42496 exp:2026-11-30
+CVE-2026-8376 exp:2026-11-30
 
 # CVE-2026-13221: libperl5.40 — silently incorrect results in Perl <= 5.43.9
 # Affects: libperl5.40 5.40.1-6 in the python:3.11-slim (Debian trixie) base image
@@ -80,7 +87,7 @@ CVE-2026-8376
 # REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-13221
 #          drop once Debian ships a trixie update with a patched libperl5.40.
 # Added: 2026-07-15
-CVE-2026-13221
+CVE-2026-13221 exp:2026-11-30
 
 # CVE-2026-60002: openssh-client — memory corruption in SSH client
 # Affects: openssh-client in the python:3.11-slim (Debian trixie) base image
@@ -91,7 +98,7 @@ CVE-2026-13221
 # REVISIT: monthly via https://security-tracker.debian.org/tracker/CVE-2026-60002
 #          drop once Debian ships a trixie update with a patched openssh-client.
 # Added: 2026-07-15
-CVE-2026-60002
+CVE-2026-60002 exp:2026-11-30
 
 # CVE-2026-33845: GnuTLS DTLS — reachable-assert / auth bypass in DN parsing
 # Affects: libgnutls30t64 in our Debian Trixie base image (3.8.9-3+deb13u2)
@@ -105,7 +112,7 @@ CVE-2026-60002
 # Check: https://security-tracker.debian.org/tracker/CVE-2026-33845
 # Tracked: GitHub issue #103
 # Added: 2026-05-06
-CVE-2026-33845
+CVE-2026-33845 exp:2026-11-30
 
 # CVE-2026-57433: perl Storable signed-integer flaw (Storable < 3.41)
 # Affects: libperl5.40, perl-base (5.40.1-6) in our Debian Trixie base image.
@@ -117,4 +124,4 @@ CVE-2026-33845
 #          trixie-security. Check: https://security-tracker.debian.org/tracker/CVE-2026-57433
 # Tracked: GitHub issue #492
 # Added: 2026-07-22
-CVE-2026-57433
+CVE-2026-57433 exp:2026-11-30

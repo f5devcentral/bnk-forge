@@ -174,8 +174,10 @@ BNK_FORGE_REGISTRY=__REGISTRY__
 BNK_FORGE_VERSION=__VERSION__
 POSTGRES_PASSWORD=${PG}
 REDIS_PASSWORD=${RD}
-MCP_USERNAME=admin
-MCP_PASSWORD=${MCP}
+# #186/#187: MCP authenticates as the dedicated 'mcp' service account with a
+# per-install random secret, NOT the human admin (whose password #184 generates + gates).
+MCP_SERVICE_USERNAME=mcp
+MCP_SERVICE_PASSWORD=${MCP}
 ENV
 chmod 600 .env
 case "${__XTRACE__}" in *x*) set -x ;; esac
@@ -343,7 +345,7 @@ done
 docker compose up -d
 
 # 9. Wait for backend health then drop a ready marker
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -sf http://localhost:8000/api/system/health >/dev/null 2>&1 && break || sleep 5
 done
 touch /opt/bnk-forge/.bnk-forge-ready
@@ -381,6 +383,12 @@ x-backend-env: &backend-env
   # Artifact (container-image) engine reaches the Docker daemon through the
   # scoped socket proxy below (loopback-published), never the raw host socket.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # #186 BLOCKER 1 / #187 (bonnyr-f5 r5): this installer writes a per-install random
+  # MCP_SERVICE_PASSWORD into .env (above). The backend reconciles the mcp account
+  # to it on boot, so it must receive it too — otherwise the backend generates its
+  # own secret and the mcp client can never authenticate.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -462,7 +470,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -495,7 +503,7 @@ services:
       start_period: 30s
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -513,7 +521,7 @@ services:
     restart: unless-stopped
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -531,7 +539,7 @@ services:
     restart: unless-stopped
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -547,7 +555,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -563,7 +571,7 @@ services:
       start_period: 10s
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -575,14 +583,15 @@ services:
     restart: unless-stopped
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: authenticate as the 'mcp' service account (see .env above), not admin.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
@@ -650,7 +659,7 @@ VM_ID="$(echo "${INST_JSON}" | jq -r '.id')"
 [ -n "${VM_ID}" ] && [ "${VM_ID}" != "null" ] || die "Instance creation failed."
 
 log "Waiting for the VSI to reach 'running'..."
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   ST="$(ibmcloud is instance "${VM_ID}" --output json | jq -r '.status')"
   [ "${ST}" = "running" ] && break
   [ "${ST}" = "failed" ] && die "Instance entered 'failed' state."
@@ -684,7 +693,7 @@ log "Floating IP: ${FIP}"
 URL="https://${FIP}"
 log "Installing bnk-forge on the VSI (this can take 5–10 minutes)..."
 READY=0
-for i in $(seq 1 90); do
+for _ in $(seq 1 90); do
   CODE="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 "${URL}/api/system/health" 2>/dev/null || true)"
   if [ "${CODE}" = "200" ]; then READY=1; break; fi
   sleep 10
@@ -702,7 +711,7 @@ fi
 echo
 echo "  URL:      ${URL}"
 echo "            (self-signed certificate — accept the browser warning)"
-echo "  Login:    admin / changeme   (change on first login)"
+echo "  Login:    admin / <generated> (see backend logs or /app/keys/initial_admin_password; change on first login)"
 echo
 echo "  Host IP:  ${FIP}   (SSH: ssh ubuntu@${FIP})"
 echo "  Region:   ${REGION} / ${ZONE}    Profile: ${PROFILE}    Image: Ubuntu 24.04"

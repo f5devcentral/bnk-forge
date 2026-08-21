@@ -18,6 +18,22 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # #186: plumb the must-change gate too, or the seeded admin owes a password
+  # change no route accepts (login is exempt; every other /api route 403s).
+  # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
+  # e2e suite reach protected routes.
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186/#187 (bonnyr-f5 r5): the BACKEND must receive MCP_SERVICE_* too, not just
+  # the mcp service. ensure_service_user reconciles the stored hash to
+  # MCP_SERVICE_PASSWORD every boot; the backend seeds the `mcp` service account
+  # from these and the MCP server authenticates with the SAME .env values. config.py
+  # has no env_file, so an unpassed var never reaches the container. Unset -> empty
+  # -> the account isn't seeded and the MCP server can't auth (clean, not a weak default).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume
@@ -457,9 +473,11 @@ services:
       BNK_FORGE_API_URL: http://localhost:8000
       BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       # MCP authenticates as the dedicated service account seeded by the backend.
-      # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
-      # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      # Set MCP_SERVICE_PASSWORD in .env (no shipped default -- #186/#187: the old
+      # mcp-service-changeme can no longer authenticate). The backend seeds the
+      # 'mcp' service account with the same value and reconciles its hash on every
+      # startup so backend and MCP always stay in sync.
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:

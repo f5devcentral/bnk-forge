@@ -16,7 +16,7 @@ global:
 
 image:
   pullPolicy: IfNotPresent
-  tag: "3.0.1"
+  tag: "3.1.6"
 
 # Generated/explicit secrets. If left empty, helm generates random values on
 # first install and reuses them on upgrade (lookup-based).
@@ -25,8 +25,23 @@ secrets:
   redisPassword: ""
   jwtSecretKey: ""
   encryptionKey: ""
-  mcpUsername: admin
-  mcpPassword: changeme
+  # Empty -> generated on first install and reused on upgrade. The seeded admin
+  # account is must_change_password; retrieve this to log in the first time.
+  adminPassword: ""
+  # #186: whether the seeded admin must change its password before using the API.
+  # Keep true on any real deployment (the shipped-default hazard #184 closes).
+  # Set false only for an ephemeral test stack seeding a known throwaway admin.
+  adminMustChange: true
+  # #186 BLOCKER 2/3 / #187 (bonnyr-f5 r5): NEVER ship a default admin credential.
+  #  - mcpUsername was `admin`: it pointed the MCP client at the human admin
+  #    account and, once the backend receives MCP_SERVICE_USERNAME, made
+  #    ensure_service_user rewrite the human admin row (BLOCKER 3). The MCP
+  #    client authenticates as its own dedicated, non-human service account.
+  #  - mcpPassword was `changeme`: a live, publicly-known credential on a public
+  #    repo. Empty -> generated per-install in the release Secret (mirrors
+  #    adminPassword) and reused on upgrade, so no shipped default ever exists.
+  mcpUsername: mcp
+  mcpPassword: ""
 
 # Common pod settings
 # fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).

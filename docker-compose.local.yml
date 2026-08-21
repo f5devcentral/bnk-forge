@@ -38,6 +38,20 @@ x-local-backend-env: &local-backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # #186: plumb the must-change gate too, or the seeded admin owes a password
+  # change no route accepts (login is exempt; every other /api route 403s).
+  # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
+  # e2e suite reach protected routes.
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186/#187 (bonnyr-f5 r5): the backend reconciles the mcp account to
+  # MCP_SERVICE_PASSWORD on every boot and seeds it from the same .env value the
+  # MCP server authenticates with; plumb it (and the username) here or the backend
+  # generates a random secret the mcp client can never match. Unset -> not seeded.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 # Shared bridge network — all services can resolve each other by service name
 networks:
@@ -143,8 +157,9 @@ services:
       BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
-      # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      # every startup so backend and MCP always stay in sync. No shipped default
+      # (#186): the old mcp-service-changeme can no longer authenticate.
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
       MCP_PORT: "8081"
 
   postgres-backup:

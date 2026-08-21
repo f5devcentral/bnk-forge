@@ -84,7 +84,7 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
         test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
         test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
-        lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
+        lint lint-backend lint-frontend shellcheck coverage quick-check version-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
         build build-retry build-backend build-frontend build-worker build-agent build-all \
@@ -206,7 +206,7 @@ _install-info:
 	  echo "        (accept the self-signed certificate warning)"; \
 	fi; \
 	echo ""; \
-	echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme' — change on first login)"; \
+	echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password — change on first login)"; \
 	echo ""; \
 	echo "  Next steps:"; \
 	echo "    1. Change your password on first login"; \
@@ -426,7 +426,7 @@ deploy: build ensure-artifact-network
 	@echo ""
 ifeq ($(UNAME_S),Darwin)
 	@echo "  Open:  https://localhost"
-	@echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme'; change on first login)"
+	@echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password; change on first login)"
 endif
 	@echo "  Recommended next step: make mcp-readiness"
 	@echo "========================================="
@@ -464,7 +464,82 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh vm-bnk-forge/*.sh vm-bnk-forge/lib/*.sh
+	@# bonnyr-f5 #182: drive from git ls-files so the WHOLE corpus is gated
+	@# (the hardcoded globs missed 14 tracked scripts incl. dist/install.sh).
+	@# bonnyr-f5 #182 r2: include the (extensionless) git hooks, and fail on an
+	@# EMPTY list -- `xargs shellcheck` with no files exits 0 on BSD (blind).
+	@files="$$(git ls-files '*.sh' .githooks/pre-commit .githooks/pre-push 2>/dev/null)"; \
+	  n=$$(printf '%s\n' "$$files" | grep -c .); \
+	  [ "$$n" -ge 1 ] || { echo "::error::shellcheck found no files to lint"; exit 1; }; \
+	  printf '%s\n' "$$files" | xargs shellcheck --severity=warning
+
+# ── CI-parity gates (bonnyr-f5 #182 r3, Major) ──────────────────────────────
+# The four gates ci.yml added were not runnable locally: `make pre-push` ran
+# none of them and `make shellcheck` had no dependents, yet ci.yml's header
+# claims `make pre-push` == CI. #166: "a local gate that does not run the CI
+# command is not a gate." These targets ARE the CI command (ci.yml calls the
+# same `make` targets / same scripts), and `pre-push` now depends on `ci-gates`.
+.PHONY: ci-gates version-check secret-scan commit-lint script-selftests
+
+# Helm chart tag/appVersion + frontend package.json must equal VERSION.
+version-check:
+	@echo ""
+	@echo "=== Version artifacts consistency (sync-version-artifacts.sh --check) ==="
+	@bash scripts/sync-version-artifacts.sh --check
+
+# gitleaks range-aware secret scan + assertion backstop (single source of truth,
+# shared with ci.yml's secret-scan job and the scheduled baseline workflow).
+# Honours RANGE from the environment; unset => scan since the upstream merge-base.
+secret-scan:
+	@echo ""
+	@echo "=== Secret scan (gitleaks) ==="
+	@bash scripts/secret-scan.sh
+
+# Commit-message marker enforcement (shared with ci.yml's commit-lint job and
+# .githooks/pre-push). Honours RANGE; unset => @{upstream}..HEAD.
+commit-lint:
+	@echo ""
+	@echo "=== Commit message marker lint ==="
+	@bash scripts/lint-commit-markers.sh
+
+# The paired self-test harnesses ci.yml's script-selftests job runs.
+# ci.yml's compute step has FOUR anti-vacuity assertions and this target must
+# mirror ALL of them, or a broken harness passes locally while CI goes red
+# (bonnyr-f5 #182 r4/r5, Major-3: a local gate that diverges from the CI command
+# is not a gate). The four (in ci.yml order):
+#   1. non-zero exit               -> the harness itself errored
+#   2. a "FAIL:" line (rc still 0) -> an assertion failed but exit was swallowed
+#   3. NO "PASS:" line             -> the guard was silenced / renamed: green with
+#                                     zero assertions actually run
+#   4. NO "=== END SELF-TEST ==="  -> the harness exited early (deleted END marker
+#                                     or an early `exit 0`) with assertions unrun
+# r5 landed 3+4 here; r4 had only 1+2, so the "silenced guard" and "early exit"
+# harness-break modes were CI-red but `make`-GREEN.
+script-selftests:
+	@echo ""
+	@echo "=== Script self-tests ==="
+	@set +e; out="$$(SELF_TEST=1 bash scripts/compute_version_bump.sh 2>&1)"; rc=$$?; \
+	  echo "$$out"; \
+	  if [ "$$rc" -ne 0 ]; then echo "::error::compute_version_bump self-test exited $$rc"; exit "$$rc"; fi; \
+	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
+	    echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])PASS:'; then \
+	    echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
+	    echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
+	  fi
+	@if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then \
+	  bash scripts/extract-breaking-changes.sh --self-test; \
+	else \
+	  echo "  (extract-breaking-changes.sh has no --self-test yet; it lands with #179)"; \
+	fi
+
+# Aggregate: every CI gate that is not already covered by quick-check/tests.
+ci-gates: shellcheck version-check commit-lint script-selftests secret-scan
+	@echo ""
+	@echo "=== CI-parity gates passed ==="
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
@@ -524,7 +599,7 @@ smoke-mcp-live:
 	@echo ""
 	@echo "=== MCP Live Smoke Validation ==="
 	@echo "  NOTE: ping/tools-list reachability != runtime readiness; tool calls require valid MCP backend credentials."
-	@echo "  Configure MCP_USERNAME/MCP_PASSWORD if backend admin password was rotated."
+	@echo "  Configure MCP_USERNAME=mcp / MCP_PASSWORD (backend MCP_SERVICE_PASSWORD) — the dedicated MCP service account, never the admin login (#187)."
 	@python3 scripts/mcp_live_smoke.py --mcp-url "$${MCP_SMOKE_URL:-http://localhost:8081/mcp}" $${MCP_SMOKE_INSECURE_TLS:+--insecure-tls}
 
 mcp-readiness:
@@ -684,9 +759,19 @@ check-migrations:
 	@echo "=== Migration Chain Validator ==="
 	@python3 scripts/check-migrations.py
 
+# ── Version-artifact consistency ─────────────────────────────────────────────
+# Mirror of CI's "P1 · Version Consistency" job. ci.yml promises `make pre-push`
+# ≡ CI, so the gate must be reachable from the documented local target or drift
+# is undetectable until the release job dies (bonnyr-f5 #180 r5, F3). Pulled in
+# by quick-check (a pre-push prerequisite).
+version-check:
+	@echo ""
+	@echo "=== Version Artifact Consistency (Helm tag/appVersion, frontend, operator) ==="
+	@bash scripts/sync-version-artifacts.sh --check
+
 # ── Quick check (~15s): lint + types + contracts ────────────────────────────
 # Run before every commit. Catches most CI failures instantly.
-quick-check: lint typecheck-backend openapi-types-check check-migrations
+quick-check: lint typecheck-backend openapi-types-check check-migrations version-check
 	@echo ""
 	@echo "========================================="
 	@echo "  Quick check passed (~15s)"
@@ -694,8 +779,10 @@ quick-check: lint typecheck-backend openapi-types-check check-migrations
 
 # ── Pre-push (~90s parallel): mirrors ALL CI jobs ───────────────────────────
 # Run once before git push. Runs test suites in parallel for speed.
-# Prerequisite: quick-check runs first (sequential), then tests fan out.
-pre-push: quick-check
+# Prerequisite: quick-check runs first (sequential), then the CI-parity gates
+# (shellcheck / version-check / commit-lint / script-selftests / secret-scan --
+# bonnyr-f5 #182 r3, so `make pre-push` genuinely == CI), then tests fan out.
+pre-push: quick-check ci-gates
 	@echo ""
 	@echo "=== Running all test suites in parallel... ==="
 	@failed=""; \
@@ -1160,6 +1247,46 @@ push-images:
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo "  Builder:   $(BUILDX_BUILDER)"; \
 	echo ""; \
+	HIGHEST_TAG=$$(git tag -l 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -1); \
+	if [ -n "$$HIGHEST_TAG" ] && [ "$${FORCE_LATEST:-}" != "1" ]; then \
+	  HIGHEST=$$(printf '%s\n%s\n' "$${HIGHEST_TAG#v}" "$$VERSION" | sort -V | tail -1); \
+	  if [ "$$VERSION" != "$$HIGHEST" ]; then \
+	    echo "ERROR: local VERSION $$VERSION is older than the highest released tag $$HIGHEST_TAG."; \
+	    echo "  bake pushes the rolling ':latest' tag, so this stale tree would move :latest backward"; \
+	    echo "  (release.yml's recency guard covers the CI path; this covers the operator path)."; \
+	    echo "  Check out the latest release first, or re-run with FORCE_LATEST=1 to override deliberately."; \
+	    exit 1; \
+	  fi; \
+	fi; \
+	if [ "$${FORCE_LATEST:-}" != "1" ]; then \
+	  echo "  Probing the registry so this push can't silently overwrite an already-published :$$VERSION tag..."; \
+	  PROBE_OUT=$$(REGISTRY=$$REGISTRY VERSION=$$VERSION bash scripts/registry-tag-probe.sh 2>/dev/null) || { \
+	    echo "ERROR: could not run the registry existence probe (scripts/registry-tag-probe.sh)."; \
+	    echo "  Re-run with FORCE_LATEST=1 only if you intend to overwrite the immutable :$$VERSION tag."; \
+	    exit 1; \
+	  }; \
+	  EXISTING=$$(printf '%s\n' "$$PROBE_OUT" | awk -F'\t' '$$1=="exists"{print "    "$$2}'); \
+	  UNKNOWN=$$(printf '%s\n' "$$PROBE_OUT" | awk -F'\t' '$$1=="unknown"{print "    "$$2": "$$3}'); \
+	  if [ -n "$$EXISTING" ]; then \
+	    echo "ERROR: images for :$$VERSION already exist in $$REGISTRY. bake would move the IMMUTABLE :$$VERSION tag"; \
+	    echo "  and orphan the cosign/SBOM/SLSA attestations bound to the old digests:"; \
+	    printf '%s\n' "$$EXISTING"; \
+	    echo "  (VERSION == the highest tag is exactly the state of a fresh 'main' right after a release —"; \
+	    echo "   the recency guard above lets that through, so this existence probe is what protects the tag,"; \
+	    echo "   mirroring release.yml's 'Refuse to overwrite an already-published tag' step.)"; \
+	    echo "  Re-run with FORCE_LATEST=1 only if you intend to overwrite them."; \
+	    exit 1; \
+	  fi; \
+	  if [ -n "$$UNKNOWN" ]; then \
+	    echo "ERROR: could not confirm the :$$VERSION tag is free (auth / network / rate-limit). Refusing to"; \
+	    echo "  publish rather than risk overwriting an immutable tag that a probe simply could not see:"; \
+	    printf '%s\n' "$$UNKNOWN"; \
+	    echo "  Export REGISTRY_USERNAME/REGISTRY_PASSWORD for an authenticated probe, or re-run with"; \
+	    echo "  FORCE_LATEST=1 to override deliberately."; \
+	    exit 1; \
+	  fi; \
+	  echo "  No existing :$$VERSION manifests found — safe to publish."; \
+	fi; \
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \
