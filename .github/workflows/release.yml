@@ -25,10 +25,13 @@ on:
     # Release's own skip list — doc-only pushes shouldn't cut a release. The
     # preflight SHA poll below depends on the invariant CI ⊇ Release: every SHA
     # that triggers Release must also trigger a CI run for it to match against.
-    # Keep this a SUBSET of whatever ci.yml runs on — never let Release trigger
+    # In paths-ignore terms that invariant is "this list ⊇ ci.yml's push
+    # paths-ignore" (equivalently: ci.yml's ⊆ this) — never let Release trigger
     # on a path CI skips, or the poll times out (PR #297 review). Enforced by
-    # convention today; #182 adds the check that ci.yml's push paths-ignore is a
-    # subset of this list. Do NOT "fix" a divergence by re-adding coverage here.
+    # convention today; #182 adds the automated check that ci.yml's push
+    # paths-ignore is a subset of this list. Do NOT "fix" a divergence by
+    # re-adding trigger coverage here — restore the invariant by widening
+    # ci.yml's skips (or narrowing this list) so CI ⊇ Release stays true.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -51,12 +54,16 @@ on:
           - major   # 2.10.49 → 3.0.0
       run_e2e:
         description: "Run E2E tests before release"
-        required: true
+        # Not required: a publish_only recovery run ignores it (it has a default
+        # and never gates the republish path) — bonnyr-f5 #181 round 2.
+        required: false
         default: true
         type: boolean
       release_notes:
-        description: "Release notes (one-line summary)"
-        required: true
+        description: "Release notes (one-line summary). Ignored when publish_only is set."
+        # Not required for the same reason: publish_only recovery runs ignore it.
+        required: false
+        default: ""
         type: string
       publish_only:
         description: "Recovery: republish images for an EXISTING tag (e.g. v4.0.0). Leave empty for a normal release. When set, version_bump / run_e2e / release_notes are ignored."
@@ -67,6 +74,13 @@ on:
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false  # Never cancel a release in progress
+
+# Least-privilege default so guard/preflight don't inherit the repo-default
+# token scope (bonnyr-f5 #181 round 2). Jobs that need more (contents: write to
+# push tags, packages/id-token to publish) declare it themselves below; a job's
+# own permissions: block replaces this one rather than merging.
+permissions:
+  contents: read
 
 jobs:
   # ── Guard: skip release: commits on main (prevents infinite loop) ────────────
@@ -82,9 +96,14 @@ jobs:
           HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           MSG="$HEAD_COMMIT_MSG"
-          # Skip if triggered by our own release commit or [skip ci] sentinel
-          if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$MSG"; then
-            FIRST="${MSG%%$'\n'*}"
+          FIRST="${MSG%%$'\n'*}"
+          # Match the SUBJECT line only. grep is line-oriented, so testing the
+          # whole message let a [skip ci] line buried in the body — a quoted CI
+          # snippet, a changelog paste — suppress a legitimate release while the
+          # warning below quoted a subject carrying no marker (bonnyr-f5 #181
+          # round 2). Our own release commits carry the marker in the subject
+          # ("release: vX.Y.Z [skip ci]"), so subject-only still catches them.
+          if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$FIRST"; then
             if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST"; then
               # Our own release-commit re-triggers Release (it touches VERSION,
               # not in paths-ignore). The release it names was already published
@@ -105,11 +124,20 @@ jobs:
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout + read VERSION/tags
+      actions: read    # gh run list --workflow=ci.yml (the CI-status poll)
     outputs:
       current_version: ${{ steps.version.outputs.current }}
       new_version: ${{ steps.version.outputs.new }}
       bump_type: ${{ steps.version.outputs.bump_type }}
       release_kind: ${{ steps.kind.outputs.kind }}
+    env:
+      # Env-indirect the ref name (bonnyr-f5 #181 round 2): a branch name can
+      # legally carry $(), backticks, ; and | (workflow_dispatch targets any
+      # branch), so it's read from env in run: blocks, never interpolated —
+      # same rule this PR applies to release_notes/publish_only.
+      REF_NAME: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -124,7 +152,7 @@ jobs:
             echo "kind=publish_only" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "kind=manual" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "main" ]; then
+          elif [ "$REF_NAME" = "main" ]; then
             echo "kind=final" >> "$GITHUB_OUTPUT"
           else
             echo "kind=rc" >> "$GITHUB_OUTPUT"
@@ -133,7 +161,7 @@ jobs:
       - name: Check CI status on this branch
         if: steps.kind.outputs.kind != 'publish_only'
         run: |
-          BRANCH="${{ github.ref_name }}"
+          BRANCH="$REF_NAME"
           SHA="${{ github.sha }}"
           echo "Checking CI status for branch '$BRANCH' at commit $SHA"
 
@@ -206,6 +234,13 @@ jobs:
 
           RELEASE_KIND="${{ steps.kind.outputs.kind }}"
           CURRENT=$(cat VERSION)
+          # Validate before it reaches $GITHUB_OUTPUT: a newline in VERSION would
+          # inject a second output key, and current_version is interpolated into
+          # several later run: blocks (bonnyr-f5 #181 round 2).
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION file contents '$CURRENT' are not a valid MAJOR.MINOR.PATCH version."
+            exit 1
+          fi
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
           if [ "$RELEASE_KIND" = "publish_only" ]; then
@@ -218,15 +253,6 @@ jobs:
               exit 1
             fi
             NEW="${TAG#v}"
-            # Recency: :latest is set by whatever release-publish last ran, not by
-            # this dispatch ref's VERSION file. Compare against the highest FINAL
-            # tag so :latest can never move backward (bonnyr-f5 #181).
-            HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
-            HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$NEW" | sort -V | tail -1)"
-            if [ -n "$HIGHEST_TAG" ] && [ "$NEW" != "$HIGHEST" ]; then
-              echo "::error::publish_only tag v$NEW is older than the highest released tag $HIGHEST_TAG; republishing would move :latest backward."
-              exit 1
-            fi
             BUMP="republish"
           elif [ "$RELEASE_KIND" = "manual" ]; then
             # Manual override: use the dropdown input directly
@@ -246,6 +272,23 @@ jobs:
             eval "$BUMP_OUTPUT"
             NEW="$TARGET_VERSION"
             BUMP="$BUMP_TYPE"
+          fi
+
+          # :latest recency guard — hoisted out of the publish_only branch so it
+          # covers EVERY path that reaches release-publish and repoints the
+          # :latest rolling tag: final, manual, AND publish_only (bonnyr-f5 #181
+          # round 2 — release-manual from a maintenance branch could tag+publish
+          # a version below the highest final tag and drag :latest backward).
+          # rc tags are pre-releases and never touch :latest, so they're exempt.
+          # :latest is set by whatever release-publish last ran, not by this
+          # ref's VERSION file, so compare $NEW against the highest FINAL tag.
+          if [ "$RELEASE_KIND" != "rc" ]; then
+            HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$NEW" | sort -V | tail -1)"
+            if [ -n "$HIGHEST_TAG" ] && [ "$NEW" != "$HIGHEST" ]; then
+              echo "::error::Release v$NEW is older than the highest released tag $HIGHEST_TAG; publishing would move :latest backward."
+              exit 1
+            fi
           fi
 
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
@@ -289,6 +332,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -312,8 +357,12 @@ jobs:
           # version has no rc tags yet; without pipefail the substitution takes
           # tail's status and ${RC_MAX:-0} yields the first rc as 1. Adding
           # pipefail here would fail rc.1 of every new version.
+          # Escape TARGET's dots so the sed anchor matches them literally, not
+          # as "any char" (bonnyr-f5 #181 round 2). The grep -l glob already
+          # pre-filters to real tags, but a literal-dot pattern is correct.
+          TARGET_RE="${TARGET//./\\.}"
           RC_MAX=$(git tag -l "v${TARGET}-rc.*" \
-            | sed -E "s|^v${TARGET}-rc\.([0-9]+)$|\1|" \
+            | sed -E "s|^v${TARGET_RE}-rc\.([0-9]+)$|\1|" \
             | grep -E '^[0-9]+$' | sort -n | tail -1)
           RC_NUM=$(( ${RC_MAX:-0} + 1 ))
           echo "rc_num=${RC_NUM}" >> "$GITHUB_OUTPUT"
@@ -329,7 +378,7 @@ jobs:
           git tag -a "$RC_TAG" \
             -m "Pre-release ${RC_TAG}
           Target: v${TARGET} (${BUMP} bump)
-          Branch: ${{ github.ref_name }}
+          Branch: ${REF_NAME}
           Commit: ${{ github.sha }}"
 
           git push origin "$RC_TAG"
@@ -349,7 +398,7 @@ jobs:
           NOTES="## Pre-release ${RC_TAG}
 
           **Target release:** v${TARGET} (${BUMP} bump)
-          **Branch:** ${{ github.ref_name }}
+          **Branch:** ${REF_NAME}
           **Commit:** ${{ github.sha }}
 
           ### Commits since ${LAST_FINAL:-initial}
@@ -376,7 +425,7 @@ jobs:
             --title "${{ steps.rc.outputs.rc_tag }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
             --prerelease \
-            --target "${{ github.ref_name }}"
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -389,7 +438,7 @@ jobs:
           echo "| RC Tag | ${{ steps.rc.outputs.rc_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Target Version | v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump Type | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Final Release (main push) ─────────────────────────────────────────────────
@@ -400,6 +449,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -493,7 +544,7 @@ jobs:
 
       - name: Push commit and tag
         run: |
-          git push origin "${{ github.ref_name }}"
+          git push origin "${REF_NAME}"
           git push origin "v${{ needs.preflight.outputs.new_version }}"
 
       - name: Generate final release notes
@@ -533,7 +584,7 @@ jobs:
           gh release create "v${{ needs.preflight.outputs.new_version }}" \
             --title "v${{ needs.preflight.outputs.new_version }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            --target "${{ github.ref_name }}"
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -545,7 +596,7 @@ jobs:
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | ${{ needs.preflight.outputs.current_version }} -> v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Manual Release (workflow_dispatch) ───────────────────────────────────────
@@ -566,6 +617,7 @@ jobs:
       # bonnyr-f5 #181: release_notes is free-text; read it from env so a value
       # with " or $() can't break out of a run: script (same rule as publish_only).
       RELEASE_NOTES: ${{ inputs.release_notes }}
+      REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
       - uses: actions/checkout@v6
         with:
@@ -632,7 +684,7 @@ jobs:
 
       - name: Push
         run: |
-          git push origin "${{ github.ref_name }}"
+          git push origin "${REF_NAME}"
           git push origin "v${{ needs.preflight.outputs.new_version }}"
 
       - name: Create GitHub Release
@@ -640,7 +692,7 @@ jobs:
           gh release create "v${{ needs.preflight.outputs.new_version }}" \
             --title "v${{ needs.preflight.outputs.new_version }}" \
             --notes "${RELEASE_NOTES}" \
-            --target "${{ github.ref_name }}"
+            --target "${REF_NAME}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -652,7 +704,7 @@ jobs:
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | ${{ needs.preflight.outputs.current_version }} -> ${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump | ${{ inputs.version_bump }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | ${REF_NAME} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| CI | passed |" >> "$GITHUB_STEP_SUMMARY"
           echo "| E2E | ${{ needs.e2e-gate.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Notes | ${RELEASE_NOTES} |" >> "$GITHUB_STEP_SUMMARY"
@@ -687,6 +739,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The workflow-level group above is per-ref, but :latest is a single global
+    # registry resource: a republish from one ref and a final release from
+    # another could otherwise push :latest concurrently, a TOCTOU that defeats
+    # the recency guard. Serialize the actual :latest writer on one global queue
+    # so those pushes can never interleave (bonnyr-f5 #181 round 2).
+    concurrency:
+      group: release-publish-latest
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
