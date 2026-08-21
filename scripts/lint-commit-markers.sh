@@ -36,6 +36,16 @@
 # scoped to the exact release-bot subject prefix, so a HUMAN quoting a marker in
 # any other commit is still caught.
 #
+# EXEMPT (2nd machine identity, bonnyr-f5 #182 r5, BLOCKER-1): GitHub's own
+# squash-merge composer -- committer `GitHub <noreply@github.com>`, single
+# parent. Its body is machine-composed from the PR description and the commit is
+# already merged (the new tip of staging/main), so it is unamendable and already
+# past the pre-merge gate. On a push to staging/main the range `before..tip`
+# scans this squash tip; without the exemption a BREAKING-CHANGE bullet or a
+# quoted marker in the summarised body reddens the push's ci-gate and release.yml
+# then refuses to release that SHA. Human commits never carry this committer
+# identity, so they are still fully linted in their own PR.
+#
 # RANGE (env): "base..head" to scan. If unset/empty, defaults to
 # @{upstream}..HEAD, else just the tip commit. Never scans all history (old
 # release-bot commits legitimately carry the deliberate skip marker). An
@@ -73,6 +83,30 @@ while IFS= read -r sha; do
   # the marker. A human quoting a marker in any non-release commit is still hit.
   if grep -qE '^release: ' <<< "$subject"; then
     echo "commit-lint: commit $sha ($subject) is a release-bot commit -- exempt"
+    continue
+  fi
+
+  # GitHub's squash-merge composer is the SECOND machine identity on the
+  # promotion path (bonnyr-f5 #182 r5, BLOCKER-1 / INV-28). When a PR is
+  # squash-merged, GitHub composes the resulting commit's BODY from the PR
+  # description under the identity `GitHub <noreply@github.com>` with a single
+  # parent. That commit is (a) UNAMENDABLE -- its body is machine-composed, and
+  # (b) ALREADY MERGED -- it is the new tip of staging/main, so re-linting it
+  # serves no pre-merge purpose (the human commits it summarises were linted in
+  # their own PR). On a push to staging/main the range is `before..tip`, so the
+  # just-merged squash tip IS scanned; a stray line-start "BREAKING CHANGE" or a
+  # marker quoted from the summarised PR body then turns the push's ci-gate red
+  # and release.yml's preflight refuses that SHA -- the pipeline stops releasing.
+  # Exempting this machine identity (mirroring the `^release: ` exemption) means
+  # the gate never judges already-merged, machine-composed history, while every
+  # HUMAN-authored commit -- which never carries this committer identity -- is
+  # still linted in its own PR. This is an identity check on the committer, not a
+  # spoofable subject allowlist. Scoped to single-parent commits so a genuine
+  # non-squash merge is not blanket-exempted.
+  committer="$(git log -1 --format='%cn <%ce>' "$sha")"
+  nparents="$(git log -1 --format='%p' "$sha" | wc -w)"
+  if [ "$committer" = "GitHub <noreply@github.com>" ] && [ "$nparents" -eq 1 ]; then
+    echo "commit-lint: commit $sha ($subject) is a GitHub-composed squash commit (already-merged machine identity) -- exempt"
     continue
   fi
 

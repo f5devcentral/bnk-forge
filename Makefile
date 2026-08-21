@@ -503,11 +503,18 @@ commit-lint:
 	@bash scripts/lint-commit-markers.sh
 
 # The paired self-test harnesses ci.yml's script-selftests job runs.
-# The compute self-test historically prints "FAIL:" but still exits 0, so
-# ci.yml's step fails on EITHER a non-zero exit OR a FAIL: line. Mirror that
-# exact anti-vacuity logic here or a broken detector passes locally while CI
-# goes red (bonnyr-f5 #182 r4: a local gate that diverges from the CI command
-# is not a gate).
+# ci.yml's compute step has FOUR anti-vacuity assertions and this target must
+# mirror ALL of them, or a broken harness passes locally while CI goes red
+# (bonnyr-f5 #182 r4/r5, Major-3: a local gate that diverges from the CI command
+# is not a gate). The four (in ci.yml order):
+#   1. non-zero exit               -> the harness itself errored
+#   2. a "FAIL:" line (rc still 0) -> an assertion failed but exit was swallowed
+#   3. NO "PASS:" line             -> the guard was silenced / renamed: green with
+#                                     zero assertions actually run
+#   4. NO "=== END SELF-TEST ==="  -> the harness exited early (deleted END marker
+#                                     or an early `exit 0`) with assertions unrun
+# r5 landed 3+4 here; r4 had only 1+2, so the "silenced guard" and "early exit"
+# harness-break modes were CI-red but `make`-GREEN.
 script-selftests:
 	@echo ""
 	@echo "=== Script self-tests ==="
@@ -516,6 +523,12 @@ script-selftests:
 	  if [ "$$rc" -ne 0 ]; then echo "::error::compute_version_bump self-test exited $$rc"; exit "$$rc"; fi; \
 	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
 	    echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])PASS:'; then \
+	    echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
+	    echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
 	  fi
 	@if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then \
 	  bash scripts/extract-breaking-changes.sh --self-test; \

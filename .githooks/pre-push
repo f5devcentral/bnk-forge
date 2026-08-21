@@ -22,8 +22,37 @@ echo ""
 # Fail fast, before the heavy suite, if any commit about to be pushed carries a
 # CI-control marker (which would suppress the workflow run) or a spurious major-
 # bump prose line. Same script the ci.yml commit-lint gate runs, so local == CI.
+#
+# RANGE from the pre-push stdin protocol (bonnyr-f5 #182 r5, Minor). git feeds
+# this hook one "<local ref> <local sha> <remote ref> <remote sha>" line per ref
+# being pushed. Scanning the script's default `@{upstream}..HEAD` misses every
+# non-tip commit when the branch has no upstream yet (a FIRST push) -- exactly
+# when a bad commit is most likely to slip in. Deriving `<remote sha>..<local
+# sha>` from stdin scans precisely the commits this push introduces. A new remote
+# branch reports an all-zero remote sha (no merge-base to diff against); there we
+# fall back to the script's own default rather than scanning all of history.
+# Deletions (all-zero local sha) contribute no commits. When stdin is empty (the
+# hook run by hand, not by git) we leave RANGE unset so the script default runs.
+zero="0000000000000000000000000000000000000000"
+prepush_range=""
+while read -r _localref localsha _remoteref remotesha; do
+    [ -z "${localsha:-}" ] && continue
+    [ "$localsha" = "$zero" ] && continue          # branch deletion: nothing to lint
+    if [ "${remotesha:-$zero}" = "$zero" ]; then
+        prepush_range="__DEFAULT__"                # new branch: no base -> script default
+        break
+    fi
+    prepush_range="${remotesha}..${localsha}"      # normal update: exactly the pushed commits
+    break
+done
+
 echo "=== Commit message marker lint (pre-push) ==="
-if ! bash scripts/lint-commit-markers.sh; then
+if [ -n "$prepush_range" ] && [ "$prepush_range" != "__DEFAULT__" ]; then
+    lint_status() { RANGE="$prepush_range" bash scripts/lint-commit-markers.sh; }
+else
+    lint_status() { bash scripts/lint-commit-markers.sh; }
+fi
+if ! lint_status; then
     echo ""
     echo "PUSH BLOCKED: a commit message carries a CI-control / spurious-major marker."
     echo "Reword it (see AGENTS.md 'Commit conventions') and try again."
