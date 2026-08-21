@@ -4,6 +4,7 @@ Protects all API routes except auth endpoints, health checks, and WebSocket.
 Can be disabled via REQUIRE_AUTH=false for backward compatibility.
 """
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -14,6 +15,9 @@ from starlette.responses import Response
 from core.config import settings
 from core.errors import UnauthorizedError
 
+if TYPE_CHECKING:
+    from models import User
+
 logger = logging.getLogger(__name__)
 
 # Long-lived API tokens (CLI / CI-CD) carry this prefix; they are verified
@@ -21,7 +25,7 @@ logger = logging.getLogger(__name__)
 API_TOKEN_PREFIX = "bnk_"
 
 
-def _verify_api_token(token: str):
+def _verify_api_token(token: str) -> "User":
     """Return the owning User for a live API token, or raise UnauthorizedError.
 
     Opens its own session: middleware runs outside FastAPI's dependency
