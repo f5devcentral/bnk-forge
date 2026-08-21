@@ -473,6 +473,51 @@ shellcheck:
 	  [ "$$n" -ge 1 ] || { echo "::error::shellcheck found no files to lint"; exit 1; }; \
 	  printf '%s\n' "$$files" | xargs shellcheck --severity=warning
 
+# ── CI-parity gates (bonnyr-f5 #182 r3, Major) ──────────────────────────────
+# The four gates ci.yml added were not runnable locally: `make pre-push` ran
+# none of them and `make shellcheck` had no dependents, yet ci.yml's header
+# claims `make pre-push` == CI. #166: "a local gate that does not run the CI
+# command is not a gate." These targets ARE the CI command (ci.yml calls the
+# same `make` targets / same scripts), and `pre-push` now depends on `ci-gates`.
+.PHONY: ci-gates version-check secret-scan commit-lint script-selftests
+
+# Helm chart tag/appVersion + frontend package.json must equal VERSION.
+version-check:
+	@echo ""
+	@echo "=== Version artifacts consistency (sync-version-artifacts.sh --check) ==="
+	@bash scripts/sync-version-artifacts.sh --check
+
+# gitleaks range-aware secret scan + assertion backstop (single source of truth,
+# shared with ci.yml's secret-scan job and the scheduled baseline workflow).
+# Honours RANGE from the environment; unset => scan since the upstream merge-base.
+secret-scan:
+	@echo ""
+	@echo "=== Secret scan (gitleaks) ==="
+	@bash scripts/secret-scan.sh
+
+# Commit-message marker enforcement (shared with ci.yml's commit-lint job and
+# .githooks/pre-push). Honours RANGE; unset => @{upstream}..HEAD.
+commit-lint:
+	@echo ""
+	@echo "=== Commit message marker lint ==="
+	@bash scripts/lint-commit-markers.sh
+
+# The paired self-test harnesses ci.yml's script-selftests job runs.
+script-selftests:
+	@echo ""
+	@echo "=== Script self-tests ==="
+	@SELF_TEST=1 bash scripts/compute_version_bump.sh
+	@if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then \
+	  bash scripts/extract-breaking-changes.sh --self-test; \
+	else \
+	  echo "  (extract-breaking-changes.sh has no --self-test yet; it lands with #179)"; \
+	fi
+
+# Aggregate: every CI gate that is not already covered by quick-check/tests.
+ci-gates: shellcheck version-check commit-lint script-selftests secret-scan
+	@echo ""
+	@echo "=== CI-parity gates passed ==="
+
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
 	$(COMPOSE) up -d
@@ -701,8 +746,10 @@ quick-check: lint typecheck-backend openapi-types-check check-migrations
 
 # ── Pre-push (~90s parallel): mirrors ALL CI jobs ───────────────────────────
 # Run once before git push. Runs test suites in parallel for speed.
-# Prerequisite: quick-check runs first (sequential), then tests fan out.
-pre-push: quick-check
+# Prerequisite: quick-check runs first (sequential), then the CI-parity gates
+# (shellcheck / version-check / commit-lint / script-selftests / secret-scan --
+# bonnyr-f5 #182 r3, so `make pre-push` genuinely == CI), then tests fan out.
+pre-push: quick-check ci-gates
 	@echo ""
 	@echo "=== Running all test suites in parallel... ==="
 	@failed=""; \

@@ -17,6 +17,20 @@ if [ $? -ne 0 ]; then
 fi
 
 echo ""
+
+# ─── Commit-message marker lint (bonnyr-f5 #182 r3) ───────────────────────────
+# Fail fast, before the heavy suite, if any commit about to be pushed carries a
+# CI-control marker (which would suppress the workflow run) or a spurious major-
+# bump prose line. Same script the ci.yml commit-lint gate runs, so local == CI.
+echo "=== Commit message marker lint (pre-push) ==="
+if ! bash scripts/lint-commit-markers.sh; then
+    echo ""
+    echo "PUSH BLOCKED: a commit message carries a CI-control / spurious-major marker."
+    echo "Reword it (see AGENTS.md 'Commit conventions') and try again."
+    exit 1
+fi
+
+echo ""
 echo "========================================="
 echo "  Pre-push: Running local checks"
 echo "========================================="

@@ -22,9 +22,13 @@ on:
     branches:
       - staging
       - main
-    # MUST stay in sync with ci.yml's push-trigger paths-ignore list — a
-    # divergence lets a push trigger Release without a matching CI run,
-    # which then times out the preflight SHA poll below (PR #297 review).
+    # ci.yml has NO push paths-ignore any more: it runs CI on EVERY push to
+    # main/staging (ci.yml:31-36, #182). That is a strict superset of the pushes
+    # that reach Release here, so any push that starts a release is guaranteed a
+    # matching CI run for the preflight SHA poll below to find — regardless of
+    # what this list ignores. This paths-ignore therefore only spares docs-only
+    # pushes from kicking off a release at all (PR #297 review; premise updated
+    # for #182, which removed ci.yml's paths-ignore).
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -148,12 +152,16 @@ jobs:
                   exit 0
                 fi
                 if [ "$RUN_CONCLUSION" = "cancelled" ]; then
-                  # ci.yml runs with cancel-in-progress: true, so a rapid
-                  # follow-up push to the same branch cancels this SHA's CI
-                  # run. That's not a CI failure for this SHA — it means a
-                  # newer push superseded it, so fail fast instead of
-                  # reporting a generic non-success error.
-                  echo "::error::CI run for $SHA was cancelled — superseded by a newer push; this release attempt is stale, the newer push will release instead."
+                  # A cancelled CI run is not a success for this SHA, so fail
+                  # fast rather than reporting a generic non-success error.
+                  # NOTE (premise updated for #182): ci.yml does NOT cancel
+                  # in-progress runs on main/staging — cancel-in-progress is
+                  # false for exactly these release branches (ci.yml:48), each
+                  # push gets its own concurrency group. So a cancellation here
+                  # is no longer necessarily "a newer push superseded it"; it may
+                  # have been cancelled by other means (e.g. a manual cancel).
+                  # Either way the run is stale — do not release on it.
+                  echo "::error::CI run for $SHA was cancelled — this release attempt is stale (a newer push, if any, will release instead)."
                   exit 1
                 fi
                 echo "::error::CI run for commit $SHA on branch '$BRANCH' completed with conclusion '$RUN_CONCLUSION'."

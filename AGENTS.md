@@ -95,6 +95,15 @@ major). One repo-specific trap worth stating outright:
   ones that mattered. Refer to it indirectly instead: "CI suppressed", "the skip-CI
   marker", or split it across backticks. The release job's *deliberate* skip is the
   only legitimate use, and it lands on the subject line where the release loop reads it.
+  This is now **enforced**, not just documented: the `commit-lint` CI gate and the
+  `.githooks/pre-push` hook both run `scripts/lint-commit-markers.sh`, which fails a
+  push/PR whose commit range carries any CI-control marker (bonnyr-f5 #182 r3, #166:
+  documentation is not enforcement).
+- **Declare a major bump with a real `BREAKING CHANGE: <description>` footer**, not a
+  bold `**BREAKING CHANGE**` heading or a bare colon-less line. `compute_version_bump.sh`
+  majors on the phrase, so a prose line that *looks* like a footer ships a spurious major
+  release; `commit-lint` rejects the line-start prose forms while allowing the plain
+  footer.
 
 ---
 
