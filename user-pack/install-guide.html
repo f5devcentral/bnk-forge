@@ -187,16 +187,11 @@
     </tr>
     <tr>
       <td><code>MCP_PASSWORD</code></td>
-      <td><em>required</em></td>
-      <td><b>Set a value — no default ships.</b> Shared by the backend and the MCP server;
-          leaving it empty disables MCP (the backend logs why). Unlike the two above it is
-          re-applied on every boot, so you can rotate it later by changing it and restarting.</td>
-    </tr>
-    <tr>
-      <td><code>DEFAULT_ADMIN_PASSWORD</code></td>
-      <td><em>your choice (recommended)</em></td>
-      <td>Initial <code>admin</code> login password. If you leave it unset, a random one is
-          generated on first launch (see Step 4). Either way you must change it on first login.</td>
+      <td><em>your choice</em></td>
+      <td><b>Change from the well-known default.</b> Credential the bundled MCP server uses to
+          authenticate to BNK Forge; it must match a real BNK Forge user (the default
+          <code>MCP_USERNAME</code> is <code>admin</code>). It is re-read from <code>.env</code>
+          on every boot, so if you change that user's password, update this to match and restart.</td>
     </tr>
   </table>
 
@@ -205,9 +200,9 @@
     <code>POSTGRES_PASSWORD</code> and <code>REDIS_PASSWORD</code> replace well-known
     placeholder defaults, and they are baked in when the database and cache first
     initialize — get them right before running the installer, as they cannot be changed
-    easily afterward. <code>MCP_PASSWORD</code> has no default and must be set (empty
-    disables MCP); unlike the other two it is reconciled on every boot, so it can be
-    rotated later by editing <code>.env</code> and restarting.
+    easily afterward. <code>MCP_PASSWORD</code> also ships as a well-known default and should
+    be changed; unlike the other two it is re-read on every boot, so it can be changed later
+    by editing <code>.env</code> and restarting.
   </div>
 
   <!-- ── Step 3 ── -->
@@ -250,20 +245,12 @@
          (Firefox). This is expected.</p>
     </li>
     <li>
-      <p><b>Log in as the admin user:</b><br>
-         Username: <code>admin</code> &nbsp;/&nbsp; Password: the value you set for
-         <code>DEFAULT_ADMIN_PASSWORD</code> in Step 2.</p>
-      <div class="callout-info">
-        <div class="callout-title">Didn't set <code>DEFAULT_ADMIN_PASSWORD</code>?</div>
-        If you left it unset, BNK Forge generated a random initial password on first launch and
-        wrote it to <code>/app/keys/initial_admin_password</code> inside the backend container;
-        the startup logs also point to it. Retrieve it with:
-        <pre style="margin:6px 0;"><span class="prompt">$ </span>docker compose exec backend cat /app/keys/initial_admin_password</pre>
-      </div>
+      <p><b>Log in with the default credentials:</b><br>
+         Username: <code>admin</code> &nbsp;/&nbsp; Password: <code>changeme</code></p>
       <div class="callout-warn">
-        <div class="callout-title">You must change the password on first login</div>
-        The admin account is flagged to require a password change — set a strong one when prompted
-        (or via <b>User menu → Change Password</b>) before doing anything else.
+        <div class="callout-title">Change the admin password immediately</div>
+        The default password is well-known — change it as your very first action after login,
+        via <b>User menu → Change Password</b>, before doing anything else.
       </div>
     </li>
     <li>
