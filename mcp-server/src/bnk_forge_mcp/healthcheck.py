@@ -34,10 +34,17 @@ def probe() -> int:
     config = load_config()
 
     if not config.has_credentials:
-        # bonnyr-f5 #188: with MCP_SERVICE_PASSWORD now shipping empty by default,
-        # "no credentials" means the MCP server CANNOT authenticate — every tool
-        # call 401s. Reporting healthy here made a default `make deploy` show a
-        # green mcp container that does nothing. Fail the probe instead.
+        # A token-only deployment (BNK_FORGE_TOKEN set, no username/password) is a
+        # valid auth mode — but this probe verifies via /api/auth/login, which only
+        # accepts username/password, so it cannot exercise a bearer token. Skip the
+        # probe and report healthy; the token is validated on real tool calls.
+        if config.has_token:
+            logger.info("token-only MCP deployment — no login probe to run, reporting healthy")
+            return 0
+        # bonnyr-f5 #188: neither password NOR token. With MCP_SERVICE_PASSWORD now
+        # shipping empty by default, this means the MCP server CANNOT authenticate —
+        # every tool call 401s. Reporting healthy here made a default `make deploy`
+        # show a green mcp container that does nothing. Fail the probe instead.
         logger.error("no MCP credentials configured — cannot authenticate to the backend")
         return 1
 

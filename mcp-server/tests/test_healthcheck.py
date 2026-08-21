@@ -104,27 +104,63 @@ def test_probe_returns_1_when_backend_unreachable() -> None:
 # ------------------------------------------------------------------
 
 
-def test_probe_returns_0_when_no_credentials_configured() -> None:
-    """No username/password set (token-only deployment) → skip probe, return 0."""
+def test_probe_returns_0_for_token_only_deployment() -> None:
+    """No username/password but a bearer token IS set → skip the login probe, return 0.
+
+    The probe authenticates via /api/auth/login (username/password only), so it
+    cannot exercise a token; a token-only deployment is healthy and validated on
+    real tool calls, not here.
+    """
     with patch("bnk_forge_mcp.healthcheck.load_config") as mock_cfg:
         cfg = MagicMock()
         cfg.has_credentials = False
+        cfg.has_token = True
         mock_cfg.return_value = cfg
         assert probe() == 0
 
 
-def test_probe_no_credentials_logs_skip(caplog) -> None:  # type: ignore[no-untyped-def]
-    """No credentials → info log is emitted so a typo'd env var is greppable."""
+def test_probe_token_only_logs_skip(caplog) -> None:  # type: ignore[no-untyped-def]
+    """Token-only → info log is emitted so the skip is greppable."""
     import logging
 
     with patch("bnk_forge_mcp.healthcheck.load_config") as mock_cfg:
         cfg = MagicMock()
         cfg.has_credentials = False
+        cfg.has_token = True
         mock_cfg.return_value = cfg
         with caplog.at_level(logging.INFO, logger="bnk_forge_mcp.healthcheck"):
             result = probe()
     assert result == 0
-    assert "no credentials configured" in caplog.text
+    assert "token-only" in caplog.text
+
+
+def test_probe_returns_1_when_no_auth_configured() -> None:
+    """Neither password NOR token → MCP cannot authenticate at all → exit 1 (UNHEALTHY).
+
+    bonnyr-f5 #188: MCP_SERVICE_PASSWORD ships empty by default, so a default
+    deploy with no token would 401 on every tool call. Report UNHEALTHY, not green.
+    """
+    with patch("bnk_forge_mcp.healthcheck.load_config") as mock_cfg:
+        cfg = MagicMock()
+        cfg.has_credentials = False
+        cfg.has_token = False
+        mock_cfg.return_value = cfg
+        assert probe() == 1
+
+
+def test_probe_no_auth_logs_error(caplog) -> None:  # type: ignore[no-untyped-def]
+    """No auth at all → error log names the cause so a typo'd env var is greppable."""
+    import logging
+
+    with patch("bnk_forge_mcp.healthcheck.load_config") as mock_cfg:
+        cfg = MagicMock()
+        cfg.has_credentials = False
+        cfg.has_token = False
+        mock_cfg.return_value = cfg
+        with caplog.at_level(logging.ERROR, logger="bnk_forge_mcp.healthcheck"):
+            result = probe()
+    assert result == 1
+    assert "cannot authenticate" in caplog.text
 
 
 # ------------------------------------------------------------------
