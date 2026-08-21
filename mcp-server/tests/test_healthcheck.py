@@ -131,7 +131,25 @@ def test_probe_token_only_logs_skip(caplog) -> None:  # type: ignore[no-untyped-
         with caplog.at_level(logging.INFO, logger="bnk_forge_mcp.healthcheck"):
             result = probe()
     assert result == 0
-    assert "token-only" in caplog.text
+    assert "token auth configured" in caplog.text
+
+
+def test_probe_returns_0_when_token_present_even_with_stale_password() -> None:
+    """bonnyr-f5 #188: token + a (possibly stale) password → skip the login probe.
+
+    A bearer token is a self-sufficient auth path; the server authenticates tool
+    calls with it regardless of the password. The previous truth table ran the
+    password probe here and reported a token-authenticated container UNHEALTHY when
+    the password had drifted. It must report healthy and never hit the backend.
+    """
+    with patch("bnk_forge_mcp.healthcheck.httpx.post") as mock_post, \
+            patch("bnk_forge_mcp.healthcheck.load_config") as mock_cfg:
+        cfg = MagicMock()
+        cfg.has_credentials = True   # a password IS set...
+        cfg.has_token = True         # ...but a token is present too
+        mock_cfg.return_value = cfg
+        assert probe() == 0
+        mock_post.assert_not_called()  # never probes /api/auth/login
 
 
 def test_probe_returns_1_when_no_auth_configured() -> None:

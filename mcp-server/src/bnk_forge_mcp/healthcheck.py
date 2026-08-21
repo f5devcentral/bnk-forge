@@ -33,14 +33,18 @@ def probe() -> int:
     """
     config = load_config()
 
+    # A bearer token is a self-sufficient auth path. When one is set, the server
+    # authenticates tool calls with it regardless of the password, so a drifted (or
+    # absent) password must NOT fail the healthcheck. This probe can only exercise
+    # username/password via /api/auth/login, so with a token present we skip it and
+    # report healthy; the token is validated on real tool calls. (bonnyr-f5 #188:
+    # previously the token+stale-password row was inverted — the password probe ran
+    # and reported a token-authenticated container UNHEALTHY.)
+    if config.has_token:
+        logger.info("token auth configured — no login probe to run, reporting healthy")
+        return 0
+
     if not config.has_credentials:
-        # A token-only deployment (BNK_FORGE_TOKEN set, no username/password) is a
-        # valid auth mode — but this probe verifies via /api/auth/login, which only
-        # accepts username/password, so it cannot exercise a bearer token. Skip the
-        # probe and report healthy; the token is validated on real tool calls.
-        if config.has_token:
-            logger.info("token-only MCP deployment — no login probe to run, reporting healthy")
-            return 0
         # bonnyr-f5 #188: neither password NOR token. With MCP_SERVICE_PASSWORD now
         # shipping empty by default, this means the MCP server CANNOT authenticate —
         # every tool call 401s. Reporting healthy here made a default `make deploy`

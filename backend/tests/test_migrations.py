@@ -534,3 +534,85 @@ class TestMigrationExecution:
         finally:
             engine.dispose()
             os.unlink(db_path)
+
+    def test_v2_154_backfills_only_the_legacy_mcp_service_row(self):
+        """bonnyr-f5 #188 r3: v2_154 must backfill is_service_account for the
+        pre-existing mcp service account, and NOTHING else.
+
+        Without the backfill every existing row is classified False (server_default
+        false), so disable_stale_service_user skips the stale mcp row (#187 stays
+        open) and ensure_service_user can never reconcile it. The backfill must flip
+        ONLY the row with the legacy creation fingerprint (username 'mcp' + the
+        synthesised email 'mcp@bnk-forge.local'), never a human — including a human
+        named 'admin', a normal human, or a human who merely happens to be named
+        'mcp' with a real email.
+        """
+        import importlib.util
+
+        import sqlalchemy as sa
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy import create_engine, inspect, text
+        from sqlalchemy.pool import StaticPool
+
+        migration_path = os.path.join(
+            backend_path, "alembic", "versions", "v2_154_user_is_service_account.py"
+        )
+        spec = importlib.util.spec_from_file_location("migration_v2_154", migration_path)
+        assert spec is not None and spec.loader is not None
+        migration_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration_module)
+
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        # users table in the pre-v2_154 shape (no is_service_account column).
+        metadata = sa.MetaData()
+        sa.Table(
+            "users", metadata,
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("username", sa.String(255), unique=True, nullable=False),
+            sa.Column("email", sa.String(255), unique=True, nullable=False),
+            sa.Column("hashed_password", sa.String(255), nullable=False),
+            sa.Column("role", sa.String(50), nullable=False, server_default="operator"),
+            sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
+            sa.Column("must_change_password", sa.Boolean, nullable=False, server_default=sa.false()),
+        )
+        metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO users (username,email,hashed_password,role,is_active,must_change_password) VALUES "
+                "('mcp','mcp@bnk-forge.local','x','admin',1,0),"        # legacy service acct
+                "('admin','admin@corp.com','y','admin',1,0),"          # human admin
+                "('alice','alice@corp.com','z','operator',1,0),"        # ordinary human
+                "('mcp2','mcp@real-human.com','w','operator',1,0)"      # human named 'mcp' w/ real email
+            ))
+
+        def flags(conn):
+            return {
+                r._mapping["username"]: r._mapping["is_service_account"]
+                for r in conn.execute(text("SELECT username, is_service_account FROM users"))
+            }
+
+        with engine.begin() as connection:
+            migration_context = MigrationContext.configure(connection)
+            migration_module.op = Operations(migration_context)
+
+            migration_module.upgrade()
+            f = flags(connection)
+            assert f["mcp"] in (1, True), "legacy mcp service row must be backfilled True"
+            assert f["admin"] in (0, False), "human admin must NOT be reclassified"
+            assert f["alice"] in (0, False), "ordinary human must NOT be reclassified"
+            assert f["mcp2"] in (0, False), "human named 'mcp' with a real email must NOT be reclassified"
+
+            migration_module.downgrade()
+            cols = {c["name"] for c in inspect(connection).get_columns("users")}
+            assert "is_service_account" not in cols
+
+            # Idempotent re-apply (CI round-trip gate).
+            migration_module.upgrade()
+            assert flags(connection)["mcp"] in (1, True)
+
+        engine.dispose()

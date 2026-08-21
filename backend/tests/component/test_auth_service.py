@@ -274,3 +274,24 @@ class TestEnsureServiceUser:
         disable_stale_service_user(db, "admin")  # reserved -> no-op
         from models import User
         assert db.query(User).filter(User.username == "admin").first().is_active is True
+
+    def test_reconcile_reactivates_a_disabled_stale_service_account(self, db):
+        # bonnyr-f5 #188 BLOCKER 3: disable_stale_service_user deactivates the mcp
+        # row when no real password is set; setting a real MCP_SERVICE_PASSWORD must
+        # then re-seed AND re-activate it (as its docstring promises). Without the
+        # reactivation the account stays is_active=False and every MCP login fails
+        # with "Account is disabled" despite a correct password.
+        from models import User
+        from services.auth_service import disable_stale_service_user, ensure_service_user
+        ensure_service_user(db, username="mcp", password="mcp-service-changeme")
+        disable_stale_service_user(db, "mcp")
+        assert db.query(User).filter(User.username == "mcp").first().is_active is False
+        # Operator now configures a real secret -> reconcile must revive the account.
+        ensure_service_user(db, username="mcp", password="a-real-strong-secret")
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert mcp.is_active is True                       # re-activated
+        assert mcp.is_service_account is True              # provenance preserved
+        # And the new secret authenticates while the old default does not.
+        assert authenticate_user(db, "mcp", "a-real-strong-secret").username == "mcp"
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")

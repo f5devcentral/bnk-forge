@@ -201,10 +201,17 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
                 f"refusing to reconcile '{username}': it is not a service account. "
                 f"Point MCP_USERNAME at a dedicated name that isn't an existing user."
             )
-        # Narrowed mutation (bonnyr-f5 #188): keeping the hash in sync does NOT
-        # require widening privilege, so role / is_active are left untouched.
+        # Narrowed mutation (bonnyr-f5 #188): keep the hash in sync and re-activate
+        # the row. We do NOT widen privilege — role is left untouched. Re-activation
+        # IS required and IS safe: disable_stale_service_user deactivates this
+        # account when no real password is configured (its docstring promises that
+        # configuring one "re-seeds and re-activates it"), and the provenance guard
+        # above already proved this is our service account, not a human row. Without
+        # this, a stale-then-reconciled mcp account stays is_active=False forever and
+        # every MCP login fails with "Account is disabled" despite a correct password.
         user.hashed_password = hash_password(password)  # type: ignore[assignment]
         user.must_change_password = False  # type: ignore[assignment]
+        user.is_active = True  # type: ignore[assignment]  # revive a disabled-stale row
         # ENG-006: Startup seed manages its own transaction
         db.commit()
         logger.info(f"Reconciled service account: {username}")
