@@ -901,13 +901,38 @@ jobs:
           # force input to overwrite deliberately (bonnyr-f5 #181 round 3). The
           # normal recovery case — a tag whose publish never completed — has no
           # manifest yet, so it passes through untouched.
+          #
+          # A non-zero `docker manifest inspect` is ambiguous: it means either
+          # "manifest genuinely not found" (safe to publish) OR a transient
+          # failure — auth expiry, GHCR 5xx/429, DNS/network blip, malformed
+          # ref — under which the tag may well exist and we simply could not
+          # see it. Reading every non-zero exit as "tag is free" fails OPEN and
+          # would overwrite an immutable tag on any transient error. So we
+          # capture the probe output and treat ONLY a definitive registry
+          # not-found signal as safe; every other failure is "unknown" and
+          # fails CLOSED — refuse unless force=true (bonnyr-f5 #181 round 4,
+          # INV-24).
           EXISTING=""
+          UNKNOWN=""
           for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
             REF="${REGISTRY}/${name}:${VERSION}"
-            if docker manifest inspect "$REF" >/dev/null 2>&1; then
+            if probe="$(docker manifest inspect "$REF" 2>&1)"; then
               EXISTING="${EXISTING}  ${REF}"$'\n'
+            elif printf '%s' "$probe" | grep -qiE 'no such manifest|manifest unknown|manifest_unknown|name unknown|name_unknown'; then
+              : # registry says the manifest/repo genuinely does not exist — safe
+            else
+              UNKNOWN="${UNKNOWN}  ${REF}: ${probe}"$'\n'
             fi
           done
+          if [ -n "$UNKNOWN" ]; then
+            printf 'Registry existence probe was inconclusive (a non-not-found error) for:\n%s' "$UNKNOWN"
+            if [ "$FORCE" = "true" ]; then
+              echo "::warning::force=true — publishing despite an inconclusive existence probe; if any of these tags were in fact already published this overwrites the immutable :${VERSION} tag and orphans its cosign/SBOM/SLSA attestations."
+            else
+              echo "::error::Could not confirm whether the :${VERSION} tag is free: the registry probe failed with a non-not-found error (auth / network / rate-limit / bad ref). Refusing to publish because an existing immutable tag cannot be ruled out. Re-run once the registry is reachable, or re-dispatch with force=true only if you intend to overwrite."
+              exit 1
+            fi
+          fi
           if [ -z "$EXISTING" ]; then
             echo "No existing :${VERSION} manifests found — safe to publish."
             exit 0
