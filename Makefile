@@ -466,7 +466,12 @@ shellcheck:
 	@echo "=== ShellCheck: linting shell scripts ==="
 	@# bonnyr-f5 #182: drive from git ls-files so the WHOLE corpus is gated
 	@# (the hardcoded globs missed 14 tracked scripts incl. dist/install.sh).
-	@git ls-files '*.sh' | xargs shellcheck --severity=warning
+	@# bonnyr-f5 #182 r2: include the (extensionless) git hooks, and fail on an
+	@# EMPTY list -- `xargs shellcheck` with no files exits 0 on BSD (blind).
+	@files="$$(git ls-files '*.sh' .githooks/pre-commit .githooks/pre-push 2>/dev/null)"; \
+	  n=$$(printf '%s\n' "$$files" | grep -c .); \
+	  [ "$$n" -ge 1 ] || { echo "::error::shellcheck found no files to lint"; exit 1; }; \
+	  printf '%s\n' "$$files" | xargs shellcheck --severity=warning
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network

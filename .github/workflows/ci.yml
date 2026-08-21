@@ -36,7 +36,11 @@ on:
     branches: [main, staging]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # bonnyr-f5 #182 r2: on main/staging give every push its OWN group (append the
+  # SHA) so a later docs-only push can't cancel -- even as a PENDING run -- the CI
+  # run a release polls by SHA. Feature branches keep the per-ref group so rapid
+  # pushes still supersede each other and save minutes.
+  group: ci-${{ github.ref }}${{ (github.ref_name == 'main' || github.ref_name == 'staging') && github.sha || '' }}
   # bonnyr-f5 #182: never cancel an in-flight CI run on the release branches --
   # release.yml preflight polls that exact run by SHA, so a docs-only push (which
   # triggers CI but not Release) would otherwise cancel it and strand the earlier
@@ -149,10 +153,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history so the range scan sees add-then-remove
       - name: gitleaks
         run: |
+          # bonnyr-f5 #182 r2: scan the PR/push COMMIT RANGE in git mode, not the
+          # working tree. --no-git misses a secret added then REMOVED within the
+          # branch, which stays fetchable forever from a public clone -- the main
+          # thing a public repo needs a history-aware scan for.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE=""   # first push / no base — scan all reachable history
+          fi
+          echo "gitleaks scanning range: ${RANGE:-<all history>}"
           docker run --rm -v "$PWD:/repo:ro" -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 detect \
-            --source=/repo --config=/repo/.gitleaks.toml --no-git --redact --verbose
+            --source=/repo --config=/repo/.gitleaks.toml --redact --verbose \
+            ${RANGE:+--log-opts=$RANGE}
 
   script-selftests:
     name: "P1 · Script Self-Tests"
@@ -179,8 +198,14 @@ jobs:
           # bonnyr-f5 #182: silence must not pass -- require positive evidence the
           # harness actually ran (renaming its SELF_TEST guard produced empty
           # output + rc=0, i.e. green with zero assertions).
+          # bonnyr-f5 #182 r2: require the END marker AND >=1 PASS. The marker
+          # prints only after the LAST assertion, so an early exit (the #179 shape,
+          # 5 of 6 unrun) is caught without hardcoding a per-branch test count.
           if ! grep -qE '(^|[[:space:]])PASS:' <<< "$out"; then
             echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1
+          fi
+          if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
+            echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
           fi
 
   lint-frontend:
@@ -1155,6 +1180,10 @@ jobs:
 
           # Collect all job results (skipped jobs are OK — they were filtered by path)
           failed=false
+          # bonnyr-f5 #182 r2: these gates run `if: always()` on every change, so
+          # `skipped` for them means a future path-filter silently disabled the
+          # check. Treat skipped as a failure for exactly these.
+          ALWAYS_RUN="version-consistency shellcheck secret-scan script-selftests"
           for job in \
             "lint-backend:${{ needs.lint-backend.result }}" \
             "version-consistency:${{ needs.version-consistency.result }}" \
@@ -1184,9 +1213,13 @@ jobs:
           ; do
             name="${job%%:*}"
             result="${job##*:}"
-            # 'success' and 'skipped' are both acceptable
+            # 'success' and 'skipped' are acceptable, EXCEPT skipped for an
+            # always-run gate, which means the check silently didn't execute.
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "::error::$name: $result"
+              failed=true
+            elif [ "$result" = "skipped" ] && case " $ALWAYS_RUN " in *" $name "*) true;; *) false;; esac; then
+              echo "::error::$name was SKIPPED but is an always-run gate — the check never executed"
               failed=true
             else
               echo "$name: $result"
