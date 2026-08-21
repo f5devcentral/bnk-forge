@@ -16,9 +16,10 @@ interface SecurityLogsTabProps {
 }
 
 const OUTCOME_COLORS: Record<string, string> = {
-  BLOCKED: 'bg-destructive/10 text-destructive border-destructive/20',
-  PASSED:  'bg-success/10 text-success border-success/20',
-  ALERTED: 'bg-warning/10 text-warning border-warning/20',
+  REJECTED: 'bg-destructive/10 text-destructive border-destructive/20',
+  BLOCKED:  'bg-destructive/10 text-destructive border-destructive/20',
+  PASSED:   'bg-success/10 text-success border-success/20',
+  ALERTED:  'bg-warning/10 text-warning border-warning/20',
 };
 
 const RATING_COLORS: Record<string, string> = {
@@ -166,7 +167,7 @@ export function SecurityLogsTab({ clusterId, namespace, crKind, crName }: Securi
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All outcomes</SelectItem>
-            <SelectItem value="BLOCKED">BLOCKED</SelectItem>
+            <SelectItem value="REJECTED">REJECTED</SelectItem>
             <SelectItem value="PASSED">PASSED</SelectItem>
             <SelectItem value="ALERTED">ALERTED</SelectItem>
           </SelectContent>
