@@ -24,11 +24,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VALUES="$ROOT/helm/bnk-forge/values.yaml"
 CHART="$ROOT/helm/bnk-forge/Chart.yaml"
 PKG="$ROOT/frontend-v2/package.json"
+# bonnyr-f5 #180 r2: the sibling operator chart is on the VERSION train (its
+# image publishes at :${VERSION}), so sync it here too instead of pinning it.
+OPVALUES="$ROOT/bnk-operator/charts/bnk-operator/values.yaml"
+OPCHART="$ROOT/bnk-operator/charts/bnk-operator/Chart.yaml"
 
 # Read each artifact's current version.
 _helm_tag()    { grep -m1 -E '^  tag: ' "$VALUES" | sed -E 's/^  tag: "?([^"]*)"?.*/\1/'; }
 _appversion()  { grep -m1 -E '^appVersion:' "$CHART" | sed -E 's/^appVersion: "?([^"]*)"?.*/\1/'; }
 _pkg_version() { grep -m1 -E '^  "version":' "$PKG" | sed -E 's/^  "version": "([^"]*)".*/\1/'; }
+_op_tag()        { grep -m1 -E '^  tag: ' "$OPVALUES" | sed -E 's/^  tag: "?([^"]*)"?.*/\1/'; }
+_op_appversion() { grep -m1 -E '^appVersion:' "$OPCHART" | sed -E 's/^appVersion: "?([^"]*)"?.*/\1/'; }
 
 case "${1:-}" in
   --write)
@@ -41,13 +47,15 @@ case "${1:-}" in
     sed -i.syncbak -E "s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
     sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$CHART"
     sed -i.syncbak -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
-    rm -f "${VALUES}.syncbak" "${CHART}.syncbak" "${PKG}.syncbak"
+    sed -i.syncbak -E "s|^  tag: .*|  tag: \"${V}\"|" "$OPVALUES"
+    sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$OPCHART"
+    rm -f "${VALUES}.syncbak" "${CHART}.syncbak" "${PKG}.syncbak" "${OPVALUES}.syncbak" "${OPCHART}.syncbak"
     # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
     # caller commits the unchanged file [skip ci] believing it synced (#180
     # review). Re-read each artifact with the same helpers --check trusts and
     # confirm it actually took ${V}.
     rc=0
-    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)"; do
+    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)" "operator image.tag:$(_op_tag)" "operator appVersion:$(_op_appversion)"; do
       name="${pair%%:*}"; got="${pair#*:}"
       if [ "$got" != "$V" ]; then
         echo "::error::--write did not take on $name: it is '$got', expected '$V' (the sed pattern matched nothing — the artifact's format changed)" >&2
@@ -63,15 +71,15 @@ case "${1:-}" in
         echo "::error::--write left a 2-space 'tag:' at '$t', expected '$V' (multiple tag lines)" >&2
         rc=1
       fi
-    done < <(grep -E '^  tag: ' "$VALUES")
+    done < <(grep -hE '^  tag: ' "$VALUES" "$OPVALUES")
     [ "$rc" -eq 0 ] || exit 1
     echo "synced helm tag, appVersion, frontend package.json -> ${V}"
     ;;
   --check)
     EXPECTED="$(cat "$ROOT/VERSION")"
-    rc=0
-    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)"; do
-      name="${pair%%:*}"; got="${pair#*:}"
+    rc=0; checked=0
+    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)" "operator image.tag:$(_op_tag)" "operator appVersion:$(_op_appversion)"; do
+      name="${pair%%:*}"; got="${pair#*:}"; checked=$((checked+1))
       if [ "$got" = "$EXPECTED" ]; then
         echo "  OK    $name = $got"
       else
@@ -79,6 +87,14 @@ case "${1:-}" in
         rc=1
       fi
     done
+    # bonnyr-f5 #180 r2 (INV-16): assert the gate actually compared something --
+    # an empty list would exit 0 with real drift present. Also catch a drifted
+    # SECOND 2-space tag that grep -m1 above can't see.
+    while IFS= read -r t; do
+      t=$(sed -E 's/^  tag: "?([^"]*)"?.*/\1/' <<< "$t"); checked=$((checked+1))
+      [ "$t" = "$EXPECTED" ] || { echo "::error::a 2-space 'tag:' reads '$t' but VERSION is '$EXPECTED'"; rc=1; }
+    done < <(grep -hE '^  tag: ' "$VALUES" "$OPVALUES")
+    [ "$checked" -ge 5 ] || { echo "::error::--check compared only $checked artifacts (expected >=5) — vacuous"; exit 1; }
     exit "$rc"
     ;;
   *)
