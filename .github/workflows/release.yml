@@ -117,21 +117,33 @@ jobs:
           # guard is a backstop, not the primary suppressor.
           if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$FIRST"; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST"; then
+            # Only OUR OWN automated release commit is exempt (a silent, green
+            # skip). It has a distinguishing fingerprint that a human commit does
+            # not: the subject is EXACTLY "release: vX.Y.Z [skip ci]" — a version
+            # AND the skip marker we ourselves append (see the two `git commit`
+            # calls below). Matching "release:" + a version alone was wrong: a
+            # hand-written commit like "release: v3.2.0 notes" (a human writing
+            # release notes, no marker) also matched and was silently skipped
+            # green, publishing nothing while reporting success — the exact
+            # silent-green class this guard exists to prevent (bonnyr-f5 #181
+            # round 4). Requiring the trailing [skip ci] marker restricts the
+            # exemption to commits we minted.
+            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST" && grep -qE '\[skip ci\]$' <<< "$FIRST"; then
               # Our own automated release commit reached the guard anyway (e.g.
-              # a re-tag or a marker-stripped replay). The release it names was
-              # already published by the run that created it, so suppressing it
-              # is expected -- a notice, and the run stays green.
+              # a re-tag or a replay that kept the marker). The release it names
+              # was already published by the run that created it, so suppressing
+              # it is expected -- a notice, and the run stays green.
               echo "::notice::Loop guard: skipping our own release commit \"$FIRST\" (expected -- it was published by the previous run)."
               exit 0
             fi
             # Any OTHER suppressed commit is unexpected: a hand-written
-            # [skip ci], or a squash-merged PR titled "release: …(#N)". The run
-            # publishes nothing, so it must NOT report success -- a release that
-            # did not happen has to be loud, not a silent green (bonnyr-f5 #181
-            # round 3). Fail the guard; downstream jobs are gated on should_run
-            # and stay skipped, so nothing is published either way.
-            echo "::error::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. If this was a normal change, rename the commit (avoid a 'release:' subject) or dispatch the workflow manually."
+            # [skip ci], a human "release: ..." subject with no marker, or a
+            # squash-merged PR titled "release: …(#N)". The run publishes
+            # nothing, so it must NOT report success -- a release that did not
+            # happen has to be loud, not a silent green (bonnyr-f5 #181 round 3
+            # and 4). Fail the guard; downstream jobs are gated on should_run and
+            # stay skipped, so nothing is published either way.
+            echo "::error::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. To cut a NEW release, push a normal commit whose subject does NOT begin with 'release: ' and carries no skip marker (it will release on merge to main). To re-publish images for an EXISTING tag, dispatch this workflow with publish_only=<tag> — do not manually dispatch a final release on a skip-marked head, GitHub creates no CI run for it and the CI-status check cannot pass."
             exit 1
           fi
           echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -178,30 +190,32 @@ jobs:
 
       - name: Restrict manual release to main
         if: steps.kind.outputs.kind == 'manual'
+        env:
+          DISPATCH_REF: ${{ github.ref }}
         run: |
           # A manual (non-publish_only) dispatch builds THIS ref's tree, commits
           # the version bump to it, tags it, and publishes it as :latest.
           # Dispatching from staging or a side branch would ship an unreviewed
           # tree as the released :latest, and the recency guard would not catch
           # it (a numerically higher version passes: measured ALLOW new=5.0.0
-          # highest=v4.0.5). Require the dispatched ref to BE main, or to be an
-          # ancestor of main (already merged), so only reviewed history cuts a
-          # final release (bonnyr-f5 #181 round 3). publish_only is exempt: it
+          # highest=v4.0.5).
+          #
+          # The dispatched ref must BE main itself (refs/heads/main). An earlier
+          # "ancestor of main" exemption was WRONG: staging sits 0-ahead/1-behind
+          # main, so `git merge-base --is-ancestor origin/staging origin/main` is
+          # true, and a manual dispatch on staging slipped through — the exact ref
+          # this step names as the hazard (release commit+tag+GitHub Release land
+          # on staging, :latest built from it, main never bumped) (bonnyr-f5 #181
+          # round 4). Any ancestor of main is by definition already ON main's
+          # first-parent history if it was merged, so requiring the ref to be main
+          # loses nothing legitimate. publish_only is exempt (kind != manual): it
           # republishes an existing tag by checking that tag out, independent of
           # the dispatched ref.
-          if [ "$REF_NAME" = "main" ]; then
+          if [ "$DISPATCH_REF" = "refs/heads/main" ]; then
             echo "Dispatched from main."
             exit 0
           fi
-          git fetch --no-tags --quiet origin main || {
-            echo "::error::Could not fetch origin/main to verify the dispatched ref '$REF_NAME' is merged."
-            exit 1
-          }
-          if git merge-base --is-ancestor HEAD FETCH_HEAD; then
-            echo "Dispatched ref '$REF_NAME' is an ancestor of main (already merged)."
-            exit 0
-          fi
-          echo "::error::A manual release must be dispatched from main, or from a ref already merged into main. '$REF_NAME' is neither — dispatching it would publish an unreviewed tree as :latest. Merge to main first, or use publish_only to republish an existing tag."
+          echo "::error::A manual final release must be dispatched from main itself (refs/heads/main). '$REF_NAME' (ref '$DISPATCH_REF') is not main — dispatching it would publish an unreviewed tree as :latest. Merge to main and dispatch from there, or use publish_only to republish an existing tag."
           exit 1
 
       - name: Check CI status on this branch
@@ -210,6 +224,23 @@ jobs:
           BRANCH="$REF_NAME"
           SHA="${{ github.sha }}"
           echo "Checking CI status for branch '$BRANCH' at commit $SHA"
+
+          # Fail FAST on a CI-skip-marked head instead of polling for 2700s.
+          # After every automated release, main's head is
+          # "release: vX.Y.Z [skip ci]"; GitHub creates NO CI run for a commit
+          # carrying a skip marker, so a manual final dispatch on that head would
+          # poll for a run that will never appear and only surface the problem
+          # after the full 45-minute timeout. There is no CI to wait for and none
+          # is coming, so refuse immediately with the real recovery, rather than
+          # advising a wait (bonnyr-f5 #181 round 4). A genuine change never
+          # reaches here skip-marked: GitHub drops skip-marked pushes before the
+          # workflow starts, so this only trips on a manual dispatch of a
+          # skip-marked head.
+          HEAD_SUBJECT="$(git log -1 --format=%s HEAD)"
+          if grep -qiE '\[skip ci\]|\[ci skip\]|\[skip actions\]' <<< "$HEAD_SUBJECT"; then
+            echo "::error::The head commit \"$HEAD_SUBJECT\" carries a CI-skip marker, so GitHub created no CI run for it and none ever will — waiting would only time out after ${CI_POLL_TIMEOUT_SECONDS}s. This is the state main is left in immediately after an automated release. To cut a NEW release, push a normal (non-skip-marked) commit and let it release on merge to main. To re-publish images for the EXISTING tag, dispatch this workflow with publish_only=<tag>, which skips this CI check."
+            exit 1
+          fi
 
           # Match the CI run by the exact commit SHA that triggered this
           # release, not by "--limit=1 --branch=X" (which is racy: on main,
@@ -320,15 +351,26 @@ jobs:
             BUMP="$BUMP_TYPE"
           fi
 
-          # :latest recency guard — hoisted out of the publish_only branch so it
-          # covers EVERY path that reaches release-publish and repoints the
-          # :latest rolling tag: final, manual, AND publish_only (bonnyr-f5 #181
-          # round 2 — release-manual from a maintenance branch could tag+publish
-          # a version below the highest final tag and drag :latest backward).
-          # rc tags are pre-releases and never touch :latest, so they're exempt.
-          # :latest is set by whatever release-publish last ran, not by this
-          # ref's VERSION file, so compare $NEW against the highest FINAL tag.
-          if [ "$RELEASE_KIND" != "rc" ]; then
+          # :latest recency guard — covers the paths that both MINT a new tag and
+          # repoint :latest to it: final and manual. A version below the highest
+          # final tag would drag :latest backward (bonnyr-f5 #181 round 2 —
+          # release-manual from a maintenance branch could tag+publish a version
+          # below the highest final tag). rc tags are pre-releases and never touch
+          # :latest, so they're exempt.
+          #
+          # publish_only is NOT hard-failed here: a republish re-emits the
+          # IMMUTABLE :VERSION tags of an ALREADY-released version whose original
+          # publish half-completed, and it owes those tags to consumers regardless
+          # of what has been released since. Failing it on recency stranded it
+          # forever — once any newer tag existed, the half-published version's
+          # images could never be produced by ANY path (bonnyr-f5 #181 round 4).
+          # A republish must still never move :latest backward, but that is a
+          # decision about the FLOATING tag only, and it is made authoritatively
+          # inside the publish job's critical section (see "Re-check recency"),
+          # not here. :latest is set by whatever release-publish last ran, not by
+          # this ref's VERSION file, so that check compares against the highest
+          # FINAL tag at push time.
+          if [ "$RELEASE_KIND" = "final" ] || [ "$RELEASE_KIND" = "manual" ]; then
             HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
             HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$NEW" | sort -V | tail -1)"
             if [ -n "$HIGHEST_TAG" ] && [ "$NEW" != "$HIGHEST" ]; then
@@ -840,12 +882,16 @@ jobs:
       - name: Resolve release commit
         id: rev
         run: |
-          # Reproducible-build inputs. The release commit's committer date is
-          # fixed for a given tag, so baking with it (CREATED) instead of the
-          # removed timestamp() default, plus SOURCE_DATE_EPOCH to normalize
-          # layer timestamps, makes a rebuild of the same tag byte-identical:
-          # a republish resolves to the SAME digest, so the cosign / SBOM / SLSA
-          # attestations attached by digest still apply (bonnyr-f5 #181 round 3).
+          # Pinned build inputs, NOT a reproducibility guarantee. The release
+          # commit's committer date is fixed for a given tag, so baking with it
+          # (CREATED) instead of the removed timestamp() default, plus
+          # SOURCE_DATE_EPOCH, removes two obvious sources of build-to-build
+          # variance. It does NOT make the rebuild byte-identical: the images run
+          # apt/apk/pip/npm against live indexes and there is no buildkit
+          # rewrite-timestamp pass, so a rebuild of the same tag can and does
+          # resolve to a DIFFERENT digest (bonnyr-f5 #181 round 4). That is
+          # exactly why a republish is refused by default and gated behind
+          # force= — see the "Refuse to overwrite an already-published tag" step.
           {
             echo "sha=$(git rev-parse HEAD)"
             echo "created=$(git log -1 --format=%cI HEAD)"
@@ -872,6 +918,8 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0
 
       - name: Re-check recency inside the publish critical section
+        env:
+          RELEASE_KIND: ${{ needs.preflight.outputs.release_kind }}
         run: |
           # preflight's recency guard runs OUTSIDE this job's concurrency group,
           # so two releases can both pass it and then race to write the single
@@ -880,14 +928,30 @@ jobs:
           # immediately before the push — is the authoritative gate: a release
           # that is no longer the newest must not repoint :latest backward
           # (bonnyr-f5 #181 round 3). rc never reaches this job.
+          #
+          # This step OWNS the :latest-move decision: it writes ROLLING_TAG to
+          # GITHUB_ENV, and the bake step below tags :$ROLLING_TAG (empty ==>
+          # push only the immutable :VERSION, see docker-bake.hcl). That lets a
+          # publish_only republish still emit its :VERSION tags when it is behind
+          # the newest release — it just does NOT move :latest — instead of being
+          # stranded (bonnyr-f5 #181 round 4).
           git fetch --tags --force --quiet origin || true
           HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
           HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$VERSION" | sort -V | tail -1)"
           if [ -n "$HIGHEST_TAG" ] && [ "$VERSION" != "$HIGHEST" ]; then
-            echo "::error::Refusing to publish v$VERSION: the highest released tag is now $HIGHEST_TAG, so repointing :latest would move it backward."
-            exit 1
+            if [ "$RELEASE_KIND" = "publish_only" ]; then
+              # Behind the newest tag: re-emit the immutable :VERSION tags but do
+              # NOT touch the floating :latest (ROLLING_TAG="").
+              echo "::notice::v$VERSION is behind the highest tag $HIGHEST_TAG; republishing the immutable :$VERSION tags but NOT moving :latest."
+              echo "ROLLING_TAG=" >> "$GITHUB_ENV"
+            else
+              echo "::error::Refusing to publish v$VERSION: the highest released tag is now $HIGHEST_TAG, so repointing :latest would move it backward."
+              exit 1
+            fi
+          else
+            echo "v$VERSION is the highest final tag; safe to repoint :latest."
+            echo "ROLLING_TAG=latest" >> "$GITHUB_ENV"
           fi
-          echo "v$VERSION is the highest final tag; safe to repoint :latest."
 
       - name: Refuse to overwrite an already-published tag
         env:
@@ -954,11 +1018,17 @@ jobs:
           # OCI source label tracks whichever remote actually built the image.
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
           GIT_REVISION: ${{ steps.rev.outputs.sha }}
-          # Reproducible build: fixed created label + normalized layer mtimes so
-          # the same tag rebuilds to the same digest (see "Resolve release commit").
+          # Pinned build inputs: fixed created label + SOURCE_DATE_EPOCH. These
+          # reduce build-to-build variance but do NOT guarantee an identical
+          # digest (see docker-bake.hcl and "Resolve release commit") — which is
+          # why the immutable-tag probe above refuses a republish by default.
           CREATED: ${{ steps.rev.outputs.created }}
           SOURCE_DATE_EPOCH: ${{ steps.rev.outputs.epoch }}
-          ROLLING_TAG: latest
+          # ROLLING_TAG is NOT hardcoded here: the "Re-check recency" step wrote
+          # it to GITHUB_ENV — "latest" to move the floating tag, or "" for a
+          # publish_only republish that is behind the newest release (push only
+          # the immutable :VERSION tags). A step-level env: entry would override
+          # that GITHUB_ENV value, so it is intentionally omitted.
 
       - name: Sign, SBOM, and attest all images (keyless cosign)
         run: bash scripts/publish-signed-images.sh --execute
@@ -968,10 +1038,19 @@ jobs:
 
       - name: Publish summary
         run: |
+          # ROLLING_TAG comes from GITHUB_ENV (set by "Re-check recency"): empty
+          # for a publish_only republish behind the newest release, which pushed
+          # only the immutable :VERSION tags and did NOT move :latest. Report the
+          # tags actually pushed rather than always claiming :latest.
+          if [ -n "${ROLLING_TAG:-}" ]; then
+            TAGS=":${{ needs.preflight.outputs.new_version }}, :${ROLLING_TAG}"
+          else
+            TAGS=":${{ needs.preflight.outputs.new_version }} (floating :latest NOT moved — this republish is behind the newest release)"
+          fi
           echo "## Published images v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
           for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
-            echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| ${name} | ${{ env.REGISTRY }}/${name}${TAGS} |" >> "$GITHUB_STEP_SUMMARY"
           done

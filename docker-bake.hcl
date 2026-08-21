@@ -20,13 +20,24 @@ variable "SOURCE_URL" {
   default = "https://github.com/f5devcentral/bnk-forge"
 }
 # Build timestamp for org.opencontainers.image.created (RFC 3339). Empty by
-# default so a plain `docker buildx bake` of a given tree is byte-reproducible.
-#   timestamp() here stamped a fresh time into every build, so EVERY rebuild of
-#   the same tag produced a different digest — silently breaking the "immutable
-#   :VERSION" contract described above and orphaning the cosign / SBOM / SLSA
-#   attestations that publish-signed-images.sh attaches by digest (bonnyr-f5
-#   #181 round 3). CI sets it to the release commit's committer date, which is
-#   fixed for a given tag, so a republish of the same tag rebuilds identically.
+# default so a plain `docker buildx bake` does not stamp a wall-clock time into
+# the image config.
+#   A timestamp() default stamped a FRESH time into every build, guaranteeing a
+#   different config digest on every rebuild. CI instead sets CREATED to the
+#   release commit's committer date (fixed for a given tag) and also exports
+#   SOURCE_DATE_EPOCH. That removes the two most obvious sources of variance.
+#
+#   It does NOT make a rebuild byte-reproducible, and a republish CAN move the
+#   digest. The Dockerfiles run `apt-get update` / `apk upgrade` / `pip` / `npm`
+#   against live package indexes, and there is no buildkit `rewrite-timestamp`
+#   pass normalizing layer mtimes to SOURCE_DATE_EPOCH — so two builds of the
+#   same tag can produce different layer diff_ids and a different image digest
+#   (bonnyr-f5 #181 round 4, verified: two SOURCE_DATE_EPOCH-pinned builds gave
+#   divergent digests). Because a republish may not resolve to the original
+#   digest, the immutable :VERSION tag is protected the honest way — the release
+#   workflow's existence probe REFUSES a republish by default and requires an
+#   explicit force= to overwrite (see release.yml "Refuse to overwrite an
+#   already-published tag"), rather than by relying on determinism we do not have.
 variable "CREATED" {
   default = ""
 }
