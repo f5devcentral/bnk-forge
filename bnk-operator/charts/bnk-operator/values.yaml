@@ -45,8 +45,8 @@ cwc:
 
 # Operator image
 image:
-  repository: f5/bnk-operator
-  tag: "1.2.0"
+  repository: ghcr.io/f5devcentral/bnk-forge-operator
+  tag: "3.1.6"
   pullPolicy: IfNotPresent
 
 # Image pull secrets (if using private registry)

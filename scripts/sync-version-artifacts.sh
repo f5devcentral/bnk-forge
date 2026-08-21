@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Keep every version-bearing artifact in lockstep with VERSION.
+# Keep the bnk-forge chart's image tag + Chart appVersion and the frontend
+# package.json in lockstep with VERSION. (The separate bnk-operator chart has its
+# own version line and is not synced here -- bonnyr-f5 #180.)
 #
 # The release job bumps VERSION but historically nothing else, so the Helm chart
 # pinned an image tag the release never publishes (:3.0.1) -> ImagePullBackOff,
@@ -33,9 +35,13 @@ case "${1:-}" in
     V="${2:?usage: sync-version-artifacts.sh --write <version>}"
     # The global image tag (2-space indent) — per-service tags are 4-space and
     # fall back to it; postgres/redis tags are external and left alone.
-    sed -i -E "s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
-    sed -i -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$CHART"
-    sed -i -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
+    # -i.bak (attached suffix) is the one in-place form both GNU and BSD sed
+    # accept; the plain `-i -E` used before makes BSD swallow -E as the backup
+    # suffix and litter *-E files (bonnyr-f5 #180). Backups removed after.
+    sed -i.syncbak -E "s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
+    sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$CHART"
+    sed -i.syncbak -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
+    rm -f "${VALUES}.syncbak" "${CHART}.syncbak" "${PKG}.syncbak"
     # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
     # caller commits the unchanged file [skip ci] believing it synced (#180
     # review). Re-read each artifact with the same helpers --check trusts and
@@ -48,6 +54,16 @@ case "${1:-}" in
         rc=1
       fi
     done
+    # grep -m1 above only reads the FIRST `^  tag:`; the sed rewrote EVERY one.
+    # Fail if any 2-space tag line disagrees, so a second one can't be silently
+    # clobbered while --check stays green (bonnyr-f5 #180).
+    while IFS= read -r line; do
+      t=$(sed -E 's/^  tag: "?([^"]*)"?.*/\1/' <<< "$line")
+      if [ "$t" != "$V" ]; then
+        echo "::error::--write left a 2-space 'tag:' at '$t', expected '$V' (multiple tag lines)" >&2
+        rc=1
+      fi
+    done < <(grep -E '^  tag: ' "$VALUES")
     [ "$rc" -eq 0 ] || exit 1
     echo "synced helm tag, appVersion, frontend package.json -> ${V}"
     ;;
