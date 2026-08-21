@@ -503,10 +503,20 @@ commit-lint:
 	@bash scripts/lint-commit-markers.sh
 
 # The paired self-test harnesses ci.yml's script-selftests job runs.
+# The compute self-test historically prints "FAIL:" but still exits 0, so
+# ci.yml's step fails on EITHER a non-zero exit OR a FAIL: line. Mirror that
+# exact anti-vacuity logic here or a broken detector passes locally while CI
+# goes red (bonnyr-f5 #182 r4: a local gate that diverges from the CI command
+# is not a gate).
 script-selftests:
 	@echo ""
 	@echo "=== Script self-tests ==="
-	@SELF_TEST=1 bash scripts/compute_version_bump.sh
+	@set +e; out="$$(SELF_TEST=1 bash scripts/compute_version_bump.sh 2>&1)"; rc=$$?; \
+	  echo "$$out"; \
+	  if [ "$$rc" -ne 0 ]; then echo "::error::compute_version_bump self-test exited $$rc"; exit "$$rc"; fi; \
+	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
+	    echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1; \
+	  fi
 	@if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then \
 	  bash scripts/extract-breaking-changes.sh --self-test; \
 	else \
