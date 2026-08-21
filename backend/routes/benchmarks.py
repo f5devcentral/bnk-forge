@@ -131,11 +131,20 @@ def _require_agent_bearer(request: Request) -> dict:
         from core.errors import ForbiddenError
         from services.auth_service import enforce_password_change, token_user_state
         agent_user = token_user_state(token)
-        if agent_user is not None:
-            try:
-                enforce_password_change(request.url.path, agent_user)
-            except ForbiddenError as exc:
-                raise BadRequestError(str(exc), code="AGENT_AUTH_PASSWORD_CHANGE_REQUIRED")
+        # token_user_state's contract: the caller refuses on None -- fail CLOSED.
+        # A non-agent role that resolves to no live User (deleted/disabled row, or
+        # a signed token whose subject never existed) must be rejected here, not
+        # waved through. Without this else the gate is skipped for exactly that
+        # case (proven fail-open: a nonexistent user's admin JWT -> 201).
+        if agent_user is None:
+            raise BadRequestError(
+                "Token does not resolve to an active user",
+                code="AGENT_AUTH_INVALID",
+            )
+        try:
+            enforce_password_change(request.url.path, agent_user)
+        except ForbiddenError as exc:
+            raise BadRequestError(str(exc), code="AGENT_AUTH_PASSWORD_CHANGE_REQUIRED")
     return payload
 
 

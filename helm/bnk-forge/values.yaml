@@ -28,6 +28,10 @@ secrets:
   # Empty -> generated on first install and reused on upgrade. The seeded admin
   # account is must_change_password; retrieve this to log in the first time.
   adminPassword: ""
+  # #186: whether the seeded admin must change its password before using the API.
+  # Keep true on any real deployment (the shipped-default hazard #184 closes).
+  # Set false only for an ephemeral test stack seeding a known throwaway admin.
+  adminMustChange: true
   mcpUsername: admin
   mcpPassword: changeme
 

@@ -104,6 +104,12 @@ in-cluster services and pulls secrets from the generated Secret.
     secretKeyRef:
       name: {{ include "bnk-forge.fullname" . }}-secrets
       key: admin-password
+# #186: plumb the must-change gate alongside its sibling, or the seeded admin
+# owes a password change no route accepts (login is exempt; every other /api
+# route 403s). Not a secret -- a plain value. Quote so the bool renders "true"/
+# "false" (do NOT `default` it: a bool false collapses back to the default).
+- name: DEFAULT_ADMIN_MUST_CHANGE
+  value: {{ .Values.secrets.adminMustChange | quote }}
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

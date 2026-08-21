@@ -118,8 +118,13 @@ class TestAgentAuthFlagOn:
         assert resp.status_code == 400
         assert "AGENT_AUTH_INVALID" in resp.text
 
-    def test_register_accepts_valid_token(self, client, admin_headers):
-        """Flag on + valid JWT → accepted (not a 400/401)."""
+    def test_register_accepts_valid_token(self, client, sample_user, admin_headers):
+        """Flag on + valid JWT for a real, live admin → accepted (not a 400/401).
+
+        #186 (bonnyr-f5): the gate fails CLOSED on a token that resolves to no
+        live User, so the token must correspond to a real row (sample_user is
+        'testadmin', which admin_headers is issued for) -- as any human token
+        does, since a token is only minted after that user logs in."""
         with patch("routes.benchmarks.settings") as mock_settings:
             mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
             resp = client.post(
@@ -161,8 +166,17 @@ class TestAgentAuthFlagOn:
                 )
         assert resp.status_code in (200, 201), resp.text
 
-    def test_register_accepts_operator_token(self, client):
-        """The documented human curl flow keeps working with an operator token."""
+    def test_register_accepts_operator_token(self, client, db):
+        """The documented human curl flow keeps working with an operator token.
+
+        #186 (bonnyr-f5): the token must resolve to a real, live operator -- the
+        gate fails CLOSED on a token for a user that does not exist or is
+        disabled. A real curl operator always has a row (that is how they got the
+        token), so create one, unlike a forged token for a phantom user."""
+        from services.auth_service import create_user
+        create_user(db, "op", "op@t.com", "pw-op-123",
+                    role="operator", must_change_password=False)
+        db.commit()
         with patch("routes.benchmarks.settings") as mock_settings:
             mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
             with patch("core.auth_middleware.settings") as mw_settings:
@@ -194,6 +208,24 @@ class TestAgentAuthFlagOn:
                 )
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["code"] == "AGENT_AUTH_PASSWORD_CHANGE_REQUIRED"
+
+    def test_register_rejects_nonexistent_user_token(self, client):
+        """#186 (bonnyr-f5): INV-20 fail-open. A validly-signed admin/operator
+        token that resolves to NO live User (deleted/disabled row, or a phantom
+        subject) must be refused -- token_user_state's contract is fail CLOSED.
+        Previously the `if agent_user is not None:` had no else, so None skipped
+        the gate and this returned 201."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="phantom-admin", role="admin"),
+                )
+        assert resp.status_code == 400, resp.text
+        assert "AGENT_AUTH_INVALID" in resp.text
 
     def test_register_rejects_token_with_no_role(self, client):
         """A token with no role claim must fail closed, not fall through."""

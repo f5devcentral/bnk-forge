@@ -201,26 +201,78 @@ def change_password(db: Session, user: User, current_password: str, new_password
 _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 
 
+def _persist_generated_admin_password(password: str) -> tuple[str, bool]:
+    """Write a generated admin password to the mode-0600 keys dir.
+
+    Returns (path, persisted). The plaintext is NEVER logged here — the caller
+    logs a POINTER to the returned path when persisted, or falls back to logging
+    the secret itself only when it could not be written (so the operator is never
+    locked out). The file is created with 0o600 at open() time so the plaintext
+    credential is never momentarily group/world-readable (open()+chmod would
+    create it 0644 under the usual umask, then narrow it). O_TRUNC handles a
+    stale file from a prior seed/rotation without failing.
+
+    Shared by the fresh-install seed (#184) and the upgrade remediation (#186)
+    so a generated credential is surfaced identically on both paths.
+    """
+    import os
+    keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
+    pw_path = os.path.join(keys_dir, "initial_admin_password")
+    try:
+        os.makedirs(keys_dir, exist_ok=True)
+        fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(password + "\n")
+    except (OSError, PermissionError) as exc:
+        logger.warning("Could not write %s: %s", pw_path, exc)
+        return pw_path, False
+    return pw_path, True
+
+
 def _rotate_known_default_admin(db: Session) -> None:
-    """#186 (bonnyr-f5): close the upgrade hole the new gate leaves open.
+    """#186 (bonnyr-f5): make a published default credential UNUSABLE on upgrade.
 
     A deployment seeded before #184 holds admin/'changeme' with
     must_change_password=False. The new seed logic never runs for it (users
-    already exist), so it keeps the published default -- and /api/auth/change-
-    password (exempt from the gate) is exactly the endpoint that lets that
-    credential persist. On every boot, if the admin still authenticates with a
-    known shipped default, force a password change so the seed credential can no
-    longer be used to reach the API.
+    already exist), so it keeps the published default.
+
+    Merely flagging must_change_password does NOT remove the capability:
+    /api/auth/change-password is exempt from the gate and verifies
+    current_password against the stored hash, so anyone holding the published
+    'changeme' (it's in dist/README.md, user-pack/install-guide.html and
+    scripts/ibm_cloud_bnk_forge.sh) could rotate the password before the operator
+    does and take over the account. A mitigation must remove the capability, not
+    request its removal.
+
+    So we OVERWRITE the hash with a fresh random secret -- the published default
+    stops working the moment this runs -- surface the new one exactly like a
+    fresh install (mode-0600 file, pointer logged once), and leave the account
+    must_change_password so the generated secret only survives until first login.
     """
     admin = db.query(User).filter(User.username == "admin").first()
-    if admin is None or admin.must_change_password:
+    if admin is None:
         return
-    if any(verify_password(p, admin.hashed_password) for p in _KNOWN_DEFAULT_ADMIN_PASSWORDS):
-        admin.must_change_password = True  # type: ignore[assignment]
-        db.commit()
+    if not any(verify_password(p, admin.hashed_password) for p in _KNOWN_DEFAULT_ADMIN_PASSWORDS):
+        return
+    new_password = secrets.token_urlsafe(18)
+    admin.hashed_password = hash_password(new_password)  # type: ignore[assignment]
+    admin.must_change_password = True  # type: ignore[assignment]
+    db.commit()
+    pw_path, persisted = _persist_generated_admin_password(new_password)
+    if persisted:
         logger.warning(
-            "Existing 'admin' still held a known shipped default password; forced "
-            "must_change_password on it so the API can't be reached with it (#186)."
+            "Existing 'admin' still held a known shipped default password; "
+            "OVERWROTE it with a generated secret (the published default no longer "
+            "works) and wrote the new one to %s -- retrieve it, then change it on "
+            "first login (#186).",
+            pw_path,
+        )
+    else:
+        logger.warning(
+            "Existing 'admin' still held a known shipped default password; "
+            "OVERWROTE it with a generated secret (could not persist to disk): %s "
+            "-- save it now; change required on first login (#186).",
+            new_password,
         )
 
 
@@ -257,22 +309,7 @@ def seed_admin_user(db: Session) -> User | None:
         # miss (log rotation, JSON formatting) and logging the plaintext is a
         # known aggregation-exposure risk. Log a POINTER, not the secret. Safe
         # to delete after first login (the account is must_change_password).
-        import os
-        keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
-        pw_path = os.path.join(keys_dir, "initial_admin_password")
-        persisted = False
-        try:
-            os.makedirs(keys_dir, exist_ok=True)
-            # Open with 0o600 at creation so the plaintext credential is never
-            # momentarily group/world-readable (open()+chmod would create it at
-            # 0644 under the usual umask, then narrow it). O_TRUNC handles a
-            # stale file from a prior seed without failing.
-            fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as fh:
-                fh.write(seed_password + "\n")
-            persisted = True
-        except (OSError, PermissionError) as exc:
-            logger.warning("Could not write %s: %s", pw_path, exc)
+        pw_path, persisted = _persist_generated_admin_password(seed_password)
         if persisted:
             logger.warning(
                 "Seeded admin user 'admin' with a GENERATED password, written to "

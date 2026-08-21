@@ -27,7 +27,7 @@ cd bnk-forge
 make local-deploy
 ```
 
-Open **https://localhost** and accept the self-signed certificate warning. Log in as **admin** — no default password ships; retrieve the generated one from `/app/keys/initial_admin_password` (or the backend logs), or set `DEFAULT_ADMIN_PASSWORD`. You'll change it on first login.
+Open **https://localhost** and accept the self-signed certificate warning. Log in as **admin** — no default password ships; retrieve the generated one from `/app/keys/initial_admin_password` (the boot log points at this file; the plaintext is never logged), or set `DEFAULT_ADMIN_PASSWORD`. You'll change it on first login.
 
 ### Linux Server
 
@@ -128,11 +128,14 @@ A default admin account is created automatically on first startup:
 
 No default password ships. On first startup the backend generates a random admin
 password and writes it to `/app/keys/initial_admin_password` (mode 600); the boot
-log points there too. Retrieve it with either:
+log points at that file (the plaintext itself is never logged). Retrieve it with
+either:
 
 ```bash
+# Docker Compose
 docker exec bnk-forge-backend cat /app/keys/initial_admin_password
-docker exec bnk-forge-backend cat /app/keys/initial_admin_password
+# Helm
+kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
 Or set `DEFAULT_ADMIN_PASSWORD` in your environment to choose your own. You will

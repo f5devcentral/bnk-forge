@@ -35,6 +35,11 @@ x-backend-env: &backend-env
   # #186: plumb the operator-chosen initial admin password to the backend
   # (config.py has no env_file, so an unpassed var never reaches the container).
   DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # #186: plumb the must-change gate too, or the seeded admin owes a password
+  # change no route accepts (login is exempt; every other /api route 403s).
+  # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
+  # e2e suite reach protected routes.
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules

@@ -58,8 +58,9 @@ Need the host itself provisioned too? [`vm-bnk-forge/`](../vm-bnk-forge/README.m
 | **Username** | `admin` |
 | **Password** | _generated on first startup_ |
 
-No default password ships (#184). Retrieve the generated one:
-`docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"` (compose) or
+No default password ships (#184). The plaintext is written to a file, never to
+the logs — retrieve the generated one:
+`docker exec bnk-forge-backend cat /app/keys/initial_admin_password` (compose) or
 `kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d` (Helm).
 **The API refuses all other calls until you change it on first login** — Settings → Change Password.
 

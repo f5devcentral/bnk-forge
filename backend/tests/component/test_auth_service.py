@@ -230,17 +230,45 @@ class TestSeedAdminUser:
         mode = stat.S_IMODE(os.stat(pw).st_mode)
         assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
-    def test_rotates_existing_admin_still_on_a_known_default(self, db):
+    def test_rotates_existing_admin_still_on_a_known_default(self, db, tmp_path):
         # #186 (bonnyr-f5): an upgrade left admin/'changeme' with
         # must_change_password=False -- the seed logic never re-runs for it. On
-        # boot, seed_admin_user (users exist -> None) must still force the change
-        # so the published default can't keep reaching the API.
+        # boot, seed_admin_user (users exist -> None) must INVALIDATE the
+        # published default, not merely flag it: /api/auth/change-password is
+        # exempt from the gate and verifies against the stored hash, so a flag
+        # alone leaves 'changeme' usable to rotate the account. The hash must be
+        # overwritten and a fresh secret surfaced like a fresh install.
         from models.system import User
         create_user(db, "admin", "admin@bnk-forge.local", "changeme",
                     role="admin", must_change_password=False)
         db.commit()
         assert seed_admin_user(db) is None
         admin = db.query(User).filter(User.username == "admin").first()
+        assert admin.must_change_password is True
+        # The published default no longer authenticates -- capability removed.
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "admin", "changeme")
+        # A fresh generated secret was surfaced exactly like a fresh install.
+        pw_file = tmp_path / "initial_admin_password"
+        assert pw_file.exists()
+        new_pw = pw_file.read_text().strip()
+        assert new_pw and new_pw != "changeme"
+        assert authenticate_user(db, "admin", new_pw).username == "admin"
+
+    def test_rotation_is_idempotent_across_boots(self, db, tmp_path):
+        # #186: after the one-time overwrite the stored password is the generated
+        # secret, so a second boot's verify("changeme", ...) is False and the
+        # account is left untouched (no re-rotation, no new file churn).
+        from models.system import User
+        create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                    role="admin", must_change_password=False)
+        db.commit()
+        seed_admin_user(db)
+        first_pw = (tmp_path / "initial_admin_password").read_text().strip()
+        seed_admin_user(db)  # second boot
+        admin = db.query(User).filter(User.username == "admin").first()
+        # Still the same generated secret from the first rotation.
+        assert authenticate_user(db, "admin", first_pw).username == "admin"
         assert admin.must_change_password is True
 
     def test_does_not_touch_an_admin_with_a_real_password(self, db):
