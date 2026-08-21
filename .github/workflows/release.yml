@@ -26,9 +26,9 @@ on:
     # preflight SHA poll below depends on the invariant CI ⊇ Release: every SHA
     # that triggers Release must also trigger a CI run for it to match against.
     # Keep this a SUBSET of whatever ci.yml runs on — never let Release trigger
-    # on a path CI skips, or the poll times out (PR #297 review). (ci.yml runs on
-    # every push, so any subset here satisfies that; do NOT re-add a ci.yml
-    # paths-ignore to "match" this list — that would break the invariant.)
+    # on a path CI skips, or the poll times out (PR #297 review). Enforced by
+    # convention today; #182 adds the check that ci.yml's push paths-ignore is a
+    # subset of this list. Do NOT "fix" a divergence by re-adding coverage here.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -218,10 +218,13 @@ jobs:
               exit 1
             fi
             NEW="${TAG#v}"
-            # Recency: never move :latest backward to an older release than VERSION.
-            HIGHEST="$(printf '%s\n%s\n' "$CURRENT" "$NEW" | sort -V | tail -1)"
-            if [ "$NEW" != "$HIGHEST" ]; then
-              echo "::error::publish_only tag v$NEW is older than the current release v$CURRENT; republishing would move :latest backward."
+            # Recency: :latest is set by whatever release-publish last ran, not by
+            # this dispatch ref's VERSION file. Compare against the highest FINAL
+            # tag so :latest can never move backward (bonnyr-f5 #181).
+            HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$NEW" | sort -V | tail -1)"
+            if [ -n "$HIGHEST_TAG" ] && [ "$NEW" != "$HIGHEST" ]; then
+              echo "::error::publish_only tag v$NEW is older than the highest released tag $HIGHEST_TAG; republishing would move :latest backward."
               exit 1
             fi
             BUMP="republish"
@@ -559,6 +562,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # bonnyr-f5 #181: release_notes is free-text; read it from env so a value
+      # with " or $() can't break out of a run: script (same rule as publish_only).
+      RELEASE_NOTES: ${{ inputs.release_notes }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -581,7 +588,7 @@ jobs:
         run: |
           NEW_VERSION="${{ needs.preflight.outputs.new_version }}"
           DATE=$(date +%Y-%m-%d)
-          NOTES="${{ inputs.release_notes }}"
+          NOTES="${RELEASE_NOTES}"
 
           # See the "Update CHANGELOG.md" step in release-final for why this
           # goes through a temp file + awk instead of an inline sed s-command
@@ -613,7 +620,7 @@ jobs:
 
           git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]
 
-          ${{ inputs.release_notes }}
+          ${RELEASE_NOTES}
 
           Bump: ${{ inputs.version_bump }}
           Previous: v${{ needs.preflight.outputs.current_version }}
@@ -621,7 +628,7 @@ jobs:
           E2E: ${{ needs.e2e-gate.result || 'skipped' }}"
 
           git tag -a "v${{ needs.preflight.outputs.new_version }}" \
-            -m "Release v${{ needs.preflight.outputs.new_version }}: ${{ inputs.release_notes }}"
+            -m "Release v${{ needs.preflight.outputs.new_version }}: ${RELEASE_NOTES}"
 
       - name: Push
         run: |
@@ -632,7 +639,7 @@ jobs:
         run: |
           gh release create "v${{ needs.preflight.outputs.new_version }}" \
             --title "v${{ needs.preflight.outputs.new_version }}" \
-            --notes "${{ inputs.release_notes }}" \
+            --notes "${RELEASE_NOTES}" \
             --target "${{ github.ref_name }}"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -648,7 +655,7 @@ jobs:
           echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| CI | passed |" >> "$GITHUB_STEP_SUMMARY"
           echo "| E2E | ${{ needs.e2e-gate.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Notes | ${{ inputs.release_notes }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Notes | ${RELEASE_NOTES} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Publish images to ghcr (final releases only) ──────────────────────────────
   # Two problems, one job:
@@ -676,7 +683,7 @@ jobs:
           (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
         )
         ||
-        needs.preflight.outputs.release_kind == 'publish_only'
+        (needs.preflight.outputs.release_kind == 'publish_only' && needs.preflight.result == 'success')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 90
