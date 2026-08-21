@@ -425,6 +425,7 @@ class TestEnsureServiceUser:
         would clear must_change and grant the mcp secret admin access. The guard
         must leave the real admin row (its hash + must_change gate) intact."""
         import pytest
+
         from models import User
         create_user(db, "admin", "admin@test.com", "human-admin-pw",
                     role="admin", must_change_password=True)
