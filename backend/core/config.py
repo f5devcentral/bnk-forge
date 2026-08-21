@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     # on every fresh deployment (#184). When unset, seed_admin_user generates a
     # random one and logs it once (the account is must_change_password anyway).
     DEFAULT_ADMIN_PASSWORD: str | None = None
+    # Test/ephemeral environments (e2e) seed a KNOWN admin and skip the
+    # must-change gate so the suite can reach protected routes. Defaults True;
+    # never set false on a real deployment.
+    DEFAULT_ADMIN_MUST_CHANGE: bool = True
     # NOTE (#184 follow-up): MCP_SERVICE_PASSWORD is the same class of shipped
     # default (the seeded 'mcp' service account is role=admin), but its fix is
     # entangled with the chart's mcp-password wiring — tracked separately.

@@ -168,12 +168,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 decode_token(token)  # Will raise UnauthorizedError if invalid
                 # #184/#186: the dependency-only gate is bypassed on routes that
                 # declare no get_current_user; enforce must_change here too, where
-                # auth is actually resolved. token_user_state returns None for a
-                # non-user subject (e.g. an agent token) — those never reach a
-                # gated user route anyway, so leave them to the route's own dep.
+                # auth is actually resolved. decode_token already succeeded, so a
+                # None from token_user_state is a VALID JWT whose user can't be
+                # resolved (deleted/disabled/DB error) -- the fail-CLOSED case, per
+                # its own contract and the WS validators. Refuse it, don't skip the
+                # gate (bonnyr-f5 #186 r2: skipping was a fail-open bypass on the
+                # ~32 dependency-less routes).
                 jwt_user = token_user_state(token)
-                if jwt_user is not None:
-                    enforce_password_change(path, jwt_user)
+                if jwt_user is None:
+                    raise UnauthorizedError("Token subject could not be resolved")
+                enforce_password_change(path, jwt_user)
         except ForbiddenError as exc:
             return JSONResponse(
                 status_code=403,

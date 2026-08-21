@@ -247,7 +247,7 @@ def seed_admin_user(db: Session) -> User | None:
         email="admin@bnk-forge.local",
         password=seed_password,
         role="admin",
-        must_change_password=True,
+        must_change_password=settings.DEFAULT_ADMIN_MUST_CHANGE,
     )
     # ENG-006: Startup seed manages its own transaction
     db.commit()

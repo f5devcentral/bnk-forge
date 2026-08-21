@@ -174,6 +174,27 @@ class TestAgentAuthFlagOn:
                 )
         assert resp.status_code in (200, 201), resp.text
 
+    def test_register_refuses_a_must_change_user(self, client, db):
+        """#186 r2 (bonnyr-f5): a real must-change admin/operator was able to
+        create an agent (201) because this path never gated must_change. A token
+        that resolves to a real user owing a password change must be refused."""
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "mc-admin", "mc-admin@t.com", "pw",
+                    role="admin", must_change_password=True)
+        db.commit()
+        token = create_access_token({"sub": "mc-admin", "role": "admin"})
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "AGENT_AUTH_PASSWORD_CHANGE_REQUIRED"
+
     def test_register_rejects_token_with_no_role(self, client):
         """A token with no role claim must fail closed, not fall through."""
         with patch("routes.benchmarks.settings") as mock_settings:

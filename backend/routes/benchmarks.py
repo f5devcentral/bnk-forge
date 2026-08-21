@@ -122,6 +122,20 @@ def _require_agent_bearer(request: Request) -> dict:
             f"Token role '{role or 'none'}' may not write to agent endpoints",
             code="AGENT_AUTH_FORBIDDEN",
         )
+    # bonnyr-f5 #186 r2: a human (operator/admin) token owed a password change
+    # must not write here either -- this path skipped the gate entirely (a
+    # must-change admin could create an agent). Agent tokens carry no User row,
+    # and this endpoint is role-based by design, so only gate a token that
+    # resolves to a REAL user: if that user owes a password change, refuse.
+    if role != "agent":
+        from core.errors import ForbiddenError
+        from services.auth_service import enforce_password_change, token_user_state
+        agent_user = token_user_state(token)
+        if agent_user is not None:
+            try:
+                enforce_password_change(request.url.path, agent_user)
+            except ForbiddenError as exc:
+                raise BadRequestError(str(exc), code="AGENT_AUTH_PASSWORD_CHANGE_REQUIRED")
     return payload
 
 
