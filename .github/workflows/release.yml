@@ -420,7 +420,18 @@ jobs:
           # Stage VERSION, dist/VERSION (if tracked), CHANGELOG, and the
           # version-bearing artifacts synced above (#177 Blocker 2).
           git add VERSION CHANGELOG.md
-          git add helm/bnk-forge/values.yaml helm/bnk-forge/Chart.yaml frontend-v2/package.json
+          # Stage EXACTLY the artifacts sync-version-artifacts.sh owns, from its
+          # own --list, so a newly-synced file can never be left unstaged and die
+          # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
+          # files, the hard-coded `git add` staged three).
+          while IFS= read -r f; do git add "$f"; done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Verify the INDEX, not the files: --write's post-write check re-reads
+          # the files (correct on disk even when unstaged), so assert each synced
+          # artifact has no unstaged residue — i.e. the sync is actually in the
+          # commit we are about to make.
+          while IFS= read -r f; do
+            git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
+          done < <(bash scripts/sync-version-artifacts.sh --list)
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${NEW} [skip ci]
@@ -555,7 +566,18 @@ jobs:
       - name: Commit and tag
         run: |
           git add VERSION CHANGELOG.md
-          git add helm/bnk-forge/values.yaml helm/bnk-forge/Chart.yaml frontend-v2/package.json
+          # Stage EXACTLY the artifacts sync-version-artifacts.sh owns, from its
+          # own --list, so a newly-synced file can never be left unstaged and die
+          # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
+          # files, the hard-coded `git add` staged three).
+          while IFS= read -r f; do git add "$f"; done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Verify the INDEX, not the files: --write's post-write check re-reads
+          # the files (correct on disk even when unstaged), so assert each synced
+          # artifact has no unstaged residue — i.e. the sync is actually in the
+          # commit we are about to make.
+          while IFS= read -r f; do
+            git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
+          done < <(bash scripts/sync-version-artifacts.sh --list)
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
           git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]

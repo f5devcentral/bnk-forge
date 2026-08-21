@@ -1,104 +1,154 @@
 #!/usr/bin/env bash
-# Keep the bnk-forge chart's image tag + Chart appVersion and the frontend
-# package.json in lockstep with VERSION. (The separate bnk-operator chart has its
-# own version line and is not synced here -- bonnyr-f5 #180.)
+# Keep the version-bearing release artifacts in lockstep with VERSION:
+#   - the bnk-forge Helm chart image tag (values.yaml) and Chart `appVersion`
+#   - the frontend package.json version
+#   - the sibling bnk-operator chart image tag (values.yaml) and `appVersion`
 #
-# The release job bumps VERSION but historically nothing else, so the Helm chart
-# pinned an image tag the release never publishes (:3.0.1) -> ImagePullBackOff,
-# and frontend package.json drifted (PR #177 review, Blocker 2). This is the one
-# place that writes them, and the same code checks them in CI so drift can't
+# All five publish at :${VERSION} on the release train — docker-bake.hcl's
+# `default` group builds the operator image alongside the rest — so any drift
+# means an image tag the release never publishes -> ImagePullBackOff. This is the
+# one place that writes them, and --check verifies them in CI so drift can't
 # reappear silently.
 #
-# Synced: the Helm image tag (values.yaml), Chart `appVersion`, and frontend
-# package.json. NOT synced, deliberately: Chart.yaml's own `version:` — Helm
-# treats the chart version and appVersion as independent, and release.yml neither
-# packages nor pushes the chart, so a static chart version publishes nothing
-# wrong. Leave it alone rather than "fixing" it to match VERSION.
+# Synced: the bnk-forge image tag + appVersion, the frontend package.json, AND
+# the bnk-operator image tag + appVersion. NOT synced, deliberately: each
+# Chart.yaml's own `version:` — Helm treats the chart version and appVersion as
+# independent, and release.yml neither packages nor pushes the chart, so a static
+# chart version publishes nothing wrong. Leave it alone rather than "fixing" it.
 #
 # Usage:
 #   sync-version-artifacts.sh --write <version>   # set all artifacts to <version>
 #   sync-version-artifacts.sh --check             # verify all == VERSION; exit 1 if not
+#   sync-version-artifacts.sh --list              # print artifact paths (repo-relative)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VALUES="$ROOT/helm/bnk-forge/values.yaml"
 CHART="$ROOT/helm/bnk-forge/Chart.yaml"
 PKG="$ROOT/frontend-v2/package.json"
-# bonnyr-f5 #180 r2: the sibling operator chart is on the VERSION train (its
-# image publishes at :${VERSION}), so sync it here too instead of pinning it.
+# The sibling operator chart is on the VERSION train (its image publishes at
+# :${VERSION}), so it is synced here too rather than pinned.
 OPVALUES="$ROOT/bnk-operator/charts/bnk-operator/values.yaml"
 OPCHART="$ROOT/bnk-operator/charts/bnk-operator/Chart.yaml"
 
-# Read each artifact's current version.
-_helm_tag()    { grep -m1 -E '^  tag: ' "$VALUES" | sed -E 's/^  tag: "?([^"]*)"?.*/\1/'; }
-_appversion()  { grep -m1 -E '^appVersion:' "$CHART" | sed -E 's/^appVersion: "?([^"]*)"?.*/\1/'; }
-_pkg_version() { grep -m1 -E '^  "version":' "$PKG" | sed -E 's/^  "version": "([^"]*)".*/\1/'; }
-_op_tag()        { grep -m1 -E '^  tag: ' "$OPVALUES" | sed -E 's/^  tag: "?([^"]*)"?.*/\1/'; }
-_op_appversion() { grep -m1 -E '^appVersion:' "$OPCHART" | sed -E 's/^appVersion: "?([^"]*)"?.*/\1/'; }
+# Canonical artifact list. --write, --list, and the release job's `git add` all
+# derive the file set from HERE, so the writer and its stager cannot diverge and
+# leave a synced-but-unstaged file behind (bonnyr-f5 #180 r3, BLOCKER 1).
+SYNCED_FILES=("$VALUES" "$CHART" "$PKG" "$OPVALUES" "$OPCHART")
+
+# ── Value readers ─────────────────────────────────────────────────────────────
+# Each reads EVERY matching version line (not grep -m1), so a second occurrence
+# can't drift unseen behind a global write (bonnyr-f5 #180 r3). `^  tag: ` (two
+# spaces) matches only the top-level image tag — the postgres/redis/per-service
+# tags are 4-space and never match.
+TAG_RE='^  tag: '
+TAG_SED='s/^  tag: "?([^"]*)"?.*/\1/'
+APPVER_RE='^appVersion:'
+APPVER_SED='s/^appVersion: "?([^"]*)"?.*/\1/'
+PKGVER_RE='^  "version":'
+PKGVER_SED='s/^  "version": "([^"]*)".*/\1/'
 
 case "${1:-}" in
   --write)
     V="${2:?usage: sync-version-artifacts.sh --write <version>}"
-    # The global image tag (2-space indent) — per-service tags are 4-space and
-    # fall back to it; postgres/redis tags are external and left alone.
-    # -i.bak (attached suffix) is the one in-place form both GNU and BSD sed
-    # accept; the plain `-i -E` used before makes BSD swallow -E as the backup
-    # suffix and litter *-E files (bonnyr-f5 #180). Backups removed after.
-    sed -i.syncbak -E "s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
+    # Anchor every substitution to its key PATH, not a bare 2-space `tag:`. The
+    # image-tag writes are scoped to the top-level `image:` block via a sed range
+    # (`/^image:/` to the next column-0 key) so a future unrelated 2-space `tag:`
+    # elsewhere is never repinned to VERSION (bonnyr-f5 #180 r3, unbounded writer).
+    # -i.syncbak (attached suffix) is the one in-place form both GNU and BSD sed
+    # accept; `-i -E` makes BSD swallow -E as the suffix and litter *-E files.
+    sed -i.syncbak -E "/^image:/,/^[^[:space:]]/ s|^  tag: .*|  tag: \"${V}\"|" "$VALUES"
     sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$CHART"
     sed -i.syncbak -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
-    sed -i.syncbak -E "s|^  tag: .*|  tag: \"${V}\"|" "$OPVALUES"
+    sed -i.syncbak -E "/^image:/,/^[^[:space:]]/ s|^  tag: .*|  tag: \"${V}\"|" "$OPVALUES"
     sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$OPCHART"
-    rm -f "${VALUES}.syncbak" "${CHART}.syncbak" "${PKG}.syncbak" "${OPVALUES}.syncbak" "${OPCHART}.syncbak"
+    for f in "${SYNCED_FILES[@]}"; do rm -f "${f}.syncbak"; done
+
     # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
-    # caller commits the unchanged file [skip ci] believing it synced (#180
-    # review). Re-read each artifact with the same helpers --check trusts and
-    # confirm it actually took ${V}.
+    # caller would commit the unchanged file believing it synced (#177 review).
+    # Re-read every version line in every artifact with the SAME readers --check
+    # uses and confirm each one actually took ${V} — and that at least one line
+    # matched per artifact, so a renamed key can't pass as "nothing to change".
     rc=0
-    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)" "operator image.tag:$(_op_tag)" "operator appVersion:$(_op_appversion)"; do
-      name="${pair%%:*}"; got="${pair#*:}"
-      if [ "$got" != "$V" ]; then
-        echo "::error::--write did not take on $name: it is '$got', expected '$V' (the sed pattern matched nothing — the artifact's format changed)" >&2
+    _verify_file() {  # label, file, grep-ERE, extract-sed
+      local label="$1" file="$2" gre="$3" ext="$4" n=0 line val
+      while IFS= read -r line; do
+        val=$(sed -E "$ext" <<< "$line"); n=$((n + 1))
+        if [ "$val" != "$V" ]; then
+          echo "::error::--write did not take on $label: it is '$val', expected '$V' (the sed pattern matched nothing — the artifact's format changed)" >&2
+          rc=1
+        fi
+      done < <(grep -E "$gre" "$file" || true)
+      if [ "$n" -eq 0 ]; then
+        echo "::error::--write found no '$label' line in $file (key renamed/removed?) — nothing was synced" >&2
         rc=1
       fi
-    done
-    # grep -m1 above only reads the FIRST `^  tag:`; the sed rewrote EVERY one.
-    # Fail if any 2-space tag line disagrees, so a second one can't be silently
-    # clobbered while --check stays green (bonnyr-f5 #180).
-    while IFS= read -r line; do
-      t=$(sed -E 's/^  tag: "?([^"]*)"?.*/\1/' <<< "$line")
-      if [ "$t" != "$V" ]; then
-        echo "::error::--write left a 2-space 'tag:' at '$t', expected '$V' (multiple tag lines)" >&2
-        rc=1
-      fi
-    done < <(grep -hE '^  tag: ' "$VALUES" "$OPVALUES")
+    }
+    _verify_file "helm image.tag"      "$VALUES"   "$TAG_RE"    "$TAG_SED"
+    _verify_file "Chart appVersion"    "$CHART"    "$APPVER_RE" "$APPVER_SED"
+    _verify_file "frontend version"    "$PKG"      "$PKGVER_RE" "$PKGVER_SED"
+    _verify_file "operator image.tag"  "$OPVALUES" "$TAG_RE"    "$TAG_SED"
+    _verify_file "operator appVersion" "$OPCHART"  "$APPVER_RE" "$APPVER_SED"
     [ "$rc" -eq 0 ] || exit 1
-    echo "synced helm tag, appVersion, frontend package.json -> ${V}"
+    echo "synced bnk-forge tag+appVersion, frontend package.json, operator tag+appVersion -> ${V}" >&2
     ;;
+
   --check)
     EXPECTED="$(cat "$ROOT/VERSION")"
-    rc=0; checked=0
-    for pair in "helm image.tag:$(_helm_tag)" "Chart appVersion:$(_appversion)" "frontend package.json:$(_pkg_version)" "operator image.tag:$(_op_tag)" "operator appVersion:$(_op_appversion)"; do
-      name="${pair%%:*}"; got="${pair#*:}"; checked=$((checked+1))
-      if [ "$got" = "$EXPECTED" ]; then
-        echo "  OK    $name = $got"
-      else
-        echo "::error::$name is '$got' but VERSION is '$EXPECTED' — the release publishes only :\${VERSION}, so a mismatch means ImagePullBackOff / drift. Run scripts/sync-version-artifacts.sh --write $EXPECTED"
-        rc=1
+    # VERSION itself must be non-empty, or every artifact would "match" an empty
+    # string and the gate would pass on a tree with no version data at all
+    # (bonnyr-f5 #180 r3, BLOCKER 2).
+    if [ -z "$EXPECTED" ]; then
+      echo "::error::VERSION is empty — refusing to validate artifacts against nothing" >&2
+      exit 1
+    fi
+    rc=0; total=0
+    # Assert EVERY version line is NON-EMPTY and equals VERSION, and that each
+    # artifact contributed at least one matched line. `total` counts MATCHED
+    # LINES, never loop iterations — an artifact whose key vanished contributes
+    # zero and both trips its own error and lowers the vacuity floor (bonnyr-f5
+    # #180 r3: the old `checked` counted a literal 5-item list, so its >=5 guard
+    # was unreachable and --check was green on an empty tree).
+    _check_file() {  # label, file, grep-ERE, extract-sed
+      local label="$1" file="$2" gre="$3" ext="$4" n=0 line val
+      while IFS= read -r line; do
+        val=$(sed -E "$ext" <<< "$line"); n=$((n + 1)); total=$((total + 1))
+        if [ -z "$val" ]; then
+          echo "::error::$label in $file has an empty version — expected '$EXPECTED'"; rc=1
+        elif [ "$val" != "$EXPECTED" ]; then
+          echo "::error::$label is '$val' but VERSION is '$EXPECTED' — the release publishes only :\${VERSION}, so a mismatch means ImagePullBackOff / drift. Run scripts/sync-version-artifacts.sh --write $EXPECTED"; rc=1
+        else
+          echo "  OK    $label = $val"
+        fi
+      done < <(grep -E "$gre" "$file" || true)
+      if [ "$n" -eq 0 ]; then
+        echo "::error::$label: no version line matched in $file (key renamed/removed?) — vacuous check"; rc=1
       fi
-    done
-    # bonnyr-f5 #180 r2 (INV-16): assert the gate actually compared something --
-    # an empty list would exit 0 with real drift present. Also catch a drifted
-    # SECOND 2-space tag that grep -m1 above can't see.
-    while IFS= read -r t; do
-      t=$(sed -E 's/^  tag: "?([^"]*)"?.*/\1/' <<< "$t"); checked=$((checked+1))
-      [ "$t" = "$EXPECTED" ] || { echo "::error::a 2-space 'tag:' reads '$t' but VERSION is '$EXPECTED'"; rc=1; }
-    done < <(grep -hE '^  tag: ' "$VALUES" "$OPVALUES")
-    [ "$checked" -ge 5 ] || { echo "::error::--check compared only $checked artifacts (expected >=5) — vacuous"; exit 1; }
+    }
+    _check_file "helm image.tag"      "$VALUES"   "$TAG_RE"    "$TAG_SED"
+    _check_file "Chart appVersion"    "$CHART"    "$APPVER_RE" "$APPVER_SED"
+    _check_file "frontend version"    "$PKG"      "$PKGVER_RE" "$PKGVER_SED"
+    _check_file "operator image.tag"  "$OPVALUES" "$TAG_RE"    "$TAG_SED"
+    _check_file "operator appVersion" "$OPCHART"  "$APPVER_RE" "$APPVER_SED"
+    # Backstop: five artifacts, each with >=1 version line, is the minimum a
+    # healthy tree yields. Fewer means a key vanished — treat as vacuous.
+    if [ "$total" -lt 5 ]; then
+      echo "::error::--check matched only $total version lines (expected >=5) — vacuous" >&2
+      exit 1
+    fi
     exit "$rc"
     ;;
+
+  --list)
+    # Print the canonical artifact paths (repo-relative) so the release job stages
+    # EXACTLY what --write touches. Adding an artifact above updates all three.
+    for f in "${SYNCED_FILES[@]}"; do
+      printf '%s\n' "${f#"$ROOT"/}"
+    done
+    ;;
+
   *)
-    echo "usage: sync-version-artifacts.sh --write <version> | --check" >&2
+    echo "usage: sync-version-artifacts.sh --write <version> | --check | --list" >&2
     exit 2
     ;;
 esac
