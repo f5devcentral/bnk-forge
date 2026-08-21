@@ -11,35 +11,61 @@
 set -euo pipefail
 
 # ── Breaking-change detectors ────────────────────────────────────────────────
-# A conventional-commits BREAKING CHANGE is a FOOTER: a line that STARTS with
-# `BREAKING CHANGE` or `BREAKING-CHANGE` (optionally markdown-bold). The anchor
-# to line-start (^) is the whole point: an unanchored word-boundary match fired
-# on uppercase prose ANYWHERE in a body ("…to describe a BREAKING CHANGE process…")
-# and the note extractor then shipped that prose to operators as migration
-# guidance (bonnyr-f5 #179 r3). The `type!:` subject form is a separate signal.
+# INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
+# the copies in compute_version_bump.sh (#182's script-selftests asserts it) --
+# if the extractor is narrower a break bumps the major with no note; if wider a
+# note appears with no bump.
 #
-# INV-15: this footer detector MUST stay byte-identical to the one in
-# compute_version_bump.sh — if the extractor is narrower, a break that bumps the
-# major ships with no note; if wider, a note appears with no bump. #182's
-# script-selftests job asserts the two function bodies match.
-_is_breaking() { grep -qE '^(\*\*)?BREAKING[ -]CHANGE' <<< "$1"; }
-# compute_version_bump.sh ALSO bumps major on a `type!:` subject; the extractor
-# must trigger on it too, or a `feat!:` release ships with zero breaking-change
-# docs. Case-insensitive on the type so `Feat!:` is not silently dropped.
-_is_breaking_subject() { grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"; }
+# A breaking change is a `type!:` subject, a `BREAKING CHANGE:` footer, or a
+# `BREAKING-CHANGE:` footer. Two robustness problems drove r4:
+#  * SUBJECT folding -- with no blank line before it, git folds the footer into
+#    %s and leaves %b empty, so a body-only check ships a major as a patch
+#    (bonnyr-f5 #179 r4). The subject is checked for a folded `BREAKING[ -]CHANGE:`
+#    footer, colon REQUIRED so subject prose ("explain the BREAKING CHANGE footer")
+#    does not trigger.
+#  * WRAPPED prose -- a bare `^` still matched a prose paragraph that WRAPPED so
+#    the marker fell at column 1 (commit 8415ce1, this branch). The body match is
+#    PARAGRAPH-initial: the marker line is the first body line or is preceded by a
+#    blank line. That keeps the real #2 break (marker preceded by a blank line)
+#    and rejects wrapped prose. No colon required, because #2 declares its break
+#    as "BREAKING CHANGE, called out" with no colon.
+_is_breaking_subject() {
+  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1" \
+    || grep -qE 'BREAKING[ -]CHANGE:' <<< "$1"
+}
+_is_breaking_body() {
+  awk '
+    BEGIN { blank = 1 }
+    /^[[:space:]]*$/ { blank = 1; next }
+    { if (blank && $0 ~ /^(\*\*)?BREAKING[ -]CHANGE/) found = 1; blank = 0 }
+    END { exit(found ? 0 : 1) }
+  ' <<< "$1"
+}
 
-# Emit EVERY BREAKING CHANGE footer paragraph (the marker line through the next
-# blank line), flattened to one line and stripped of markdown bold. Anchored to
-# the SAME line-start position as _is_breaking, so the trigger and the note can
-# never disagree (an anchored trigger with an unanchored note, or vice versa,
-# silently drops or invents a break). No line cap — an earlier n>=40 cap
-# truncated long migration notes silently — and it captures ALL footers, so a
-# second footer in the same body is never dropped.
+# Emit the BREAKING CHANGE footer paragraph(s) -- flattened, markdown-bold
+# stripped. Capture starts only at a PARAGRAPH-initial marker (same rule as
+# _is_breaking_body, so trigger and note never disagree) and STOPS at the first
+# trailer-shaped line (`Word-Word: ...`) or at prose, so a `Co-Authored-By:`
+# email or a `Claude-Session:` URL sitting under the footer is never published to
+# a public release (bonnyr-f5 #179 r4). A following BREAKING CHANGE paragraph is
+# kept, so a second footer is not dropped.
 _breaking_note() {
   awk '
-    /^(\*\*)?BREAKING[ -]CHANGE/ { p=1 }
-    p && /^[[:space:]]*$/        { p=0; next }
-    p                           { print }
+    BEGIN { blank = 1 }
+    {
+      if ($0 ~ /^[[:space:]]*$/) { blank = 1; next }
+      marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
+      trailer = ($0 ~ /^[A-Za-z][A-Za-z-]*: /)
+      if (!p) {
+        if (blank && marker) { p = 1; print }
+      } else if (blank) {
+        if (marker) { print ""; print } else { exit }
+      } else {
+        if (trailer && !marker) exit
+        print
+      }
+      blank = 0
+    }
   ' <<< "$1" | sed 's/\*\*//g' | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//'
 }
 
@@ -51,7 +77,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _assert() {
     local label="$1" body="$2" want="$3" note trig
     note=$(_breaking_note "$body")
-    if _is_breaking "$body"; then trig=1; else trig=0; fi
+    if _is_breaking_body "$body"; then trig=1; else trig=0; fi
     assertions=$((assertions + 1))
     if [[ "$want" == 1 ]]; then
       # A positive case must BOTH trigger and yield a non-empty note — the old
@@ -102,6 +128,28 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _assert_subject "scoped bang triggers"     "fix(core)!: rename"        1
   _assert_subject "normal subject inert"     "feat: normal change"       0
 
+  # r4 BLOCKER 1 -- WRAPPED prose: a marker at column 1 of a line that is NOT
+  # paragraph-initial (mid-paragraph, the prose wrapped there) must NOT trigger.
+  # This is commit 8415ce1's shape, which defeated the bare `^` anchor.
+  _assert "wrapped-prose mid-paragraph" $'The detector matches a BREAKING\nCHANGE marker anywhere, but the note awk was anchored to\nline-start. A commit whose marker was not at line-start ("... a\nBREAKING CHANGE: ...") therefore bumped major yet produced an empty\nnote.' 0
+
+  # r4 -- a real break declared paragraph-initial with NO colon (the #2 shape)
+  # must still trigger.
+  _assert "paragraph-initial no-colon break" $'Context line about the change.\n\nBREAKING CHANGE, called out deliberately. USER must become 1000.' 1
+
+  # r4 MAJOR -- the note must STOP before a trailer block, or a Co-Authored-By
+  # email / Claude-Session URL leaks into a public release body.
+  _leak=$(_breaking_note $'feat: x\n\nBREAKING CHANGE: the key moved.\nCo-Authored-By: Someone <someone@example.com>\nClaude-Session: https://claude.ai/code/session_ABC')
+  assertions=$((assertions + 1))
+  if [[ "$_leak" == *"the key moved"* && "$_leak" != *"someone@example.com"* && "$_leak" != *"claude.ai"* ]]; then
+    echo "  ok: note stops before trailers (no email/URL leak) -> ${_leak:0:48}"
+  else echo "FAIL: note leaked a trailer -> '$_leak'"; fail=1; fi
+
+  # r4 BLOCKER 2 -- a footer git FOLDED into the subject (no blank line before it)
+  # must be seen; subject prose that merely names the marker must not.
+  _assert_subject "folded footer in subject"  "fix: tighten the thing BREAKING CHANGE: the config key was renamed" 1
+  _assert_subject "prose names marker in subj" "docs: explain the BREAKING CHANGE footer" 0
+
   if [[ $assertions -eq 0 ]]; then
     echo "FAIL: harness ran zero assertions"; fail=1
   fi
@@ -129,7 +177,7 @@ while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
   body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
-  if _is_breaking_subject "$subj" || _is_breaking "$body"; then
+  if _is_breaking_subject "$subj" || _is_breaking_body "$body"; then
     note=$(_breaking_note "$body")
     # Belt-and-suspenders: a `type!:` subject with no body footer yields no note;
     # point the operator at the commit rather than emitting a bare bullet.

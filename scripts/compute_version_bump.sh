@@ -75,6 +75,30 @@ bump_version() {
   esac
 }
 
+# ── Breaking-change detectors ────────────────────────────────────────────────
+# INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
+# the copies in extract-breaking-changes.sh (#182's script-selftests asserts it).
+# See that file for the full rationale. Summary of the r4 hardening:
+#  * SUBJECT folding -- git folds a footer into %s when the blank line before it
+#    is missing, leaving %b empty; a body-only check then ships a major as a
+#    patch. The subject is checked for a folded `BREAKING[ -]CHANGE:` footer
+#    (colon REQUIRED so subject prose does not trigger).
+#  * WRAPPED prose -- a bare `^` matched a prose paragraph that wrapped so the
+#    marker fell at column 1. The body match is PARAGRAPH-initial (first body line
+#    or preceded by a blank line). No colon required, to keep the #2 no-colon break.
+_is_breaking_subject() {
+  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1" \
+    || grep -qE 'BREAKING[ -]CHANGE:' <<< "$1"
+}
+_is_breaking_body() {
+  awk '
+    BEGIN { blank = 1 }
+    /^[[:space:]]*$/ { blank = 1; next }
+    { if (blank && $0 ~ /^(\*\*)?BREAKING[ -]CHANGE/) found = 1; blank = 0 }
+    END { exit(found ? 0 : 1) }
+  ' <<< "$1"
+}
+
 # ── Resolve baseline + since-tag ─────────────────────────────────────────────
 # Skipped entirely in SELF_TEST mode: the self-test runner below exercises
 # this same script recursively against isolated temp repos, so evaluating it
@@ -134,27 +158,13 @@ while IFS= read -r sha; do
   subject=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
   body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
 
-  # Major: `type!:` in the subject, OR a line-start `BREAKING CHANGE` /
-  # `BREAKING-CHANGE` footer in the body (see the anchored detector note below).
-  #
-  # Pipe-free on purpose (PR #177 review): `foo | grep -q` under `set -o
-  # pipefail` returns SIGPIPE (141) when grep matches early and the writer still
-  # has a large body to push, which pipefail turns into a failed test -- so
-  # *finding* the marker made the branch evaluate false and the bump silently
-  # stayed patch. It is DETERMINISTIC once the untransmitted tail exceeds the
-  # ~64 KB pipe buffer (12/12 on a >90 KB body, per the #179 r3 audit); only
-  # bodies sitting right at the buffer threshold look flaky. Here-strings have no
-  # writer process to signal SIGPIPE, so the read is always correct.
-  # bonnyr-f5 #179: honour the marker only in the BODY (its spec footer home),
-  # not the subject -- else `docs: explain BREAKING CHANGE` in a subject bumps
-  # major with no note, disagreeing with the extractor. A real breaking change is
-  # a `type!:` subject OR a BREAKING CHANGE body footer.
-  # INV-15: the footer detector is anchored to line-start (^) and byte-identical
-  # to _is_breaking in extract-breaking-changes.sh -- an unanchored match fired on
-  # uppercase prose anywhere in a body. The bang detector is case-insensitive on
-  # the type so `Feat!:` is not silently shipped as a patch (bonnyr-f5 #179 r3).
-  if grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$subject" \
-     || grep -qE '^(\*\*)?BREAKING[ -]CHANGE' <<< "$body"; then
+  # Major: a `type!:`/folded-footer subject, OR a paragraph-initial BREAKING
+  # CHANGE body footer. Both checks are pipe-free here-strings on purpose (PR #177
+  # review): `foo | grep -q` under `set -o pipefail` takes SIGPIPE (141) when grep
+  # matches early on a large body, which pipefail turns into a failed test, so
+  # *finding* the marker silently kept the bump at patch. Detection lives in
+  # _is_breaking_subject / _is_breaking_body (byte-identical to the extractor).
+  if _is_breaking_subject "$subject" || _is_breaking_body "$body"; then
     BUMP_TYPE="major"
     break
   fi
@@ -168,26 +178,24 @@ while IFS= read -r sha; do
 done <<< "$RANGE_HASHES"
 
 # ── Consistency guard (defence-in-depth) ──────────────────────────────────────
-# Independent of the loop above and pipe-free: if any commit in the range
-# declares a breaking change, the bump MUST be major. This would have caught the
-# SIGPIPE bug (marker present, bump silently patch) by aborting rather than
-# shipping a mis-versioned release.
-# Re-derive "any breaking commit in range" INDEPENDENTLY of the loop, checking
-# BOTH signals the loop honours: a `type!:` subject AND a `^BREAKING CHANGE` body
-# footer. Reading only bodies (%b) here left the guard blind to subject-declared
-# breaks -- drop the loop's subject detector and `feat!:` would derive patch with
-# the guard silent, the exact failure mode the guard exists to catch (#179 r3).
-if [[ -n "$SINCE_TAG" ]]; then
-  ALL_SUBJECTS=$(git log "${SINCE_TAG}..HEAD" --format='%s' 2>/dev/null || true)
-  ALL_BODIES=$(git log "${SINCE_TAG}..HEAD" --format='%b' 2>/dev/null || true)
-else
-  ALL_SUBJECTS=$(git log --format='%s' 2>/dev/null || true)
-  ALL_BODIES=$(git log --format='%b' 2>/dev/null || true)
-fi
-if { grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$ALL_SUBJECTS" \
-     || grep -qE '^(\*\*)?BREAKING[ -]CHANGE' <<< "$ALL_BODIES"; } \
-   && [[ "$BUMP_TYPE" != "major" ]]; then
-  echo "::error::Derived bump '$BUMP_TYPE' but a breaking change (type!: subject or BREAKING CHANGE footer) exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
+# Re-derive "is any commit in the range breaking" INDEPENDENTLY of the loop above,
+# so a control-flow bug there (a bad break/assignment) can't ship a mis-versioned
+# release. It iterates PER COMMIT and calls the same detectors: paragraph-initial
+# body detection cannot run on concatenated %b (commit boundaries would form false
+# paragraphs), and folding means the signal can be in %s -- so this reads each
+# commit's %s AND %b, exactly as the loop does (bonnyr-f5 #179 r3/r4).
+guard_breaking=0
+while IFS= read -r sha; do
+  [[ -z "$sha" ]] && continue
+  gsub=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
+  gbody=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
+  if _is_breaking_subject "$gsub" || _is_breaking_body "$gbody"; then
+    guard_breaking=1
+    break
+  fi
+done <<< "$RANGE_HASHES"
+if [[ "$guard_breaking" -eq 1 && "$BUMP_TYPE" != "major" ]]; then
+  echo "::error::Derived bump '$BUMP_TYPE' but a breaking change (type!: / folded footer subject, or a paragraph-initial BREAKING CHANGE body footer) exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2
   exit 1
 fi
 
@@ -315,6 +323,23 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   _tl=$(for _ in $(seq 1 1500); do printf '%s\\n' "$_line"; done)
   run_test "early marker + long multi-line tail → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "fix: big commit~~BODY~~BREAKING CHANGE: boom\\n${_tl}"
+
+  # Test 8a (r4 BLOCKER 2): a footer git FOLDED into the subject (no blank line
+  # before it, so %b is empty) must still derive major -- a body-only check
+  # shipped it as a patch. Subject carries the whole folded footer here.
+  run_test "folded footer in subject → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: tighten the thing BREAKING CHANGE: the config key was renamed"
+
+  # Test 8b (r4 BLOCKER 1): a marker at column 1 of a WRAPPED prose line
+  # (mid-paragraph) must NOT trigger -- the bare `^` anchor false-positived on
+  # exactly this shape (commit 8415ce1). No commas (run_test splits on them).
+  run_test "wrapped-prose body marker → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" \
+    "fix: describe the detector~~BODY~~the detector matched a BREAKING\\nCHANGE marker anywhere but the note awk used\\nline-start so a commit whose marker was mid-line like\\nBREAKING CHANGE: this one produced an empty note"
+
+  # Test 8c (r4): a real break declared PARAGRAPH-initial with NO colon (the #2
+  # shape) must still derive major.
+  run_test "paragraph-initial no-colon break → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: harden the gate~~BODY~~context line about the change\\n\\nBREAKING CHANGE called out deliberately USER must become 1000"
 
   # Test 8 (guard coverage — bonnyr-f5 #179 r3): an unresolvable --since-tag must
   # fail CLOSED (rc 1, no BUMP_TYPE output), not derive patch from an empty range.
