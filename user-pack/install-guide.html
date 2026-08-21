@@ -267,12 +267,16 @@
          (Firefox). This is expected.</p>
     </li>
     <li>
-      <p><b>Log in with the default credentials:</b><br>
-         Username: <code>admin</code> &nbsp;/&nbsp; Password: <em>generated on first start — see the backend logs (grep "GENERATED password")</em></p>
+      <p><b>Log in as <code>admin</code>.</b><br>
+         No default password ships. Unless you set <code>DEFAULT_ADMIN_PASSWORD</code> before
+         install, the backend generates a random one on first start and writes it to a file
+         (the plaintext is never written to the logs). Retrieve it with:</p>
+      <pre><span class="prompt">$ </span>docker compose exec backend cat /app/keys/initial_admin_password</pre>
       <div class="callout-warn">
         <div class="callout-title">Change the admin password immediately</div>
-        The default password is well-known. Go to <b>User menu → Change Password</b> as your
-        very first action after login.
+        This generated password is a one-time bootstrap credential. Go to
+        <b>User menu → Change Password</b> as your very first action after login — the API
+        refuses every other call until you do.
       </div>
     </li>
     <li>

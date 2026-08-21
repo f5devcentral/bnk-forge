@@ -280,11 +280,57 @@ class TestSeedAdminUser:
         admin = db.query(User).filter(User.username == "admin").first()
         assert admin.must_change_password is False  # not a known default → untouched
 
+    def test_rotation_honors_default_admin_password_when_set(self, db, monkeypatch, tmp_path):
+        # #186 (bonnyr-f5 r4) provenance: when DEFAULT_ADMIN_PASSWORD is set
+        # (Helm wires it from the admin-password Secret), the upgrade rotation
+        # must rotate TO that value so the documented source-of-truth (the
+        # Secret / env) authenticates -- and it must NOT write a keys-file
+        # (nothing was generated), so the docs' Helm "read the Secret"
+        # instruction stays correct on upgrade.
+        from models.system import User
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", "chart-supplied-secret-x")
+        create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                    role="admin", must_change_password=False)
+        db.commit()
+        assert seed_admin_user(db) is None
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin.must_change_password is True
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "admin", "changeme")  # published default gone
+        # The configured value now authenticates (Secret == source of truth).
+        assert authenticate_user(db, "admin", "chart-supplied-secret-x").username == "admin"
+        # No keys-file written: nothing was generated.
+        assert not (tmp_path / "initial_admin_password").exists()
+
+    def test_rotation_refuses_to_rotate_to_a_published_default(self, db, monkeypatch, tmp_path):
+        # #186: DEFAULT_ADMIN_PASSWORD=changeme must NOT be used as the rotation
+        # target (that would re-publish the hole) -- fall through to a generated
+        # keys-file secret instead.
+        from models.system import User
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", "changeme")
+        create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                    role="admin", must_change_password=False)
+        db.commit()
+        seed_admin_user(db)
+        admin = db.query(User).filter(User.username == "admin").first()
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "admin", "changeme")
+        pw_file = tmp_path / "initial_admin_password"
+        assert pw_file.exists()
+        assert authenticate_user(db, "admin", pw_file.read_text().strip()).username == "admin"
+
 
 # ── ensure_service_user ──────────────────────────────────────────────
 
 
 class TestEnsureServiceUser:
+    @pytest.fixture(autouse=True)
+    def _isolate_keys_dir(self, monkeypatch, tmp_path):
+        # ensure_service_user may generate + persist a secret to KEYS_DIR; keep it
+        # out of the working tree (default /app/keys). Persist now fails closed on
+        # an unwritable dir, so a writable KEYS_DIR is required for these tests.
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+
     def test_creates_service_user_when_absent(self, db):
         ensure_service_user(db, username="mcp", password="secret")
         user = authenticate_user(db, "mcp", "secret")
@@ -410,3 +456,112 @@ class TestTokenUserState:
         from services.auth_service import token_user_state
         token = create_access_token(data={"sub": "ghost", "role": "admin"})
         assert token_user_state(token) is None
+
+
+class TestUnwritableKeysDirNeverLeaksPlaintext:
+    """#186 (bonnyr-f5): the docs promise "the plaintext is never logged".
+
+    On an UNWRITABLE /app/keys the old code fell back to LOGGING the generated
+    plaintext (a real secret-into-logs leak). Every generated-credential path
+    must now fail closed (raise GeneratedCredentialPersistError) WITHOUT the
+    plaintext ever reaching a log record or the exception message.
+
+    Each test patches secrets.token_urlsafe to a sentinel so the assertion is
+    exact: the sentinel must appear in NO log message and NOT in str(exc).
+    """
+
+    SENTINEL = "SENTINEL-do-not-log-this-secret-42"
+
+    @pytest.fixture(autouse=True)
+    def _sentinel_secret(self, monkeypatch):
+        # Make every generated secret a known sentinel we can search for.
+        monkeypatch.setattr(
+            "services.auth_service.secrets.token_urlsafe", lambda *_a, **_k: self.SENTINEL
+        )
+
+    def _unwritable_keys(self, monkeypatch, tmp_path):
+        # A FILE used as a directory -> os.makedirs raises NotADirectoryError
+        # (an OSError), simulating an unwritable /app/keys mount.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("x")
+        monkeypatch.setenv("KEYS_DIR", str(blocker / "keys"))
+
+    def _assert_no_leak(self, caplog):
+        for rec in caplog.records:
+            assert self.SENTINEL not in rec.getMessage(), (
+                f"plaintext leaked into logs: {rec.getMessage()!r}"
+            )
+
+    def test_seed_generated_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
+        import logging
+
+        from services.auth_service import GeneratedCredentialPersistError
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        self._unwritable_keys(monkeypatch, tmp_path)
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(GeneratedCredentialPersistError) as ei:
+            seed_admin_user(db)
+        assert self.SENTINEL not in str(ei.value)
+        self._assert_no_leak(caplog)
+        # Fail closed: no admin row was committed, so the next boot retries.
+        from models.system import User
+        assert db.query(User).filter(User.username == "admin").first() is None
+
+    def test_rotate_admin_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
+        import logging
+
+        from models.system import User
+        from services.auth_service import GeneratedCredentialPersistError
+        create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                    role="admin", must_change_password=False)
+        db.commit()
+        self._unwritable_keys(monkeypatch, tmp_path)
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(GeneratedCredentialPersistError) as ei:
+            seed_admin_user(db)
+        assert self.SENTINEL not in str(ei.value)
+        self._assert_no_leak(caplog)
+        # Fail closed: the published-default hash is left untouched (still
+        # 'changeme') so the next boot retries the rotation cleanly rather than
+        # stranding an admin whose generated password nobody can read. (The
+        # rotate path raises BEFORE mutating the row, so nothing to roll back.)
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert verify_password("changeme", str(admin.hashed_password))
+
+    def test_service_seed_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
+        import logging
+
+        from models import User
+        from services.auth_service import GeneratedCredentialPersistError
+        self._unwritable_keys(monkeypatch, tmp_path)
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(GeneratedCredentialPersistError) as ei:
+            ensure_service_user(db, username="mcp", password=None)
+        assert self.SENTINEL not in str(ei.value)
+        self._assert_no_leak(caplog)
+        assert db.query(User).filter(User.username == "mcp").first() is None
+
+    def test_service_rotate_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
+        import logging
+
+        from models import User
+        from services.auth_service import (
+            GeneratedCredentialPersistError,
+            hash_password,
+        )
+        from services.auth_service import (
+            create_user as _cu,
+        )
+        u = _cu(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme",
+                role="admin", must_change_password=False)
+        u.hashed_password = hash_password("mcp-service-changeme")
+        db.commit()
+        self._unwritable_keys(monkeypatch, tmp_path)
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(GeneratedCredentialPersistError) as ei:
+            ensure_service_user(db, username="mcp", password=None)
+        assert self.SENTINEL not in str(ei.value)
+        self._assert_no_leak(caplog)
+        # Published default hash untouched -> next boot retries the rotation.
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert verify_password("mcp-service-changeme", str(mcp.hashed_password))

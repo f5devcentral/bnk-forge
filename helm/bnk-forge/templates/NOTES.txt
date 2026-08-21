@@ -18,11 +18,13 @@ To reach the UI:
   open https://localhost:8443/
 {{- end }}
 
-Admin login: username 'admin'. The password was generated on the FIRST install — retrieve it with:
+Admin login: username 'admin'. Retrieve the password with:
   kubectl get secret {{ include "bnk-forge.fullname" . }}-secrets -o jsonpath='{.data.admin-password}' | base64 -d
-You will be required to change it on first login (the API refuses other calls until you do).
-NOTE: this secret holds the ORIGINAL install password. After you change it on first
-login, use your new password — the value above no longer authenticates.
+This is the per-install value the backend seeds the 'admin' account with on a fresh
+install — and rotates it to if you upgraded from a build that shipped a default
+password — so it is what authenticates now. You will be required to change it on
+first login (the API refuses other calls until you do). After you change it, use your
+new password — the value above no longer authenticates.
 
 IMPORTANT:
   * Shared volumes use ReadWriteMany. Set global.sharedStorageClass to a

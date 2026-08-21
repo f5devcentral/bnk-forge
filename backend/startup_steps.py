@@ -215,25 +215,45 @@ def seed_deployable_releases_step():
 def seed_auth_step():
     """Seed default admin user if no users exist; always reconcile MCP service account."""
     from database import get_db_context
-    from services.auth_service import ensure_service_user, seed_admin_user
-    with get_db_context() as db:
-        admin = seed_admin_user(db)
-    if admin:
-        logger.info("  Created default admin user — change password on first login")
-        logger.info("  See docs/INSTALLATION.md for first-login instructions")
-    else:
-        logger.info("  Users already exist")
+    from services.auth_service import (
+        GeneratedCredentialPersistError,
+        ensure_service_user,
+        seed_admin_user,
+    )
+    try:
+        with get_db_context() as db:
+            admin = seed_admin_user(db)
+        if admin:
+            logger.info("  Created default admin user — change password on first login")
+            logger.info("  See docs/INSTALLATION.md for first-login instructions")
+        else:
+            logger.info("  Users already exist")
 
-    # Unconditional: ensure the MCP service account exists. When MCP_SERVICE_PASSWORD
-    # is set it reconciles the stored hash to it (prevents auth drift when the env var
-    # is rotated); when unset (or the shipped default) it seeds/rotates to a generated
-    # secret so no publicly-known admin credential is ever live (#186 BLOCKER 1).
-    with get_db_context() as db:
-        ensure_service_user(
-            db,
-            username=settings.MCP_SERVICE_USERNAME,
-            password=settings.MCP_SERVICE_PASSWORD,
-        )
+        # Unconditional: ensure the MCP service account exists. When MCP_SERVICE_PASSWORD
+        # is set it reconciles the stored hash to it (prevents auth drift when the env var
+        # is rotated); when unset (or the shipped default) it seeds/rotates to a generated
+        # secret so no publicly-known admin credential is ever live (#186 BLOCKER 1).
+        with get_db_context() as db:
+            ensure_service_user(
+                db,
+                username=settings.MCP_SERVICE_USERNAME,
+                password=settings.MCP_SERVICE_PASSWORD,
+            )
+    except GeneratedCredentialPersistError as exc:
+        # #186 (bonnyr-f5): a generated admin/service credential could not be
+        # written to the keys dir. We refuse to fall back to LOGGING the plaintext
+        # (a real secret-into-logs leak). Fail closed instead: SystemExit escapes
+        # the best-effort step handler in main.py (which only catches Exception),
+        # so the process refuses to start rather than run with an unretrievable
+        # generated credential — no plaintext ever reaches the logs. The operator
+        # makes the keys volume (KEYS_DIR, default /app/keys) writable, or sets an
+        # explicit DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD (which skips
+        # generation entirely), then restarts.
+        raise SystemExit(
+            f"Cannot start: {exc}. Refusing to log the generated plaintext secret. "
+            "Make the keys volume (KEYS_DIR, default /app/keys) writable, or set "
+            "DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD, then restart."
+        ) from exc
 
     if settings.REQUIRE_AUTH:
         logger.info("  Authentication ENABLED (REQUIRE_AUTH=true)")

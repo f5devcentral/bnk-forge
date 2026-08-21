@@ -210,16 +210,34 @@ _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 _KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
 
 
-def _persist_generated_password(password: str, filename: str = "initial_admin_password") -> tuple[str, bool]:
+class GeneratedCredentialPersistError(RuntimeError):
+    """A generated credential could not be written to the keys dir.
+
+    #186 (bonnyr-f5): the docs promise "the plaintext is never logged". The old
+    code broke that promise — on an unwritable ``/app/keys`` it fell back to
+    logging the generated plaintext, leaking a live secret into the logs (a real
+    aggregation-exposure risk). We now fail closed instead: raise this
+    (WITHOUT the plaintext in the message) so startup refuses to proceed and the
+    operator remediates. Because the credential is persisted BEFORE the DB row is
+    created/rotated, a failure leaves nothing committed and the next boot retries
+    cleanly once the keys volume is writable (or an explicit password env var is
+    set, which skips generation entirely).
+    """
+
+
+def _persist_generated_password(password: str, filename: str = "initial_admin_password") -> str:
     """Write a generated credential to a mode-0600 file in the keys dir.
 
-    Returns (path, persisted). The plaintext is NEVER logged here — the caller
-    logs a POINTER to the returned path when persisted, or falls back to logging
-    the secret itself only when it could not be written (so the operator is never
-    locked out). The file is created with 0o600 at open() time so the plaintext
-    credential is never momentarily group/world-readable (open()+chmod would
-    create it 0644 under the usual umask, then narrow it). O_TRUNC handles a
-    stale file from a prior seed/rotation without failing.
+    Returns the path on success. Raises :class:`GeneratedCredentialPersistError`
+    if the keys dir is unwritable — the plaintext is NEVER logged or included in
+    the exception, so an unwritable ``/app/keys`` can never leak the secret. The
+    caller logs a POINTER to the returned path; there is deliberately no
+    "log the secret instead" fallback.
+
+    The file is created with 0o600 at open() time so the plaintext credential is
+    never momentarily group/world-readable (open()+chmod would create it 0644
+    under the usual umask, then narrow it). O_TRUNC handles a stale file from a
+    prior seed/rotation without failing.
 
     Shared by the fresh-install admin seed (#184), the upgrade remediation
     (#186), and the mcp service-account seed/rotation (#186 BLOCKER 1) so a
@@ -235,10 +253,13 @@ def _persist_generated_password(password: str, filename: str = "initial_admin_pa
         fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as fh:
             fh.write(password + "\n")
-    except (OSError, PermissionError) as exc:
-        logger.warning("Could not write %s: %s", pw_path, exc)
-        return pw_path, False
-    return pw_path, True
+    except OSError as exc:  # PermissionError/NotADirectoryError are OSError subclasses
+        # Fail closed. NEVER put `password` in this message: it propagates into
+        # logs, which is exactly the leak we are closing (#186).
+        raise GeneratedCredentialPersistError(
+            f"could not persist generated credential to {pw_path}: {exc}"
+        ) from exc
+    return pw_path
 
 
 def _rotate_known_default_admin(db: Session) -> None:
@@ -256,36 +277,67 @@ def _rotate_known_default_admin(db: Session) -> None:
     does and take over the account. A mitigation must remove the capability, not
     request its removal.
 
-    So we OVERWRITE the hash with a fresh random secret -- the published default
-    stops working the moment this runs -- surface the new one exactly like a
-    fresh install (mode-0600 file, pointer logged once), and leave the account
-    must_change_password so the generated secret only survives until first login.
+    So we OVERWRITE the hash -- the published default stops working the moment
+    this runs -- and leave the account must_change_password so the replacement
+    only survives until first login.
+
+    Provenance (bonnyr-f5 r4): the replacement follows the SAME source-of-truth
+    rule as a fresh seed, so the documented retrieval instructions stay correct
+    on upgrade too:
+      * DEFAULT_ADMIN_PASSWORD set to a non-published value (Helm wires it from
+        the ``admin-password`` Secret) -> rotate TO that value, so the Secret /
+        env the docs tell operators to read is what now authenticates. No
+        keys-file is written (nothing was generated).
+      * otherwise -> generate a fresh random secret and surface it exactly like a
+        fresh install (mode-0600 keys-file, pointer logged once).
+    Rotating to a *published* default (e.g. DEFAULT_ADMIN_PASSWORD=changeme) is
+    refused -- that would just re-publish the hole -- so such a value falls
+    through to generation.
     """
-    admin = db.query(User).filter(User.username == "admin").first()
+    # #186 (bonnyr-f5 r4, INV-8): lock the row for the read-then-write. Two `api`
+    # replicas booting together would otherwise both read admin/'changeme', each
+    # generate a DIFFERENT secret, and interleave file-write vs DB-commit so the
+    # keys-file and the stored hash end up from different runs -> permanent admin
+    # lockout. FOR UPDATE serializes them: the loser blocks, then re-reads the
+    # already-rotated hash (no longer a known default) and no-ops. (Silently
+    # ignored on SQLite, which the tests use and which has no concurrent writers.)
+    admin = db.query(User).filter(User.username == "admin").with_for_update().first()
     if admin is None:
         return
     if not any(verify_password(p, admin.hashed_password) for p in _KNOWN_DEFAULT_ADMIN_PASSWORDS):
         return
+
+    configured = settings.DEFAULT_ADMIN_PASSWORD
+    if configured and configured not in _KNOWN_DEFAULT_ADMIN_PASSWORDS:
+        # Rotate to the operator/chart-supplied secret so the documented source
+        # (Helm admin-password Secret / DEFAULT_ADMIN_PASSWORD env) is authoritative.
+        admin.hashed_password = hash_password(configured)  # type: ignore[assignment]
+        admin.must_change_password = True  # type: ignore[assignment]
+        db.commit()
+        logger.warning(
+            "Existing 'admin' still held a known shipped default password; "
+            "OVERWROTE it with DEFAULT_ADMIN_PASSWORD (the published default no "
+            "longer works) -- retrieve it from the same source you configured "
+            "(Helm: the admin-password Secret) and change it on first login (#186).",
+        )
+        return
+
     new_password = secrets.token_urlsafe(18)
+    # Persist the new secret BEFORE overwriting the hash: if the keys dir is
+    # unwritable this raises (fail closed, no plaintext logged) with the row's
+    # published-default hash untouched, so the next boot retries the whole
+    # remediation cleanly. Never fall back to logging the plaintext (#186).
+    pw_path = _persist_generated_password(new_password)
     admin.hashed_password = hash_password(new_password)  # type: ignore[assignment]
     admin.must_change_password = True  # type: ignore[assignment]
     db.commit()
-    pw_path, persisted = _persist_generated_password(new_password)
-    if persisted:
-        logger.warning(
-            "Existing 'admin' still held a known shipped default password; "
-            "OVERWROTE it with a generated secret (the published default no longer "
-            "works) and wrote the new one to %s -- retrieve it, then change it on "
-            "first login (#186).",
-            pw_path,
-        )
-    else:
-        logger.warning(
-            "Existing 'admin' still held a known shipped default password; "
-            "OVERWROTE it with a generated secret (could not persist to disk): %s "
-            "-- save it now; change required on first login (#186).",
-            new_password,
-        )
+    logger.warning(
+        "Existing 'admin' still held a known shipped default password; "
+        "OVERWROTE it with a generated secret (the published default no longer "
+        "works) and wrote the new one to %s -- retrieve it, then change it on "
+        "first login (#186).",
+        pw_path,
+    )
 
 
 def seed_admin_user(db: Session) -> User | None:
@@ -296,14 +348,25 @@ def seed_admin_user(db: Session) -> User | None:
         return None
 
     # #184: never seed a known/published default. If DEFAULT_ADMIN_PASSWORD is
-    # unset, generate a strong random one and log it ONCE so the operator can
-    # retrieve it from the boot logs. The account is must_change_password, so it
-    # only survives until first login regardless.
+    # unset, generate a strong random one and persist it to the (mode-600,
+    # volume-backed) keys dir so the operator can retrieve it. The account is
+    # must_change_password, so it only survives until first login regardless.
     seed_password = settings.DEFAULT_ADMIN_PASSWORD
     generated = False
     if not seed_password:
         seed_password = secrets.token_urlsafe(18)
         generated = True
+
+    pw_path = None
+    if generated:
+        # Persist the one-time password BEFORE creating the row: a single boot-log
+        # line is easy to miss (log rotation, JSON formatting) and logging the
+        # plaintext is a known aggregation-exposure risk, so we surface a POINTER,
+        # never the secret. Persisting first means an unwritable keys dir raises
+        # here (fail closed, no plaintext logged) with NO admin row committed, so
+        # the next boot retries the seed cleanly instead of stranding an admin
+        # account whose generated password nobody can read (#186).
+        pw_path = _persist_generated_password(seed_password)
 
     admin = create_user(
         db=db,
@@ -316,48 +379,30 @@ def seed_admin_user(db: Session) -> User | None:
     # ENG-006: Startup seed manages its own transaction
     db.commit()
     if generated:
-        # Persist the one-time password to the (mode-600, volume-backed) keys
-        # dir rather than only logging it: a single boot-log line is easy to
-        # miss (log rotation, JSON formatting) and logging the plaintext is a
-        # known aggregation-exposure risk. Log a POINTER, not the secret. Safe
-        # to delete after first login (the account is must_change_password).
-        pw_path, persisted = _persist_generated_password(seed_password)
-        if persisted:
-            logger.warning(
-                "Seeded admin user 'admin' with a GENERATED password, written to "
-                "%s (retrieve it, then delete it — you must change it on first login). "
-                "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
-                pw_path,
-            )
-        else:
-            # Last resort if the file couldn't be written: log the secret so the
-            # operator isn't locked out. Prefer the file path above.
-            logger.warning(
-                "Seeded admin user 'admin' with GENERATED password (could not persist "
-                "to disk): %s -- save it now; change required on first login.",
-                seed_password,
-            )
+        logger.warning(
+            "Seeded admin user 'admin' with a GENERATED password, written to "
+            "%s (retrieve it, then delete it — you must change it on first login). "
+            "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
+            pw_path,
+        )
     else:
         logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
     return admin
 
 
-def _surface_generated_service_password(username: str, password: str, action: str) -> None:
-    """Persist + log a generated service-account secret, mirroring the admin path."""
-    pw_path, persisted = _persist_generated_password(password, filename=f"initial_{username}_password")
-    if persisted:
-        logger.warning(
-            "%s service account '%s' with a GENERATED password, written to %s "
-            "(retrieve it and point the MCP client at it via MCP_SERVICE_PASSWORD). "
-            "Set MCP_SERVICE_PASSWORD to choose your own instead (#186).",
-            action, username, pw_path,
-        )
-    else:
-        logger.warning(
-            "%s service account '%s' with a GENERATED password (could not persist "
-            "to disk): %s -- save it now and set MCP_SERVICE_PASSWORD (#186).",
-            action, username, password,
-        )
+def _log_generated_service_password(username: str, pw_path: str, action: str) -> None:
+    """Log a POINTER to a persisted generated service-account secret (#186).
+
+    The plaintext is never logged — the caller persisted it via
+    :func:`_persist_generated_password` (which fails closed) and passes only the
+    resulting file path here.
+    """
+    logger.warning(
+        "%s service account '%s' with a GENERATED password, written to %s "
+        "(retrieve it and point the MCP client at it via MCP_SERVICE_PASSWORD). "
+        "Set MCP_SERVICE_PASSWORD to choose your own instead (#186).",
+        action, username, pw_path,
+    )
 
 
 def ensure_service_user(
@@ -393,11 +438,19 @@ def ensure_service_user(
     # An operator secret we may actually store, or None if there is nothing usable.
     usable_password = None if (not password or published_default) else password
 
-    user = db.query(User).filter(User.username == username).first()
+    # #186 (bonnyr-f5 r4, INV-8): lock the row for the read-then-write, so two
+    # `api` replicas reconciling/rotating this service account concurrently cannot
+    # desync the stored hash from the keys-file (same lockout hazard as the admin
+    # rotation above). No-op on SQLite (tests).
+    user = db.query(User).filter(User.username == username).with_for_update().first()
 
     if user is None:
         generated = usable_password is None
         seed_password = usable_password if usable_password is not None else secrets.token_urlsafe(18)
+        # Persist the generated secret BEFORE creating the row (fail closed on an
+        # unwritable keys dir, never logging the plaintext) so a failure leaves
+        # nothing committed and the next boot retries cleanly (#186).
+        pw_path = _persist_generated_password(seed_password, filename=f"initial_{username}_password") if generated else None
         create_user(
             db=db,
             username=username,
@@ -409,7 +462,7 @@ def ensure_service_user(
         # ENG-006: Startup seed manages its own transaction
         db.commit()
         if generated:
-            _surface_generated_service_password(username, seed_password, "Seeded")
+            _log_generated_service_password(username, pw_path, "Seeded")
         else:
             logger.info(f"Created service account: {username} (role={role})")
         return
@@ -430,9 +483,13 @@ def ensure_service_user(
     # already holds a generated/operator secret is left untouched (idempotent).
     if any(verify_password(p, str(user.hashed_password)) for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS):
         new_password = secrets.token_urlsafe(18)
+        # Persist BEFORE overwriting the hash: fail closed on an unwritable keys
+        # dir (no plaintext logged), leaving the published-default hash untouched
+        # so the next boot retries the rotation cleanly (#186).
+        pw_path = _persist_generated_password(new_password, filename=f"initial_{username}_password")
         user.hashed_password = hash_password(new_password)  # type: ignore[assignment]
         user.must_change_password = False  # type: ignore[assignment]
         user.role = role  # type: ignore[assignment]
         user.is_active = True  # type: ignore[assignment]
         db.commit()  # ENG-006: Startup seed manages its own transaction
-        _surface_generated_service_password(username, new_password, "Rotated")
+        _log_generated_service_password(username, pw_path, "Rotated")

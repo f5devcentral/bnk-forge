@@ -424,3 +424,87 @@ class TestWSTokenValidationLogic:
         token_agent_id = payload.get("agent_id")
         path_agent_id = 7
         assert int(token_agent_id) == path_agent_id
+
+
+class TestAgentWSLayer2MustChangeGate:
+    """#186 (bonnyr-f5 r4, INV-10): the agent WS Layer-2 (global JWT) branch
+    must enforce the must-change gate the other five JWT entry points enforce.
+
+    token_user_state opens its own DB session, so these unit tests patch it to
+    isolate the gate LOGIC in _agent_ws_authorized (DB-backed behavior is
+    covered by token_user_state's own component tests).
+    """
+
+    def _ws(self, token):
+        from unittest.mock import MagicMock
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+        return ws
+
+    def test_rejects_must_change_human_admin(self):
+        # The reproduced bug: a valid admin token owing a password change was
+        # admitted (returned None). It must now close 4001.
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "admin", "role": "admin"})
+        must_change_user = MagicMock(must_change_password=True)
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=must_change_user),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) == 4001
+
+    def test_admits_settled_human_admin(self):
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "admin", "role": "admin"})
+        settled_user = MagicMock(must_change_password=False)
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=settled_user),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) is None
+
+    def test_rejects_human_token_resolving_to_no_user(self):
+        # Fail closed: a signed token whose subject no longer resolves (deleted/
+        # disabled) must be refused, not waved through.
+        from unittest.mock import patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "ghost", "role": "admin"})
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=None),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) == 4001
+
+    def test_agent_role_token_admitted_without_user_lookup(self):
+        # Agent tokens carry no User row; they must still connect on this path
+        # (agent auth off, global JWT on) and must NOT be gated via token_user_state.
+        from unittest.mock import patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "forge-agent", "role": "agent"})
+
+        def _boom(*_a, **_k):  # token_user_state must not be consulted for agents
+            raise AssertionError("token_user_state should not be called for an agent token")
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", _boom),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) is None

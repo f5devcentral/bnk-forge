@@ -126,21 +126,31 @@ A default admin account is created automatically on first startup:
 | **Username** | `admin` |
 | **Password** | _generated on first startup_ |
 
-No default password ships. On first startup the backend generates a random admin
-password and writes it to `/app/keys/initial_admin_password` (mode 600); the boot
-log points at that file (the plaintext itself is never logged). Retrieve it with
-either:
+No default password ships. Where the password comes from — and where to retrieve
+it — depends on whether `DEFAULT_ADMIN_PASSWORD` is set:
 
-```bash
-# Docker Compose
-docker exec bnk-forge-backend cat /app/keys/initial_admin_password
-# Helm
-kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
-```
+- **`DEFAULT_ADMIN_PASSWORD` set** (Helm always sets it, wiring it from the
+  chart's per-install `admin-password` Secret): the backend seeds `admin` from
+  that value — and, on upgrade from a build that shipped a default password,
+  rotates `admin` to it. No keys-file is written. Retrieve it from that source:
 
-Or set `DEFAULT_ADMIN_PASSWORD` in your environment to choose your own. You will
-be **required** to change it on first login (the API refuses other calls until
-you do).
+  ```bash
+  # Helm (the admin-password Secret is the source of truth)
+  kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
+  ```
+
+- **`DEFAULT_ADMIN_PASSWORD` unset** (Docker Compose default): the backend
+  generates a random password and writes it to `/app/keys/initial_admin_password`
+  (mode 600); the boot log points at that file (the plaintext itself is never
+  logged). Retrieve it from the file:
+
+  ```bash
+  # Docker Compose
+  docker exec bnk-forge-backend cat /app/keys/initial_admin_password
+  ```
+
+You will be **required** to change it on first login (the API refuses other calls
+until you do).
 
 ### Managing Your Local Deployment
 

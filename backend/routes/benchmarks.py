@@ -1506,10 +1506,27 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     try:
         from services.auth_service import decode_token
 
-        decode_token(token)
-        return None
+        payload = decode_token(token)
     except Exception:
         return 4001
+    # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
+    # only, so this path waved a must-change human admin straight through — the
+    # one JWT-resolving entry point that skipped the gate the other five enforce.
+    # Agent tokens (role=agent) carry no User row and legitimately reach this
+    # branch when agent auth is off, so gate ONLY a token that resolves to a real
+    # user: refuse if that user owes a password change or no longer resolves
+    # (deleted/disabled). Mirrors the POST /api/benchmarks/agents gate above.
+    if payload.get("role") != "agent":
+        from services.auth_service import token_user_state
+
+        ws_user = token_user_state(token)
+        if ws_user is None or ws_user.must_change_password:
+            logger.warning(
+                "Agent %d WS rejected: token owes a password change or does not resolve to an active user",
+                agent_id,
+            )
+            return 4001
+    return None
 
 
 @ws_router.websocket("/ws/benchmarks/agents/{agent_id}")
