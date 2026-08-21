@@ -705,7 +705,7 @@ fi
 echo
 echo "  URL:      ${URL}"
 echo "            (self-signed certificate — accept the browser warning)"
-echo "  Login:    admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password; change on first login)"
+echo "  Login:    admin  (password: DEFAULT_ADMIN_PASSWORD if set, else 'changeme'; change on first login)"
 echo
 echo "  Host IP:  ${FIP}   (SSH: ssh ubuntu@${FIP})"
 echo "  Region:   ${REGION} / ${ZONE}    Profile: ${PROFILE}    Image: Ubuntu 24.04"

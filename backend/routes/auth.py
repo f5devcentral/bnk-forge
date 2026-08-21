@@ -230,6 +230,9 @@ def _user_to_dict(user: User) -> dict:
         # carries a request_role, so admin user listings are unaffected.
         "role": effective_role(user),
         "is_active": user.is_active,
+        # bonnyr-f5 #188: surface provenance so the UI can distinguish a service
+        # account (whose re-enable is guarded) from a human account.
+        "is_service_account": bool(user.is_service_account),
         "must_change_password": user.must_change_password,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,

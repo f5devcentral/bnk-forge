@@ -232,12 +232,20 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
 
 
 def disable_stale_service_user(db: Session) -> None:
-    """#188 (bonnyr-f5): on upgrade with no usable MCP_SERVICE_PASSWORD, a service
-    account seeded by a prior release still holds the shipped
-    'mcp-service-changeme' default and keeps authenticating (the reconcile branch
-    only runs when a real password IS set). Deactivate EVERY active service-account
-    row so no known default can be used until the operator configures a real
-    password (which re-seeds and re-activates the account).
+    """#188 (bonnyr-f5): a service account seeded by a prior release still holds
+    the shipped 'mcp-service-changeme' default and keeps authenticating on upgrade.
+    Deactivate EVERY active service-account row so no known default can be used
+    until the operator configures a real password (which re-seeds and re-activates
+    the account).
+
+    Round 5 (BLOCKER-1): seed_auth_step now calls this UNCONDITIONALLY, before the
+    reconcile — not only on the no-password path. The reconcile is name-keyed, so
+    on the diligent-operator path (strong MCP_SERVICE_PASSWORD but MCP_USERNAME
+    left at the legacy 'admin') it raises a reserved-name ValueError and never
+    reaches a disable; running this first is what closes that hole. When a usable
+    password IS set for a dedicated username, the reconcile re-activates that one
+    row immediately after, so the net effect is: exactly the configured service
+    account stays active, every stale default is revoked.
 
     Keyed on provenance (is_service_account), NOT on the configured username
     (bonnyr-f5 #188 round 4, INV-11): on the dist/IBM upgrade path

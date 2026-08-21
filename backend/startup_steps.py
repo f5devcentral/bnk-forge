@@ -234,6 +234,23 @@ def seed_auth_step():
     # branch would re-seed the mcp account to a known password on every dist/IBM
     # upgrade. Treat a known default as unset -> take the disable-stale path.
     _mcp_pw_usable = bool(settings.MCP_SERVICE_PASSWORD) and settings.MCP_SERVICE_PASSWORD not in MCP_KNOWN_DEFAULT_PASSWORDS
+
+    # bonnyr-f5 #188 round 5 (BLOCKER-1): disable stale service accounts
+    # UNCONDITIONALLY, before any reconcile — never only on the no-password path.
+    # The reconcile below touches ONLY the row whose name matches
+    # MCP_SERVICE_USERNAME; on the diligent-operator upgrade path that name
+    # resolves from a legacy .env to 'admin', so ensure_service_user raises a
+    # reserved-name ValueError and returns WITHOUT disabling the legacy 'mcp' row —
+    # leaving it active with the shipped default even though the operator did the
+    # right thing and set a strong MCP_SERVICE_PASSWORD. Running the
+    # provenance-keyed disable first (round 4, INV-11: keyed on is_service_account,
+    # not the configured username, so it can't no-op and can't touch a human row)
+    # neutralises every stale default; the reconcile then re-activates the one
+    # account whose credentials we actually manage.
+    from services.auth_service import disable_stale_service_user
+    with get_db_context() as db:
+        disable_stale_service_user(db)
+
     if _mcp_pw_usable:
         try:
             with get_db_context() as db:
@@ -244,16 +261,10 @@ def seed_auth_step():
                 )
         except ValueError as exc:
             # Reserved-username refusal (e.g. MCP_USERNAME still 'admin'): loud,
-            # not fatal — MCP stays down but the human admin is not taken over.
+            # not fatal — MCP stays down but the human admin is not taken over,
+            # and the stale default row was already disabled above.
             logger.error("  MCP service account NOT seeded: %s", exc)
     else:
-        from services.auth_service import disable_stale_service_user
-        with get_db_context() as db:
-            # bonnyr-f5 #188 round 4 (INV-11): disable by provenance, not by the
-            # configured username — on the dist upgrade path MCP_SERVICE_USERNAME
-            # resolves to 'admin' and a name-keyed disable would no-op, leaving the
-            # legacy 'mcp' row authenticating with the shipped default.
-            disable_stale_service_user(db)
         logger.warning(
             "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
             "the MCP server will be unable to authenticate until you set it"

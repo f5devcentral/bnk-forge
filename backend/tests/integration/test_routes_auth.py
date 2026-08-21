@@ -209,6 +209,21 @@ class TestUserCRUD:
         usernames = [u["username"] for u in users]
         assert "testadmin" in usernames
 
+    def test_list_users_exposes_service_account_flag(self, client, admin_headers, all_test_users, db):
+        """bonnyr-f5 #188: the user listing surfaces is_service_account so the UI can
+        tell a service account (whose re-enable is guarded) from a human account
+        instead of blindly 400ing on the toggle."""
+        from services.auth_service import ensure_service_user
+        ensure_service_user(db, username="mcp", password="a-strong-real-secret")
+        db.commit()
+
+        response = client.get("/api/auth/users", headers=admin_headers)
+        assert response.status_code == 200
+        by_name = {u["username"]: u for u in response.json()["users"]}
+        assert "is_service_account" in by_name["testadmin"]
+        assert by_name["testadmin"]["is_service_account"] is False
+        assert by_name["mcp"]["is_service_account"] is True
+
     def test_list_users_viewer_denied(self, client, viewer_headers, all_test_users):
         """Viewer cannot list users — returns 403."""
         response = client.get("/api/auth/users", headers=viewer_headers)
