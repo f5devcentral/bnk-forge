@@ -209,7 +209,9 @@ class Settings(BaseSettings):
         # #187: the MCP service password is a shared secret and cannot be
         # auto-generated -- it must be set explicitly and identically on the
         # backend and the MCP server. Refuse an unset or known-default value.
-        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD == "mcp-service-changeme":
+        # bonnyr-f5: the actually-shipped default across dist/helm/scripts was
+        # "changeme", not just "mcp-service-changeme" — reject both.
+        if not self.MCP_SERVICE_PASSWORD or self.MCP_SERVICE_PASSWORD in ("mcp-service-changeme", "changeme"):
             issues.append(
                 "MCP_SERVICE_PASSWORD was not set to a real value — set it (the same "
                 "value the MCP server gets as BNK_FORGE_PASSWORD) as an environment variable"

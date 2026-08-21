@@ -154,13 +154,30 @@ def seed_admin_user(db: Session) -> User | None:
     return admin
 
 
+# Usernames that belong to human accounts and must never be reconciled as a
+# service account. ensure_service_user rewrites the hash and clears
+# must_change_password, so pointing it at "admin" (which happens when
+# MCP_USERNAME still defaults to "admin" on an old .env) silently takes over the
+# human admin row and disables #186's gate on it (bonnyr-f5).
+_RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
+
+
 def ensure_service_user(db: Session, username: str, password: str, role: str = "admin") -> None:
     """Idempotent create-or-reconcile a non-human service account.
 
     Called unconditionally on every startup so the stored password hash always
     matches the current MCP_SERVICE_PASSWORD env var — prevents auth drift when
     the env var is rotated without the DB being updated.
+
+    Refuses a reserved human username: reconciling would rewrite that account's
+    hash and clear must_change_password, converting a var whose shipped default
+    was "admin" into a takeover of the real admin account.
     """
+    if username in _RESERVED_HUMAN_USERNAMES:
+        raise ValueError(
+            f"refusing to reconcile reserved human username '{username}' as a "
+            f"service account — set MCP_USERNAME to a dedicated name like 'mcp'"
+        )
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         create_user(
@@ -183,3 +200,25 @@ def ensure_service_user(db: Session, username: str, password: str, role: str = "
         # ENG-006: Startup seed manages its own transaction
         db.commit()
         logger.info(f"Reconciled service account: {username}")
+
+
+def disable_stale_service_user(db: Session, username: str) -> None:
+    """#188 (bonnyr-f5): on upgrade with MCP_SERVICE_PASSWORD unset, an mcp
+    account seeded by a prior release still holds the shipped
+    'mcp-service-changeme' default and keeps authenticating (the reconcile branch
+    only runs when a password IS set). Deactivate the stale account so the known
+    default can't be used until the operator configures a real one (which
+    re-seeds and re-activates it). Never touches a reserved human username.
+    """
+    if username in _RESERVED_HUMAN_USERNAMES:
+        return
+    user = db.query(User).filter(User.username == username, User.is_active.is_(True)).first()
+    if user is not None:
+        user.is_active = False  # type: ignore[assignment]
+        db.commit()
+        logger.warning(
+            "Disabled stale MCP service account '%s' — MCP_SERVICE_PASSWORD is "
+            "unset, so its pre-existing (possibly default) credential must not "
+            "keep authenticating. Set MCP_SERVICE_PASSWORD to re-enable MCP.",
+            username,
+        )

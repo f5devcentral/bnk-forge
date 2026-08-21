@@ -227,3 +227,36 @@ class TestEnsureServiceUser:
         from models import User
         count = db.query(User).filter(User.username == "mcp").count()
         assert count == 1
+
+    def test_refuses_to_reconcile_the_human_admin(self, db):
+        # #188 (bonnyr-f5): MCP_USERNAME still 'admin' on an old .env would point
+        # ensure_service_user at the human admin row and take it over (rewrite
+        # hash, clear must_change). Refuse, and leave the admin row untouched.
+        from services.auth_service import create_user, verify_password
+        create_user(db, "admin", "admin@bnk-forge.local", "human-admin-pw",
+                    role="admin", must_change_password=True)
+        db.commit()
+        with pytest.raises(ValueError, match="reserved human username"):
+            ensure_service_user(db, username="admin", password="mcp-secret")
+        from models import User
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin.must_change_password is True            # gate not cleared
+        assert verify_password("human-admin-pw", admin.hashed_password)  # hash intact
+
+    def test_disable_stale_service_user_deactivates_mcp(self, db):
+        # #188: upgrade with MCP_SERVICE_PASSWORD unset must not leave the old
+        # mcp/'mcp-service-changeme' account authenticating.
+        from services.auth_service import create_user, disable_stale_service_user
+        create_user(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme", role="admin")
+        db.commit()
+        disable_stale_service_user(db, "mcp")
+        from models import User
+        assert db.query(User).filter(User.username == "mcp").first().is_active is False
+
+    def test_disable_stale_never_touches_admin(self, db):
+        from services.auth_service import create_user, disable_stale_service_user
+        create_user(db, "admin", "admin@bnk-forge.local", "pw", role="admin")
+        db.commit()
+        disable_stale_service_user(db, "admin")  # reserved -> no-op
+        from models import User
+        assert db.query(User).filter(User.username == "admin").first().is_active is True

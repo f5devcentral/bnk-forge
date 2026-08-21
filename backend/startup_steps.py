@@ -230,13 +230,21 @@ def seed_auth_step():
     # account with a shipped default. Unset -> MCP is simply unavailable until an
     # operator sets MCP_SERVICE_PASSWORD (and gives the MCP server the same value).
     if settings.MCP_SERVICE_PASSWORD:
-        with get_db_context() as db:
-            ensure_service_user(
-                db,
-                username=settings.MCP_SERVICE_USERNAME,
-                password=settings.MCP_SERVICE_PASSWORD,
-            )
+        try:
+            with get_db_context() as db:
+                ensure_service_user(
+                    db,
+                    username=settings.MCP_SERVICE_USERNAME,
+                    password=settings.MCP_SERVICE_PASSWORD,
+                )
+        except ValueError as exc:
+            # Reserved-username refusal (e.g. MCP_USERNAME still 'admin'): loud,
+            # not fatal — MCP stays down but the human admin is not taken over.
+            logger.error("  MCP service account NOT seeded: %s", exc)
     else:
+        from services.auth_service import disable_stale_service_user
+        with get_db_context() as db:
+            disable_stale_service_user(db, settings.MCP_SERVICE_USERNAME)
         logger.warning(
             "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
             "the MCP server will be unable to authenticate until you set it"
