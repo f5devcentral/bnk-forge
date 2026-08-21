@@ -311,6 +311,62 @@ class TestEnsureServiceUser:
         count = db.query(User).filter(User.username == "mcp").count()
         assert count == 1
 
+    # ── #186 BLOCKER 1: the published mcp default must never authenticate ──
+
+    @pytest.mark.parametrize("published_default", ["mcp-service-changeme", "changeme"])
+    def test_published_default_seed_cannot_authenticate(self, db, published_default):
+        """Seeding the mcp account with a shipped default must NOT store that
+        value — the published credential can never authenticate."""
+        from core.errors import UnauthorizedError as UnauthError
+        ensure_service_user(db, username="mcp", password=published_default)
+        from models import User
+        assert db.query(User).filter(User.username == "mcp").count() == 1
+        with pytest.raises(UnauthError):
+            authenticate_user(db, "mcp", published_default)
+
+    def test_none_password_seeds_generated_secret(self, db):
+        """MCP_SERVICE_PASSWORD unset (None) still creates the row, but with a
+        generated secret — neither None nor the published default authenticates."""
+        from core.errors import UnauthorizedError as UnauthError
+        ensure_service_user(db, username="mcp", password=None)
+        from models import User
+        assert db.query(User).filter(User.username == "mcp").count() == 1
+        with pytest.raises(UnauthError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")
+
+    def test_upgrade_rotates_existing_published_default(self, db):
+        """An account carried over from a pre-fix install still holding the
+        published default is OVERWRITTEN with a random secret on next boot."""
+        from core.errors import UnauthorizedError as UnauthError
+        from services.auth_service import create_user, hash_password
+        # Simulate the pre-fix seeded row: hash of the published default.
+        user = create_user(db, username="mcp", email="mcp@bnk-forge.local",
+                           password="mcp-service-changeme", role="admin")
+        db.commit()
+        assert authenticate_user(db, "mcp", "mcp-service-changeme")  # live before fix
+        ensure_service_user(db, username="mcp", password=None)  # unset env on upgrade boot
+        with pytest.raises(UnauthError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")  # dead after fix
+
+    def test_generated_secret_not_churned_on_reboot(self, db):
+        """With no operator password, a row already holding a generated (non-
+        default) secret is left untouched — reboots don't rotate it, so the MCP
+        client's retrieved secret keeps working."""
+        from models import User
+        ensure_service_user(db, username="mcp", password=None)
+        first_hash = db.query(User).filter(User.username == "mcp").first().hashed_password
+        ensure_service_user(db, username="mcp", password=None)
+        second_hash = db.query(User).filter(User.username == "mcp").first().hashed_password
+        assert first_hash == second_hash
+
+    def test_operator_password_still_reconciles(self, db):
+        """A genuine operator-set password is honored (MCP stays usable when the
+        operator configures MCP_SERVICE_PASSWORD)."""
+        ensure_service_user(db, username="mcp", password="a-real-operator-secret")
+        user = authenticate_user(db, "mcp", "a-real-operator-secret")
+        assert user.username == "mcp"
+        assert user.must_change_password is False
+
 
 class TestTokenUserState:
     """#184: the WS gate helper -- resolve the User row and fail CLOSED.

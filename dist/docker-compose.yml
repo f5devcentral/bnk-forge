@@ -361,8 +361,13 @@ services:
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: MCP authenticates as the dedicated 'mcp' service account, NOT the
+      # human admin. admin/changeme is gone (#184 generates the admin password
+      # and gates it), so the old admin/changeme wiring 403s every tool call.
+      # Set MCP_SERVICE_PASSWORD in .env (no shipped default — the published one
+      # can no longer authenticate); the backend reconciles the account to it.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:

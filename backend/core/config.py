@@ -106,11 +106,16 @@ class Settings(BaseSettings):
     # must-change gate so the suite can reach protected routes. Defaults True;
     # never set false on a real deployment.
     DEFAULT_ADMIN_MUST_CHANGE: bool = True
-    # NOTE (#184 follow-up): MCP_SERVICE_PASSWORD is the same class of shipped
-    # default (the seeded 'mcp' service account is role=admin), but its fix is
-    # entangled with the chart's mcp-password wiring — tracked separately.
+    # #186 BLOCKER 1: MCP_SERVICE_PASSWORD is the same class of shipped default as
+    # DEFAULT_ADMIN_PASSWORD above (the seeded 'mcp' account is role=admin and
+    # exempt from the must-change gate), so it must NEVER carry a published value.
+    # Defaults to None; when unset ensure_service_user generates a random secret
+    # and surfaces it once, and a published default (mcp-service-changeme) is
+    # refused as a seed value and rotated out of any existing row. Wiring the MCP
+    # client to that per-install secret across every distro (the chart's
+    # mcp-password provenance) is tracked in #188.
     MCP_SERVICE_USERNAME: str = "mcp"
-    MCP_SERVICE_PASSWORD: str = "mcp-service-changeme"
+    MCP_SERVICE_PASSWORD: str | None = None
 
     # Benchmark agent auth flag.
     # When False (default): register/ingest/WS are open (preserves the documented curl flow).

@@ -174,8 +174,10 @@ BNK_FORGE_REGISTRY=__REGISTRY__
 BNK_FORGE_VERSION=__VERSION__
 POSTGRES_PASSWORD=${PG}
 REDIS_PASSWORD=${RD}
-MCP_USERNAME=admin
-MCP_PASSWORD=${MCP}
+# #186: MCP authenticates as the dedicated 'mcp' service account with a per-install
+# random secret, NOT the human admin (whose password #184 generates + gates).
+MCP_SERVICE_USERNAME=mcp
+MCP_SERVICE_PASSWORD=${MCP}
 ENV
 chmod 600 .env
 case "${__XTRACE__}" in *x*) set -x ;; esac
@@ -581,8 +583,9 @@ services:
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: authenticate as the 'mcp' service account (see .env above), not admin.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:

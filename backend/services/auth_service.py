@@ -200,9 +200,18 @@ def change_password(db: Session, user: User, current_password: str, new_password
 # holding a publicly-known credential.
 _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 
+# Passwords this project has shipped as a default for the mcp SERVICE account
+# (role=admin, must_change bypassed) at some point -- the exact same #184 hazard
+# class as the admin defaults above, just a second account. Published in
+# config.py, the compose files, and .env.example, so any account still
+# authenticating with one of these holds a publicly-known admin credential.
+# ``changeme`` is here too because the old shipped compose pointed the MCP client
+# at admin/changeme. Refused as a seed value and rotated out of any existing row.
+_KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
 
-def _persist_generated_admin_password(password: str) -> tuple[str, bool]:
-    """Write a generated admin password to the mode-0600 keys dir.
+
+def _persist_generated_password(password: str, filename: str = "initial_admin_password") -> tuple[str, bool]:
+    """Write a generated credential to a mode-0600 file in the keys dir.
 
     Returns (path, persisted). The plaintext is NEVER logged here — the caller
     logs a POINTER to the returned path when persisted, or falls back to logging
@@ -212,12 +221,15 @@ def _persist_generated_admin_password(password: str) -> tuple[str, bool]:
     create it 0644 under the usual umask, then narrow it). O_TRUNC handles a
     stale file from a prior seed/rotation without failing.
 
-    Shared by the fresh-install seed (#184) and the upgrade remediation (#186)
-    so a generated credential is surfaced identically on both paths.
+    Shared by the fresh-install admin seed (#184), the upgrade remediation
+    (#186), and the mcp service-account seed/rotation (#186 BLOCKER 1) so a
+    generated credential is surfaced identically on every path — ``filename``
+    keeps the admin and mcp secrets in distinct files so neither clobbers the
+    other.
     """
     import os
     keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
-    pw_path = os.path.join(keys_dir, "initial_admin_password")
+    pw_path = os.path.join(keys_dir, filename)
     try:
         os.makedirs(keys_dir, exist_ok=True)
         fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -258,7 +270,7 @@ def _rotate_known_default_admin(db: Session) -> None:
     admin.hashed_password = hash_password(new_password)  # type: ignore[assignment]
     admin.must_change_password = True  # type: ignore[assignment]
     db.commit()
-    pw_path, persisted = _persist_generated_admin_password(new_password)
+    pw_path, persisted = _persist_generated_password(new_password)
     if persisted:
         logger.warning(
             "Existing 'admin' still held a known shipped default password; "
@@ -309,7 +321,7 @@ def seed_admin_user(db: Session) -> User | None:
         # miss (log rotation, JSON formatting) and logging the plaintext is a
         # known aggregation-exposure risk. Log a POINTER, not the secret. Safe
         # to delete after first login (the account is must_change_password).
-        pw_path, persisted = _persist_generated_admin_password(seed_password)
+        pw_path, persisted = _persist_generated_password(seed_password)
         if persisted:
             logger.warning(
                 "Seeded admin user 'admin' with a GENERATED password, written to "
@@ -330,32 +342,97 @@ def seed_admin_user(db: Session) -> User | None:
     return admin
 
 
-def ensure_service_user(db: Session, username: str, password: str, role: str = "admin") -> None:
+def _surface_generated_service_password(username: str, password: str, action: str) -> None:
+    """Persist + log a generated service-account secret, mirroring the admin path."""
+    pw_path, persisted = _persist_generated_password(password, filename=f"initial_{username}_password")
+    if persisted:
+        logger.warning(
+            "%s service account '%s' with a GENERATED password, written to %s "
+            "(retrieve it and point the MCP client at it via MCP_SERVICE_PASSWORD). "
+            "Set MCP_SERVICE_PASSWORD to choose your own instead (#186).",
+            action, username, pw_path,
+        )
+    else:
+        logger.warning(
+            "%s service account '%s' with a GENERATED password (could not persist "
+            "to disk): %s -- save it now and set MCP_SERVICE_PASSWORD (#186).",
+            action, username, password,
+        )
+
+
+def ensure_service_user(
+    db: Session, username: str, password: str | None, role: str = "admin"
+) -> None:
     """Idempotent create-or-reconcile a non-human service account.
 
-    Called unconditionally on every startup so the stored password hash always
-    matches the current MCP_SERVICE_PASSWORD env var — prevents auth drift when
-    the env var is rotated without the DB being updated.
+    Called unconditionally on every startup. A genuine operator-supplied password
+    is reconciled onto the row so the stored hash always matches the current
+    MCP_SERVICE_PASSWORD env var — prevents auth drift when the env var is rotated
+    without the DB being updated.
+
+    #186 BLOCKER 1 (bonnyr-f5): the mcp service account is role=admin and
+    must_change_password=False, so it is EXEMPT from the #184 must-change gate.
+    Seeding or reconciling it to a shipped published default (mcp-service-changeme
+    / changeme) republishes a live, publicly-known admin credential — the exact
+    class of hole #184 closed for the human admin. So a published default (or an
+    absent password) is treated as "no usable secret":
+
+      * fresh row  -> a strong random secret is generated and surfaced like the
+        admin seed (mode-0600 file + one-time pointer log). The published default
+        NEVER becomes the stored credential, so it can never authenticate.
+      * existing row still holding a known published default -> OVERWRITTEN with a
+        fresh random secret (upgrade remediation, same as _rotate_known_default_admin).
+      * existing row already holding a generated/operator secret -> left intact,
+        so the reconcile is idempotent and does not churn the secret every boot.
+
+    Wiring the MCP client to a per-install generated/operator secret across every
+    distro (the chart's mcp-password provenance) is tracked in #188; this only
+    guarantees the published default can never authenticate.
     """
+    published_default = bool(password) and password in _KNOWN_DEFAULT_SERVICE_PASSWORDS
+    # An operator secret we may actually store, or None if there is nothing usable.
+    usable_password = None if (not password or published_default) else password
+
     user = db.query(User).filter(User.username == username).first()
+
     if user is None:
+        generated = usable_password is None
+        seed_password = usable_password if usable_password is not None else secrets.token_urlsafe(18)
         create_user(
             db=db,
             username=username,
             email=f"{username}@bnk-forge.local",
-            password=password,
+            password=seed_password,
             role=role,
             must_change_password=False,
         )
         # ENG-006: Startup seed manages its own transaction
         db.commit()
-        logger.info(f"Created service account: {username} (role={role})")
-    else:
-        # Reconcile: update hash to match current env var; never requires current password
-        user.hashed_password = hash_password(password)  # type: ignore[assignment]
+        if generated:
+            _surface_generated_service_password(username, seed_password, "Seeded")
+        else:
+            logger.info(f"Created service account: {username} (role={role})")
+        return
+
+    if usable_password is not None:
+        # Operator supplied a genuine (non-default) password: reconcile to it.
+        user.hashed_password = hash_password(usable_password)  # type: ignore[assignment]
         user.must_change_password = False  # type: ignore[assignment]
         user.role = role  # type: ignore[assignment]
         user.is_active = True  # type: ignore[assignment]
-        # ENG-006: Startup seed manages its own transaction
-        db.commit()
+        db.commit()  # ENG-006: Startup seed manages its own transaction
         logger.info(f"Reconciled service account: {username}")
+        return
+
+    # No usable secret configured. Only touch the row if it still holds a known
+    # published default (an upgrade left holding the shipped credential); rotate
+    # it to a fresh random secret so the published value stops working. A row that
+    # already holds a generated/operator secret is left untouched (idempotent).
+    if any(verify_password(p, str(user.hashed_password)) for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS):
+        new_password = secrets.token_urlsafe(18)
+        user.hashed_password = hash_password(new_password)  # type: ignore[assignment]
+        user.must_change_password = False  # type: ignore[assignment]
+        user.role = role  # type: ignore[assignment]
+        user.is_active = True  # type: ignore[assignment]
+        db.commit()  # ENG-006: Startup seed manages its own transaction
+        _surface_generated_service_password(username, new_password, "Rotated")

@@ -109,7 +109,13 @@ in-cluster services and pulls secrets from the generated Secret.
 # route 403s). Not a secret -- a plain value. Quote so the bool renders "true"/
 # "false" (do NOT `default` it: a bool false collapses back to the default).
 - name: DEFAULT_ADMIN_MUST_CHANGE
-  value: {{ .Values.secrets.adminMustChange | quote }}
+  # #186 (bonnyr-f5 r4): fall back to the secure "true" only when the value is
+  # nil/unset -- `| default true` cannot be used here because sprig `default`
+  # treats a bool false as empty and would silently flip an intentional false
+  # back to true. kindIs "invalid" is true only for nil, so an explicit false
+  # still renders "false"; nil no longer renders a bare `value:` that makes
+  # pydantic reject an empty string and the backend crashloop.
+  value: {{ if kindIs "invalid" .Values.secrets.adminMustChange }}{{ "true" | quote }}{{ else }}{{ .Values.secrets.adminMustChange | quote }}{{ end }}
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

@@ -224,8 +224,10 @@ def seed_auth_step():
     else:
         logger.info("  Users already exist")
 
-    # Unconditional: ensure MCP service account exists and its password hash matches
-    # current MCP_SERVICE_PASSWORD — prevents auth drift when the env var is rotated.
+    # Unconditional: ensure the MCP service account exists. When MCP_SERVICE_PASSWORD
+    # is set it reconciles the stored hash to it (prevents auth drift when the env var
+    # is rotated); when unset (or the shipped default) it seeds/rotates to a generated
+    # secret so no publicly-known admin credential is ever live (#186 BLOCKER 1).
     with get_db_context() as db:
         ensure_service_user(
             db,
