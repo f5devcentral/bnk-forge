@@ -1160,6 +1160,17 @@ push-images:
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo "  Builder:   $(BUILDX_BUILDER)"; \
 	echo ""; \
+	HIGHEST_TAG=$$(git tag -l 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -1); \
+	if [ -n "$$HIGHEST_TAG" ] && [ "$${FORCE_LATEST:-}" != "1" ]; then \
+	  HIGHEST=$$(printf '%s\n%s\n' "$${HIGHEST_TAG#v}" "$$VERSION" | sort -V | tail -1); \
+	  if [ "$$VERSION" != "$$HIGHEST" ]; then \
+	    echo "ERROR: local VERSION $$VERSION is older than the highest released tag $$HIGHEST_TAG."; \
+	    echo "  bake pushes the rolling ':latest' tag, so this stale tree would move :latest backward"; \
+	    echo "  (release.yml's recency guard covers the CI path; this covers the operator path)."; \
+	    echo "  Check out the latest release first, or re-run with FORCE_LATEST=1 to override deliberately."; \
+	    exit 1; \
+	  fi; \
+	fi; \
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \

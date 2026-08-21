@@ -19,6 +19,17 @@ variable "GIT_REVISION" {
 variable "SOURCE_URL" {
   default = "https://github.com/f5devcentral/bnk-forge"
 }
+# Build timestamp for org.opencontainers.image.created (RFC 3339). Empty by
+# default so a plain `docker buildx bake` of a given tree is byte-reproducible.
+#   timestamp() here stamped a fresh time into every build, so EVERY rebuild of
+#   the same tag produced a different digest — silently breaking the "immutable
+#   :VERSION" contract described above and orphaning the cosign / SBOM / SLSA
+#   attestations that publish-signed-images.sh attaches by digest (bonnyr-f5
+#   #181 round 3). CI sets it to the release commit's committer date, which is
+#   fixed for a given tag, so a republish of the same tag rebuilds identically.
+variable "CREATED" {
+  default = ""
+}
 
 group "default" {
   targets = ["api", "worker", "beat", "frontend", "proxy", "mcp", "operator"]
@@ -30,7 +41,7 @@ target "_common" {
     "org.opencontainers.image.source"   = SOURCE_URL
     "org.opencontainers.image.revision" = GIT_REVISION
     "org.opencontainers.image.version"  = VERSION
-    "org.opencontainers.image.created"  = timestamp()
+    "org.opencontainers.image.created"  = CREATED
   }
 }
 

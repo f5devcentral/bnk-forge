@@ -11,8 +11,10 @@
 # ║    feat                    → minor                                          ║
 # ║    fix / other             → patch                                          ║
 # ║                                                                             ║
-# ║  Infinite-loop guard: commits starting with "release: " have [skip ci]    ║
-# ║  appended and are filtered out by the head-commit check below.             ║
+# ║  Loop guard: our automated release commits carry [skip ci] in the SUBJECT, ║
+# ║  so GitHub drops their push runs before this workflow even starts. The job ║
+# ║  below is a backstop that FAILS the run on any OTHER suppressed commit — a ║
+# ║  release that published nothing must never read as green.                  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 name: Release
@@ -24,14 +26,16 @@ on:
       - main
     # Release's own skip list — doc-only pushes shouldn't cut a release. The
     # preflight SHA poll below depends on the invariant CI ⊇ Release: every SHA
-    # that triggers Release must also trigger a CI run for it to match against.
-    # In paths-ignore terms that invariant is "this list ⊇ ci.yml's push
-    # paths-ignore" (equivalently: ci.yml's ⊆ this) — never let Release trigger
-    # on a path CI skips, or the poll times out (PR #297 review). Enforced by
-    # convention today; #182 adds the automated check that ci.yml's push
-    # paths-ignore is a subset of this list. Do NOT "fix" a divergence by
-    # re-adding trigger coverage here — restore the invariant by widening
-    # ci.yml's skips (or narrowing this list) so CI ⊇ Release stays true.
+    # that triggers Release must also trigger a CI run for the poll to match
+    # against, or it times out (PR #297 review). In paths-ignore terms that is
+    # "ci.yml's push paths-ignore ⊆ this list" — CI must not skip a path Release
+    # runs on. #182 does NOT add a subset check; it REMOVES ci.yml's push
+    # paths-ignore entirely, so CI runs on EVERY push (doc-only included). Once
+    # #182 lands the subset holds trivially (∅ ⊆ anything) and Release keeping
+    # this narrower list stays safe; until then it holds by convention. If the
+    # two ever diverge, restore CI ⊇ Release by shrinking ci.yml's skips, or by
+    # ADDING the missing entries here — never by deleting entries here to widen
+    # Release's own triggers.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -70,6 +74,11 @@ on:
         required: false
         type: string
         default: ""
+      force:
+        description: "Overwrite images that ALREADY exist in the registry for this tag. Off by default: publishing refuses when the :VERSION manifest is already present, so a republish can't silently move an immutable tag and orphan its cosign/SBOM/SLSA attestations. Only a recovery of a tag whose publish never completed needs this off; set it on to deliberately re-push."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -100,23 +109,32 @@ jobs:
           # Match the SUBJECT line only. grep is line-oriented, so testing the
           # whole message let a [skip ci] line buried in the body — a quoted CI
           # snippet, a changelog paste — suppress a legitimate release while the
-          # warning below quoted a subject carrying no marker (bonnyr-f5 #181
-          # round 2). Our own release commits carry the marker in the subject
-          # ("release: vX.Y.Z [skip ci]"), so subject-only still catches them.
+          # message below quoted a subject carrying no marker (bonnyr-f5 #181
+          # round 2). On a normal push GitHub's own [skip ci] handling already
+          # drops our release commits (their subject is "release: vX.Y.Z
+          # [skip ci]") before this workflow starts, and on workflow_dispatch
+          # head_commit is null so FIRST is empty and nothing matches — this
+          # guard is a backstop, not the primary suppressor.
           if grep -qE '^release: |^\[skip ci\]|\[skip ci\]$' <<< "$FIRST"; then
-            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST"; then
-              # Our own release-commit re-triggers Release (it touches VERSION,
-              # not in paths-ignore). The release it names was already published
-              # by the run that created it, so this is expected -- a notice, not
-              # a warning telling the operator to "re-run" something that worked.
-              echo "::notice::Loop guard: skipping our own release commit \"$FIRST\" (expected -- it was published by the previous run)."
-            else
-              echo "::warning::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. If this was a normal change, rename the commit or dispatch the workflow manually."
-            fi
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST"; then
+              # Our own automated release commit reached the guard anyway (e.g.
+              # a re-tag or a marker-stripped replay). The release it names was
+              # already published by the run that created it, so suppressing it
+              # is expected -- a notice, and the run stays green.
+              echo "::notice::Loop guard: skipping our own release commit \"$FIRST\" (expected -- it was published by the previous run)."
+              exit 0
+            fi
+            # Any OTHER suppressed commit is unexpected: a hand-written
+            # [skip ci], or a squash-merged PR titled "release: …(#N)". The run
+            # publishes nothing, so it must NOT report success -- a release that
+            # did not happen has to be loud, not a silent green (bonnyr-f5 #181
+            # round 3). Fail the guard; downstream jobs are gated on should_run
+            # and stay skipped, so nothing is published either way.
+            echo "::error::Release suppressed by the loop guard: head commit \"$FIRST\" begins with 'release: ' or carries [skip ci], so nothing was published. If this was a normal change, rename the commit (avoid a 'release:' subject) or dispatch the workflow manually."
+            exit 1
           fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
   # ── Pre-flight: verify CI passed + derive version ────────────────────────────
   preflight:
@@ -157,6 +175,34 @@ jobs:
           else
             echo "kind=rc" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Restrict manual release to main
+        if: steps.kind.outputs.kind == 'manual'
+        run: |
+          # A manual (non-publish_only) dispatch builds THIS ref's tree, commits
+          # the version bump to it, tags it, and publishes it as :latest.
+          # Dispatching from staging or a side branch would ship an unreviewed
+          # tree as the released :latest, and the recency guard would not catch
+          # it (a numerically higher version passes: measured ALLOW new=5.0.0
+          # highest=v4.0.5). Require the dispatched ref to BE main, or to be an
+          # ancestor of main (already merged), so only reviewed history cuts a
+          # final release (bonnyr-f5 #181 round 3). publish_only is exempt: it
+          # republishes an existing tag by checking that tag out, independent of
+          # the dispatched ref.
+          if [ "$REF_NAME" = "main" ]; then
+            echo "Dispatched from main."
+            exit 0
+          fi
+          git fetch --no-tags --quiet origin main || {
+            echo "::error::Could not fetch origin/main to verify the dispatched ref '$REF_NAME' is merged."
+            exit 1
+          }
+          if git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo "Dispatched ref '$REF_NAME' is an ancestor of main (already merged)."
+            exit 0
+          fi
+          echo "::error::A manual release must be dispatched from main, or from a ref already merged into main. '$REF_NAME' is neither — dispatching it would publish an unreviewed tree as :latest. Merge to main first, or use publish_only to republish an existing tag."
+          exit 1
 
       - name: Check CI status on this branch
         if: steps.kind.outputs.kind != 'publish_only'
@@ -793,7 +839,18 @@ jobs:
 
       - name: Resolve release commit
         id: rev
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          # Reproducible-build inputs. The release commit's committer date is
+          # fixed for a given tag, so baking with it (CREATED) instead of the
+          # removed timestamp() default, plus SOURCE_DATE_EPOCH to normalize
+          # layer timestamps, makes a rebuild of the same tag byte-identical:
+          # a republish resolves to the SAME digest, so the cosign / SBOM / SLSA
+          # attestations attached by digest still apply (bonnyr-f5 #181 round 3).
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "created=$(git log -1 --format=%cI HEAD)"
+            echo "epoch=$(git log -1 --format=%ct HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -814,6 +871,55 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@v0
 
+      - name: Re-check recency inside the publish critical section
+        run: |
+          # preflight's recency guard runs OUTSIDE this job's concurrency group,
+          # so two releases can both pass it and then race to write the single
+          # global :latest. This job is serialized on release-publish-latest, so
+          # re-checking the highest final tag HERE — after acquiring the slot,
+          # immediately before the push — is the authoritative gate: a release
+          # that is no longer the newest must not repoint :latest backward
+          # (bonnyr-f5 #181 round 3). rc never reaches this job.
+          git fetch --tags --force --quiet origin || true
+          HIGHEST_TAG="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          HIGHEST="$(printf '%s\n%s\n' "${HIGHEST_TAG#v}" "$VERSION" | sort -V | tail -1)"
+          if [ -n "$HIGHEST_TAG" ] && [ "$VERSION" != "$HIGHEST" ]; then
+            echo "::error::Refusing to publish v$VERSION: the highest released tag is now $HIGHEST_TAG, so repointing :latest would move it backward."
+            exit 1
+          fi
+          echo "v$VERSION is the highest final tag; safe to repoint :latest."
+
+      - name: Refuse to overwrite an already-published tag
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          # docker-bake pushes ${REGISTRY}/<img>:${VERSION} unconditionally and
+          # the tag is declared IMMUTABLE. Probe the registry first: if the
+          # :VERSION manifest already exists, republishing moves that immutable
+          # tag under anyone who pinned it AND orphans the cosign / SBOM / SLSA
+          # attestations bound to the OLD digest. Refuse by default; require the
+          # force input to overwrite deliberately (bonnyr-f5 #181 round 3). The
+          # normal recovery case — a tag whose publish never completed — has no
+          # manifest yet, so it passes through untouched.
+          EXISTING=""
+          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
+            REF="${REGISTRY}/${name}:${VERSION}"
+            if docker manifest inspect "$REF" >/dev/null 2>&1; then
+              EXISTING="${EXISTING}  ${REF}"$'\n'
+            fi
+          done
+          if [ -z "$EXISTING" ]; then
+            echo "No existing :${VERSION} manifests found — safe to publish."
+            exit 0
+          fi
+          printf 'Images already published for this tag:\n%s' "$EXISTING"
+          if [ "$FORCE" = "true" ]; then
+            echo "::warning::force=true — overwriting the existing :${VERSION} manifests; the cosign/SBOM/SLSA attestations bound to the previous digests are now orphaned."
+          else
+            echo "::error::Images for v${VERSION} already exist in ${REGISTRY}. Republishing would move the immutable :${VERSION} tag and orphan its attestations. Re-dispatch with force=true only if you intend to overwrite them."
+            exit 1
+          fi
+
       - name: Build and push all images (docker-bake.hcl)
         run: docker buildx bake --push default
         env:
@@ -823,6 +929,10 @@ jobs:
           # OCI source label tracks whichever remote actually built the image.
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
           GIT_REVISION: ${{ steps.rev.outputs.sha }}
+          # Reproducible build: fixed created label + normalized layer mtimes so
+          # the same tag rebuilds to the same digest (see "Resolve release commit").
+          CREATED: ${{ steps.rev.outputs.created }}
+          SOURCE_DATE_EPOCH: ${{ steps.rev.outputs.epoch }}
           ROLLING_TAG: latest
 
       - name: Sign, SBOM, and attest all images (keyless cosign)
