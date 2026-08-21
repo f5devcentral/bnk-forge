@@ -18,6 +18,9 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume

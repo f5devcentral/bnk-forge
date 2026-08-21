@@ -146,7 +146,7 @@ The admin password is generated randomly on first startup (there is no shipped
 default). Retrieve it once from the backend logs:
 
 ```bash
-docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"
+docker exec bnk-forge-backend cat /app/keys/initial_admin_password
 ```
 
 Or choose your own beforehand by setting `DEFAULT_ADMIN_PASSWORD` in `.env`. You

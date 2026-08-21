@@ -114,33 +114,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-# The only endpoints a must-change user needs before rotating: submit the new
-# password, and read their own state so the UI can show the change screen.
-# (There is no server-side logout endpoint -- logout is discarding the token
-# client-side.) Exact full paths, not suffixes: this is a security gate, so it
-# should not accept some unrelated route that merely ends in "/auth/me".
-_PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
-    "/api/auth/change-password",
-    "/api/auth/me",
-})
+# The gate now lives in services.auth_service so AuthMiddleware and this
+# dependency enforce it from ONE place -- a dependency-less route was bypassing
+# the dependency-only version (see enforce_password_change).
+from services.auth_service import enforce_password_change  # noqa: E402
 
 
 def _enforce_password_change(request: Request, user: User) -> None:
-    """#184: must_change_password must gate the API, not just the UI.
-
-    The seeded admin (and any admin-created must-change user) gets a fully-valid
-    token, so without a server-side gate a client can skip the change-password
-    screen and call every endpoint directly with the seed credential. Refuse all
-    but the exempt endpoints until the password is rotated.
-    """
-    if not getattr(user, "must_change_password", False):
-        return
-    if request.url.path.rstrip("/") in _PASSWORD_CHANGE_EXEMPT_PATHS:
-        return
-    raise ForbiddenError(
-        "Password change required before using the API. "
-        "POST /api/auth/change-password with your current and new password."
-    )
+    """#184: gate a must-change user at the get_current_user dependency."""
+    enforce_password_change(request.url.path, user)
 
 
 def require_role(*allowed_roles: str):

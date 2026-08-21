@@ -104,6 +104,37 @@ def token_user_state(token: str) -> User | None:
         return None
 
 
+# The only endpoints a must-change user needs before rotating: submit the new
+# password, and read their own state so the UI can show the change screen.
+# Exact full paths, not suffixes: this is a security gate, so it must not accept
+# an unrelated route that merely ends in "/auth/me".
+PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
+    "/api/auth/change-password",
+    "/api/auth/me",
+})
+
+
+def enforce_password_change(path: str, user: User) -> None:
+    """#184/#186: refuse a must-change user everything but the exempt endpoints.
+
+    Enforced at BOTH auth-resolution points -- the get_current_user dependency
+    AND AuthMiddleware -- so a route that declares no dependency of its own (there
+    are ~32 such /api routes) still inherits the gate. Without the middleware half
+    the seed credential can skip the change-password screen and call those routes
+    directly (proven: DELETE /api/benchmarks/configs/{id} -> 204 with the seed
+    token). Raises ForbiddenError; callers translate it to 403.
+    """
+    if not getattr(user, "must_change_password", False):
+        return
+    if path.rstrip("/") in PASSWORD_CHANGE_EXEMPT_PATHS:
+        return
+    from core.errors import ForbiddenError
+    raise ForbiddenError(
+        "Password change required before using the API. "
+        "POST /api/auth/change-password with your current and new password."
+    )
+
+
 def get_user_from_token(db: Session, token: str) -> User:
     """Get the user associated with a JWT token. Raises UnauthorizedError on failure."""
     payload = decode_token(token)
@@ -164,10 +195,40 @@ def change_password(db: Session, user: User, current_password: str, new_password
     logger.info(f"Password changed for user: {user.username}")
 
 
+# Passwords this project has shipped as an admin default at some point. An
+# existing account still authenticating with one of these is an upgrade left
+# holding a publicly-known credential.
+_KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
+
+
+def _rotate_known_default_admin(db: Session) -> None:
+    """#186 (bonnyr-f5): close the upgrade hole the new gate leaves open.
+
+    A deployment seeded before #184 holds admin/'changeme' with
+    must_change_password=False. The new seed logic never runs for it (users
+    already exist), so it keeps the published default -- and /api/auth/change-
+    password (exempt from the gate) is exactly the endpoint that lets that
+    credential persist. On every boot, if the admin still authenticates with a
+    known shipped default, force a password change so the seed credential can no
+    longer be used to reach the API.
+    """
+    admin = db.query(User).filter(User.username == "admin").first()
+    if admin is None or admin.must_change_password:
+        return
+    if any(verify_password(p, admin.hashed_password) for p in _KNOWN_DEFAULT_ADMIN_PASSWORDS):
+        admin.must_change_password = True  # type: ignore[assignment]
+        db.commit()
+        logger.warning(
+            "Existing 'admin' still held a known shipped default password; forced "
+            "must_change_password on it so the API can't be reached with it (#186)."
+        )
+
+
 def seed_admin_user(db: Session) -> User | None:
     """Create default admin user if no users exist. Returns the user or None if already exists."""
     existing_users = db.query(User).count()
     if existing_users > 0:
+        _rotate_known_default_admin(db)  # #186: upgrade safety for pre-#184 installs
         return None
 
     # #184: never seed a known/published default. If DEFAULT_ADMIN_PASSWORD is

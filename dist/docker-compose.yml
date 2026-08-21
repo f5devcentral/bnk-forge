@@ -32,6 +32,9 @@ x-backend-env: &backend-env
   # networking the proxy publishes to the host loopback, so services reach it
   # at 127.0.0.1:2375. Overridable via DOCKER_HOST in .env.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules

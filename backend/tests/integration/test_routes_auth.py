@@ -288,6 +288,31 @@ class TestMustChangePasswordEnforcement:
         after = client.get("/api/auth/users", headers=hdr)
         assert after.status_code == 200, after.text
 
+    def test_dependency_less_route_is_gated_by_the_middleware(self, client, db):
+        """#186 (bonnyr-f5): the gate lived only in get_current_user, so a route
+        that declares NO auth dependency and relies on AuthMiddleware alone was
+        bypassable with the seed credential. /api/system/process-metrics is such
+        a route (public_router, no get_current_user, not in PUBLIC_PATHS). A
+        must-change token must be refused there, at the middleware, not served.
+        """
+        self._make_must_change_admin(db)
+        token = self._login(client, "mustchange", "startpw")
+        hdr = {"Authorization": f"Bearer {token}"}
+
+        # Middleware-only route: must be 403 while must-change (was 200 = bypass).
+        blocked = client.get("/api/system/process-metrics", headers=hdr)
+        assert blocked.status_code == 403, blocked.text
+
+        # Exempt read still works so the UI can drive the change screen.
+        assert client.get("/api/auth/me", headers=hdr).status_code == 200
+
+        # After rotating, the same middleware-only route is reachable.
+        assert client.post(
+            "/api/auth/change-password", headers=hdr,
+            json={"current_password": "startpw", "new_password": "BrandNewPw123!"},
+        ).status_code == 200
+        assert client.get("/api/system/process-metrics", headers=hdr).status_code == 200
+
     def test_non_must_change_user_is_not_gated(self, client, admin_headers, sample_user):
         # Regression guard: an ordinary user (must_change False) reaches the API.
         assert client.get("/api/auth/users", headers=admin_headers).status_code == 200

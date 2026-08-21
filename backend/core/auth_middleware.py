@@ -21,19 +21,23 @@ logger = logging.getLogger(__name__)
 API_TOKEN_PREFIX = "bnk_"
 
 
-def _verify_api_token(token: str) -> None:
-    """Raise UnauthorizedError unless ``token`` is a live API token.
+def _verify_api_token(token: str):
+    """Return the owning User for a live API token, or raise UnauthorizedError.
 
     Opens its own session: middleware runs outside FastAPI's dependency
-    injection, so ``get_db`` is not available here.
+    injection, so ``get_db`` is not available here. The User is refreshed before
+    the session closes so the caller can read ``must_change_password`` off the
+    detached instance (same pattern as token_user_state).
     """
     from database import SessionLocal
     from services.api_token_service import ApiTokenService
 
     db = SessionLocal()
     try:
-        ApiTokenService(db).verify(token)  # raises UnauthorizedError if invalid
+        user, _api_token = ApiTokenService(db).verify(token)  # raises if invalid
         db.commit()  # verify() stamps last_used_at
+        db.refresh(user)
+        return user
     except Exception:
         db.rollback()
         raise
@@ -146,15 +150,38 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Validate the token
         token = auth_header.split(" ", 1)[1]
         try:
+            from core.errors import ForbiddenError
+            from services.auth_service import enforce_password_change
             if token.startswith(API_TOKEN_PREFIX):
                 # Long-lived CLI / CI-CD token — a DB-backed hash, not a JWT, so
-                # decode_token() would reject it. 21 /api routes have no auth
+                # decode_token() would reject it. ~32 /api routes have no auth
                 # dependency of their own and rely on this middleware alone, so
                 # it must fully verify the token here, not defer to the route.
-                _verify_api_token(token)
+                user = _verify_api_token(token)
+                enforce_password_change(path, user)
             else:
-                from services.auth_service import decode_token
+                from services.auth_service import decode_token, token_user_state
                 decode_token(token)  # Will raise UnauthorizedError if invalid
+                # #184/#186: the dependency-only gate is bypassed on routes that
+                # declare no get_current_user; enforce must_change here too, where
+                # auth is actually resolved. token_user_state returns None for a
+                # non-user subject (e.g. an agent token) — those never reach a
+                # gated user route anyway, so leave them to the route's own dep.
+                jwt_user = token_user_state(token)
+                if jwt_user is not None:
+                    enforce_password_change(path, jwt_user)
+        except ForbiddenError as exc:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "PASSWORD_CHANGE_REQUIRED",
+                        "message": str(exc),
+                        "details": {},
+                        "path": path,
+                    }
+                },
+            )
         except (JWTError, UnauthorizedError):
             return JSONResponse(
                 status_code=401,

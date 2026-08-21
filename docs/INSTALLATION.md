@@ -132,7 +132,7 @@ log points there too. Retrieve it with either:
 
 ```bash
 docker exec bnk-forge-backend cat /app/keys/initial_admin_password
-docker logs bnk-forge-backend 2>&1 | grep "GENERATED password"
+docker exec bnk-forge-backend cat /app/keys/initial_admin_password
 ```
 
 Or set `DEFAULT_ADMIN_PASSWORD` in your environment to choose your own. You will
@@ -361,7 +361,7 @@ After starting BNK Forge for the first time:
 
 Open the application URL and log in as **`admin`**. There is no default
 password: retrieve the one generated on first startup —
-`docker logs bnk-forge-backend 2>&1 | grep -A2 "GENERATED password"` (compose),
+`docker exec bnk-forge-backend cat /app/keys/initial_admin_password` (compose),
 or `kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d` (Helm).
 You will be **required** to set a new password before the API accepts other calls.
 

@@ -218,6 +218,40 @@ class TestSeedAdminUser:
         with pytest.raises(UnauthorizedError):
             authenticate_user(db, "admin", "changeme")
 
+    def test_generated_password_file_is_mode_0600(self, db, monkeypatch, tmp_path):
+        # #186 (bonnyr-f5): the commit is titled "harden the password-file mode"
+        # but only .exists() was asserted. The plaintext credential must be 0600,
+        # never group/world-readable.
+        import os
+        import stat
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        seed_admin_user(db)
+        pw = tmp_path / "initial_admin_password"
+        mode = stat.S_IMODE(os.stat(pw).st_mode)
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+    def test_rotates_existing_admin_still_on_a_known_default(self, db):
+        # #186 (bonnyr-f5): an upgrade left admin/'changeme' with
+        # must_change_password=False -- the seed logic never re-runs for it. On
+        # boot, seed_admin_user (users exist -> None) must still force the change
+        # so the published default can't keep reaching the API.
+        from models.system import User
+        create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                    role="admin", must_change_password=False)
+        db.commit()
+        assert seed_admin_user(db) is None
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin.must_change_password is True
+
+    def test_does_not_touch_an_admin_with_a_real_password(self, db):
+        from models.system import User
+        create_user(db, "admin", "admin@bnk-forge.local", "a-Strong-Real-Pw-1",
+                    role="admin", must_change_password=False)
+        db.commit()
+        seed_admin_user(db)
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin.must_change_password is False  # not a known default → untouched
+
 
 # ── ensure_service_user ──────────────────────────────────────────────
 
