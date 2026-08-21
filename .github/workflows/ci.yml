@@ -207,6 +207,44 @@ jobs:
           if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
             echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
           fi
+      - name: BREAKING CHANGE detector parity + extractor self-test
+        run: |
+          # bonnyr-f5 #179 r3 (cross-PR / INV-15): the BREAKING CHANGE detector
+          # MUST be byte-identical between the two scripts -- if they drift, a
+          # major bump ships with empty notes (or a note ships with no bump). This
+          # asserts identity in code, replacing the "MUST stay identical" comment.
+          #
+          # The extraction is version-agnostic on purpose: it pulls the regex out
+          # of whichever `grep -qE '...BREAKING...CHANGE...'` detector each script
+          # uses, so it enforces parity whether the tree is pre- or post-#179
+          # (both scripts use the SAME form as each other in either state). That
+          # keeps this gate meaningful on this PR today AND on the merged stack.
+          set -euo pipefail
+          _regex() {
+            grep -oE "grep -qE '[^']*BREAKING[^']*CHANGE[^']*'" "$1" \
+              | sed -E "s/^grep -qE '//; s/'\$//" | sort -u
+          }
+          ex="$(_regex scripts/extract-breaking-changes.sh)"
+          cv="$(_regex scripts/compute_version_bump.sh)"
+          if [ -z "$ex" ] || [ -z "$cv" ]; then
+            echo "::error::could not extract a BREAKING CHANGE detector regex from one of the scripts (extract='$ex' compute='$cv')"; exit 1
+          fi
+          if [ "$ex" != "$cv" ]; then
+            echo "::error::INV-15 violated: the BREAKING CHANGE detector differs between the two scripts"
+            echo "  extract-breaking-changes.sh: $ex"
+            echo "  compute_version_bump.sh:     $cv"
+            exit 1
+          fi
+          echo "INV-15 OK: BREAKING CHANGE detector identical across both scripts -> $ex"
+          # Run the extractor's own self-test once #179's anchored extractor (which
+          # adds --self-test) is in the tree. Until #179 merges to staging, this
+          # PR's base carries the older extractor; warn LOUDLY (not a silent skip)
+          # so the pending activation is visible in the log.
+          if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then
+            bash scripts/extract-breaking-changes.sh --self-test
+          else
+            echo "::warning::extract-breaking-changes.sh has no --self-test yet (it lands with #179); the parity gate above is still enforced this run"
+          fi
 
   lint-frontend:
     name: "P1 · Lint Frontend"
