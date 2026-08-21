@@ -26,6 +26,15 @@ x-backend-env: &backend-env
   # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
   # e2e suite reach protected routes.
   DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186 BLOCKER 1 (bonnyr-f5 r5): the BACKEND must receive MCP_SERVICE_* too, not
+  # just the mcp service. ensure_service_user reconciles the stored hash to
+  # MCP_SERVICE_PASSWORD every boot; if the backend never sees it, it generates a
+  # random secret while the mcp client is handed the operator's .env value — the
+  # two can never agree and `make mcp-readiness` fails on every install. config.py
+  # has no env_file, so an unpassed var never reaches the container. Plumb both so
+  # the backend and the mcp service authenticate against the same account.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume

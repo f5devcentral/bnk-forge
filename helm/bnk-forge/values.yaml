@@ -32,8 +32,16 @@ secrets:
   # Keep true on any real deployment (the shipped-default hazard #184 closes).
   # Set false only for an ephemeral test stack seeding a known throwaway admin.
   adminMustChange: true
-  mcpUsername: admin
-  mcpPassword: changeme
+  # #186 BLOCKER 2/3 (bonnyr-f5 r5): NEVER ship a default admin credential.
+  #  - mcpUsername was `admin`: it pointed the MCP client at the human admin
+  #    account and, once the backend receives MCP_SERVICE_USERNAME, made
+  #    ensure_service_user rewrite the human admin row (BLOCKER 3). The MCP
+  #    client authenticates as its own dedicated, non-human service account.
+  #  - mcpPassword was `changeme`: a live, publicly-known credential on a public
+  #    repo. Empty -> generated per-install in the release Secret (mirrors
+  #    adminPassword) and reused on upgrade, so no shipped default ever exists.
+  mcpUsername: mcp
+  mcpPassword: ""
 
 # Common pod settings
 # fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).

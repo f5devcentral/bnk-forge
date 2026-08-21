@@ -111,9 +111,16 @@ class Settings(BaseSettings):
     # exempt from the must-change gate), so it must NEVER carry a published value.
     # Defaults to None; when unset ensure_service_user generates a random secret
     # and surfaces it once, and a published default (mcp-service-changeme) is
-    # refused as a seed value and rotated out of any existing row. Wiring the MCP
-    # client to that per-install secret across every distro (the chart's
-    # mcp-password provenance) is tracked in #188.
+    # refused as a seed value and rotated out of any existing row.
+    #
+    # #186 BLOCKER 1 (bonnyr-f5 r5): the BACKEND now receives MCP_SERVICE_PASSWORD
+    # on every deploy mode (the backend-env anchors in every compose file, the
+    # ibm installer, and the Helm shared-env in _helpers.tpl sourced from the
+    # release Secret's mcp-password key), so it reconciles the mcp account to the
+    # same per-install secret the mcp client uses instead of generating a private
+    # one the client can never match. The reserved-name guard in
+    # ensure_service_user and #188's Helm mcp-secret work share this credential
+    # surface; see the PR discussion for the #186/#188 integration split.
     MCP_SERVICE_USERNAME: str = "mcp"
     MCP_SERVICE_PASSWORD: str | None = None
 

@@ -413,6 +413,32 @@ class TestEnsureServiceUser:
         assert user.username == "mcp"
         assert user.must_change_password is False
 
+    def test_reserved_human_username_is_refused(self, db):
+        """#186 BLOCKER 3 (bonnyr-f5): a service account may not adopt a reserved
+        human identity such as `admin`. The call raises and never touches the row."""
+        import pytest
+        with pytest.raises(ValueError, match="reserved human username"):
+            ensure_service_user(db, username="admin", password="mcp-service-secret")
+
+    def test_reserved_username_does_not_rewrite_human_admin(self, db):
+        """The attack bonnyr reproduced: pointing the mcp reconcile at `admin`
+        would clear must_change and grant the mcp secret admin access. The guard
+        must leave the real admin row (its hash + must_change gate) intact."""
+        import pytest
+        from models import User
+        create_user(db, "admin", "admin@test.com", "human-admin-pw",
+                    role="admin", must_change_password=True)
+        db.commit()
+        with pytest.raises(ValueError):
+            ensure_service_user(db, username="admin", password="mcp-secret")
+        db.rollback()
+        admin = db.query(User).filter(User.username == "admin").first()
+        # Human admin credential + gate survive; the mcp secret never authenticates as admin.
+        assert admin.must_change_password is True
+        authenticate_user(db, "admin", "human-admin-pw")  # still the human's password
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "admin", "mcp-secret")
+
 
 class TestTokenUserState:
     """#184: the WS gate helper -- resolve the User row and fail CLOSED.

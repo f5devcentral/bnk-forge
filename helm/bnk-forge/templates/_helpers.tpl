@@ -116,6 +116,22 @@ in-cluster services and pulls secrets from the generated Secret.
   # still renders "false"; nil no longer renders a bare `value:` that makes
   # pydantic reject an empty string and the backend crashloop.
   value: {{ if kindIs "invalid" .Values.secrets.adminMustChange }}{{ "true" | quote }}{{ else }}{{ .Values.secrets.adminMustChange | quote }}{{ end }}
+# #186 BLOCKER 1 (bonnyr-f5 r5): the backend reconciles the mcp service account
+# to MCP_SERVICE_PASSWORD on every boot, so it must read the SAME per-install
+# secret the mcp client (mcp.yaml) reads -- otherwise removing the shipped
+# `changeme` default just makes the backend generate its own secret the client
+# can never match ("removes the default without plumbing the replacement").
+# Source both from the release Secret's mcp-* keys, identical to mcp.yaml.
+- name: MCP_SERVICE_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-username
+- name: MCP_SERVICE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "bnk-forge.fullname" . }}-secrets
+      key: mcp-password
 - name: DATABASE_URL
   value: "postgresql://bnkforge:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/bnkforge"
 - name: REDIS_URL

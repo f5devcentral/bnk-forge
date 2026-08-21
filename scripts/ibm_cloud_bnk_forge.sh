@@ -383,6 +383,12 @@ x-backend-env: &backend-env
   # Artifact (container-image) engine reaches the Docker daemon through the
   # scoped socket proxy below (loopback-published), never the raw host socket.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # #186 BLOCKER 1 (bonnyr-f5 r5): this installer writes a per-install random
+  # MCP_SERVICE_PASSWORD into .env (above). The backend reconciles the mcp
+  # account to it on boot, so it must receive it too — otherwise the backend
+  # generates its own secret and the mcp client can never authenticate.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules

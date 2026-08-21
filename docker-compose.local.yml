@@ -46,6 +46,11 @@ x-local-backend-env: &local-backend-env
   # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
   # e2e suite reach protected routes.
   DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186 BLOCKER 1 (bonnyr-f5 r5): the backend reconciles the mcp account to
+  # MCP_SERVICE_PASSWORD on every boot; plumb it (and the username) here or the
+  # backend generates a random secret the mcp client can never match.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
 
 # Shared bridge network — all services can resolve each other by service name
 networks:

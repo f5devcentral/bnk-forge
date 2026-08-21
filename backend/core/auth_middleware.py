@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from jose import JWTError
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
@@ -161,7 +162,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 # decode_token() would reject it. ~32 /api routes have no auth
                 # dependency of their own and rely on this middleware alone, so
                 # it must fully verify the token here, not defer to the route.
-                user = _verify_api_token(token)
+                #
+                # bonnyr-f5 #186 r5 (Major): _verify_api_token opens a SYNC DB
+                # session; awaiting it directly on the event-loop thread would
+                # block every concurrent request for the duration of the query.
+                # Off-load the blocking I/O to a worker thread so dispatch stays
+                # non-blocking (same treatment as token_user_state below).
+                user = await run_in_threadpool(_verify_api_token, token)
                 enforce_password_change(path, user)
             else:
                 from services.auth_service import decode_token, token_user_state
@@ -174,7 +181,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 # its own contract and the WS validators. Refuse it, don't skip the
                 # gate (bonnyr-f5 #186 r2: skipping was a fail-open bypass on the
                 # ~32 dependency-less routes).
-                jwt_user = token_user_state(token)
+                # bonnyr-f5 #186 r5 (Major): token_user_state opens a SYNC DB
+                # session on every authenticated request. Run it in a worker
+                # thread so the blocking DB round-trip never stalls the event
+                # loop (the gate previously only paid this cost for rare bnk_
+                # tokens; it now runs for every JWT request).
+                jwt_user = await run_in_threadpool(token_user_state, token)
                 if jwt_user is None:
                     raise UnauthorizedError("Token subject could not be resolved")
                 enforce_password_change(path, jwt_user)

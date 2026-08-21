@@ -209,6 +209,18 @@ _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 # at admin/changeme. Refused as a seed value and rotated out of any existing row.
 _KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
 
+# #186 BLOCKER 3 (bonnyr-f5 r5): usernames that belong to a HUMAN identity and
+# must never be resolved by ensure_service_user. That function locates its target
+# purely by ``User.username`` and then force-sets role=admin / is_active=True /
+# must_change_password=False. If MCP_SERVICE_USERNAME (or the Helm chart's
+# mcpUsername) is pointed at "admin", it would REWRITE the human admin row --
+# clearing the #184 must-change gate and handing the mcp secret full admin access
+# (probe: "mcp secret now authenticates as admin? YES role=admin must_change=False").
+# Refuse the co-option: a service account may not adopt a reserved human identity.
+# (Name kept identical to #188's guard so the two land cleanly on the integration
+# branch.)
+_RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
+
 
 class GeneratedCredentialPersistError(RuntimeError):
     """A generated credential could not be written to the keys dir.
@@ -430,18 +442,40 @@ def ensure_service_user(
       * existing row already holding a generated/operator secret -> left intact,
         so the reconcile is idempotent and does not churn the secret every boot.
 
-    Wiring the MCP client to a per-install generated/operator secret across every
-    distro (the chart's mcp-password provenance) is tracked in #188; this only
-    guarantees the published default can never authenticate.
+    #186 BLOCKER 1 (bonnyr-f5 r5): the backend now receives MCP_SERVICE_PASSWORD on
+    every deploy mode (compose backend-env anchors, the ibm installer, and the Helm
+    shared-env sourced from the release Secret's mcp-password key), so this reconcile
+    binds the mcp account to the SAME per-install secret the mcp client uses. A
+    reserved-name guard (above) refuses to run against a human username such as
+    ``admin``. #188's Helm mcp-secret work shares this credential surface.
     """
+    # #186 BLOCKER 3 (bonnyr-f5 r5): fail closed BEFORE any lookup if the caller
+    # points a service account at a reserved human username. Without this, a
+    # deployment that sets MCP_SERVICE_USERNAME=admin (or ships the chart's old
+    # mcpUsername: admin) silently rewrites the human admin row and grants the mcp
+    # secret admin access. A service account may never co-opt a human identity.
+    if username in _RESERVED_HUMAN_USERNAMES:
+        raise ValueError(
+            f"Refusing to provision service account under reserved human username "
+            f"{username!r}: a service account must not co-opt the human admin "
+            f"identity. Set MCP_SERVICE_USERNAME to a dedicated service name (#186)."
+        )
+
     published_default = bool(password) and password in _KNOWN_DEFAULT_SERVICE_PASSWORDS
     # An operator secret we may actually store, or None if there is nothing usable.
     usable_password = None if (not password or published_default) else password
 
-    # #186 (bonnyr-f5 r4, INV-8): lock the row for the read-then-write, so two
-    # `api` replicas reconciling/rotating this service account concurrently cannot
-    # desync the stored hash from the keys-file (same lockout hazard as the admin
-    # rotation above). No-op on SQLite (tests).
+    # #186 (bonnyr-f5 r4/r5, INV-8): lock the row for the read-then-write on the
+    # RECONCILE/ROTATE (existing-row) paths, so two `api` replicas cannot desync
+    # the stored hash from the keys-file (same lockout hazard as the admin rotation
+    # above). No-op on SQLite (tests). Caveat (bonnyr-f5 r5): with_for_update()
+    # cannot lock a row that does not exist yet, so the FIRST-CREATE path below is
+    # NOT serialised by this lock — it is serialised by the username UNIQUE
+    # constraint instead: a losing racer's INSERT raises IntegrityError and that
+    # boot's seed step fails closed and retries on the next start (both racers
+    # persist the same generated secret to the keys-file first, so a retry
+    # converges). Startup runs single-replica in every shipped topology, so the
+    # create race is theoretical; the reconcile lock is what matters at scale.
     user = db.query(User).filter(User.username == username).with_for_update().first()
 
     if user is None:
