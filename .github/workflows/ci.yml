@@ -37,7 +37,11 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # bonnyr-f5 #182: never cancel an in-flight CI run on the release branches --
+  # release.yml preflight polls that exact run by SHA, so a docs-only push (which
+  # triggers CI but not Release) would otherwise cancel it and strand the earlier
+  # commit's release. Feature branches still cancel to save minutes.
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'staging' }}
 
 permissions:
   contents: read
@@ -171,6 +175,12 @@ jobs:
           fi
           if grep -qE '(^|[[:space:]])FAIL:' <<< "$out"; then
             echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1
+          fi
+          # bonnyr-f5 #182: silence must not pass -- require positive evidence the
+          # harness actually ran (renaming its SELF_TEST guard produced empty
+          # output + rc=0, i.e. green with zero assertions).
+          if ! grep -qE '(^|[[:space:]])PASS:' <<< "$out"; then
+            echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1
           fi
 
   lint-frontend:

@@ -34,24 +34,17 @@ regexes = [
   # "signature_here"; used to test _looks_like_jwt().
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ0ZXN0In0\.signature_here''',
 ]
+
+[[rules]]
+id = "private-key"
+# bonnyr-f5 #182: scope the fixture private keys to the private-key rule only, so
+# a real AWS/GitHub/generic secret hidden in these same files is still caught --
+# a top-level [allowlist].paths would have disabled EVERY rule for them. The
+# .pyc/__pycache__ blanket entries were dropped (zero tracked files).
+[rules.allowlist]
 paths = [
-  # Throwaway RSA/Ed25519 keypairs generated solely to exercise paramiko key
-  # parsing. They authenticate nothing — no corresponding public key is
-  # deployed anywhere. See the note in the file header.
   '''backend/tests/unit/test_paramiko_utils\.py''',
-  # PEM headers wrapped around placeholder bodies, not key material:
-  #   test_agent_host_candidates.py        -> "MIIEowIBAAKCAQEA000000..."
-  #   test_routes_project_secrets.py       -> "fake"
-  #   test_infrastructure_access_service.py-> "MIIEowIBAAKCAQEAuTestKeyMaterial"
   '''backend/tests/component/test_agent_host_candidates\.py''',
   '''backend/tests/integration/test_routes_project_secrets\.py''',
   '''backend/tests/unit/test_infrastructure_access_service\.py''',
-  # Compiled bytecode of the sources above, which ARE scanned. Not a blanket
-  # directory skip of hand-written code, and it buys a clean local run without
-  # blinding CI (these are gitignored -- zero tracked files -- so a fresh
-  # checkout has none). frontend-v2/dist is deliberately NOT allowlisted: a
-  # built JS bundle is where VITE_*-style build-time secret injection lands, so
-  # it is the highest-value thing to scan, not to skip (#182 review).
-  '''.*__pycache__/.*''',
-  '''.*\.pyc$''',
 ]

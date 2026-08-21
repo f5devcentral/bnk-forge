@@ -464,7 +464,9 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh vm-bnk-forge/*.sh vm-bnk-forge/lib/*.sh
+	@# bonnyr-f5 #182: drive from git ls-files so the WHOLE corpus is gated
+	@# (the hardcoded globs missed 14 tracked scripts incl. dist/install.sh).
+	@git ls-files '*.sh' | xargs shellcheck --severity=warning
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
