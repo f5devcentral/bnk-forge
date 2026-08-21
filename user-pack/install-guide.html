@@ -300,6 +300,25 @@
   <p>If you pinned a specific build tag in <code>.env</code>, update <code>BNK_FORGE_VERSION</code>
      to the new tag before running the command above.</p>
 
+  <div class="callout-warn">
+    <div class="callout-title">Before upgrading an older install to 4.0.0</div>
+    If your <code>.env</code> predates this release, reconcile it first, or the upgrade will fail
+    to pull or refuse to boot:
+    <ul>
+      <li><b>Registry &amp; version.</b> Set <code>BNK_FORGE_REGISTRY=ghcr.io/f5devcentral</code>
+          (older packages pointed at a private org that no longer resolves), and replace any pinned
+          <code>BNK_FORGE_VERSION</code> such as <code>3.0.1</code> with <code>latest</code> or a
+          current tag like <code>3.1.6</code> — a stale pin pulls a tag that no longer exists.</li>
+      <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
+          <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
+          your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
+      <li><b>MCP service credential.</b> In staging/production the backend now refuses to boot if
+          <code>MCP_SERVICE_PASSWORD</code> is unset or still the shipped default. Set it to a real
+          secret (the same value the MCP server receives as <code>BNK_FORGE_PASSWORD</code>) before
+          upgrading, or the stack will exit at startup.</li>
+    </ul>
+  </div>
+
   <!-- ── Uninstall ── -->
   <h2>Uninstall</h2>
 

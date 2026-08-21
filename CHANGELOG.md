@@ -18,9 +18,10 @@ that release is cut.
 >
 > 1. **Container runner non-root gate:** it now refuses *named* users — an image
 >    using the distroless-standard `USER nonroot` is rejected. Switch it to a
->    numeric uid. Use **`USER 1000`** (it can write the workspace, which is
->    chowned `1000:1000`); `USER 65532` clears the gate but cannot write the
->    workspace without a relaxed mount mode.
+>    numeric uid. Use **`USER 1000`**: the workspace is mounted from the host
+>    and chowned `1000:1000`, so uid 1000 is the only value that clears the gate
+>    *and* can write it. A higher uid such as `65532` passes the non-root gate but
+>    cannot write the workspace, so the step fails on its first write.
 > 2. **`MCP_SERVICE_PASSWORD` is now required (bonnyr-f5 #188):** in
 >    staging/production the backend refuses to boot if it is unset or still the
 >    shipped default (`changeme` / `mcp-service-changeme`). Every existing

@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - Docker Engine 24+ with Compose v2.24+
-#   - Authenticated to the container registry (if private)
+#   - Network access to ghcr.io (images are public — no registry login required)
 #
 # Configuration:
 #   Copy .env.example to .env and set your passwords before first start.
@@ -19,8 +19,8 @@
 
 # ── Registry configuration ──────────────────────────────────────────────────
 # Set BNK_FORGE_REGISTRY and BNK_FORGE_VERSION in .env or environment:
-#   BNK_FORGE_REGISTRY=ghcr.io/your-org    (no trailing slash)
-#   BNK_FORGE_VERSION=3.0.1                (or "latest")
+#   BNK_FORGE_REGISTRY=ghcr.io/f5devcentral    (no trailing slash)
+#   BNK_FORGE_VERSION=3.1.6                (or "latest")
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
@@ -160,7 +160,7 @@ services:
           memory: 32M
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -201,7 +201,7 @@ services:
           memory: 256M
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -233,7 +233,7 @@ services:
           memory: 512M
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -265,7 +265,7 @@ services:
           memory: 512M
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -295,7 +295,7 @@ services:
           memory: 64M
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -321,7 +321,7 @@ services:
           memory: 32M
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -347,7 +347,7 @@ services:
           memory: 32M
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
