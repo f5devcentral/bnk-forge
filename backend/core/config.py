@@ -110,29 +110,35 @@ class Settings(BaseSettings):
     # must-change gate so the suite can reach protected routes. Defaults True;
     # never set false on a real deployment.
     DEFAULT_ADMIN_MUST_CHANGE: bool = True
-    # #186 BLOCKER 1: MCP_SERVICE_PASSWORD is the same class of shipped default as
-    # DEFAULT_ADMIN_PASSWORD above (the seeded 'mcp' account is role=admin and
-    # exempt from the must-change gate), so it must NEVER carry a published value.
-    # Defaults to None; when unset ensure_service_user generates a random secret
-    # and surfaces it once, and a published default (mcp-service-changeme) is
-    # refused as a seed value and rotated out of any existing row.
-    #
-    # #186 BLOCKER 1 (bonnyr-f5 r5): the BACKEND now receives MCP_SERVICE_PASSWORD
-    # on every deploy mode (the backend-env anchors in every compose file, the
-    # ibm installer, and the Helm shared-env in _helpers.tpl sourced from the
-    # release Secret's mcp-password key), so it reconciles the mcp account to the
-    # same per-install secret the mcp client uses instead of generating a private
-    # one the client can never match. The reserved-name guard in
-    # ensure_service_user and #188's Helm mcp-secret work share this credential
-    # surface; see the PR discussion for the #186/#188 integration split.
     MCP_SERVICE_USERNAME: str = "mcp"
-    # #187: shared secret between the backend (which seeds the `mcp` service
-    # account) and the MCP server (which authenticates with it). Defaults to
-    # None -- never a shipped value like "mcp-service-changeme", which is a live
-    # admin credential. It can't be auto-generated (both sides must receive the
-    # same value), so it must be set explicitly; validate_production fails fast
-    # in staging/prod, and when unset the backend simply doesn't seed the account
-    # (MCP is unavailable until it's configured).
+    # #187/#188: shared secret between the backend (which seeds the `mcp` service
+    # account) and the MCP server (which authenticates with it). The seeded 'mcp'
+    # account is role=admin and exempt from the #184 must-change gate, so this
+    # value must NEVER carry a published default like "mcp-service-changeme" — that
+    # would be a live, publicly-known admin credential.
+    #
+    # Defaults to None. It CANNOT be auto-generated: both sides must receive the
+    # SAME value, so it must be set explicitly. validate_production fails fast
+    # (SystemExit) under ENVIRONMENT=staging|production when it is unset or a known
+    # default.
+    #
+    # Merged behaviour (#186 + #188 — #188's "unset -> disable" was chosen over
+    # #186's "unset -> generate"): when this is UNSET (or a known published
+    # default), startup_steps.seed_auth_step does NOT call ensure_service_user
+    # (its _mcp_pw_usable gate is false); it calls disable_stale_service_user
+    # instead, so the 'mcp' account is left DISABLED/unavailable until an operator
+    # configures a real password (which re-seeds and re-activates the row). No
+    # random secret is generated and nothing is surfaced.
+    #
+    # When it IS set to a usable value: the BACKEND receives MCP_SERVICE_PASSWORD
+    # on every deploy mode (the backend-env anchors in every compose file, the ibm
+    # installer, and the Helm shared-env in _helpers.tpl sourced from the release
+    # Secret's mcp-password key), and ensure_service_user reconciles the 'mcp'
+    # account's stored hash to it — the same per-install secret the mcp client
+    # uses — so the env var can be rotated without auth drift. Any row still
+    # holding a shipped published default is refused as a seed value and rotated
+    # out on upgrade. The reserved-name guard in ensure_service_user and #188's
+    # Helm mcp-secret work share this credential surface.
     MCP_SERVICE_PASSWORD: str | None = None
 
     # Benchmark agent auth flag.

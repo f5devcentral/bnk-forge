@@ -1542,7 +1542,15 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
       - BENCHMARK_AGENT_AUTH_REQUIRED ON  → token + agent_id claim match (close 4401).
       - REQUIRE_AUTH ON (global JWT, M2)  → valid token required (close 4001).
     """
-    close_code = _agent_ws_authorized(websocket, agent_id)
+    # #193 (CR-2): _agent_ws_authorized is fully synchronous and calls
+    # token_user_state, which opens a SYNC DB session. Run the whole helper off the
+    # event loop so the handshake never blocks it (same intent as
+    # core/auth_middleware.py's run_in_threadpool(token_user_state, ...)). The
+    # helper only reads websocket.query_params and returns a close code — it awaits
+    # nothing — so it is safe to run in a thread; the caller still does the async
+    # websocket.close() below.
+    from starlette.concurrency import run_in_threadpool
+    close_code = await run_in_threadpool(_agent_ws_authorized, websocket, agent_id)
     if close_code is not None:
         await websocket.close(code=close_code)
         logger.warning("Agent %d WS rejected: missing/invalid token", agent_id)

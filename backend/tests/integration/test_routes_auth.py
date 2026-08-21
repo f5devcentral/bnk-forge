@@ -267,12 +267,13 @@ class TestServiceAccountReEnableGuard:
     def _seed_disabled_default_mcp(self, db):
         # Simulate a pre-#186 upgrade row that GENUINELY holds bcrypt("mcp-service
         # -changeme"). The merged ensure_service_user (integration: #186 + #188)
-        # refuses to STORE a published default — it generates a random secret
-        # instead — so build the legacy row directly, exactly as an already-deployed
-        # DB carries it: the v2_155 migration flags it is_service_account=True, and
-        # disable_stale_service_user then deactivates it. This is precisely the state
-        # the PUT-route guard defends against (re-enabling would resurrect the
-        # publicly-known default).
+        # REFUSES a published default as a seed value (#193: the generate-on-default
+        # path was removed — the unset/default case is owned by
+        # disable_stale_service_user), so build the legacy row directly, exactly as
+        # an already-deployed DB carries it: the v2_155 migration flags it
+        # is_service_account=True, and disable_stale_service_user then deactivates
+        # it. This is precisely the state the PUT-route guard defends against
+        # (re-enabling would resurrect the publicly-known default).
         from services.auth_service import create_user, disable_stale_service_user
         mcp = create_user(
             db,

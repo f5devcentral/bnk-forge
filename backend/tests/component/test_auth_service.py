@@ -9,6 +9,7 @@ Pure functions (hash, verify, token) are covered in unit tests.
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from core.config import settings
 from core.errors import BadRequestError, ConflictError, UnauthorizedError
@@ -230,6 +231,53 @@ class TestSeedAdminUser:
         mode = stat.S_IMODE(os.stat(pw).st_mode)
         assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
+    def test_persist_tightens_a_preexisting_0644_file_to_0600(self, monkeypatch, tmp_path):
+        # CR-5: os.open's mode arg applies ONLY on create. A pre-existing 0644 file
+        # from an older release would be truncated in place but keep 0644 — writing
+        # the generated secret world-readable. _persist_generated_password must
+        # fchmod it to 0600 regardless of the prior mode.
+        import os
+        import stat
+
+        from services.auth_service import _persist_generated_password
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+        stale = tmp_path / "initial_admin_password"
+        stale.write_text("old-secret\n")
+        os.chmod(stale, 0o644)
+        assert stat.S_IMODE(stale.stat().st_mode) == 0o644  # precondition
+        path = _persist_generated_password("brand-new-secret")
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600  # tightened
+        with open(path) as fh:
+            assert fh.read().strip() == "brand-new-secret"
+
+    def test_losing_replica_does_not_clobber_keys_file(self, db, monkeypatch, tmp_path):
+        # CR-1: on a concurrent fresh boot with DEFAULT_ADMIN_PASSWORD unset, both
+        # replicas see 0 users and each GENERATES a different password. The losing
+        # replica's create_user('admin') INSERT loses the username UNIQUE
+        # constraint (IntegrityError). It must roll back and NOT overwrite the keys
+        # file, or the file (loser's pw) and the committed row (winner's pw) would
+        # disagree and permanently lock the operator out.
+        import services.auth_service as auth_mod
+        from models import User
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+        # The winner already committed its row and persisted the matching file.
+        key_file = tmp_path / "initial_admin_password"
+        key_file.write_text("winner-password-from-replica-A\n")
+
+        def _boom(*_a, **_k):
+            # Simulate the losing INSERT: create_user flushes and the UNIQUE
+            # constraint fires.
+            raise IntegrityError("INSERT INTO users", {}, Exception("duplicate username"))
+        monkeypatch.setattr(auth_mod, "create_user", _boom)
+
+        result = seed_admin_user(db)
+        assert result is None  # deferred to the winning replica
+        # The keys file was NOT clobbered with the loser's generated password.
+        assert key_file.read_text() == "winner-password-from-replica-A\n"
+        # The aborted transaction left no half-seeded row.
+        assert db.query(User).filter(User.username == "admin").count() == 0
+
     def test_rotates_existing_admin_still_on_a_known_default(self, db, tmp_path):
         # #186 (bonnyr-f5): an upgrade left admin/'changeme' with
         # must_change_password=False -- the seed logic never re-runs for it. On
@@ -323,6 +371,24 @@ class TestSeedAdminUser:
 # ── ensure_service_user ──────────────────────────────────────────────
 
 
+def _seed_legacy_stale_service_row(db, username="mcp", password="mcp-service-changeme"):
+    """Build a pre-fix / pre-provenance service-account row directly.
+
+    An older release seeded the 'mcp' account holding the shipped published
+    default; the v2_155 backfill flags the known legacy row is_service_account on
+    upgrade. ensure_service_user NO LONGER creates such a row (it now refuses a
+    published default — that dead generate/rotate-on-unset path was removed in the
+    #193 review), so tests that need a stale service row build it here.
+    """
+    from services.auth_service import create_user, hash_password
+    user = create_user(db, username, f"{username}@bnk-forge.local", password,
+                       role="admin", must_change_password=False)
+    user.hashed_password = hash_password(password)
+    user.is_service_account = True
+    db.commit()
+    return user
+
+
 class TestEnsureServiceUser:
     @pytest.fixture(autouse=True)
     def _isolate_keys_dir(self, monkeypatch, tmp_path):
@@ -375,8 +441,8 @@ class TestEnsureServiceUser:
     def test_disable_stale_service_user_deactivates_mcp(self, db):
         # #188: upgrade with MCP_SERVICE_PASSWORD unset must not leave the old
         # mcp/'mcp-service-changeme' account authenticating.
-        from services.auth_service import disable_stale_service_user, ensure_service_user
-        ensure_service_user(db, username="mcp", password="mcp-service-changeme")  # sets is_service_account
+        from services.auth_service import disable_stale_service_user
+        _seed_legacy_stale_service_row(db)  # sets is_service_account
         disable_stale_service_user(db)
         from models import User
         assert db.query(User).filter(User.username == "mcp").first().is_active is False
@@ -393,9 +459,8 @@ class TestEnsureServiceUser:
             authenticate_user,
             create_user,
             disable_stale_service_user,
-            ensure_service_user,
         )
-        ensure_service_user(db, username="mcp", password="mcp-service-changeme")  # legacy service row
+        _seed_legacy_stale_service_row(db)  # legacy service row
         create_user(db, "admin", "admin@bnk-forge.local", "human-admin-pw", role="admin")
         db.commit()
         disable_stale_service_user(db)  # startup no longer passes a username at all
@@ -439,7 +504,7 @@ class TestEnsureServiceUser:
         # with "Account is disabled" despite a correct password.
         from models import User
         from services.auth_service import disable_stale_service_user, ensure_service_user
-        ensure_service_user(db, username="mcp", password="mcp-service-changeme")
+        _seed_legacy_stale_service_row(db)
         disable_stale_service_user(db)
         assert db.query(User).filter(User.username == "mcp").first().is_active is False
         # Operator now configures a real secret -> reconcile must revive the account.
@@ -454,50 +519,62 @@ class TestEnsureServiceUser:
     # ── #186 BLOCKER 1: the published mcp default must never authenticate ──
 
     @pytest.mark.parametrize("published_default", ["mcp-service-changeme", "changeme"])
-    def test_published_default_seed_cannot_authenticate(self, db, published_default):
-        """Seeding the mcp account with a shipped default must NOT store that
-        value — the published credential can never authenticate."""
-        from core.errors import UnauthorizedError as UnauthError
-        ensure_service_user(db, username="mcp", password=published_default)
+    def test_published_default_seed_is_refused(self, db, published_default):
+        """#193: seeding the mcp account with a shipped published default is
+        REFUSED (ValueError) and creates no row. The merged model treats unset /
+        published-default as "not usable"; that case is owned by
+        disable_stale_service_user, never seeded here — the old generate-on-default
+        path was removed. seed_auth_step's _mcp_pw_usable gate means this branch is
+        only ever reached defensively, but it must still fail closed."""
         from models import User
-        assert db.query(User).filter(User.username == "mcp").count() == 1
-        with pytest.raises(UnauthError):
-            authenticate_user(db, "mcp", published_default)
+        with pytest.raises(ValueError, match="usable MCP_SERVICE_PASSWORD"):
+            ensure_service_user(db, username="mcp", password=published_default)
+        assert db.query(User).filter(User.username == "mcp").count() == 0
 
-    def test_none_password_seeds_generated_secret(self, db):
-        """MCP_SERVICE_PASSWORD unset (None) still creates the row, but with a
-        generated secret — neither None nor the published default authenticates."""
-        from core.errors import UnauthorizedError as UnauthError
-        ensure_service_user(db, username="mcp", password=None)
+    def test_none_password_is_refused(self, db):
+        """#193: MCP_SERVICE_PASSWORD unset (None) is REFUSED and creates no row.
+        The unset case is handled by disable_stale_service_user (account left
+        disabled), not by generating a secret here — that dead path was removed."""
         from models import User
-        assert db.query(User).filter(User.username == "mcp").count() == 1
-        with pytest.raises(UnauthError):
-            authenticate_user(db, "mcp", "mcp-service-changeme")
+        with pytest.raises(ValueError, match="usable MCP_SERVICE_PASSWORD"):
+            ensure_service_user(db, username="mcp", password=None)
+        assert db.query(User).filter(User.username == "mcp").count() == 0
 
-    def test_upgrade_rotates_existing_published_default(self, db):
+    def test_upgrade_disables_backfilled_published_default(self, db):
         """An account carried over from a pre-fix install still holding the
-        published default is OVERWRITTEN with a random secret on next boot."""
+        published default is neutralised on upgrade by disable_stale_service_user
+        (unset MCP_SERVICE_PASSWORD path): the v2_155 backfill flags it
+        is_service_account, and the provenance-keyed disable deactivates it so the
+        published default can no longer authenticate. ensure_service_user is NOT
+        called on the unset path — disable owns it."""
         from core.errors import UnauthorizedError as UnauthError
-        from services.auth_service import create_user, hash_password
-        # Simulate the pre-fix seeded row: hash of the published default.
-        user = create_user(db, username="mcp", email="mcp@bnk-forge.local",
-                           password="mcp-service-changeme", role="admin")
-        db.commit()
-        assert authenticate_user(db, "mcp", "mcp-service-changeme")  # live before fix
-        ensure_service_user(db, username="mcp", password=None)  # unset env on upgrade boot
+        from services.auth_service import disable_stale_service_user
+        _seed_legacy_stale_service_row(db)  # published default + is_service_account (backfill)
+        assert authenticate_user(db, "mcp", "mcp-service-changeme")  # live before upgrade
+        disable_stale_service_user(db)  # unset MCP_SERVICE_PASSWORD upgrade boot
         with pytest.raises(UnauthError):
-            authenticate_user(db, "mcp", "mcp-service-changeme")  # dead after fix
+            authenticate_user(db, "mcp", "mcp-service-changeme")  # dead after upgrade
 
-    def test_generated_secret_not_churned_on_reboot(self, db):
-        """With no operator password, a row already holding a generated (non-
-        default) secret is left untouched — reboots don't rotate it, so the MCP
-        client's retrieved secret keeps working."""
+    def test_adopts_and_reconciles_a_legacy_row_holding_a_published_default(self, db):
+        """#186 integration (reachable adopt path): a row NOT flagged
+        is_service_account but still holding a shipped published default is a stale
+        service credential from a pre-provenance install. When a REAL
+        MCP_SERVICE_PASSWORD is configured, ensure_service_user ADOPTS it (flags
+        provenance) and reconciles to the real secret instead of refusing — the
+        published default stops working."""
         from models import User
-        ensure_service_user(db, username="mcp", password=None)
-        first_hash = db.query(User).filter(User.username == "mcp").first().hashed_password
-        ensure_service_user(db, username="mcp", password=None)
-        second_hash = db.query(User).filter(User.username == "mcp").first().hashed_password
-        assert first_hash == second_hash
+        from services.auth_service import create_user, hash_password
+        u = create_user(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme",
+                        role="admin", must_change_password=False)
+        u.hashed_password = hash_password("mcp-service-changeme")
+        # is_service_account intentionally left False (pre-provenance row).
+        db.commit()
+        ensure_service_user(db, username="mcp", password="a-real-strong-secret")
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert mcp.is_service_account is True          # adopted
+        assert authenticate_user(db, "mcp", "a-real-strong-secret").username == "mcp"
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "mcp-service-changeme")  # published default dead
 
     def test_operator_password_still_reconciles(self, db):
         """A genuine operator-set password is honored (MCP stays usable when the
@@ -649,40 +726,8 @@ class TestUnwritableKeysDirNeverLeaksPlaintext:
         admin = db.query(User).filter(User.username == "admin").first()
         assert verify_password("changeme", str(admin.hashed_password))
 
-    def test_service_seed_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
-        import logging
-
-        from models import User
-        from services.auth_service import GeneratedCredentialPersistError
-        self._unwritable_keys(monkeypatch, tmp_path)
-        caplog.set_level(logging.DEBUG)
-        with pytest.raises(GeneratedCredentialPersistError) as ei:
-            ensure_service_user(db, username="mcp", password=None)
-        assert self.SENTINEL not in str(ei.value)
-        self._assert_no_leak(caplog)
-        assert db.query(User).filter(User.username == "mcp").first() is None
-
-    def test_service_rotate_fails_closed_no_leak(self, db, monkeypatch, tmp_path, caplog):
-        import logging
-
-        from models import User
-        from services.auth_service import (
-            GeneratedCredentialPersistError,
-            hash_password,
-        )
-        from services.auth_service import (
-            create_user as _cu,
-        )
-        u = _cu(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme",
-                role="admin", must_change_password=False)
-        u.hashed_password = hash_password("mcp-service-changeme")
-        db.commit()
-        self._unwritable_keys(monkeypatch, tmp_path)
-        caplog.set_level(logging.DEBUG)
-        with pytest.raises(GeneratedCredentialPersistError) as ei:
-            ensure_service_user(db, username="mcp", password=None)
-        assert self.SENTINEL not in str(ei.value)
-        self._assert_no_leak(caplog)
-        # Published default hash untouched -> next boot retries the rotation.
-        mcp = db.query(User).filter(User.username == "mcp").first()
-        assert verify_password("mcp-service-changeme", str(mcp.hashed_password))
+    # NOTE (#193): the service-account seed/rotate-on-unset paths were removed —
+    # ensure_service_user no longer generates or persists a secret (it requires a
+    # usable password; the unset case is owned by disable_stale_service_user), so
+    # the two former "service seed/rotate fails closed" cases no longer exist. Only
+    # the admin seed + admin rotation still generate, and are covered above.

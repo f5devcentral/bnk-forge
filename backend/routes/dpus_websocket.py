@@ -61,8 +61,13 @@ async def _validate_ws_token(websocket: WebSocket, token: str | None) -> bool:
         # #184: fail closed on the actual User row (see k8s_websocket) -- refuse
         # if it can't be resolved or still owes a password change, so a
         # seed-credential admin never reaches the DPU console / BMC SSH.
+        # bonnyr-f5 #186 r5 / #193 (CR-2): token_user_state opens a SYNC DB session;
+        # run it off the event loop so the handshake never blocks it (same treatment
+        # as core/auth_middleware.py).
+        from starlette.concurrency import run_in_threadpool
+
         from services.auth_service import token_user_state
-        ws_user = token_user_state(token)
+        ws_user = await run_in_threadpool(token_user_state, token)
         if ws_user is None or ws_user.must_change_password:
             await websocket.close(code=4401, reason="Unauthorized")
             return False
