@@ -94,7 +94,9 @@ major). One repo-specific trap worth stating outright:
   gates that got skipped (ShellCheck, Script Self-Tests, Secret Scan) were exactly the
   ones that mattered. Refer to it indirectly instead: "CI suppressed", "the skip-CI
   marker", or split it across backticks. The release job's *deliberate* skip is the
-  only legitimate use, and it lands on the subject line where the release loop reads it.
+  only legitimate use — and the release loop's own skip-detection grep is
+  line-oriented over the whole message (`^\[skip ci\]` / `\[skip ci\]$` anchored
+  per line), so it matches the marker on any line, not just the subject.
 
 ---
 

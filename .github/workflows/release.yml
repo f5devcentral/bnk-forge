@@ -424,7 +424,18 @@ jobs:
           # own --list, so a newly-synced file can never be left unstaged and die
           # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
           # files, the hard-coded `git add` staged three).
-          while IFS= read -r f; do git add "$f"; done < <(bash scripts/sync-version-artifacts.sh --list)
+          staged=0
+          while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
+          # if --list ever yields fewer paths (script broke / was truncated) the
+          # add + verify loops both go silent and we would commit a bare VERSION
+          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
+          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
+          # per-file "not fully staged" check below cannot catch this: it runs the
+          # same possibly-empty --list, so an empty list makes it vacuously pass.
+          if [ "$staged" -lt 5 ]; then
+            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          fi
           # Verify the INDEX, not the files: --write's post-write check re-reads
           # the files (correct on disk even when unstaged), so assert each synced
           # artifact has no unstaged residue — i.e. the sync is actually in the
@@ -570,7 +581,18 @@ jobs:
           # own --list, so a newly-synced file can never be left unstaged and die
           # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
           # files, the hard-coded `git add` staged three).
-          while IFS= read -r f; do git add "$f"; done < <(bash scripts/sync-version-artifacts.sh --list)
+          staged=0
+          while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
+          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
+          # if --list ever yields fewer paths (script broke / was truncated) the
+          # add + verify loops both go silent and we would commit a bare VERSION
+          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
+          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
+          # per-file "not fully staged" check below cannot catch this: it runs the
+          # same possibly-empty --list, so an empty list makes it vacuously pass.
+          if [ "$staged" -lt 5 ]; then
+            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          fi
           # Verify the INDEX, not the files: --write's post-write check re-reads
           # the files (correct on disk even when unstaged), so assert each synced
           # artifact has no unstaged residue — i.e. the sync is actually in the

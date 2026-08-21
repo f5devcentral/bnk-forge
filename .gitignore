@@ -278,3 +278,7 @@ next-session-prompt
 agent-selection
 handoffs/
 *.code-workspace
+
+# Transient sed backup files from scripts/sync-version-artifacts.sh --write
+# (removed on success; gitignored so an interrupted run leaves no tracked litter)
+*.syncbak

@@ -84,7 +84,7 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
         test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
         test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
-        lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
+        lint lint-backend lint-frontend shellcheck coverage quick-check version-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
         build build-retry build-backend build-frontend build-worker build-agent build-all \
@@ -684,9 +684,19 @@ check-migrations:
 	@echo "=== Migration Chain Validator ==="
 	@python3 scripts/check-migrations.py
 
+# ── Version-artifact consistency ─────────────────────────────────────────────
+# Mirror of CI's "P1 · Version Consistency" job. ci.yml promises `make pre-push`
+# ≡ CI, so the gate must be reachable from the documented local target or drift
+# is undetectable until the release job dies (bonnyr-f5 #180 r5, F3). Pulled in
+# by quick-check (a pre-push prerequisite).
+version-check:
+	@echo ""
+	@echo "=== Version Artifact Consistency (Helm tag/appVersion, frontend, operator) ==="
+	@bash scripts/sync-version-artifacts.sh --check
+
 # ── Quick check (~15s): lint + types + contracts ────────────────────────────
 # Run before every commit. Catches most CI failures instantly.
-quick-check: lint typecheck-backend openapi-types-check check-migrations
+quick-check: lint typecheck-backend openapi-types-check check-migrations version-check
 	@echo ""
 	@echo "========================================="
 	@echo "  Quick check passed (~15s)"
