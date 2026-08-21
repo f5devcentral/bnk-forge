@@ -16,57 +16,63 @@ set -euo pipefail
 # if the extractor is narrower a break bumps the major with no note; if wider a
 # note appears with no bump.
 #
-# A breaking change is a `type!:` subject, a `BREAKING CHANGE:` footer, or a
-# `BREAKING-CHANGE:` footer. Two robustness problems drove r4:
-#  * SUBJECT folding -- with no blank line before it, git folds the footer into
-#    %s and leaves %b empty, so a body-only check ships a major as a patch
-#    (bonnyr-f5 #179 r4). The subject is checked for a folded `BREAKING[ -]CHANGE:`
-#    footer, colon REQUIRED so subject prose ("explain the BREAKING CHANGE footer")
-#    does not trigger.
-#  * WRAPPED prose -- a bare `^` still matched a prose paragraph that WRAPPED so
-#    the marker fell at column 1 (commit 8415ce1, this branch). The body match is
-#    PARAGRAPH-initial: the marker line is the first body line or is preceded by a
-#    blank line. That keeps the real #2 break (marker preceded by a blank line)
-#    and rejects wrapped prose. No colon required, because #2 declares its break
-#    as "BREAKING CHANGE, called out" with no colon.
+# A marker counts as a real footer when its line is preceded by a blank line OR by
+# another trailer line -- the footer block is "a blank line then a run of trailers",
+# and a footer may directly follow another footer (conventional-commits' own
+# canonical example, bonnyr-f5 #179 r5 Major 1). Wrapped prose (a marker after a
+# PROSE line) is still rejected. _is_breaking_subject is now BANG-ONLY: the folded-
+# footer-in-subject is caught by running _is_breaking_body on %B (which preserves
+# the newline git folds into %s), and scanning the raw subject for the marker
+# over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
 _is_breaking_subject() {
-  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1" \
-    || grep -qE 'BREAKING[ -]CHANGE:' <<< "$1"
+  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
 }
 _is_breaking_body() {
   awk '
-    BEGIN { blank = 1 }
-    /^[[:space:]]*$/ { blank = 1; next }
-    { if (blank && $0 ~ /^(\*\*)?BREAKING[ -]CHANGE/) found = 1; blank = 0 }
+    BEGIN { prev_blank = 1; prev_trailer = 0 }
+    /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
+    {
+      is_marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
+      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
+      if ((prev_blank || prev_trailer) && is_marker) found = 1
+      prev_blank = 0; prev_trailer = is_trailer
+    }
     END { exit(found ? 0 : 1) }
   ' <<< "$1"
 }
 
 # Emit the BREAKING CHANGE footer paragraph(s) -- flattened, markdown-bold
-# stripped. Capture starts only at a PARAGRAPH-initial marker (same rule as
-# _is_breaking_body, so trigger and note never disagree) and STOPS at the first
-# trailer-shaped line (`Word-Word: ...`) or at prose, so a `Co-Authored-By:`
-# email or a `Claude-Session:` URL sitting under the footer is never published to
-# a public release (bonnyr-f5 #179 r4). A following BREAKING CHANGE paragraph is
-# kept, so a second footer is not dropped.
+# stripped. Takes the FULL raw message (%B). Capture starts only at a footer-
+# anchored marker (preceded by a blank line OR another trailer -- same rule as
+# _is_breaking_body, so trigger and note never disagree) and captures the WHOLE
+# footer paragraph, including ordinary prose continuation lines that merely
+# contain a colon (`migration:`, `Note:`). The round-4 note stopped at the FIRST
+# trailer-shaped continuation line, truncating 7ece9b04's real bullet mid-sentence
+# (bonnyr-f5 #179 r5 Major 2). Only a TRAILING run of real trailer lines is then
+# stripped (the second awk), so a Co-Authored-By / Claude-Session / X-Session-1
+# block after the footer is removed -- no public-notes leak, including the digit-
+# token and no-space `Session:` forms (r5 Minor 2) -- while mid-footer prose stays.
 _breaking_note() {
   awk '
-    BEGIN { blank = 1 }
+    BEGIN { prev_blank = 1; prev_trailer = 0 }
     {
-      if ($0 ~ /^[[:space:]]*$/) { blank = 1; next }
-      marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
-      trailer = ($0 ~ /^[A-Za-z][A-Za-z-]*: /)
+      if ($0 ~ /^[[:space:]]*$/) { if (p) para_end = 1; prev_blank = 1; prev_trailer = 0; next }
+      is_marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
+      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
       if (!p) {
-        if (blank && marker) { p = 1; print }
-      } else if (blank) {
-        if (marker) { print ""; print } else { exit }
-      } else {
-        if (trailer && !marker) exit
-        print
-      }
-      blank = 0
+        if ((prev_blank || prev_trailer) && is_marker) { p = 1; print }
+      } else if (para_end) {
+        if (prev_blank && is_marker) { print ""; print; para_end = 0 } else { exit }
+      } else { print }
+      prev_blank = 0; prev_trailer = is_trailer
     }
-  ' <<< "$1" | sed 's/\*\*//g' | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//'
+  ' <<< "$1" \
+  | awk '{ a[NR] = $0 } END {
+      n = NR
+      while (n > 1 && a[n] ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/ && a[n] !~ /^(\*\*)?BREAKING[ -]CHANGE/) n--
+      for (i = 1; i <= n; i++) print a[i]
+    }' \
+  | sed 's/\*\*//g' | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//'
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -145,10 +151,43 @@ if [[ "${1:-}" == "--self-test" ]]; then
     echo "  ok: note stops before trailers (no email/URL leak) -> ${_leak:0:48}"
   else echo "FAIL: note leaked a trailer -> '$_leak'"; fail=1; fi
 
-  # r4 BLOCKER 2 -- a footer git FOLDED into the subject (no blank line before it)
-  # must be seen; subject prose that merely names the marker must not.
-  _assert_subject "folded footer in subject"  "fix: tighten the thing BREAKING CHANGE: the config key was renamed" 1
-  _assert_subject "prose names marker in subj" "docs: explain the BREAKING CHANGE footer" 0
+  # Subject detector is BANG-ONLY now (r5): prose that merely names the marker,
+  # with or without a colon, must NOT trigger via the subject path.
+  _assert_subject "prose names marker in subj"  "docs: explain the BREAKING CHANGE footer" 0
+  _assert_subject "docs quotes marker w/ colon"  "docs: clarify what BREAKING CHANGE: means" 0
+
+  # r4 BLOCKER 2 / r5 -- a footer git FOLDED into the subject is a real TWO-LINE
+  # message with no blank line. Derivation/extraction read %B; the subject line is
+  # trailer-shaped, so the marker on the next line anchors as a footer → trigger.
+  _assert "folded footer via %B (two-line)" $'fix: tighten the thing\nBREAKING CHANGE: the config key was renamed' 1
+
+  # r5 Major 1 -- a BREAKING CHANGE footer stacked directly after another trailer
+  # with NO blank line between (conventional-commits' canonical example) triggers,
+  # and the note starts at the marker (the preceding trailer is not captured).
+  _assert "stacked footer (after trailer)" $'feat: x\n\nReviewed-by: Z\nBREAKING CHANGE: drops the old API' 1
+  _stk=$(_breaking_note $'feat: x\n\nReviewed-by: Z\nBREAKING CHANGE: drops the old API')
+  assertions=$((assertions + 1))
+  if [[ "$_stk" == *"drops the old API"* && "$_stk" != *"Reviewed-by"* ]]; then
+    echo "  ok: stacked footer note starts at marker -> ${_stk:0:48}"
+  else echo "FAIL: stacked footer note wrong -> '$_stk'"; fail=1; fi
+
+  # r5 Major 2 -- the note must NOT truncate at the first prose `word:` line. A
+  # footer whose continuation contains ordinary prose colons (`migration:`) keeps
+  # the WHOLE paragraph; only a TRAILING run of real trailers is stripped.
+  _notrunc=$(_breaking_note $'feat: y\n\nBREAKING CHANGE: the runner changed.\nmigration: run the tool first.\nThat is the whole story.')
+  assertions=$((assertions + 1))
+  if [[ "$_notrunc" == *"migration: run the tool first."* && "$_notrunc" == *"That is the whole story."* ]]; then
+    echo "  ok: note keeps prose continuation -> ${_notrunc:0:56}"
+  else echo "FAIL: note truncated on prose colon -> '$_notrunc'"; fail=1; fi
+
+  # r5 Minor 2 -- a trailer with a digit/dot token (`X-Session-1:`) or a no-space
+  # colon (`Session:` at line end) directly under the footer must be stripped, not
+  # leaked. The old `[A-Za-z][A-Za-z-]*: ` stop missed both.
+  _leak2=$(_breaking_note $'feat: x\n\nBREAKING CHANGE: the key moved.\nX-Session-1: 0decafbad\nClaude-Session: https://claude.ai/code/session_XYZ\nSession:')
+  assertions=$((assertions + 1))
+  if [[ "$_leak2" == *"the key moved"* && "$_leak2" != *"0decafbad"* && "$_leak2" != *"claude.ai"* && "$_leak2" != *"Session"* ]]; then
+    echo "  ok: digit-token / no-space trailers stripped -> ${_leak2:0:48}"
+  else echo "FAIL: non-standard trailer leaked -> '$_leak2'"; fail=1; fi
 
   if [[ $assertions -eq 0 ]]; then
     echo "FAIL: harness ran zero assertions"; fail=1
@@ -176,9 +215,11 @@ block=""
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
-  body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
-  if _is_breaking_subject "$subj" || _is_breaking_body "$body"; then
-    note=$(_breaking_note "$body")
+  # Full raw message (%B): a folded footer keeps its newline here, and the footer
+  # anchor / note extractor both need the whole message (bonnyr-f5 #179 r5).
+  message=$(git log -1 --format='%B' "$sha" 2>/dev/null || true)
+  if _is_breaking_subject "$subj" || _is_breaking_body "$message"; then
+    note=$(_breaking_note "$message")
     # Belt-and-suspenders: a `type!:` subject with no body footer yields no note;
     # point the operator at the commit rather than emitting a bare bullet.
     [[ -z "$note" ]] && note="(see commit ${sha:0:9} for the breaking-change details)"

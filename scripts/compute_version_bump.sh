@@ -78,23 +78,27 @@ bump_version() {
 # ── Breaking-change detectors ────────────────────────────────────────────────
 # INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
 # the copies in extract-breaking-changes.sh (#182's script-selftests asserts it).
-# See that file for the full rationale. Summary of the r4 hardening:
-#  * SUBJECT folding -- git folds a footer into %s when the blank line before it
-#    is missing, leaving %b empty; a body-only check then ships a major as a
-#    patch. The subject is checked for a folded `BREAKING[ -]CHANGE:` footer
-#    (colon REQUIRED so subject prose does not trigger).
-#  * WRAPPED prose -- a bare `^` matched a prose paragraph that wrapped so the
-#    marker fell at column 1. The body match is PARAGRAPH-initial (first body line
-#    or preceded by a blank line). No colon required, to keep the #2 no-colon break.
+# A marker counts as a real footer when its line is preceded by a blank line OR by
+# another trailer line -- the footer block is "a blank line then a run of trailers",
+# and a footer may directly follow another footer (conventional-commits' own
+# canonical example, bonnyr-f5 #179 r5 Major 1). Wrapped prose (a marker after a
+# PROSE line) is still rejected. _is_breaking_subject is now BANG-ONLY: the folded-
+# footer-in-subject is caught by running _is_breaking_body on %B (which preserves
+# the newline git folds into %s), and scanning the raw subject for the marker
+# over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
 _is_breaking_subject() {
-  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1" \
-    || grep -qE 'BREAKING[ -]CHANGE:' <<< "$1"
+  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
 }
 _is_breaking_body() {
   awk '
-    BEGIN { blank = 1 }
-    /^[[:space:]]*$/ { blank = 1; next }
-    { if (blank && $0 ~ /^(\*\*)?BREAKING[ -]CHANGE/) found = 1; blank = 0 }
+    BEGIN { prev_blank = 1; prev_trailer = 0 }
+    /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
+    {
+      is_marker  = ($0 ~ /^(\*\*)?BREAKING[ -]CHANGE/)
+      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
+      if ((prev_blank || prev_trailer) && is_marker) found = 1
+      prev_blank = 0; prev_trailer = is_trailer
+    }
     END { exit(found ? 0 : 1) }
   ' <<< "$1"
 }
@@ -156,15 +160,19 @@ fi
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   subject=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
-  body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
+  # Read the FULL raw message (%B), not just %b: a footer git folded into %s
+  # keeps its newline in %B, so _is_breaking_body catches a folded footer there,
+  # and scanning %B (not the subject) for the marker stops subject prose from
+  # over-matching (bonnyr-f5 #179 r5).
+  message=$(git log -1 --format='%B' "$sha" 2>/dev/null || true)
 
-  # Major: a `type!:`/folded-footer subject, OR a paragraph-initial BREAKING
-  # CHANGE body footer. Both checks are pipe-free here-strings on purpose (PR #177
+  # Major: a `type!:` bang subject, OR a footer-anchored BREAKING CHANGE in the
+  # full message. Both checks are pipe-free here-strings on purpose (PR #177
   # review): `foo | grep -q` under `set -o pipefail` takes SIGPIPE (141) when grep
   # matches early on a large body, which pipefail turns into a failed test, so
   # *finding* the marker silently kept the bump at patch. Detection lives in
   # _is_breaking_subject / _is_breaking_body (byte-identical to the extractor).
-  if _is_breaking_subject "$subject" || _is_breaking_body "$body"; then
+  if _is_breaking_subject "$subject" || _is_breaking_body "$message"; then
     BUMP_TYPE="major"
     break
   fi
@@ -183,13 +191,13 @@ done <<< "$RANGE_HASHES"
 # release. It iterates PER COMMIT and calls the same detectors: paragraph-initial
 # body detection cannot run on concatenated %b (commit boundaries would form false
 # paragraphs), and folding means the signal can be in %s -- so this reads each
-# commit's %s AND %b, exactly as the loop does (bonnyr-f5 #179 r3/r4).
+# commit's %s AND %B, exactly as the loop does (bonnyr-f5 #179 r3/r4/r5).
 guard_breaking=0
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   gsub=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
-  gbody=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
-  if _is_breaking_subject "$gsub" || _is_breaking_body "$gbody"; then
+  gmsg=$(git log -1 --format='%B' "$sha" 2>/dev/null || true)
+  if _is_breaking_subject "$gsub" || _is_breaking_body "$gmsg"; then
     guard_breaking=1
     break
   fi
@@ -256,7 +264,11 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
         git -C "$tmpdir" commit --allow-empty \
           -m "${entry%%~~BODY~~*}" -m "$_b" -q
       else
-        git -C "$tmpdir" commit --allow-empty -m "$entry" -q
+        # A plain entry may embed a literal \n for a FOLDED single message:
+        # subject and footer on consecutive lines with NO blank between, so git
+        # folds them into %s (leaving %b empty) but %B keeps the newline. One -m
+        # with an embedded newline reproduces exactly that shape.
+        git -C "$tmpdir" commit --allow-empty -m "${entry//\\n/$'\n'}" -q
       fi
     done <<< "$(echo "$commits_str" | tr ',' '\n')"
 
@@ -302,6 +314,12 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   # Test 4b (bonnyr-f5 INV-15): a marker in SUBJECT prose only must NOT bump.
   run_test "marker in subject prose → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" "docs: explain the BREAKING CHANGE footer"
 
+  # Test 4c (r5 Minor 1): a docs subject that quotes `BREAKING CHANGE:` with a
+  # colon must NOT over-bump. The old subject match was unanchored across the
+  # whole subject; the detector is now bang-only, and %B is a single subject line
+  # so the body anchor finds no footer either.
+  run_test "docs subject quotes marker → patch" "patch" "1.2.4" "v1.2.3" "1.2.3" "docs: clarify what BREAKING CHANGE: means"
+
   # Test 5: BREAKING CHANGE footer in the BODY → major (the PR #177 bug: a
   # fix-subject commit whose body declares the break must still bump major).
   run_test "BREAKING CHANGE footer in body → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
@@ -324,11 +342,18 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   run_test "early marker + long multi-line tail → major (no SIGPIPE)" "major" "2.0.0" "v1.2.3" "1.2.3" \
     "fix: big commit~~BODY~~BREAKING CHANGE: boom\\n${_tl}"
 
-  # Test 8a (r4 BLOCKER 2): a footer git FOLDED into the subject (no blank line
-  # before it, so %b is empty) must still derive major -- a body-only check
-  # shipped it as a patch. Subject carries the whole folded footer here.
-  run_test "folded footer in subject → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
-    "fix: tighten the thing BREAKING CHANGE: the config key was renamed"
+  # Test 8a (r4 BLOCKER 2 / r5): a footer git FOLDED into the subject -- a real
+  # TWO-LINE message with no blank line, so %s folds subject+footer and %b is
+  # empty, but %B keeps the newline. Derivation reads %B, and the subject line is
+  # trailer-shaped, so the marker on the next line anchors as a footer → major.
+  run_test "folded footer in subject (two-line) → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "fix: tighten the thing\\nBREAKING CHANGE: the config key was renamed"
+
+  # Test 8a2 (r5 Major 1): a BREAKING CHANGE footer stacked directly after another
+  # trailer with NO blank line between them (conventional-commits' own canonical
+  # example) must still derive major.
+  run_test "stacked footer (after another trailer) → major" "major" "2.0.0" "v1.2.3" "1.2.3" \
+    "feat: x~~BODY~~Reviewed-by: Z\\nBREAKING CHANGE: drops the old API"
 
   # Test 8b (r4 BLOCKER 1): a marker at column 1 of a WRAPPED prose line
   # (mid-paragraph) must NOT trigger -- the bare `^` anchor false-positived on
