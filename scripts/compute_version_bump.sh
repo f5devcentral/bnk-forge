@@ -97,6 +97,13 @@ if [[ -n "$SINCE_TAG" ]] && ! git rev-parse --verify --quiet "${SINCE_TAG}^{comm
   exit 1
 fi
 
+# A resolvable SINCE_TAG whose range is empty (tag == HEAD) still slips through as
+# patch -- a phantom duplicate release (bonnyr-f5 #179). Refuse the empty range.
+if [[ -n "$SINCE_TAG" ]] && [[ -z "$(git log "${SINCE_TAG}..HEAD" --first-parent --format='%H' 2>/dev/null)" ]]; then
+  echo "::error::Range ${SINCE_TAG}..HEAD is empty (tag == HEAD?) -- refusing to derive a duplicate release." >&2
+  exit 1
+fi
+
 if [[ -n "$BASELINE_OVERRIDE" ]]; then
   BASELINE="$BASELINE_OVERRIDE"
 elif [[ -n "$SINCE_TAG" ]]; then
@@ -117,9 +124,9 @@ fi
 BUMP_TYPE="patch"
 
 if [[ -z "$SINCE_TAG" ]]; then
-  RANGE_HASHES=$(git log --format='%H' 2>/dev/null || true)
+  RANGE_HASHES=$(git log --first-parent --format='%H' 2>/dev/null || true)
 else
-  RANGE_HASHES=$(git log "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null || true)
+  RANGE_HASHES=$(git log --first-parent "${SINCE_TAG}..HEAD" --format='%H' 2>/dev/null || true)
 fi
 
 while IFS= read -r sha; do
@@ -157,9 +164,9 @@ done <<< "$RANGE_HASHES"
 # SIGPIPE race (marker present, bump silently patch) by aborting rather than
 # shipping a mis-versioned release.
 if [[ -n "$SINCE_TAG" ]]; then
-  ALL_MSGS=$(git log "${SINCE_TAG}..HEAD" --format='%B' 2>/dev/null || true)
+  ALL_MSGS=$(git log --first-parent "${SINCE_TAG}..HEAD" --format='%B' 2>/dev/null || true)
 else
-  ALL_MSGS=$(git log --format='%B' 2>/dev/null || true)
+  ALL_MSGS=$(git log --first-parent --format='%B' 2>/dev/null || true)
 fi
 if grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$ALL_MSGS" && [[ "$BUMP_TYPE" != "major" ]]; then
   echo "::error::Derived bump '$BUMP_TYPE' but a BREAKING CHANGE marker exists in ${SINCE_TAG:-<all>}..HEAD -- refusing to ship a mis-versioned release." >&2

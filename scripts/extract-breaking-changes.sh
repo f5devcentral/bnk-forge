@@ -15,6 +15,10 @@ set -euo pipefail
 # MUST stay identical to the detector in compute_version_bump.sh: if this is
 # narrower, a break that bumps the major produces no note at all.
 _is_breaking() { grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$1"; }
+# bonnyr-f5 #179: the detector in compute_version_bump.sh ALSO bumps major on a
+# `type!:` subject; the extractor must trigger on it too, or a `feat!:` release
+# ships with zero breaking-change docs.
+_is_breaking_subject() { grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$1"; }
 
 # Extract the BREAKING CHANGE paragraph (up to the next blank line), flattened to
 # one line and stripped of markdown bold. The start match is as loose as the
@@ -23,7 +27,7 @@ _is_breaking() { grep -qE '\bBREAKING[[:space:] -]+CHANGE\b' <<< "$1"; }
 # non-line-start marker, silently dropping the break from the CHANGELOG and
 # Release body (#179 review).
 _breaking_note() {
-  awk '/BREAKING[[:space:] -]+CHANGE/{p=1} p{print} p&&/^$/{exit}' <<< "$1" \
+  awk '/\\yBREAKING[[:space:] -]+CHANGE\\y/{p=1} p{print;n++} p&&(/^$/||n>=40){exit}' <<< "$1" \
     | tr '\n' ' ' | sed 's/\*\*//g; s/  */ /g; s/ *$//'
 }
 
@@ -44,6 +48,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   if _is_breaking "this is not a breaking change at all"; then
     echo "FAIL: lowercase prose false-triggered"; fail=1
   else echo "  ok: lowercase prose does not trigger"; fi
+  if _is_breaking_subject "feat!: drop the v1 API"; then echo "  ok: bang subject triggers"; else echo "FAIL: bang subject"; fail=1; fi
+  if _is_breaking_subject "feat: normal change"; then echo "FAIL: normal subject false-triggered"; fail=1; else echo "  ok: normal subject does not trigger"; fi
   [[ $fail -eq 0 ]] && echo "extract-breaking-changes self-test: OK"
   exit "$fail"
 fi
@@ -54,9 +60,9 @@ UNTIL="${2:-HEAD}"
 block=""
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
+  subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
   body=$(git log -1 --format="%b" "$sha" 2>/dev/null || true)
-  if _is_breaking "$body"; then
-    subj=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
+  if _is_breaking_subject "$subj" || _is_breaking "$body"; then
     note=$(_breaking_note "$body")
     # Belt-and-suspenders: never emit a bare bullet if extraction somehow yields
     # nothing — point the operator at the commit rather than staying silent.
@@ -65,7 +71,7 @@ while IFS= read -r sha; do
   ${note}
 "
   fi
-done < <(git log "${SINCE}..${UNTIL}" --format='%H' 2>/dev/null || true)
+done < <(git log "${SINCE}..${UNTIL}" --first-parent --format='%H' 2>/dev/null || true)
 
 if [[ -n "$block" ]]; then
   printf '### ⚠️ Breaking Changes\n\n%s\n' "$block"
