@@ -404,12 +404,22 @@ jobs:
           ### Commits since ${LAST_FINAL:-initial}
           "
 
+          # Cap the commit list, but say so when it truncates -- a silent `head`
+          # dropped 17 of 67 commits from published notes with no indication
+          # (bonnyr-f5 #179 r3). CAP is generous enough that normal ranges are
+          # complete; a larger range appends an explicit "and N more" line.
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMIT_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | head -40)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s")
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMIT_LOG=$(git log --pretty=format:"- %s" | head -40)
+            FULL_LOG=$(git log --pretty=format:"- %s")
             BREAKING=""
+          fi
+          COMMIT_LOG=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMIT_LOG=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMIT_LOG" "$((TOTAL - CAP))")
           fi
 
           if [ -n "$BREAKING" ]; then
@@ -482,14 +492,23 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V | tail -1)
 
+          # Cap the commit list but say so on truncation -- a silent `head -50`
+          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
+          # The `|| true` guards the FILTER only (an all-"release:" range leaves
+          # grep -v with no output, rc 1 under pipefail); it does NOT mask the
+          # breaking-change detector, which stays fail-closed.
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
+            FULL_LOG=$(git log --pretty=format:"- %s" | { grep -v "^- release: " || true; })
             BREAKING=""
+          fi
+          COMMITS=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMITS=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMITS" "$((TOTAL - CAP))")
           fi
 
           # Build the entry in a temp file rather than interpolating COMMITS
@@ -557,14 +576,23 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V | tail -2 | head -1)
 
+          # Cap the commit list but say so on truncation -- a silent `head -50`
+          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
+          # The `|| true` guards the FILTER only (an all-"release:" range leaves
+          # grep -v with no output, rc 1 under pipefail); it does NOT mask the
+          # breaking-change detector, which stays fail-closed.
+          CAP=300
           if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
+            FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
+            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD)
           else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
+            FULL_LOG=$(git log --pretty=format:"- %s" | { grep -v "^- release: " || true; })
             BREAKING=""
+          fi
+          COMMITS=$(printf '%s\n' "$FULL_LOG" | head -"$CAP")
+          TOTAL=$(printf '%s\n' "$FULL_LOG" | grep -c '^-' || true)
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            COMMITS=$(printf '%s\n- … and %d more commit(s) — see the full compare view' "$COMMITS" "$((TOTAL - CAP))")
           fi
 
           {
