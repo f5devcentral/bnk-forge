@@ -259,12 +259,15 @@ gh release create v${VERSION} dist/bnk-forge-${VERSION}.tar.gz \
 
 ### End-user download URL
 
-After publishing, users can download and install with:
+Once a full (non-prerelease) `vX.Y.Z` release with an attached tarball exists, users
+download and install with the URL below — substitute the version you actually published
+(the example `3.1.6` is illustrative; no release asset exists until you cut one):
 
 ```bash
-# Download from GitHub Releases
-curl -L https://github.com/f5devcentral/bnk-forge/releases/download/v3.1.6/bnk-forge-3.1.6.tar.gz | tar xz
-cd bnk-forge-3.1.6
+# Download from GitHub Releases — replace 3.1.6 with your published version
+VERSION=3.1.6
+curl -L https://github.com/f5devcentral/bnk-forge/releases/download/v${VERSION}/bnk-forge-${VERSION}.tar.gz | tar xz
+cd bnk-forge-${VERSION}
 ./install.sh
 ```
 

@@ -206,6 +206,17 @@
     re-read on every boot, so edit <code>.env</code> and re-run <code>docker compose up -d</code>
     to apply the new value (a plain <code>docker compose restart</code> does not re-read
     <code>.env</code>).
+    <p><b>A second administrator ships seeded — <code>mcp</code>.</b> Besides <code>admin</code>,
+    this build seeds an active admin-role account named <code>mcp</code> whose password is a shipped
+    default (<code>mcp-service-changeme</code>) published in the public repository. This compose file
+    wires no <code>.env</code> variable to the backend for it, and the backend reconciles its
+    password back to that default on every boot, so there is <em>no supported way to rotate it in
+    this release</em> — treat it as a live, publicly-known credential and keep the backend API off
+    untrusted networks until you upgrade. bonnyr-f5 #186 removes this shipped default and re-points
+    the bundled MCP server at this dedicated <code>mcp</code> service account, so that from 4.0.0 MCP
+    no longer borrows the human <code>admin</code> login; this release is sequenced to land with or
+    after #186. Until #186 is in the build you install, the bundled MCP server continues to
+    authenticate as <code>admin</code> via <code>MCP_PASSWORD</code>, as described above.</p>
   </div>
 
   <!-- ── Step 3 ── -->
@@ -315,11 +326,17 @@
       <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
           <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
           your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
-      <li><b>MCP service credential (from 4.0.0).</b> Starting with 4.0.0 the backend refuses to
-          boot in staging/production if <code>MCP_SERVICE_PASSWORD</code> is unset or still a shipped
-          default. Set it to a real secret (the same value the MCP server receives as
-          <code>BNK_FORGE_PASSWORD</code>) before upgrading, or the stack will exit at startup once
-          that check is in the tree.</li>
+      <li><b>MCP service credential (from 4.0.0).</b> In this bundle the MCP server authenticates
+          with <code>MCP_PASSWORD</code> (delivered to the MCP container as
+          <code>BNK_FORGE_PASSWORD</code>), so keep <code>MCP_PASSWORD</code> matching your admin
+          password as described in the settings table above. Setting <code>MCP_SERVICE_PASSWORD</code>
+          in this <code>.env</code> has <em>no effect</em>: this compose file does not pass that
+          variable to the backend, so the backend never reads it here. From 4.0.0, once bonnyr-f5
+          #186 wires the MCP server to a dedicated <code>mcp</code> service account and #188 adds a
+          boot check, the backend will refuse to start in staging/production while
+          <code>MCP_SERVICE_PASSWORD</code> is unset or a shipped default — that is the point at
+          which you set that variable to a real secret. Neither mechanism ships in this bundle yet,
+          so this release is sequenced to land with or after #186&nbsp;+&nbsp;#188.</li>
     </ul>
   </div>
 

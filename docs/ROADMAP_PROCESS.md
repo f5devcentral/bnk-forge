@@ -34,7 +34,7 @@ backend/.venv/bin/python bin/roadmap-add.py \
 ```
 
 - `--list-sections` prints the available section ids + headings.
-- `--status` must be one of: `shipped`, `in_progress`, `blocked`, `deferred`, `planned`.
+- `--status` must be one of: `shipped`, `merged`, `in_progress`, `blocked`, `deferred`, `planned` (the keys in `status_legend`; `merged` = merged to staging but unreleased).
 - `--refs` is comma-separated; values like `#216` / `PR #188` become GitHub links.
 - `--group` (optional) buckets the item into a named card on the HTML view.
 - After adding, also update the **§12 issue index** (`render: raw`, edited by hand in the yaml) and re-run the generator so the index stays in sync.
@@ -49,7 +49,7 @@ backend/.venv/bin/python bin/roadmap-add.py \
 
 ## Status vocabulary
 
-✅ shipped · 🟡 in-progress / partial · ⛔ blocked (state the blocker) · 💤 deferred (state the resume-trigger) · ⚪ not-started / proposed.
+✅ shipped · 🟢 merged (merged to staging, unreleased) · 🟡 in-progress / partial · ⛔ blocked (state the blocker) · 💤 deferred (state the resume-trigger) · ⚪ not-started / proposed.
 
 ## Where things live
 

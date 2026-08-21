@@ -31,6 +31,17 @@ that release is cut.
 >    4.0.0 **set `MCP_SERVICE_PASSWORD` to a real secret** (the same value the MCP
 >    server receives as `BNK_FORGE_PASSWORD`); once #188 is in the tree, leaving
 >    it at a default will `SystemExit` the stack at startup.
+>
+> **Merge ordering (integration dependency).** The dist-bundle wiring these two
+> steps assume — the dedicated `mcp` service account for the bundled MCP server,
+> and the `MCP_SERVICE_PASSWORD` boot check — arrives in **bonnyr-f5 #186** (service
+> account + removal of the shipped `changeme` / `mcp-service-changeme` defaults) and
+> **#188** (boot check). This release documents them forward-looking and is therefore
+> sequenced to merge **with or after #186 + #188**. Merged ahead of them, the
+> `MCP_SERVICE_PASSWORD` guidance is inert for the dist stack (the compose file does
+> not pass that variable to the backend) and #186 will conflict in
+> `user-pack/install-guide.html` — resolve by taking #186's credential model, not by
+> re-adding the `changeme` default this guide describes as a stopgap.
 
 ## v3.0.1 — 3.0.x line
 

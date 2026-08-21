@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - Docker Engine 24+ with Compose v2.24+
-#   - Authenticated to the container registry (if private)
+#   - Network access to ghcr.io (images are public — no registry login required)
 #
 set -euo pipefail
 
