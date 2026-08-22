@@ -71,8 +71,41 @@ if _is_breaking_subject 'feat: normal change'; then
   echo "::error::detector-parity: shared _is_breaking_subject false-positived on a normal subject"; fail=1
 fi
 
+# 4. Marker-regex single source (bonnyr-f5 #193 r3): the marker shape used to be
+# hand-copied ~6 times. It is now named ONCE as _BREAKING_MARKER_ERE; the grep
+# predicates interpolate it and the awk copies embed the identical literal (an ERE
+# through `awk -v` mangles `\*`). Assert (a) the variable is defined, and (b) every
+# place that uses the marker AS A REGEX embeds the byte-identical canonical string,
+# so the copies cannot drift. The regex form carries the distinctive
+# `BREAKING[[:space:] -]+CHANGE` token that prose comments never contain.
+EXPECT='^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE'
+if [ -z "${_BREAKING_MARKER_ERE:-}" ]; then
+  echo "::error::detector-parity: _BREAKING_MARKER_ERE is not defined in the shared lib"; fail=1
+elif [ "$_BREAKING_MARKER_ERE" != "$EXPECT" ]; then
+  echo "::error::detector-parity: _BREAKING_MARKER_ERE drifted from the canonical marker shape"; fail=1
+fi
+# Every file that embeds the marker regex must embed EXACTLY the canonical string.
+MARKER_CONSUMERS=(
+  "$ROOT/scripts/lib/breaking-change-detect.sh"
+  "$ROOT/scripts/extract-breaking-changes.sh"
+)
+for f in "${MARKER_CONSUMERS[@]}"; do
+  [ -f "$f" ] || { echo "::error::detector-parity: marker consumer $f not found"; fail=1; continue; }
+  n_uses=0
+  while IFS= read -r ln; do
+    n_uses=$((n_uses + 1))
+    case "$ln" in
+      *"$EXPECT"*) : ;;
+      *) echo "::error::detector-parity: $(basename "$f") has a DRIFTED marker regex: $ln"; fail=1 ;;
+    esac
+  done < <(grep -F 'BREAKING[[:space:] -]+CHANGE' "$f")
+  if [ "$n_uses" -eq 0 ]; then
+    echo "::error::detector-parity: $(basename "$f") has no marker-regex use — enumeration broke (vacuous parity)"; fail=1
+  fi
+done
+
 if [ "$fail" -eq 0 ]; then
-  echo "INV-15 OK: detector single-sourced in scripts/lib/breaking-change-detect.sh; all consumers source it, none shadow it, predicate behaves"
+  echo "INV-15 OK: detector + marker regex single-sourced in scripts/lib/breaking-change-detect.sh; all consumers source/embed the one definition, none shadow it, predicate behaves"
 else
   echo "::error::detector-parity: one or more checks failed"; exit 1
 fi

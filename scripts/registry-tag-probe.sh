@@ -134,7 +134,12 @@ for name in "${IMAGES[@]}"; do
     200|203)  printf '%s\t%s\t%s\n' exists  "$ref" "HTTP ${code}" ;;
     404)      printf '%s\t%s\t%s\n' absent  "$ref" "HTTP 404 (not found)" ;;
     401|403)  printf '%s\t%s\t%s\n' unknown "$ref" "HTTP ${code} (auth/permission — cannot confirm)" ;;
-    000)      printf '%s\t%s\t%s\n' unknown "$ref" "network/curl failure — cannot confirm" ;;
+    # Network/curl failure. curl writes its own `%{http_code}` of "000" to stdout
+    # AND exits non-zero, so `... || echo 000` appends a SECOND "000" -> the real
+    # shape is "000000" (or a bare "000" if curl emitted nothing). The old `000)`
+    # arm matched neither doubled shape and fell through to `*)` — dead code
+    # (bonnyr-f5 #193 r3 minor). Match the `^000` prefix so it actually fires.
+    000*)     printf '%s\t%s\t%s\n' unknown "$ref" "network/curl failure (code '${code}') — cannot confirm" ;;
     429)      printf '%s\t%s\t%s\n' unknown "$ref" "HTTP 429 (rate limited — cannot confirm)" ;;
     5??)      printf '%s\t%s\t%s\n' unknown "$ref" "HTTP ${code} (registry error — cannot confirm)" ;;
     *)        printf '%s\t%s\t%s\n' unknown "$ref" "HTTP ${code} (unexpected — cannot confirm)" ;;

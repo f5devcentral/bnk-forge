@@ -53,7 +53,12 @@ case "$SCENARIO" in
     elif [ "$is_authed" = 1 ]; then echo 403;
     else emit_challenge; echo 401; fi ;;
   network)
-    echo 000 ;;
+    # Real curl on a connection failure writes "000" via -w (NO trailing newline,
+    # it is a -w format string) AND exits non-zero, so the probe's `... || echo 000`
+    # appends a second "000" and command substitution yields exactly "000000".
+    # Reproduce that byte-for-byte (printf, not echo) so the probe's ^000 network
+    # arm actually fires instead of the `*)` fallback (bonnyr-f5 #193 r3).
+    printf '000'; exit 7 ;;
   ratelimit)
     if [ "$is_token" = 1 ]; then echo '{"token":"T"}';
     elif [ "$is_authed" = 1 ]; then echo 429;
@@ -89,6 +94,16 @@ check "network -> refuse"            "$(verdict network)"              UNKNOWN
 check "rate-limit -> refuse"         "$(verdict ratelimit)"            UNKNOWN
 check "exists -> refuse"             "$(verdict exists)"               EXISTS
 
+# The network failure must be classified by the dedicated ^000 arm, NOT the `*)`
+# unexpected-code fallback: real curl yields the doubled "000000" shape and the old
+# `000)` arm matched neither, so it was dead code (bonnyr-f5 #193 r3). Assert the
+# arm's own message fires so a regression to the exact-match arm is caught.
+NET_OUT="$(run network)"; NET_DETAIL="${NET_OUT%%$'\n'*}"
+case "$NET_DETAIL" in
+  *"network/curl failure (code '000000')"*) check "network arm fires (^000, not fallback)" fires fires ;;
+  *) printf 'FAIL  network arm fires -> got detail: %s\n' "$NET_DETAIL"; fail=1 ;;
+esac
+
 # ─── F6: image-list single-source parity with docker-bake.hcl ────────────────
 # `while read` not `mapfile`: mapfile is bash 4+, and this file is wired into
 # `make script-selftests` -> `ci-gates` -> `pre-push`, which stock macOS runs
@@ -97,7 +112,23 @@ check "exists -> refuse"             "$(verdict exists)"               EXISTS
 LIST=()
 while IFS= read -r _img; do LIST+=("$_img"); done < <(bash "$PROBE" --images)
 check "image count is 7"             "${#LIST[@]}"                     7
-BAKE_TARGETS="$(sed -n 's/.*targets = \[\(.*\)\].*/\1/p' "$HERE/../../docker-bake.hcl" | tr -d '" ' | tr ',' '\n' | sort)"
+# Enumerate the SAME group the guard counts — the DEFAULT group (the guard uses
+# `docker buildx bake --print default | jq '.group.default.targets'`). The old test
+# used an UNSCOPED `targets = [` sed that matched EVERY group's targets line, so
+# adding any second bake group would make the test and the guard disagree about how
+# targets are enumerated (bonnyr-f5 #193 r3 minor). Scope the HCL parse to the
+# `group "default"` block so both read the same set without needing docker/buildx.
+BAKE_TARGETS="$(awk '
+  /^group[[:space:]]+"default"[[:space:]]*\{/ { ing = 1 }
+  ing && /targets[[:space:]]*=/ {
+    line = $0
+    sub(/.*targets[[:space:]]*=[[:space:]]*\[/, "", line)
+    sub(/\].*/, "", line)
+    print line
+    exit
+  }
+  ing && /^\}/ { ing = 0 }
+' "$HERE/../../docker-bake.hcl" | tr -d '" ' | tr ',' '\n' | sort)"
 LIST_TARGETS="$(printf '%s\n' "${LIST[@]}" | sed 's/^bnk-forge-//' | sort)"
 if [ "$BAKE_TARGETS" = "$LIST_TARGETS" ]; then
   check "image list == bake group"   match                            match

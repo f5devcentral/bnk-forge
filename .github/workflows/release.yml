@@ -128,6 +128,14 @@ jobs:
             # silent-green class this guard exists to prevent (bonnyr-f5 #181
             # round 4). Requiring the trailing [skip ci] marker restricts the
             # exemption to commits we minted.
+            #
+            # SINGLE SOURCE (bonnyr-f5 #193 r3 minor): this same fingerprint is
+            # _is_release_bot_subject in scripts/lib/is-release-bot-subject.sh, used
+            # by the commit-lint gate. This `guard` job runs WITHOUT a checkout (it
+            # reads only the event payload) so it cannot source that file; the two
+            # grep predicates below are therefore kept BYTE-IDENTICAL to the lib and
+            # scripts/tests/lint-commit-markers.test.sh (SS-1) asserts they match, so
+            # they cannot silently diverge.
             if grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$FIRST" && grep -qE '\[skip ci\]$' <<< "$FIRST"; then
               # Our own automated release commit reached the guard anyway (e.g.
               # a re-tag or a replay that kept the marker). The release it names
@@ -1056,6 +1064,7 @@ jobs:
           sparse-checkout: |
             scripts/registry-tag-probe.sh
             scripts/registry-overwrite-guard.sh
+            scripts/verify-image-pins.sh
             docker-bake.hcl
           sparse-checkout-cone-mode: false
           # bonnyr-f5 #193 M3: docker-bake.hcl is sourced here too so the overwrite
@@ -1200,7 +1209,11 @@ jobs:
         # produce possibly-different digests and move the immutable tag — the
         # INV-24 harm sign_only exists to avoid (bonnyr-f5 #181 round 5, F2).
         if: inputs.sign_only != true
-        run: docker buildx bake --push default
+        # --metadata-file records exactly which targets buildx built and pushed
+        # (bonnyr-f5 #193 r3 minor): the Publish summary below counts THAT, not the
+        # static bake target list, so a tag whose tree builds 6 images is not
+        # reported as 7.
+        run: docker buildx bake --push --metadata-file "$RUNNER_TEMP/bake-metadata.json" default
         env:
           REGISTRY: ${{ env.REGISTRY }}
           VERSION: ${{ env.VERSION }}
@@ -1226,6 +1239,23 @@ jobs:
           BNK_FORGE_REGISTRY: ${{ env.REGISTRY }}
           BNK_FORGE_VERSION: ${{ env.VERSION }}
 
+      - name: Verify every shipped compose image pin resolves in the registry
+        # bonnyr-f5 #193 r3 (cross-agent): scripts/verify-image-pins.sh resolves
+        # every `image:` pin in every shipped compose file against the registry and
+        # fails on `manifest unknown`. Run it AFTER the push above so a release can
+        # NEVER complete while a packaged artifact pins a tag nobody published (the
+        # B-1 class: dist/ pinned 4.0.0 which never existed). Sourced from the
+        # workflow ref (.release-tooling), like the tag-safety probe, so a
+        # publish_only recovery of an older tag still runs the CURRENT verifier.
+        # NOTE: the script is authored by the deploy agent and lands with the B-1
+        # fix; this step references it by path and goes green once it exists.
+        run: bash .release-tooling/scripts/verify-image-pins.sh
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          VERSION: ${{ env.VERSION }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish summary
         env:
           SIGN_ONLY: ${{ inputs.sign_only }}
@@ -1247,7 +1277,28 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          # Single-source the image list from the probe script (F6).
-          while IFS= read -r name; do
-            echo "| ${name} | ${{ env.REGISTRY }}/${name}${TAGS} |" >> "$GITHUB_STEP_SUMMARY"
-          done < <(bash .release-tooling/scripts/registry-tag-probe.sh --images)
+          META="$RUNNER_TEMP/bake-metadata.json"
+          if [ "$SIGN_ONLY" = "true" ] || [ ! -f "$META" ]; then
+            # sign_only pushed nothing (only re-signed existing digests): enumerate
+            # the canonical image list from the probe (F6) as the set that was
+            # re-signed. No metadata file exists because the bake step was skipped.
+            n=0
+            while IFS= read -r name; do
+              n=$((n + 1))
+              echo "| ${name} | ${{ env.REGISTRY }}/${name}${TAGS} |" >> "$GITHUB_STEP_SUMMARY"
+            done < <(bash .release-tooling/scripts/registry-tag-probe.sh --images)
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_${n} image(s) re-signed (no push)._" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Report what buildx ACTUALLY built + pushed, read from the bake
+            # --metadata-file (bonnyr-f5 #193 r3 minor). Each pushed target carries
+            # an "image.name" (its comma-joined push refs); a top-level
+            # buildx.build.* key is NOT a target, so select on image.name to exclude
+            # it. This is the real pushed count — 6 or 7 — never the static list.
+            pushed_n="$(jq -r '[to_entries[] | select(.value["image.name"])] | length' "$META")"
+            jq -r 'to_entries[]
+                     | select(.value["image.name"])
+                     | "| \(.key) | \(.value["image.name"]) |"' "$META" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_${pushed_n} image(s) pushed (from docker buildx bake metadata)._" >> "$GITHUB_STEP_SUMMARY"
+          fi

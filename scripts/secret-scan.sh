@@ -76,10 +76,23 @@ if [ -z "$scanned" ]; then
   exit 1
 fi
 
-# 3) A non-empty range that scanned 0 commits scanned NOTHING.
-if [ -n "$range" ] && [ "$scanned" -eq 0 ]; then
-  echo "::error::gitleaks scanned 0 commits for range $range -- the gate would have passed blind"
-  exit 1
+# 3) Anti-vacuity backstop. gitleaks reports "0 commits scanned" in TWO cases: a
+#    BLIND scan (broken range / dubious-ownership refusal — already caught by check
+#    1's "ERR [git]"), AND, legitimately, a range that adds no content to scan.
+#    `git log -p` shows only removed lines for a delete-only (or empty) push;
+#    gitleaks scans ADDED content, so it counts 0 and exits 0 for a real, pushable
+#    change (reproduced: a delete-only commit has rev-list count 1 yet "0 commits
+#    scanned"). The old count==0 backstop RED that legitimate push and blocked the
+#    hook (bonnyr-f5 #193 r3 M-7). So the scanned COUNT is not a reliable blind
+#    signal. Instead assert the scan ran against REAL history by gitleaks' exit
+#    status (checks 1/2/4) PLUS git's own ability to resolve the range: a range git
+#    cannot enumerate is a broken scan (fail closed); a resolvable range that
+#    gitleaks scanned cleanly is trustworthy regardless of the commit count.
+if [ -n "$range" ]; then
+  if ! git -C "$repo_dir" rev-list --count "$range" >/dev/null 2>&1; then
+    echo "::error::gitleaks range '$range' does not resolve in git -- no evidence the scan ran against real history"
+    exit 1
+  fi
 fi
 
 # 4) Real leaks make gitleaks exit non-zero -- that must still fail here.

@@ -203,15 +203,15 @@ jobs:
           # CHANGE prose that spuriously majors a release. The .githooks/pre-push
           # hook runs the SAME script locally so it is caught before push too.
           #
-          # The already-merged exemption keys on the BASE of the scanned range
-          # (github.event.before / the PR base), which the RANGE below already
-          # carries -- the script derives it from RANGE's left-hand side, so no
-          # protected-branch fetch is needed (bonnyr-f5 #193 B3). Round-1 fetched
-          # origin/main|staging and tested reachability against the POST-push tips,
-          # which ALREADY contain every commit in the range once the push landed --
-          # so the exemption fired for EVERY commit and rule 1 never caught a
-          # [skip ci] on a push to main/staging. Fails CLOSED: an unresolvable base
-          # means "not merged" and the commit is fully linted.
+          # The RANGE is base..head; on a push to main it is github.event.before..
+          # github.sha, which INCLUDES the merged branch's own commits (e.g. the PR
+          # merge-base). There is no already-merged exemption any more (bonnyr-f5
+          # #193 r3 M-6a: it was dead code — base..head excludes the base by
+          # construction, so no scanned commit could ever be an ancestor of it).
+          # rule 2 now flags ONLY a mis-anchored DECLARATIVE `BREAKING CHANGE:` (the
+          # colon form), so a marker-shaped PROSE line in an unamendable merged body
+          # no longer reds this ALWAYS_RUN gate on the merge that cuts the release
+          # (M-6b). The only exemption left is the release bot's own minted commit.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then

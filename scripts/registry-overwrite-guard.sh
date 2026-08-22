@@ -75,6 +75,12 @@ else
       exists)  EXISTING="${EXISTING}  ${ref}"$'\n' ;;
       absent)  : ;; # 404 — the immutable tag is free
       unknown) UNKNOWN="${UNKNOWN}  ${ref}: ${detail}"$'\n' ;;
+      # FAIL CLOSED on any unrecognised/empty status (bonnyr-f5 #193 r3 minor). The
+      # shipped probe only ever emits exists/absent/unknown, but a malformed or
+      # empty status field is the MOST inconclusive state there is — without this
+      # arm it fell through to neither bucket and the guard printed "safe to
+      # publish", overwriting an immutable tag on garbage. Treat it as inconclusive.
+      *)       UNKNOWN="${UNKNOWN}  ${ref:-<no ref>}: unrecognised probe status '${status:-<empty>}' — treating as inconclusive"$'\n' ;;
     esac
   done <<< "$PROBE_OUT"
 fi

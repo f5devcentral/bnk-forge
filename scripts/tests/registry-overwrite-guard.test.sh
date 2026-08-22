@@ -33,6 +33,8 @@ case "${SCEN:-}" in
   safe)       for i in 1 2 3 4 5 6 7; do printf 'absent\tref%s\tHTTP 404\n' "$i"; done ;;
   exists)     printf 'exists\tref1\tHTTP 200\n'; for i in 2 3 4 5 6 7; do printf 'absent\tref%s\t404\n' "$i"; done ;;
   short)      for i in 1 2 3 4 5 6; do printf 'absent\tref%s\t404\n' "$i"; done ;;  # only 6 => inconclusive
+  malformed)  for i in 1 2 3 4 5 6 7; do printf 'bogus\tref%s\tunexpected token\n' "$i"; done ;; # 7 lines, unrecognised status
+  empty_status) for i in 1 2 3 4 5 6 7; do printf '\tref%s\tdetail\n' "$i"; done ;;  # 7 lines, EMPTY status field
   unrunnable) exit 3 ;;
 esac
 FAKE
@@ -55,6 +57,9 @@ check "second bake group does NOT wedge (safe)" "$(run safe)"       0
 check "an existing manifest refuses"            "$(run exists)"     1
 check "force overrides an existing manifest"    "$(run exists true)" 0
 check "count mismatch => inconclusive refuse"   "$(run short)"      1
+check "malformed status fails closed"           "$(run malformed)"  1
+check "empty status fails closed"               "$(run empty_status)" 1
+check "force overrides a malformed status"      "$(run malformed true)" 0
 check "unrunnable probe fails closed"           "$(run unrunnable)" 1
 check "force overrides an unrunnable probe"      "$(run unrunnable true)" 0
 

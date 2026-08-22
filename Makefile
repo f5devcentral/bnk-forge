@@ -640,7 +640,7 @@ smoke-mcp-live:
 	@echo ""
 	@echo "=== MCP Live Smoke Validation ==="
 	@echo "  NOTE: ping/tools-list reachability != runtime readiness; tool calls require valid MCP backend credentials."
-	@echo "  Configure MCP_USERNAME=mcp / MCP_PASSWORD (backend MCP_SERVICE_PASSWORD) — the dedicated MCP service account, never the admin login (#187)."
+	@echo "  Configure MCP_SERVICE_PASSWORD (compose maps it to the container's BNK_FORGE_PASSWORD and the backend's MCP_SERVICE_PASSWORD) — the dedicated MCP service account, never the admin login (#187). MCP_USERNAME is not read; do not set it."
 	@python3 scripts/mcp_live_smoke.py --mcp-url "$${MCP_SMOKE_URL:-http://localhost:8081/mcp}" $${MCP_SMOKE_INSECURE_TLS:+--insecure-tls}
 
 mcp-readiness:
@@ -664,7 +664,7 @@ mcp-readiness:
 mcp-recreate:
 	@echo ""
 	@echo "=== Recreate MCP service ==="
-	@echo "  Use after MCP_USERNAME/MCP_PASSWORD changes so MCP picks up new credentials."
+	@echo "  Use after MCP_SERVICE_PASSWORD changes so MCP picks up new credentials."
 	@$(COMPOSE) up -d --force-recreate --no-deps mcp
 	@$(COMPOSE) ps mcp
 
@@ -1263,6 +1263,18 @@ buildx-setup:
 
 # Push multi-arch images to a container registry
 # Usage: make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
+#
+# TWO INDEPENDENT guards, TWO independent override knobs (bonnyr-f5 #193 r3 minor —
+# they used to share FORCE_LATEST, so overriding the ':latest recency' guard also
+# silently disarmed the immutable-tag overwrite protection):
+#   FORCE_LATEST=1    overrides ONLY the recency guard (this stale tree would move
+#                     the rolling ':latest' tag backward). It does NOT touch the
+#                     overwrite guard.
+#   FORCE_OVERWRITE=1 overrides ONLY the immutable-:VERSION overwrite guard, and
+#                     ONLY for an already-published tag you intend to overwrite
+#                     (orphaning its attestations). It does NOT rescue a tooling
+#                     failure (missing docker/buildx/jq) — that is fail-closed by
+#                     design; install the tooling instead.
 push-images:
 	@echo ""
 	@echo "========================================="
@@ -1299,13 +1311,19 @@ push-images:
 	    exit 1; \
 	  fi; \
 	fi; \
-	if [ "$${FORCE_LATEST:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
+	if [ "$${FORCE_OVERWRITE:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
 	echo "  Probing the registry via the single-sourced scripts/registry-overwrite-guard.sh so this push"; \
 	echo "  can't silently overwrite an already-published immutable :$$VERSION tag..."; \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION FORCE=$$GUARD_FORCE \
 	  bash scripts/registry-overwrite-guard.sh || { \
-	    echo "  (Export REGISTRY_USERNAME/REGISTRY_PASSWORD for an authenticated probe, or re-run with"; \
-	    echo "   FORCE_LATEST=1 only if you intend to overwrite the immutable :$$VERSION tag.)"; \
+	    echo "  Remediation depends on WHY it failed (read the ::error:: line above):"; \
+	    echo "    - missing docker/buildx/jq, or an unparseable bake file -> a TOOLING problem."; \
+	    echo "      Install the tooling and re-run. FORCE_* does NOT rescue this (the guard"; \
+	    echo "      refuses to guess the image count, by design)."; \
+	    echo "    - registry unreachable / auth -> export REGISTRY_USERNAME/REGISTRY_PASSWORD and re-run."; \
+	    echo "    - the immutable :$$VERSION tag genuinely already exists -> re-run with"; \
+	    echo "      FORCE_OVERWRITE=1 ONLY if you intend to overwrite it (this orphans its"; \
+	    echo "      cosign/SBOM/SLSA attestations). FORCE_LATEST=1 does NOT override this guard."; \
 	    exit 1; \
 	  }; \
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \

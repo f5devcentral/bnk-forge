@@ -14,17 +14,22 @@
 #      r4): it is GitHub's documented way to suppress ALL required checks and is
 #      not a bracketed token, so the fixed-string list alone would miss it.
 #
-#   2. A line SHAPED like a BREAKING CHANGE marker that the release detectors
-#      would MISS (bonnyr-f5 #193 M1). Rule 2 is the exact COMPLEMENT of the
-#      detector: it reuses _looks_like_breaking_marker + _is_breaking_body from
-#      scripts/lib/breaking-change-detect.sh (the SAME predicate the bump and the
-#      note use) rather than a second hand-written regex. A marker-shaped line
+#   2. A DECLARATIVE `BREAKING CHANGE:` marker (the colon form) that the release
+#      detectors would MISS (bonnyr-f5 #193 M1, r3 M-6b). Rule 2 is the exact
+#      COMPLEMENT of the detector: it uses _under_detected_markers from
+#      scripts/lib/breaking-change-detect.sh, which shares _is_breaking_body's SAME
+#      anchoring logic and the SAME single-sourced marker regex the bump and the
+#      note use, rather than a second hand-written regex. A `BREAKING CHANGE:` line
 #      that is NOT positioned as a real footer (needs a blank line before it, or a
 #      colon after a preceding trailer) does not trigger the intended major bump,
 #      so a human who typed a break there ships it silently as a patch. The gate
 #      flags it BEFORE it becomes an unamendable commit -- including
 #      `inputs.release_notes`, which release.yml lints through this script before
-#      interpolating it into the release commit/tag.
+#      interpolating it into the release commit/tag. The COLON is required: a
+#      colonless marker-shaped line is indistinguishable from PROSE describing the
+#      concept (an already-merged body reading "- BREAKING CHANGE footer in the
+#      body ..."), which the detectors treat as inert; flagging it reddened
+#      unamendable release history (M-6b), so it is not flagged.
 #
 #      The round-1 rule 2 did the OPPOSITE and was wrong in both directions
 #      (bonnyr-f5 #193 M1): it REJECTED dash-bullet `- BREAKING CHANGE:` and
@@ -34,32 +39,27 @@
 #      triggers a major" message. Those three shapes are now negative fixtures in
 #      the self-test below (must NOT be flagged).
 #
-# EXEMPTIONS (both rules, bonnyr-f5 #193 B3/M1): a commit is exempt when it is
-# unamendable machine history, keyed on properties the committing client cannot
-# forge. Rule 2 gets the SAME exemption as rule 1 (the unamendability argument is
-# identical -- a mis-anchored marker in an already-merged squash body cannot be
-# reworded, and inputs.release_notes is linted before it is minted):
+# EXEMPTION (both rules): the release bot's OWN release commit -- subject EXACTLY
+# matching `^release: vX.Y.Z ... [skip ci]` (a version AND the trailing skip marker
+# it appends). This is release.yml's own loop-guard fingerprint (release.yml:131),
+# single-sourced as _is_release_bot_subject in scripts/lib/is-release-bot-subject.sh
+# and shared here rather than a second, looser predicate; the guard's inline copy
+# is byte-locked to it by scripts/tests/lint-commit-markers.test.sh. This reads the
+# commit SUBJECT, which the committing client controls -- it is NOT unforgeable: a
+# human could hand-write `release: v0.0.1 ... [skip ci]` to self-exempt. The
+# residual is low-exposure (a squash-merged PR is linted through PR_TITLE, which
+# gets NO exemption; a skip-marked push to a protected branch produces no workflow
+# run for the exemption to weaken), so this is honest about the trade rather than
+# claiming an unforgeability it does not have.
 #
-#   (a) the release bot's OWN release commit -- subject EXACTLY matching
-#       `^release: vX.Y.Z ... [skip ci]` (a version AND the trailing skip marker
-#       it appends). This is release.yml's own loop-guard fingerprint
-#       (release.yml:131), shared here as _is_release_bot_subject rather than a
-#       second, looser predicate. The round-1 `^release: ` prefix match was
-#       SELF-SETTABLE -- strictly more spoofable than the committer identity it
-#       replaced: any human could prepend `release: ` to self-exempt a marker. The
-#       version+trailing-marker fingerprint catches a spoofed `release: <prose>
-#       [skip ci]` subject (no version) while still exempting a real release commit.
-#
-#   (b) already-merged, unamendable history -- a commit already reachable from the
-#       PRE-PUSH state of the branch (github.event.before / the BASE of the scanned
-#       range), NOT the post-push tip. Round-1 evaluated this against the
-#       post-push origin/main|origin/staging, which ALREADY contain every commit in
-#       the range once the push has landed -- so the exemption fired for EVERY
-#       commit and rule 1 never caught a `[skip ci]` on a push to main/staging, the
-#       exact events it protects (bonnyr-f5 #193 B3). Anchoring to the range BASE
-#       exempts a commit that existed BEFORE this push but lints a NEW commit the
-#       push introduces. Fails CLOSED: no resolvable base => treated as NOT-merged
-#       and fully linted.
+# There is deliberately NO "already-merged history" exemption (bonnyr-f5 #193 r3
+# M-6a). It was removed as dead code: the scanned range is `base..head`, which by
+# definition EXCLUDES every commit reachable from `base`, so no commit the script
+# iterates can ever be an ancestor of the range base -- the exemption could not
+# fire on any real caller. It is not needed either: rule 2 now flags ONLY a
+# mis-anchored DECLARATIVE `BREAKING CHANGE:` marker (the colon form), so a
+# marker-shaped PROSE line in an already-merged, unamendable body no longer reds
+# the push-to-main range (that was M-6b).
 #
 # PR TITLE (bonnyr-f5 #193 B6b): for any PR with >=2 commits GitHub's squash
 # SUBJECT is the PR title (squash_title=COMMIT_OR_PR_TITLE), linted NOWHERE else --
@@ -79,10 +79,14 @@
 # (bonnyr-f5 #182 r4; matches secret-scan.sh's fail-closed behaviour).
 set -uo pipefail
 
-# The BREAKING CHANGE predicate is single-sourced and shared with the bump/note
-# detectors (INV-15). Resolve from THIS script's directory, not cwd.
+# Single-sourced predicates. Resolve from THIS script's directory, not cwd.
+# The BREAKING CHANGE detector/gate is shared with the bump/note detectors (INV-15);
+# the release-bot fingerprint is shared with release.yml's loop guard.
+_LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source=scripts/lib/breaking-change-detect.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/breaking-change-detect.sh"
+. "$_LIBDIR/breaking-change-detect.sh"
+# shellcheck source=scripts/lib/is-release-bot-subject.sh
+. "$_LIBDIR/is-release-bot-subject.sh"
 
 # Resolve the commit list without ever falling back to full history, and fail
 # closed when an explicit RANGE is unresolvable.
@@ -98,40 +102,10 @@ else
   commits="$(git rev-list -1 HEAD)"
 fi
 
-# The BASE of the scanned range == the pre-push state to test already-merged
-# against (bonnyr-f5 #193 B3). Prefer an explicit BEFORE (github.event.before);
-# otherwise derive it from RANGE's left-hand side ("base..head" -> "base"). Empty
-# when there is no base (default/tip scan) -> the exemption fails closed.
-BEFORE="${BEFORE:-}"
-if [ -z "$BEFORE" ] && [ -n "${RANGE:-}" ] && [[ "$RANGE" == *..* ]]; then
-  BEFORE="${RANGE%%..*}"
-fi
-
 # CI-control markers (matched case-insensitively, as fixed strings).
 markers=('[skip ci]' '[ci skip]' '[no ci]' '[skip actions]' '[actions skip]')
 
 fail=0
-
-# Is <sha> already reachable from the PRE-PUSH base -- i.e. it existed before this
-# push, so it is unamendable and was linted when it first landed? Keyed on a git
-# FACT the committing client cannot forge (unlike committer name/email). Fails
-# CLOSED: an unresolvable/empty base means "not merged" -> the commit is fully
-# linted (bonnyr-f5 #193 B3).
-_already_merged() {
-  local sha="$1"
-  [ -n "$BEFORE" ] || return 1
-  git rev-parse --verify --quiet "${BEFORE}^{commit}" >/dev/null 2>&1 || return 1
-  git merge-base --is-ancestor "$sha" "$BEFORE" 2>/dev/null
-}
-
-# Is <subject> the release bot's OWN release commit? EXACTLY release.yml's
-# loop-guard fingerprint (release.yml:131): a version AND the trailing [skip ci]
-# marker the bot itself appends. A human `release: <prose> [skip ci]` (no version)
-# is NOT exempt; only a real minted release commit is (bonnyr-f5 #193 B3).
-_is_release_bot_subject() {
-  grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+' <<< "$1" \
-    && grep -qE '\[skip ci\]$' <<< "$1"
-}
 
 # rule 1 -- CI-control MARKER checks (fixed-string markers + skip-checks trailer).
 # $1=label $2=message. Sets `fail=1` on a hit.
@@ -152,22 +126,22 @@ _lint_markers() {
 }
 
 # rule 2 -- UNDER-DETECTED-MARKER check. $1=label $2=message. Sets `fail=1` on a
-# hit. The exact COMPLEMENT of the detectors (bonnyr-f5 #193 M1): if the body is
-# ALREADY a real breaking footer (_is_breaking_body true) there is nothing to warn
-# about -- dash-bullet/markdown-bold footers pass straight through. Otherwise a
-# line SHAPED like a marker (_looks_like_breaking_marker, the SAME is_marker shape
-# the detector uses) is one the detectors would MISS: it will NOT trigger the
-# intended major bump, so flag it. Indented lines are not marker-shaped here, so
-# the detector-ignored indented case is not flagged either.
+# hit. The exact COMPLEMENT of the detectors (bonnyr-f5 #193 M1, r3 M-6b):
+# _under_detected_markers (in the shared lib) prints EVERY line that is a
+# DECLARATIVE `BREAKING CHANGE:` marker sitting where the detectors would MISS it
+# (mis-anchored), and NEVER a line the detector already accepts as a real footer.
+# So a properly-anchored footer (blank-anchored, or trailer+colon -- incl.
+# dash-bullet/markdown-bold) is passed through untouched, a COLONLESS marker-shaped
+# prose line the detectors treat as inert is NOT flagged (that reddened unamendable
+# release history), and a SECOND mis-anchored marker later in the same body is
+# reported too (no first-footer short-circuit).
 _lint_under_detected() {
   local label="$1" msg="$2" line
-  _is_breaking_body "$msg" && return 0
   while IFS= read -r line; do
-    if _looks_like_breaking_marker "$line"; then
-      echo "::error::${label}: line \"$line\" is shaped like a BREAKING CHANGE marker but is not positioned where the release detectors recognise a footer, so it would NOT trigger the intended major bump. Put it at the START of a paragraph (a blank line before it) as 'BREAKING CHANGE: <description>', or fold it onto a trailer with a colon -- or reword if no break is intended."
-      fail=1
-    fi
-  done <<< "$msg"
+    [ -z "$line" ] && continue
+    echo "::error::${label}: line \"$line\" is shaped like a BREAKING CHANGE marker but is not positioned where the release detectors recognise a footer, so it would NOT trigger the intended major bump. Put it at the START of a paragraph (a blank line before it) as 'BREAKING CHANGE: <description>', or fold it onto a trailer with a colon -- or reword if no break is intended."
+    fail=1
+  done <<< "$(_under_detected_markers "$msg")"
 }
 
 n=0
@@ -177,20 +151,12 @@ while IFS= read -r sha; do
   msg="$(git log -1 --format='%B' "$sha")"
   subject="$(git log -1 --format='%s' "$sha")"
 
-  # BOTH rules share ONE exemption gate (bonnyr-f5 #193 B3/M1): unamendable
-  # machine history (the release-bot's own commit, or a commit already in the
-  # pre-push base) is skipped entirely; every NEW commit this push introduces is
-  # linted through both rules.
-  exempt=0
-  reason=""
+  # BOTH rules share ONE exemption: the release-bot's OWN minted release commit
+  # (version + trailing skip marker). Every other commit is linted through both
+  # rules (bonnyr-f5 #193 r3 M-6a: there is no already-merged exemption -- see the
+  # header -- because the scanned range excludes the base by construction).
   if _is_release_bot_subject "$subject"; then
-    exempt=1; reason="release-bot commit (version + trailing skip marker)"
-  elif _already_merged "$sha"; then
-    exempt=1; reason="already reachable from the pre-push base ${BEFORE} (unamendable)"
-  fi
-
-  if [ "$exempt" = 1 ]; then
-    echo "commit-lint: commit $sha ($subject) is exempt ($reason)"
+    echo "commit-lint: commit $sha ($subject) is exempt (release-bot commit: version + trailing skip marker)"
   else
     _lint_markers "commit $sha ($subject)" "$msg"
     _lint_under_detected "commit $sha ($subject)" "$msg"
