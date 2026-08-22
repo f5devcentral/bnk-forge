@@ -194,28 +194,35 @@ def test_ensure_service_user_refuses_reserved_username_case_insensitively(legacy
         db.close()
 
 
-@pytest.mark.parametrize("variant", [" mcp ", "MCP", "  Mcp  "])
-def test_service_username_variant_reconciles_legacy_row_end_to_end(legacy_db, monkeypatch, variant):
-    """bonnyr-f5 #193 test-gap 6, full seed_auth_step path: MCP_SERVICE_USERNAME set
-    to a case/whitespace variant of the legacy 'mcp' name must RECONCILE the existing
-    legacy row (rotate its hash, keep it active) — not disable it and mint a second
-    ' mcp ' service account. The disable's skip filter and the reconcile's lookup
-    must both canonicalise the variant onto the same 'mcp' row."""
+@pytest.mark.parametrize("variant", ["MCP", " mcp ", "  Mcp  "])
+def test_service_username_variant_account_matches_what_the_client_sends(legacy_db, monkeypatch, variant):
+    """bonnyr-f5 #193 M-2 (regression fix; this REPLACES the round-3 'reconcile the
+    legacy row' test, which locked in the bug). The MCP client receives the RAW
+    MCP_SERVICE_USERNAME as BNK_FORGE_USERNAME and authenticate_user matches exactly,
+    so the seeded account MUST carry the RAW value the client will send — not a
+    normalised 'mcp'. Round-3 normalised the row to 'mcp' and every non-lowercase
+    login was DENIED. The correct invariant: the row matches what the client sends,
+    and the reserved/skip logic keys on that same raw value. The provenance-keyed
+    disable neutralises the legacy default in the same boot."""
     _set_mcp_env(monkeypatch, variant, "brand-new-strong-secret")
 
     startup_steps.seed_auth_step()
 
     db = legacy_db()
     try:
-        # Exactly one service row, canonical name — no variant twin.
-        assert db.query(User).filter(User.username == "mcp").count() == 1
-        assert db.query(User).filter(User.username == variant).count() == 0
-        mcp = db.query(User).filter(User.username == "mcp").one()
-        assert mcp.is_active is True  # reconciled + kept live, not disabled
-        # New secret authenticates; the shipped default no longer does.
-        assert authenticate_user(db, "mcp", "brand-new-strong-secret")
+        # The account the CLIENT will authenticate as exists under the raw value and
+        # its new secret works — this is the login round-3 broke.
+        assert authenticate_user(db, variant, "brand-new-strong-secret")
+        # The normalised name is NOT what the client sends; nothing was seeded there.
+        if variant != "mcp":
+            with pytest.raises(UnauthorizedError):
+                authenticate_user(db, "mcp", "brand-new-strong-secret")
+        # The legacy 'mcp'/shipped-default row is neutralised (provenance-keyed
+        # disable + hash scrub), so the published default no longer authenticates.
         with pytest.raises(UnauthorizedError):
             authenticate_user(db, "mcp", LEGACY_DEFAULT)
+        legacy = db.query(User).filter(User.username == "mcp").one()
+        assert legacy.is_active is False
     finally:
         db.close()
 

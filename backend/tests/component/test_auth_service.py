@@ -855,59 +855,77 @@ class TestDisableStaleSkipUsername:
         assert extra.hashed_password != extra_hash_before
         assert verify_password("mcp-service-changeme", extra.hashed_password) is False
 
-    def test_skip_username_variant_still_skips_the_live_row(self, db):
-        # test-gap 6 at the disable site: a case/whitespace variant of the live
-        # name must still skip the live 'mcp' row (else M2's no-inactive-window
-        # property breaks for a variant-configured install).
+    def test_skip_username_is_exact_raw_match(self, db):
+        # bonnyr-f5 #193 M-2: the skip keys on the RAW MCP_SERVICE_USERNAME — the
+        # exact value ensure_service_user reconciles under and the client
+        # authenticates with. So skip 'MCP' protects a raw-'MCP' live row, while a
+        # differently-cased stale 'mcp' row (NOT what the client sends) is correctly
+        # disabled. Normalising the skip would instead spare that stale default row.
         from models import User
         from services.auth_service import disable_stale_service_user
 
-        live = _seed_legacy_stale_service_row(db, username="mcp", password="live-real-secret")
+        live = _seed_legacy_stale_service_row(db, username="MCP", password="live-real-secret")
+        stale = _seed_legacy_stale_service_row(
+            db, username="mcp", password="mcp-service-changeme"
+        )
         live_hash_before = live.hashed_password
 
-        disable_stale_service_user(db, skip_username="  MCP  ", password_configured=True)
+        disable_stale_service_user(db, skip_username="MCP", password_configured=True)
 
-        live = db.query(User).filter(User.username == "mcp").first()
+        live = db.query(User).filter(User.username == "MCP").first()
+        stale = db.query(User).filter(User.username == "mcp").first()
+        # The row the client actually uses is skipped — no inactive window.
         assert live.is_active is True
         assert live.hashed_password == live_hash_before
+        # The differently-cased stale default row is disabled + scrubbed.
+        assert stale.is_active is False
+        assert verify_password("mcp-service-changeme", stale.hashed_password) is False
 
 
 # ── bonnyr-f5 #193 test-gap 6: MCP_SERVICE_USERNAME case/whitespace variant ──
 
 
-class TestServiceUsernameNormalisation:
+class TestServiceUsernameRawMatchesClient:
+    """bonnyr-f5 #193 M-2 (regression fix; replaces the round-3 'normalise the
+    lookup' tests, which locked in a client-breaking bug). The MCP client sends the
+    RAW MCP_SERVICE_USERNAME and authenticate_user matches exactly, so the account
+    must be created under the raw value — not folded to 'mcp'."""
+
     @pytest.fixture(autouse=True)
     def _isolate_keys_dir(self, monkeypatch, tmp_path):
         monkeypatch.setenv("KEYS_DIR", str(tmp_path))
 
-    def test_variant_reconciles_existing_row_not_a_second(self, db):
-        # A pre-existing 'mcp' service row + MCP_SERVICE_USERNAME=" mcp " (variant):
-        # the lookup used the RAW value, so the variant missed the 'mcp' row and
-        # minted a SECOND service account. Normalising at the lookup site reconciles
-        # the existing row instead.
+    def test_variant_creates_account_under_raw_value_client_sends(self, db):
+        # MCP_SERVICE_USERNAME="MCP" (case variant): the row is created under 'MCP',
+        # so the client's 'MCP' login works — the login round-3 denied.
+        from models import User
+        ensure_service_user(db, username="MCP", password="a-real-strong-secret")
+        assert db.query(User).filter(User.username == "MCP").count() == 1
+        assert db.query(User).filter(User.username == "mcp").count() == 0
+        assert authenticate_user(db, "MCP", "a-real-strong-secret").username == "MCP"
+        # The normalised name is NOT what the client sends — nothing seeded there.
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", "a-real-strong-secret")
+
+    def test_variant_create_uses_raw_name_and_email(self, db):
+        # The created row carries the raw username and a raw-derived email.
+        from models import User
+        ensure_service_user(db, username="MCP", password="a-real-strong-secret")
+        row = db.query(User).filter(User.username == "MCP").one()
+        assert row.email == "MCP@bnk-forge.local"
+        # Idempotent under the SAME raw value: reconciles the one row, no twin.
+        ensure_service_user(db, username="MCP", password="rotated-strong-secret")
+        assert db.query(User).filter(User.username == "MCP").count() == 1
+        assert authenticate_user(db, "MCP", "rotated-strong-secret").username == "MCP"
+
+    def test_default_lowercase_name_still_reconciles_legacy_row(self, db):
+        # The default MCP_SERVICE_USERNAME='mcp' (raw == what the client sends) still
+        # reconciles the legacy 'mcp' row rather than minting a second account.
         from models import User
         _seed_legacy_stale_service_row(db, username="mcp", password="mcp-service-changeme")
-        ensure_service_user(db, username="  mcp  ", password="a-real-strong-secret")
-        # Exactly one service row, named 'mcp' — no ' mcp ' twin.
+        ensure_service_user(db, username="mcp", password="a-real-strong-secret")
         assert db.query(User).filter(User.username == "mcp").count() == 1
-        assert db.query(User).filter(User.username == "  mcp  ").count() == 0
-        # It reconciled to the new secret and re-activated.
-        mcp = db.query(User).filter(User.username == "mcp").first()
-        assert mcp.is_active is True
         assert authenticate_user(db, "mcp", "a-real-strong-secret").username == "mcp"
-
-    def test_variant_create_uses_normalised_name_and_email(self, db):
-        # Fresh install (no existing row) with a variant name: the created row is
-        # canonicalised so a later boot with the plain name reconciles it (and the
-        # synthesised email matches v2_155's 'mcp@bnk-forge.local' fingerprint).
-        from models import User
-        ensure_service_user(db, username=" MCP ", password="a-real-strong-secret")
-        row = db.query(User).filter(User.username == "mcp").one()
-        assert row.email == "mcp@bnk-forge.local"
-        assert db.query(User).filter(User.username == " MCP ").count() == 0
-        # Idempotent: the plain name reconciles the same single row.
-        ensure_service_user(db, username="mcp", password="rotated-strong-secret")
-        assert db.query(User).filter(User.username == "mcp").count() == 1
 
 
 # ── bonnyr-f5 #193 test-gap 4: db.commit() fails after the keys file is written ──

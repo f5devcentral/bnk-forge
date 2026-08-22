@@ -3,14 +3,17 @@
 Revision ID: v2_155
 Revises: v2_154
 
-bonnyr-f5 #188 round 4 (INV-7): the backfill MUST live in its own revision, not
-inside ``v2_154``. ``v2_154`` only adds the column (``server_default false``) and
-already shipped in earlier RCs of this branch, so any install that ran it at the
-earlier commit has ``alembic_version = v2_154`` and will NEVER re-run it — an
-applied revision is immutable. Appending the backfill to ``v2_154`` therefore
-skips exactly the existing installs it was meant to fix. Cutting a NEW revision
-that chains from ``v2_154`` guarantees every such install applies the backfill on
-its next ``alembic upgrade``.
+bonnyr-f5 #188 round 4 (INV-7) / #193 (minor, rationale corrected): the backfill
+lives in its OWN revision, separate from ``v2_154`` (which only adds the column,
+``server_default false``). NOTE: ``v2_154`` and ``v2_155`` are BOTH introduced in
+THIS diff — the earlier claim that ``v2_154`` "already shipped in earlier RCs" was
+false, so no install has ``alembic_version = v2_154`` without also getting
+``v2_155`` on the same ``alembic upgrade``. The split is kept regardless because it
+is the correct shape: a schema change and its data backfill are cleanly separable
+and independently reversible, and IF a future build ever ships the column ahead of
+the backfill, a distinct revision still guarantees every install that stopped at
+``v2_154`` applies the backfill on its next upgrade (appending it to ``v2_154``
+would silently skip such installs, since an applied revision is immutable).
 
 Why the backfill is needed at all: the column ships ``server_default false``, so
 without it EVERY pre-existing row — including the ``mcp`` service account that

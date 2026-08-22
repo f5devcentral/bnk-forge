@@ -236,9 +236,15 @@ _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 # ensure_service_user raise ValueError, which startup_steps swallows as a log line,
 # leaving MCP silently dead. The tuple is deleted; ``MCP_KNOWN_DEFAULT_PASSWORDS``
 # (imported from core.config above) is the single Python source of truth, used both
-# by validate_production's fail-fast gate and by this seed/rotate path. (A third
-# copy lives in helm/templates/secrets.yaml — owned by the deploy surface and kept
-# in lockstep by a chart test there.)
+# by validate_production's fail-fast gate and by this seed/rotate path.
+#
+# Copies OUTSIDE this Python source (deploy-owned, not editable from here — count
+# corrected in r4): helm/bnk-forge/templates/secrets.yaml, kept in lockstep by
+# scripts/tests/helm-known-defaults-lockstep.test.sh; and a FOURTH copy in
+# dist/install.sh (the ``changeme|mcp-service-changeme`` MCP_USABLE gate, ~line 381)
+# that sits OUTSIDE that lockstep test. Flagged for the deploy surface; the Python
+# gate here is independent of the shell copy, so drift in install.sh cannot weaken
+# this path.
 
 # #186 BLOCKER 3 (bonnyr-f5 r5): usernames that belong to a HUMAN identity and
 # must never be resolved by ensure_service_user. That function locates its target
@@ -254,17 +260,23 @@ _RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
 
 
 def _normalize_service_username(username: str) -> str:
-    """Canonicalise a configured service username: trim, casefold to lowercase.
+    """Canonicalise a configured service username for RESERVED-NAME comparison
+    only: trim, casefold to lowercase.
 
-    bonnyr-f5 #193 (test-gap 6): the reserved-name guard normalises, but the row
-    LOOKUP (ensure_service_user) and the skip filter (disable_stale_service_user)
-    used the RAW value, so a case/whitespace variant of a non-reserved name (e.g.
-    ``" mcp "`` or ``"MCP"``) failed to match the existing ``mcp`` row and minted a
-    SECOND service account instead of reconciling the first — and the skip filter,
-    keyed on the raw value, then disabled the live row it was supposed to keep. Both
-    sites now canonicalise through here so a variant reconciles the existing row.
-    Matches the Helm chart's ``lower | trim`` and the reserved-name guard below, so
-    every surface treats the same inputs identically.
+    bonnyr-f5 #193 M-2: this is used ONLY by the reserved-name guard
+    (``_is_reserved_human_username``), so ``Admin`` / ``" admin "`` are refused the
+    same way the Helm chart refuses them at render (``lower | trim``). It is
+    deliberately NOT used for the row lookup/create in ``ensure_service_user`` nor
+    for the ``disable_stale_service_user`` skip filter: those must key on the RAW
+    ``MCP_SERVICE_USERNAME`` because that is the exact value the MCP client sends as
+    ``BNK_FORGE_USERNAME`` and ``authenticate_user`` matches exactly. Round-3
+    normalised the lookup/create too, which created the row as ``mcp`` while a
+    ``MCP`` client was denied (the account must match what the client sends).
+
+    NOTE: the Helm chart only lower|trims inside its reserved-name CHECK
+    (``secrets.yaml:119``); it STORES the raw ``mcpUsername`` (``secrets.yaml:140``),
+    so the row-name surface is raw on both Helm and compose — this guard governs the
+    reserved-name surface, which is where the two agree.
     """
     return username.strip().lower()
 
@@ -584,9 +596,9 @@ def ensure_service_user(
     disable-then-reconcile could take the live MCP row inactive for a
     bcrypt-plus-commit window on a rolling restart. bonnyr-f5 #193 M2 closes this:
     seed_auth_step passes ``skip_username`` so disable_stale_service_user leaves the
-    row this reconcile will touch untouched. The skip key and the name reconciled
-    here are canonicalised the same way (``_normalize_service_username``) so a
-    case/whitespace variant still lines the two sites up on the same row.
+    row this reconcile will touch untouched. bonnyr-f5 #193 M-2: BOTH sites now key
+    on the RAW ``MCP_SERVICE_USERNAME`` (the exact value the client sends), so the
+    skip target and the reconciled row are the same row for any casing.
     """
     # #186 BLOCKER 3 / #188 (bonnyr-f5): fail closed BEFORE any lookup if the
     # caller points a service account at a reserved human username. Without this,
@@ -600,12 +612,16 @@ def ensure_service_user(
             f"'mcp' (a service account must not co-opt the human admin identity)"
         )
 
-    # bonnyr-f5 #193 (test-gap 6): canonicalise the configured name BEFORE the
-    # lookup/create below so a case/whitespace variant (e.g. " mcp ", "MCP")
-    # reconciles the existing 'mcp' row instead of minting a second service account.
-    # The synthesised email is derived from this normalised value too, so it stays
-    # equal to v2_155's 'mcp@bnk-forge.local' fingerprint on the create path.
-    username = _normalize_service_username(username)
+    # bonnyr-f5 #193 M-2 (regression fix): do NOT canonicalise the name for the
+    # lookup/create. The MCP CLIENT receives the RAW MCP_SERVICE_USERNAME as
+    # BNK_FORGE_USERNAME on every shipped path, and authenticate_user matches
+    # EXACTLY, so the row MUST be created/reconciled under the value the client will
+    # actually send (raw). Round-3 normalised here (strip().lower()), which created
+    # the account as 'mcp' while the client sent 'MCP' -> every non-lowercase
+    # MCP_SERVICE_USERNAME login was DENIED. Canonicalisation is kept ONLY in the
+    # reserved-name guard above (so ' Admin ' is still refused). The synthesised
+    # email below derives from the raw username; the default 'mcp' still yields
+    # 'mcp@bnk-forge.local' and matches v2_155's fingerprint on the create path.
 
     # This function only ever runs with a usable password (seed_auth_step's
     # _mcp_pw_usable gate). Fail closed and loudly if that contract is violated:
@@ -653,6 +669,14 @@ def ensure_service_user(
     # so neutralising it is the upgrade remediation. Keying the exception on the
     # password value instead (as the pre-#193 code did) adopted ANY human row whose
     # password was `changeme` — a takeover of the human account (bonnyr-f5 #193 B1).
+    # bonnyr-f5 #193 (minor): why this branch is KEPT even though v2_155 backfills
+    # is_service_account=True on the legacy 'mcp'/'mcp@bnk-forge.local' row (which
+    # would send that row down the is_service_account=True path, not here). It is
+    # defence-in-depth for the ordering where seeding meets a row that carries the
+    # legacy fingerprint but NOT the flag: migrations disabled or lagging behind the
+    # app, a fresh test DB seeded without running v2_155, or a row created under a
+    # pre-provenance path. In production v2_155 runs before seeding, so this is
+    # normally unreachable; keeping it costs nothing and closes the ordering gap.
     is_adoption = False
     if not user.is_service_account:
         fingerprint_match = (
@@ -744,11 +768,12 @@ def disable_stale_service_user(
         User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
     )
     if skip_username is not None:
-        # bonnyr-f5 #193 (test-gap 6): canonicalise the skip key the same way
-        # ensure_service_user canonicalises the name it reconciles, so a variant
-        # like " mcp " skips the live 'mcp' row instead of disabling it (which
-        # would open the exact inactive window M2 exists to prevent).
-        skip_username = _normalize_service_username(skip_username)
+        # bonnyr-f5 #193 M-2: key the skip on the RAW MCP_SERVICE_USERNAME — the
+        # exact value ensure_service_user reconciles the row under — so the live row
+        # is skipped (not nuked into an inactive window). Normalising here would
+        # break that: a non-lowercase MCP_SERVICE_USERNAME=MCP reconciles a 'MCP'
+        # row while a normalised skip='mcp' would fail to protect it (and would also
+        # spare a differently-cased legacy default row that must be disabled).
         query = query.filter(User.username != skip_username)
     rows = query.all()
     if not rows:

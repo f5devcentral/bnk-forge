@@ -143,3 +143,86 @@ class TestApiTokenBranchGatedByMiddleware:
         resp = client.get("/api/projects", headers={"Authorization": "Bearer bnk_deadbeef"})
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
+
+
+# ── JWT branch fails CLOSED on an unresolvable subject (bonnyr-f5 #193 minor) ──
+
+
+class TestUnresolvableJwtSubjectRefused:
+    """A VALID JWT whose user cannot be resolved (deleted/disabled/DB error) must be
+    REFUSED with 401 — token_user_state returns None on any such failure and the
+    middleware must fail closed, never pass through on the ~32 dependency-less /api
+    routes (bonnyr-f5 #186 r2 called the earlier skip a fail-open bypass). Untested
+    until now."""
+
+    def _client(self):
+        app = _make_app(require_auth=True)
+
+        @app.get("/api/projects")
+        async def _projects(request: Request):  # a dependency-less /api route
+            return JSONResponse({"ok": True})
+
+        return TestClient(app, raise_server_exceptions=True)
+
+    def test_valid_jwt_unresolvable_user_is_401(self, monkeypatch):
+        from services.auth_service import create_access_token
+
+        # decode_token succeeds (real JWT), but the user can't be resolved.
+        monkeypatch.setattr("services.auth_service.token_user_state", lambda token: None)
+        token = create_access_token(data={"sub": "ghost", "role": "admin"})
+        resp = self._client().get(
+            "/api/projects", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 401
+        assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+    def test_valid_jwt_resolvable_settled_user_passes(self, monkeypatch):
+        from services.auth_service import create_access_token
+
+        class _U:
+            must_change_password = False
+
+        monkeypatch.setattr("services.auth_service.token_user_state", lambda token: _U())
+        token = create_access_token(data={"sub": "real", "role": "admin"})
+        resp = self._client().get(
+            "/api/projects", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+
+# ── must-change exempt-path matching is EXACT, not suffix (bonnyr-f5 #193 minor) ──
+
+
+class TestPasswordChangeExemptPathIsExact:
+    """enforce_password_change gates a must-change user off everything but the exempt
+    endpoints, and the match is EXACT (path.rstrip('/') in the frozenset) — a security
+    gate must not accept an unrelated route that merely ENDS WITH '/auth/me'. Untested
+    until now."""
+
+    class _MustChange:
+        must_change_password = True
+
+    def test_exact_exempt_paths_are_allowed(self):
+        from services.auth_service import enforce_password_change
+
+        # No raise on the exact exempt paths (trailing slash tolerated by rstrip).
+        enforce_password_change("/api/auth/me", self._MustChange())
+        enforce_password_change("/api/auth/me/", self._MustChange())
+        enforce_password_change("/api/auth/change-password", self._MustChange())
+
+    def test_suffix_lookalike_paths_are_not_exempt(self):
+        from core.errors import ForbiddenError
+        from services.auth_service import enforce_password_change
+
+        for path in ("/api/evil/auth/me", "/api/auth/me/extra", "xxx/api/auth/me"):
+            with pytest.raises(ForbiddenError):
+                enforce_password_change(path, self._MustChange())
+
+    def test_settled_user_is_never_gated(self):
+        from services.auth_service import enforce_password_change
+
+        class _Settled:
+            must_change_password = False
+
+        enforce_password_change("/api/anything/at/all", _Settled())  # no raise
