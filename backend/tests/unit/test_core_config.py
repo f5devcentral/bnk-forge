@@ -278,12 +278,18 @@ class TestProductionValidationSatisfiableFromEnv:
         Settings(ENVIRONMENT="production", **self.REAL).validate_production()
 
     @pytest.mark.parametrize("var", sorted(REAL.keys()))
-    def test_each_gated_var_trips_then_is_satisfiable(self, var):
+    def test_each_gated_var_trips_then_is_satisfiable(self, var, tmp_path):
         # Only this one var left at its shipped default → must fail fast.
         env = dict(self.REAL)
         env[var] = self.SHIPPED_DEFAULT[var]
         with pytest.raises(SystemExit):
             Settings(ENVIRONMENT="production", **env).validate_production()
+        # Phase 1 with ENCRYPTION_KEY unset persists a marker-less auto-gen key; the
+        # at-rest key file is NEVER silently overwritten (r4 B-3 self-review), so an
+        # operator provisioning a real value does so on a clean keys volume. Clear it
+        # to reflect a provisioned deploy rather than one still carrying that auto-gen.
+        (tmp_path / "encryption.key").unlink(missing_ok=True)
+        (tmp_path / "encryption.key.operator").unlink(missing_ok=True)
         # Restoring a real value for it (all others already real) → passes.
         env[var] = self.REAL[var]
         Settings(ENVIRONMENT="production", **env).validate_production()
@@ -469,26 +475,48 @@ class TestEncryptionKeyEnvConsumed:
         with pytest.raises(SystemExit):
             Settings(ENVIRONMENT="production", ENCRYPTION_KEY=_secrets.token_hex(16))
 
-    def test_env_key_does_not_clobber_operator_provisioned_different_key(self, tmp_path):
-        # A DIFFERENT operator-provisioned key already occupies the file (with its
-        # marker). Setting ENCRYPTION_KEY to a different valid key must FAIL CLOSED,
-        # never silently overwrite (that would make existing data undecryptable).
+    def test_env_key_does_not_overwrite_a_persisted_operator_key(self, tmp_path):
+        # A DIFFERENT operator-provisioned key (with marker) already occupies the file.
+        # The persisted key is authoritative: it is NEVER overwritten (that would
+        # destroy encrypted data) and the boot does NOT brick — the env value is
+        # ignored with a warning, and core.encryption keeps loading the file's key.
         other = Fernet.generate_key().decode()
         (tmp_path / "encryption.key").write_text(other)
         (tmp_path / "encryption.key.operator").write_text("")
-        with pytest.raises(SystemExit):
-            Settings(ENVIRONMENT="development", ENCRYPTION_KEY=VALID_FERNET)
-        # The operator's key is untouched.
-        assert (tmp_path / "encryption.key").read_text() == other
-
-    def test_env_key_replaces_marker_less_autogen_key(self, tmp_path):
-        # A marker-less key in the file is our own auto-gen (in production that path
-        # only ever crash-looped, so no committed data). The explicit env value is
-        # authoritative and replaces it.
-        (tmp_path / "encryption.key").write_text("some-old-marker-less-value")
-        s = Settings(ENVIRONMENT="development", ENCRYPTION_KEY=VALID_FERNET)
-        assert (tmp_path / "encryption.key").read_text().strip() == VALID_FERNET
+        s = Settings(ENVIRONMENT="production", ENCRYPTION_KEY=VALID_FERNET)
+        assert (tmp_path / "encryption.key").read_text() == other  # untouched
+        assert s.ENCRYPTION_KEY == other  # the FILE wins; the gate saw a real key
         assert s._encryption_key_auto_generated is False
+
+    def test_env_key_never_clobbers_a_marker_less_persisted_key(self, tmp_path):
+        # THE DATA-LOSS REGRESSION (r4 self-review). A marker-less key in the file is a
+        # prior release's auto-gen OR a bare backup restore — and at r3 core.encryption
+        # used the FILE regardless of the env, so it may hold the key LIVE DATA was
+        # encrypted under. ENCRYPTION_KEY must NEVER overwrite it.
+        persisted = Fernet.generate_key().decode()
+        (tmp_path / "encryption.key").write_text(persisted)  # no marker
+        s = Settings(ENVIRONMENT="development", ENCRYPTION_KEY=VALID_FERNET)
+        assert (tmp_path / "encryption.key").read_text().strip() == persisted  # NOT clobbered
+        assert s.ENCRYPTION_KEY == persisted  # the FILE wins
+        assert s._encryption_key_auto_generated is True  # marker-less -> auto (gate flags it)
+
+    def test_marker_less_persisted_key_fails_production_without_losing_data(self, tmp_path):
+        # Same upgrade/restore shape under production: the gate must still fire
+        # (marker-less == auto-generated), AND the persisted key must SURVIVE so the
+        # operator can bless it (drop a .operator marker) instead of losing data.
+        persisted = Fernet.generate_key().decode()
+        (tmp_path / "encryption.key").write_text(persisted)
+        s = Settings(
+            ENVIRONMENT="production",
+            ENCRYPTION_KEY=VALID_FERNET,  # ignored: the persisted file wins
+            JWT_SECRET_KEY="x" * 40,
+            MCP_SERVICE_PASSWORD="a-real-mcp-secret",
+            ALLOWED_ORIGINS="https://forge.example.com",
+        )
+        assert s._encryption_key_auto_generated is True  # marker-less file -> auto
+        with pytest.raises(SystemExit):
+            s.validate_production()  # fails specifically on the encryption provenance
+        assert (tmp_path / "encryption.key").read_text().strip() == persisted  # data preserved
 
     def test_env_unset_generates_valid_fernet_at_rest_key(self, tmp_path):
         # No ENCRYPTION_KEY set: the app generates a real Fernet key into the file.

@@ -75,8 +75,11 @@ in-cluster services and pulls secrets from the generated Secret.
 {{/* bonnyr-f5 #193 M10: render-time CORS/production guard, mirroring the backend's
      core/config.py validate_production() SystemExit conditions exactly, so a fatal
      posture is caught at `helm install` time instead of as a crashloop:
-       * "*" (wildcard) in ALLOWED_ORIGINS  -> fatal under staging AND production;
-       * "localhost"     in ALLOWED_ORIGINS -> fatal under production only.
+       * a bare "*" ENTRY in ALLOWED_ORIGINS -> fatal under staging AND production
+         (exact comma-split entry, matching the backend's `"*" in self.cors_origins`
+         since r4 — so a legit `https://*.example.com` subdomain origin is NOT flagged);
+       * "localhost" substring in ALLOWED_ORIGINS -> fatal under production only
+         (matches the backend's per-origin `"localhost" in origin`).
      An EMPTY ALLOWED_ORIGINS is deliberately NOT failed: the backend accepts it
      (no wildcard, no localhost) and boots, so the default render (ENVIRONMENT
      production + the empty ALLOWED_ORIGINS shipped in values.yaml) stays green under
@@ -87,8 +90,10 @@ in-cluster services and pulls secrets from the generated Secret.
 {{- $environment := $benv.ENVIRONMENT | default "" -}}
 {{- if or (eq $environment "production") (eq $environment "staging") -}}
 {{- $origins := $benv.ALLOWED_ORIGINS | default "" -}}
-{{- if contains "*" $origins -}}
-{{- fail (printf "api.env.ALLOWED_ORIGINS contains '*' (wildcard) under ENVIRONMENT=%s; the backend rejects this at boot (validate_production) and crashloops. Set api.env.ALLOWED_ORIGINS to your explicit origin(s), e.g. https://forge.example.com." $environment) -}}
+{{- $hasWildcard := false -}}
+{{- range (splitList "," $origins) -}}{{- if eq (trim .) "*" -}}{{- $hasWildcard = true -}}{{- end -}}{{- end -}}
+{{- if $hasWildcard -}}
+{{- fail (printf "api.env.ALLOWED_ORIGINS has a bare '*' (wildcard) entry under ENVIRONMENT=%s; the backend rejects this at boot (validate_production) and crashloops. Set api.env.ALLOWED_ORIGINS to your explicit origin(s), e.g. https://forge.example.com." $environment) -}}
 {{- end -}}
 {{- if and (eq $environment "production") (contains "localhost" $origins) -}}
 {{- fail "api.env.ALLOWED_ORIGINS contains 'localhost' under ENVIRONMENT=production; the backend rejects this at boot (validate_production) and crashloops. Set api.env.ALLOWED_ORIGINS to your actual domain/IP, e.g. https://forge.example.com (or set ENVIRONMENT=development for a local trial)." -}}
@@ -204,37 +209,33 @@ sharedVolumes: PVC-backed volume references for pod spec.
 {{- end -}}
 
 {{/*
-secretsChecksum: DETERMINISTIC digest for the pod `checksum/secret` annotations, so a real
-secret change rolls api/worker/beat/mcp and an unchanged render does not. bonnyr-f5 #193 M7
-+ round-3 minor. It hashes the INPUTS that determine the emitted Secret, NOT the rendered
-Secret: the values.yaml `secrets.*` block, the persisted Secret's `.data` (reused verbatim
-across upgrades via `lookup`, nil-folded as secrets.yaml does), and a per-credential
-"rotating-from-default" MARKER for admin/mcp whose persisted value is a known published
-default (secrets.yaml rotates those to a fresh RANDOM value that must roll the pods).
+secretsChecksum: digest for the pod `checksum/secret` annotations, so a real secret change
+rolls api/worker/beat/mcp and an unchanged render does not. bonnyr-f5 #193 M7 + round-3 minor.
+It hashes the DETERMINISTIC inputs that determine the Secret -- the values.yaml `secrets.*`
+block and the persisted Secret's `.data` (reused verbatim across upgrades via `lookup`,
+nil-folded as secrets.yaml does) -- NOT the rendered Secret.
 
-Why inputs, not `include secrets.yaml | sha256sum`: the generated fallbacks are
-`randAlphaNum` (RANDOM, unpredictable). Re-rendering the Secret to hash it would either
-churn every render (each include re-rolls the random) or force generation to be DETERMINISTIC
--- and a derived key is computable from public chart/label metadata (release name, namespace,
-fullname), which would hand an attacker the JWT signing key, the at-rest Fernet key and the
-admin/mcp passwords. So M7's "checksum must track rotation" is met WITHOUT reintroducing that:
-- operator edit          -> values.secrets changes    -> digest moves;
-- persisted-value change -> .data changes              -> digest moves;
-- rotate a persisted known-default -> marker set on the sync that still sees the default,
-  clears once the random value persists -> digest moves, pods roll.
-This is stable even in a bare no-cluster `helm template` (the hashed inputs carry no
-randomness). A first-ever pure-generated value isn't represented until it persists, but the
-pods are being CREATED on that sync so no roll is needed; every later sync is stable.
+The M7 trilemma (r4 self-review): you cannot have all three of (i) stable across a bare
+no-cluster `helm template`, (ii) tracks a GENERATED-value rotation at render time, and
+(iii) unpredictable secrets. Determinism buys (i)+(ii) but forfeits (iii) -- a derived key is
+computable from public chart/label metadata (release name/namespace/fullname), handing an
+attacker the JWT signing key, the at-rest Fernet key and the admin/mcp passwords. We keep
+(iii) (randAlphaNum) and get (i) from hashing inputs. Coverage:
+  - operator edit (`values.secrets.*`)        -> input changes  -> digest moves, pods roll NOW;
+  - a change to the persisted Secret          -> `.data` changes (seen via lookup in a REAL
+                                                 cluster)        -> digest moves;
+  - rotate-away-from-a-persisted-known-default emits a fresh RANDOM value the checksum cannot
+    see at render time without re-rolling the random (or a cluster), so those pods roll on the
+    NEXT reconcile once the value persists into `.data` -- one sync, not never.
+(An earlier "rotating-from-default" marker was removed: it was provably redundant -- the same
+`.data` change already moves the digest, so the marker never altered the outcome. A bare
+no-cluster `helm template` has no lookup and reflects only `values.secrets`; that is a
+template-mode limitation, not a deploy defect -- GitOps renders against the live cluster.)
 */}}
 {{- define "bnk-forge.secretsChecksum" -}}
 {{- $name := printf "%s-secrets" (include "bnk-forge.fullname" .) -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
 {{- $data := dict -}}
 {{- if and $existing $existing.data -}}{{- $data = $existing.data -}}{{- end -}}
-{{- $adminDefaults := list "changeme" -}}
-{{- $mcpDefaults := list "changeme" "mcp-service-changeme" -}}
-{{- $rot := dict -}}
-{{- if and (hasKey $data "admin-password") (has (index $data "admin-password" | b64dec) $adminDefaults) -}}{{- $_ := set $rot "admin" "rotating-from-default" -}}{{- end -}}
-{{- if and (hasKey $data "mcp-password") (has (index $data "mcp-password" | b64dec) $mcpDefaults) -}}{{- $_ := set $rot "mcp" "rotating-from-default" -}}{{- end -}}
-{{- printf "%s|%s|%s" (toYaml .Values.secrets) (toYaml $data) (toYaml $rot) | sha256sum -}}
+{{- printf "%s|%s" (toYaml .Values.secrets) (toYaml $data) | sha256sum -}}
 {{- end -}}

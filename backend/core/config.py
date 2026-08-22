@@ -156,24 +156,23 @@ def _persist_or_load_key(key_path: str, generate_fn: Callable[[], str]) -> tuple
     return key, True  # Auto-generated
 
 
-def _adopt_operator_encryption_key(key_path: str, key_value: str) -> None:
-    """bonnyr-f5 #193 B-3: consume an operator-provided ``ENCRYPTION_KEY`` as the
-    ONE at-rest key.
+def _seed_encryption_key_if_absent(key_path: str, key_value: str) -> tuple[str, bool]:
+    """bonnyr-f5 #193 B-3 (r4 self-review): reconcile an operator-provided
+    ``ENCRYPTION_KEY`` with the at-rest key file WITHOUT ever destroying data.
 
-    ``ENCRYPTION_KEY`` used to gate ``validate_production`` while encrypting nothing —
-    the real at-rest Fernet key was a second, independent file that
-    ``core.encryption`` generated unchecked. Now, when the operator sets a (validated)
-    ``ENCRYPTION_KEY``, we WRITE it to ``key_path`` and drop the ``.operator`` marker,
-    so ``core.encryption`` and ``services.backup_service`` load THIS value and a later
-    env-unset boot still classifies it operator-provisioned. There is exactly one key,
-    one generator, one provenance signal — mirroring the JWT half, which was always
-    sound.
+    INVARIANT: the at-rest key FILE is the single source of truth. ``core.encryption``
+    reads it, ``services.backup_service`` restore WRITES it, and prior releases
+    persisted an auto-generated key there. So this function NEVER overwrites an
+    existing file — that file may hold the key under which live data was already
+    encrypted, and clobbering it makes that data undecryptable (and doing so under a
+    ``.operator`` marker mismatch previously *bricked* the boot). ``ENCRYPTION_KEY``
+    env only SEEDS the file when it is absent (first boot), and provenance for
+    ``validate_production`` is read from the FILE's ``.operator`` marker, so the gate
+    reflects the value that actually encrypts regardless of the env var.
 
-    Never CLOBBER an operator-provisioned key: if a DIFFERENT key already occupies the
-    file AND carries a ``.operator`` marker, that is a genuine "env and file disagree"
-    misconfiguration -> fail closed. A DIFFERENT marker-less key is either our own
-    auto-gen (which in production only ever crash-looped, so it holds no committed
-    data) or dev scratch: the explicit env value is authoritative, so replace it.
+    Returns ``(effective_at_rest_key, auto_generated)`` — the FILE's value wins when a
+    file already exists, so ``self.ENCRYPTION_KEY`` tracks what ``core.encryption``
+    will actually load.
     """
     marker_path = key_path + ".operator"
     if os.path.isfile(key_path):
@@ -182,31 +181,30 @@ def _adopt_operator_encryption_key(key_path: str, key_value: str) -> None:
                 existing = f.read().strip()
         except (OSError, PermissionError):
             existing = ""
-        if existing and existing != key_value:
-            if os.path.isfile(marker_path):
-                logger.error("=" * 60)
-                logger.error(
-                    "FATAL: ENCRYPTION_KEY differs from the operator-provisioned "
-                    f"at-rest key already present at {key_path}."
+        if existing:
+            # The persisted key is authoritative. Never overwrite it; never brick.
+            if existing != key_value:
+                logger.warning(
+                    "ENCRYPTION_KEY differs from the persisted at-rest key at %s; the "
+                    "persisted key is authoritative and the env value is IGNORED "
+                    "(overwriting it would make existing encrypted data undecryptable). "
+                    "Remove ENCRYPTION_KEY from the environment, or rotate the at-rest "
+                    "key out of band (re-encrypt), then restart.",
+                    key_path,
                 )
-                logger.error(
-                    "Refusing to overwrite it (that would make existing encrypted "
-                    "data undecryptable). Unset ENCRYPTION_KEY to keep using the key "
-                    "file, or reconcile the two, then restart."
-                )
-                logger.error("=" * 60)
-                raise SystemExit(1)
-            logger.warning(
-                "Replacing a marker-less at-rest key at %s with the "
-                "operator-provided ENCRYPTION_KEY.",
-                key_path,
-            )
+            # Provenance is the FILE's marker, not the env var's presence: a marker-less
+            # persisted key (a prior release's auto-gen, or a bare restore) classifies
+            # auto-generated so production fail-fast still fires on it.
+            return existing, (not os.path.isfile(marker_path))
+    # File absent (or unreadable/empty): seed it from the validated operator value and
+    # record operator provenance.
     if _write_key_file_0600(key_path, key_value) and not os.path.isfile(marker_path):
         try:
             with open(marker_path, "w") as mf:
                 mf.write("")
         except (OSError, PermissionError) as e:
             logger.warning(f"Could not write provenance marker {marker_path}: {e}")
+    return key_value, False  # freshly seeded from the operator env value
 
 
 class Settings(BaseSettings):
@@ -357,8 +355,10 @@ class Settings(BaseSettings):
         # There is ONE key file (``_encryption_key_path()`` — the same file
         # ``core.encryption`` loads), ONE generator, ONE provenance signal.
         #   * ENCRYPTION_KEY set  -> validate it is a real Fernet key (fail clearly if
-        #     not), write it to the key file + drop the .operator marker, and mark it
-        #     operator-provided (auto=False). ``core.encryption`` then loads THIS value.
+        #     not), then SEED the key file from it ONLY IF the file is absent (never
+        #     overwrite an existing at-rest key — that would destroy already-encrypted
+        #     data or brick the boot). The FILE wins if it exists; self.ENCRYPTION_KEY
+        #     and the auto flag track the FILE, so `core.encryption` and the gate agree.
         #   * ENCRYPTION_KEY unset/empty (compose `${ENCRYPTION_KEY:-}` = "") -> load or
         #     generate the key file; provenance comes from the .operator marker.
         enc_path = _encryption_key_path()
@@ -387,8 +387,12 @@ class Settings(BaseSettings):
                 )
                 logger.error("=" * 60)
                 raise SystemExit(1)
-            _adopt_operator_encryption_key(enc_path, self.ENCRYPTION_KEY)
-            self._encryption_key_auto_generated = False
+            key, auto = _seed_encryption_key_if_absent(enc_path, self.ENCRYPTION_KEY)
+            # The FILE is authoritative: if one already exists (a prior release's key,
+            # or one written by backup restore), it wins and the env value is ignored,
+            # so self.ENCRYPTION_KEY tracks what core.encryption actually loads.
+            self.ENCRYPTION_KEY = key
+            self._encryption_key_auto_generated = auto
 
     def validate_production(self) -> None:
         """
