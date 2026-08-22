@@ -556,25 +556,72 @@ class TestEnsureServiceUser:
             authenticate_user(db, "mcp", "mcp-service-changeme")  # dead after upgrade
 
     def test_adopts_and_reconciles_a_legacy_row_holding_a_published_default(self, db):
-        """#186 integration (reachable adopt path): a row NOT flagged
-        is_service_account but still holding a shipped published default is a stale
-        service credential from a pre-provenance install. When a REAL
-        MCP_SERVICE_PASSWORD is configured, ensure_service_user ADOPTS it (flags
-        provenance) and reconciles to the real secret instead of refusing — the
-        published default stops working."""
+        """#186 integration, scoped by bonnyr-f5 #193 B1 (reachable adopt path): a
+        row NOT flagged is_service_account is adopted ONLY when it carries v2_155's
+        exact backfill fingerprint (username 'mcp' AND email 'mcp@bnk-forge.local')
+        and still holds a shipped published default — a stale service credential
+        from a pre-provenance install. When a REAL MCP_SERVICE_PASSWORD is
+        configured, ensure_service_user ADOPTS it (flags provenance) and reconciles
+        to the real secret instead of refusing — the published default stops
+        working. Adoption must NOT clear the must_change_password gate (#193 B1)."""
         from models import User
         from services.auth_service import create_user, hash_password
         u = create_user(db, "mcp", "mcp@bnk-forge.local", "mcp-service-changeme",
-                        role="admin", must_change_password=False)
+                        role="admin", must_change_password=True)
         u.hashed_password = hash_password("mcp-service-changeme")
         # is_service_account intentionally left False (pre-provenance row).
         db.commit()
         ensure_service_user(db, username="mcp", password="a-real-strong-secret")
         mcp = db.query(User).filter(User.username == "mcp").first()
         assert mcp.is_service_account is True          # adopted
+        # #193 B1: adopting a row must not clear its must-change gate as a side effect.
+        assert mcp.must_change_password is True
         assert authenticate_user(db, "mcp", "a-real-strong-secret").username == "mcp"
         with pytest.raises(UnauthorizedError):
             authenticate_user(db, "mcp", "mcp-service-changeme")  # published default dead
+
+    def test_human_row_holding_changeme_is_refused(self, db):
+        """bonnyr-f5 #193 B1 (the takeover): before the fix, ensure_service_user
+        adopted ANY non-service row whose password was a known default — and
+        `changeme` is both a known default AND one of the most common human
+        passwords. A human `operator`/`changeme` row (email that is NOT v2_155's
+        'mcp@bnk-forge.local' fingerprint) must be REFUSED, not adopted: no
+        takeover, no lockout, and the must-change gate is left intact."""
+        from models import User
+        from services.auth_service import create_user, hash_password
+        u = create_user(db, "operator", "ops@corp.example", "changeme",
+                        role="admin", must_change_password=True)
+        u.hashed_password = hash_password("changeme")
+        # is_service_account False (a genuine human row), holds the default `changeme`.
+        db.commit()
+        with pytest.raises(ValueError, match="not a service account"):
+            ensure_service_user(db, username="operator", password="mcp-shared-secret")
+        # ensure_service_user raises BEFORE any write, so the committed row is intact
+        # (no rollback needed — a rollback would discard the fixture's savepoint).
+        row = db.query(User).filter(User.username == "operator").first()
+        # The human row is untouched: still human, still gated, own password still works.
+        assert row.is_service_account is False
+        assert row.must_change_password is True
+        assert authenticate_user(db, "operator", "changeme").username == "operator"
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "operator", "mcp-shared-secret")  # takeover refused
+
+    def test_named_mcp_but_wrong_email_holding_changeme_is_refused(self, db):
+        """bonnyr-f5 #193 B1: even a row literally named 'mcp' is only adopted when
+        its email matches v2_155's fingerprint. A human who merely happens to be
+        named 'mcp' with a real email is left untouched (mirrors the migration's own
+        conservative rule)."""
+        from models import User
+        from services.auth_service import create_user, hash_password
+        u = create_user(db, "mcp", "real.person@corp.example", "changeme",
+                        role="admin", must_change_password=True)
+        u.hashed_password = hash_password("changeme")
+        db.commit()
+        with pytest.raises(ValueError, match="not a service account"):
+            ensure_service_user(db, username="mcp", password="mcp-shared-secret")
+        row = db.query(User).filter(User.username == "mcp").first()
+        assert row.is_service_account is False
+        assert row.must_change_password is True
 
     def test_operator_password_still_reconciles(self, db):
         """A genuine operator-set password is honored (MCP stays usable when the

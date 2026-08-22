@@ -32,8 +32,16 @@ x-backend-env: &backend-env
   # from these and the MCP server authenticates with the SAME .env values. config.py
   # has no env_file, so an unpassed var never reaches the container. Unset -> empty
   # -> the account isn't seeded and the MCP server can't auth (clean, not a weak default).
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+  # bonnyr-f5 #193 B2b: honor the legacy short names MCP_USERNAME/MCP_PASSWORD as
+  # aliases so an existing customer .env (which shipped those names) keeps working
+  # after upgrade; the canonical name wins when both are set.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so an operator who sets it to
+  # staging/production actually reaches config.py's fail-fast (validate_production);
+  # config.py has no env_file, so without this the var never reaches the container
+  # and the documented "refuses to boot" promise could never fire.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume
@@ -471,13 +479,16 @@ services:
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases so an
+      # existing customer .env keeps working; the MCP client resolves the SAME value
+      # the backend does, so the two never drift.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env (no shipped default -- #186/#187: the old
       # mcp-service-changeme can no longer authenticate). The backend seeds the
       # 'mcp' service account with the same value and reconciles its hash on every
       # startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:

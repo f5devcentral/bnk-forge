@@ -25,8 +25,11 @@ x-local-backend-env: &local-backend-env
   # 127.0.0.1:2375 is the container's own loopback here, not the host).
   DOCKER_HOST: tcp://docker-socket-proxy:2375
   # MCP service account (see base compose): no shipped default (#186/#187).
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+  # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
 
 networks:
   bnk-local:
@@ -131,8 +134,9 @@ services:
       # human admin. admin/changeme is gone (#184 generates the admin password
       # and gates it). Set MCP_SERVICE_PASSWORD in .env (no shipped default — the
       # published one can no longer authenticate); the backend reconciles to it.
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
 
   postgres-backup:

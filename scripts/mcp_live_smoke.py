@@ -147,7 +147,7 @@ def _extract_tool_payload(result: dict[str, Any], tool_name: str) -> dict[str, A
                                 "Set correct MCP_SERVICE_USERNAME/MCP_SERVICE_PASSWORD for the MCP container/service "
                                 "(MCP authenticates as the mcp service account, not admin; the backend reconciles the "
                                 "mcp account to the SAME MCP_SERVICE_PASSWORD both sides receive — set it identically on "
-                                "the backend and the MCP client. When it is unset the mcp account is left disabled) (#186/#188)."
+                                "the backend and the MCP client. When it is unset the mcp account is left disabled) (#186)."
                             )
                         raise SmokeFailure(
                             f"Tool '{tool_name}' execution failed before returning MCP JSON payload: {text}.{hint}"
@@ -232,7 +232,7 @@ def _auth_bootstrap_hint(tool_name: str, payload: dict[str, Any]) -> str:
             " Hint: MCP endpoint is reachable, but MCP runtime auth/bootstrap failed. "
             "Verify MCP_SERVICE_USERNAME/MCP_SERVICE_PASSWORD match the mcp service account the backend reconciles "
             "(set the SAME MCP_SERVICE_PASSWORD on the backend and the MCP client; when it is unset the mcp account is "
-            "left disabled), then recreate the mcp container (#186/#188)."
+            "left disabled), then recreate the mcp container (#186)."
         )
 
     return (

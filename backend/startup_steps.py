@@ -246,18 +246,31 @@ def seed_auth_step():
         # INV-11: keyed on is_service_account, not the configured username) neutralises
         # every stale default; the reconcile then re-activates the one account whose
         # credentials we actually manage.
+        # bonnyr-f5 #193 M2: when a usable password IS configured, skip the row we
+        # are about to reconcile so we never commit an inactive window for the live
+        # MCP account (a rolling restart would otherwise 401 live MCP traffic), and
+        # suppress the misleading "no usable MCP_SERVICE_PASSWORD is set" warning
+        # that used to fire on every boot of a correctly-configured install.
         from services.auth_service import disable_stale_service_user
         with get_db_context() as db:
-            disable_stale_service_user(db)
+            disable_stale_service_user(
+                db,
+                skip_username=settings.MCP_SERVICE_USERNAME if _mcp_pw_usable else None,
+                password_configured=_mcp_pw_usable,
+            )
 
         # #187/#188: only reconcile when a real password is configured; never seed
         # the account with a shipped default. When unset, MCP is simply unavailable
         # (the stale default row was already disabled above) until an operator sets
         # MCP_SERVICE_PASSWORD (and gives the MCP server the same value). When it IS
         # set, ensure_service_user reconciles the stored hash to it — preventing auth
-        # drift when the env var is rotated. (#186's generate-a-secret fallback for
-        # the unset case is deliberately NOT taken here: #188's disable-stale is the
-        # chosen behaviour for an unset MCP password. See the integration notes.)
+        # drift when the env var is rotated.
+        # bonnyr-f5 #193 M1 (DECISION): this is a deliberate consolidation — #188's
+        # "unset MCP_SERVICE_PASSWORD -> account disabled" is chosen over #186's
+        # "unset -> generate a retrievable secret". The generate path is intentionally
+        # NOT restored: an MCP secret is a shared secret the MCP *client* must also
+        # hold, so a backend-only generated value cannot be surfaced to it. Do not
+        # re-add a generate-on-unset fallback here without re-opening that decision.
         if _mcp_pw_usable:
             try:
                 with get_db_context() as db:

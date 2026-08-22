@@ -34,7 +34,7 @@ spec:
         # re-seeds the mcp account) and the MCP server (which authenticates with
         # it) pick up a rotated mcp-password together instead of drifting for a
         # restart cycle.
-        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        checksum/secret: {{ include "bnk-forge.secretsChecksum" . }}
       labels:
         {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 8 }}
     spec:
@@ -63,16 +63,25 @@ spec:
           ports:
             - containerPort: 8081
               name: mcp
+          # bonnyr-f5 #193 M7: exec the same auth-probe healthcheck the compose
+          # paths run (`python -m bnk_forge_mcp.healthcheck`) instead of a bare
+          # tcpSocket. A tcpSocket probe only proves the port is open; it cannot
+          # detect the "no usable MCP credentials -> 401 on every backend call"
+          # condition (M8: a disabled mcp row). The auth probe logs in to the
+          # backend and exits non-zero on 401, so a credential drift surfaces as
+          # UNHEALTHY on Kubernetes too, not just on the compose/dist paths.
           readinessProbe:
-            tcpSocket:
-              port: 8081
+            exec:
+              command: ["python", "-m", "bnk_forge_mcp.healthcheck"]
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 10
           livenessProbe:
-            tcpSocket:
-              port: 8081
+            exec:
+              command: ["python", "-m", "bnk_forge_mcp.healthcheck"]
             initialDelaySeconds: 30
             periodSeconds: 30
+            timeoutSeconds: 10
           resources:
             {{- toYaml .Values.mcp.resources | nindent 12 }}
 {{- end }}
