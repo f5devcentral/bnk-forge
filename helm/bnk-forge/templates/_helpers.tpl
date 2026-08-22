@@ -204,37 +204,37 @@ sharedVolumes: PVC-backed volume references for pod spec.
 {{- end -}}
 
 {{/*
-deriveSecret: DETERMINISTIC per-release material for a GENERATED secret fallback.
-bonnyr-f5 #193 M7. Generation must be stable across renders and across template
-includes, or two things break: (a) the rendered Secret churns on every GitOps sync
-(perpetual drift), and (b) checksum/secret cannot faithfully track the Secret.
-`randAlphaNum` satisfies neither -- it returns a fresh value on every call, so the
-Secret's mcp-password differed from render to render while a checksum hashed only
-the raw inputs stayed byte-identical (M7: the rotated/generated credential lands in
-the Secret but the pods never roll). This derives the fallback from the release
-identity plus a purpose tag: identical on every include and every render, different
-per release and per key. Operator-supplied values and values persisted in the Secret
-(via `lookup`) are ALWAYS honoured verbatim upstream of this, so a production
-operator's strong secret is never replaced by a derived one -- this only fills the
-"nothing set, nothing persisted" bootstrap slot. Args: dict "ctx" $ "purpose" str "len" int.
-*/}}
-{{- define "bnk-forge.deriveSecret" -}}
-{{- $seed := printf "%s|%s|%s|%s" .ctx.Release.Name .ctx.Release.Namespace (include "bnk-forge.fullname" .ctx) .purpose -}}
-{{- $seed | sha256sum | trunc (int .len) -}}
-{{- end -}}
+secretsChecksum: DETERMINISTIC digest for the pod `checksum/secret` annotations, so a real
+secret change rolls api/worker/beat/mcp and an unchanged render does not. bonnyr-f5 #193 M7
++ round-3 minor. It hashes the INPUTS that determine the emitted Secret, NOT the rendered
+Secret: the values.yaml `secrets.*` block, the persisted Secret's `.data` (reused verbatim
+across upgrades via `lookup`, nil-folded as secrets.yaml does), and a per-credential
+"rotating-from-default" MARKER for admin/mcp whose persisted value is a known published
+default (secrets.yaml rotates those to a fresh RANDOM value that must roll the pods).
 
-{{/*
-secretsChecksum: digest for the pod `checksum/secret` annotations. bonnyr-f5 #193 M7:
-hash the RENDERED Secret so the annotation tracks exactly what the Secret contains --
-including a generated or rotated mcp-password. This is only correct because every
-generate-fallback in secrets.yaml is now DETERMINISTIC (see deriveSecret): re-rendering
-secrets.yaml here yields byte-identical output to the emitted Secret, so all four
-deployments (api/worker/beat/mcp) get the SAME digest, it is stable across renders when
-nothing changed, and it flips the moment any resolved value changes (an operator edit, a
-persisted-value change, or a rotation of a known-default persisted credential). The prior
-input-only hash (values + persisted .data) missed exactly the rotation/generation case:
-the new credential never appears in either input, so the digest never moved.
+Why inputs, not `include secrets.yaml | sha256sum`: the generated fallbacks are
+`randAlphaNum` (RANDOM, unpredictable). Re-rendering the Secret to hash it would either
+churn every render (each include re-rolls the random) or force generation to be DETERMINISTIC
+-- and a derived key is computable from public chart/label metadata (release name, namespace,
+fullname), which would hand an attacker the JWT signing key, the at-rest Fernet key and the
+admin/mcp passwords. So M7's "checksum must track rotation" is met WITHOUT reintroducing that:
+- operator edit          -> values.secrets changes    -> digest moves;
+- persisted-value change -> .data changes              -> digest moves;
+- rotate a persisted known-default -> marker set on the sync that still sees the default,
+  clears once the random value persists -> digest moves, pods roll.
+This is stable even in a bare no-cluster `helm template` (the hashed inputs carry no
+randomness). A first-ever pure-generated value isn't represented until it persists, but the
+pods are being CREATED on that sync so no roll is needed; every later sync is stable.
 */}}
 {{- define "bnk-forge.secretsChecksum" -}}
-{{- include (print .Template.BasePath "/secrets.yaml") . | sha256sum -}}
+{{- $name := printf "%s-secrets" (include "bnk-forge.fullname" .) -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
+{{- $data := dict -}}
+{{- if and $existing $existing.data -}}{{- $data = $existing.data -}}{{- end -}}
+{{- $adminDefaults := list "changeme" -}}
+{{- $mcpDefaults := list "changeme" "mcp-service-changeme" -}}
+{{- $rot := dict -}}
+{{- if and (hasKey $data "admin-password") (has (index $data "admin-password" | b64dec) $adminDefaults) -}}{{- $_ := set $rot "admin" "rotating-from-default" -}}{{- end -}}
+{{- if and (hasKey $data "mcp-password") (has (index $data "mcp-password" | b64dec) $mcpDefaults) -}}{{- $_ := set $rot "mcp" "rotating-from-default" -}}{{- end -}}
+{{- printf "%s|%s|%s" (toYaml .Values.secrets) (toYaml $data) (toYaml $rot) | sha256sum -}}
 {{- end -}}
