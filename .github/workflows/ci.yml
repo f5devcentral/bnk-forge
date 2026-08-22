@@ -203,11 +203,15 @@ jobs:
           # CHANGE prose that spuriously majors a release. The .githooks/pre-push
           # hook runs the SAME script locally so it is caught before push too.
           #
-          # Fetch the protected-branch tips so the script's already-merged marker
-          # exemption (reachable from origin/main|origin/staging) can resolve them;
-          # best-effort, and the check fails CLOSED if a ref is unavailable
-          # (bonnyr-f5 #193 B6a).
-          git fetch --quiet origin main staging 2>/dev/null || true
+          # The already-merged exemption keys on the BASE of the scanned range
+          # (github.event.before / the PR base), which the RANGE below already
+          # carries -- the script derives it from RANGE's left-hand side, so no
+          # protected-branch fetch is needed (bonnyr-f5 #193 B3). Round-1 fetched
+          # origin/main|staging and tested reachability against the POST-push tips,
+          # which ALREADY contain every commit in the range once the push landed --
+          # so the exemption fired for EVERY commit and rule 1 never caught a
+          # [skip ci] on a push to main/staging. Fails CLOSED: an unresolvable base
+          # means "not merged" and the commit is fully linted.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then

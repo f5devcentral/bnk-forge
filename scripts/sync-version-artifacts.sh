@@ -58,11 +58,18 @@ PKGVER_SED='s/^  "version": "([^"]*)".*/\1/'
 # The image tag lives inside the top-level `image:` block. The WRITER scopes its
 # substitution to that block (sed range below); the READERS (--check and --write's
 # post-write verify) MUST use the SAME range, or writer and checker diverge:
-# a `tag:` the writer can't reach (a column-0 comment closing the block early) or
-# a stray 2-space `tag:` under another key would be read by a file-global checker
-# but never written — CI green while the next release hard-fails, or CI red on a
-# line --write can't fix (bonnyr-f5 #180 r5, F1). One expression, used by both.
-IMG_RANGE='/^image:/,/^[^[:space:]]/'
+# a `tag:` the writer can't reach or a stray 2-space `tag:` under another key would
+# be read by a file-global checker but never written — CI green while the next
+# release hard-fails, or CI red on a line --write can't fix (bonnyr-f5 #180 r5, F1).
+# One expression, used by both.
+#
+# The range END is a column-0 line that is NOT a comment (`^[^[:space:] #]`). A
+# YAML `# comment` at column 0 is legal ANYWHERE, including inside the image block,
+# and is NOT the next top-level key — the old `^[^[:space:]]` ended the range on it,
+# so a column-0 comment placed after `^image:` hid the `tag:` from BOTH the writer
+# and the checker, making --check report "key renamed/removed? — vacuous" and print
+# a --write remediation that also could not reach the tag (bonnyr-f5 #193 minor).
+IMG_RANGE='/^image:/,/^[^[:space:] #]/'
 
 # Emit the candidate version lines for a reader. When RANGE is given, the grep is
 # scoped to that sed address range (the image-tag case) so the reader sees EXACTLY

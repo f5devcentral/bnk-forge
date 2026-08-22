@@ -135,14 +135,20 @@ resolve_digest() {
 
 # ─── Provenance predicate (minimal SLSA Build L1) ────────────────────────────
 # Written to a temp file and attached via cosign attest --type slsaprovenance.
+#
+# metadata.buildStartedOn is OMITTED, not stamped from `date -u` here: this script
+# runs at SIGNING time, AFTER the build (and a sign_only recovery re-signs an
+# already-built digest), so a wall-clock time taken here is not the build start and
+# would be a knowingly-wrong timestamp in the attestation. The field is optional in
+# SLSA v0.2; omitting it is honest, stamping the wrong value is not (bonnyr-f5 #193
+# minor). The build's real time is already carried by the OCI
+# org.opencontainers.image.created label (docker-bake.hcl CREATED).
 
 write_provenance() {
   local image_ref="$1"
   local digest="$2"
   local out_file="$3"
 
-  local build_ts
-  build_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local git_sha
   git_sha="$(git -C "$(dirname "$0")/.." rev-parse HEAD 2>/dev/null || echo "unknown")"
   # Provenance must name the remote this build actually came from. Prefer an
@@ -179,7 +185,6 @@ write_provenance() {
       "version": "${VERSION}"
     },
     "metadata": {
-      "buildStartedOn": "${build_ts}",
       "completeness": {
         "parameters": false,
         "environment": false,

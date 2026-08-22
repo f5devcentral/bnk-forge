@@ -15,8 +15,15 @@
 #   • the probe's EXIT STATUS is asserted before its output is trusted — a probe
 #     that cannot run fails CLOSED (M3).
 #
+# The floor is derived from the TOOL (`docker buildx bake --print default` + jq),
+# scoped to the DEFAULT group, NOT by counting `targets = [` lines in the file. The
+# old unscoped `sed` counted EVERY `targets = [` line, so adding any SECOND bake
+# group (an ordinary edit) inflated the floor and made this gate refuse forever,
+# blaming the registry for a bake-file change (bonnyr-f5 #193 M2). A parse/tooling
+# failure is now reported as exactly that, distinct from "registry unreachable".
+#
 # Env in:
-#   REGISTRY, VERSION            (required; forwarded to registry-tag-probe.sh)
+#   REGISTRY, VERSION            (required; forwarded to registry-tag-probe.sh + bake)
 #   FORCE                        ("true" overrides a refusal, deliberately)
 #   REGISTRY_USERNAME/PASSWORD   (optional; forwarded for the Bearer challenge)
 #   PROBE                        (path to registry-tag-probe.sh; default: sibling)
@@ -31,13 +38,19 @@ FORCE="${FORCE:-}"
 : "${REGISTRY:?REGISTRY is required (e.g. ghcr.io/your-org)}"
 : "${VERSION:?VERSION is required (e.g. 3.1.6)}"
 
-# ── Independent vacuity floor (M3): count docker-bake.hcl's default group ────────
-IMAGES_N=0
-if [ -f "$BAKE_FILE" ]; then
-  IMAGES_N="$(sed -n 's/.*targets = \[\(.*\)\].*/\1/p' "$BAKE_FILE" | grep -oE '"[^"]+"' | grep -c . || true)"
+# ── Independent vacuity floor (M2/M3): count docker-bake.hcl's DEFAULT group via
+# the tool, scoped to `.group.default.targets`, so a second bake group cannot wedge
+# the gate. This is a BAKE-FILE/tooling concern, kept strictly separate from the
+# registry probe below and from its "registry unreachable" remediation text.
+if ! command -v docker >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "::error::registry-overwrite-guard: 'docker' and 'jq' are required to count the bake default group (a tooling problem, NOT a registry problem). Install them and re-run." >&2
+  exit 1
 fi
-if [ "${IMAGES_N:-0}" -lt 1 ]; then
-  echo "::error::registry-overwrite-guard: could not read the canonical image set from $BAKE_FILE — refusing to publish rather than guard vacuously." >&2
+IMAGES_N="$(REGISTRY="$REGISTRY" VERSION="$VERSION" \
+  docker buildx bake --file "$BAKE_FILE" --print default 2>/dev/null \
+  | jq -r '.group.default.targets | length' 2>/dev/null || true)"
+if ! printf '%s' "${IMAGES_N:-}" | grep -qE '^[0-9]+$' || [ "${IMAGES_N:-0}" -lt 1 ]; then
+  echo "::error::registry-overwrite-guard: could not count the DEFAULT bake group in $BAKE_FILE via 'docker buildx bake --print default' + jq (a bake-file PARSE / tooling problem — NOT a registry problem). Fix $BAKE_FILE / the buildx+jq tooling; do not set FORCE for this." >&2
   exit 1
 fi
 

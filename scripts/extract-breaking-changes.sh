@@ -11,44 +11,14 @@
 set -euo pipefail
 
 # ── Breaking-change detectors ────────────────────────────────────────────────
-# INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
-# the copies in compute_version_bump.sh. This is an invariant these two files must
-# uphold themselves -- if the extractor is narrower a break bumps the major with no
-# note; if wider a note appears with no bump. The CI job that DIFFS the two copies
-# and fails on any drift lands with #182 (bonnyr-f5 #179 r6 F4); it is not present
-# in this tree, so until #182 merges the invariant is enforced only by review and
-# by the shared self-test fixtures below -- keep the two copies in lock-step by hand.
-#
-# A marker counts as a real footer under two anchors (byte-identical to compute):
-#   * preceded by a BLANK line -> accepted with OR without a colon (keeps the #2
-#     no-colon paragraph break);
-#   * preceded by another TRAILER, or folded directly onto a conventional-commit
-#     SUBJECT -> accepted ONLY with a colon (catches a footer folded onto a scoped
-#     subject `fix(core): x`, bonnyr-f5 #179 r6 F1, while rejecting a prose header
-#     `Before:` / `Note:` followed by colon-less prose, r6 F2).
-# Wrapped prose (a marker after a PROSE line) is still rejected. _is_breaking_subject
-# is BANG-ONLY: the folded-footer-in-subject is caught by running _is_breaking_body
-# on %B (which preserves the newline git folds into %s), and scanning the raw subject
-# for the marker over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
-_is_breaking_subject() {
-  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
-}
-_is_breaking_body() {
-  awk '
-    BEGIN { prev_blank = 1; prev_trailer = 0 }
-    /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
-    {
-      is_marker  = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE/)
-      is_colon   = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE(\*\*)?:/)
-      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
-      if (prev_blank && is_marker) found = 1
-      else if (prev_trailer && is_colon) found = 1
-      is_subject = (NR == 1 && $0 ~ /^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]/)
-      prev_blank = 0; prev_trailer = (is_trailer || is_subject)
-    }
-    END { exit(found ? 0 : 1) }
-  ' <<< "$1"
-}
+# INV-15: _is_breaking_subject / _is_breaking_body are SINGLE-SOURCED in
+# scripts/lib/breaking-change-detect.sh and shared with compute_version_bump.sh and
+# the commit-lint gate (bonnyr-f5 #179 r6 F4 / #193 M5). If the extractor were
+# narrower than the bumper a break would major with no note; if wider a note would
+# appear with no bump -- the shared file removes that whole failure class by making
+# them the SAME code, and scripts/tests/detector-parity.test.sh asserts the wiring.
+# shellcheck source=scripts/lib/breaking-change-detect.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/breaking-change-detect.sh"
 
 # Emit the BREAKING CHANGE footer paragraph(s) -- flattened, markdown-bold
 # stripped. Takes the FULL raw message (%B). Capture uses the SAME start rule as

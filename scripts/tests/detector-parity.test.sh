@@ -1,56 +1,78 @@
 #!/usr/bin/env bash
-# INV-15 detector parity (bonnyr-f5 #179 r3; #193 M5).
+# INV-15 detector parity (bonnyr-f5 #179 r3; #193 M1/M5).
 #
-# The BREAKING CHANGE detector MUST be byte-identical between
-# scripts/extract-breaking-changes.sh and scripts/compute_version_bump.sh. If they
-# drift, a major bump ships with empty notes (or a note ships with no bump). This
-# asserts that identity in code, replacing the "MUST stay identical" comment.
+# The BREAKING CHANGE detector MUST be identical everywhere it is used:
+# scripts/compute_version_bump.sh (the bump), scripts/extract-breaking-changes.sh
+# (the note), and scripts/lint-commit-markers.sh (the commit-lint gate). If they
+# drift, a major bump ships with empty notes, or a note ships with no bump, or the
+# gate flags a shape the detectors accept.
+#
+# It USED to diff two byte-identical inline copies. Round-2 single-sources the
+# predicate into scripts/lib/breaking-change-detect.sh, so drift is now
+# structurally impossible; this test asserts that wiring:
+#   1. the shared lib exists and defines BOTH functions;
+#   2. every consumer SOURCES the lib and does NOT redefine either function
+#      inline (an inline copy would silently shadow the shared one and reopen the
+#      drift the single-source closes);
+#   3. the shared predicate behaves — a representative positive and negative body,
+#      so an empty/stubbed lib cannot pass vacuously.
 #
 # It lives here as a scripts/tests/*.test.sh so BOTH the Makefile `script-selftests`
 # target AND ci.yml's `script-selftests` job run it through the SAME filesystem
-# enumeration — local == CI. Previously this parity diff was inline in ci.yml only,
-# so `make script-selftests` was strictly narrower than the CI job it claimed to
-# mirror (bonnyr-f5 #193 M5).
-#
-# The extraction is version-agnostic on purpose: #179 factors detection into
-# _is_breaking_subject and _is_breaking_body FUNCTIONS (the body one is a
-# paragraph-aware awk, not a single grep). When those functions exist, diff their
-# full bodies. On a pre-#179 tree (inline greps, no functions) fall back to
-# extracting the detector regex, so the gate stays meaningful in either state.
+# enumeration — local == CI (bonnyr-f5 #193 M5).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-E="$ROOT/scripts/extract-breaking-changes.sh"
-C="$ROOT/scripts/compute_version_bump.sh"
+LIB="$ROOT/scripts/lib/breaking-change-detect.sh"
+CONSUMERS=(
+  "$ROOT/scripts/compute_version_bump.sh"
+  "$ROOT/scripts/extract-breaking-changes.sh"
+  "$ROOT/scripts/lint-commit-markers.sh"
+)
 
-for f in "$E" "$C"; do
-  [ -f "$f" ] || { echo "::error::detector-parity: $f not found"; exit 1; }
+fail=0
+
+# 1. The shared lib exists and defines both functions.
+[ -f "$LIB" ] || { echo "::error::detector-parity: shared lib $LIB not found"; exit 1; }
+for fn in _is_breaking_subject _is_breaking_body; do
+  if ! grep -qE "^${fn}\(\)" "$LIB"; then
+    echo "::error::detector-parity: $LIB does not define ${fn}()"; fail=1
+  fi
 done
 
-_fn() { sed -n "/^$2()/,/^}/p" "$1"; }        # print a function definition
-_regex() {
-  grep -oE "grep -qE '[^']*BREAKING[^']*CHANGE[^']*'" "$1" \
-    | sed -E "s/^grep -qE '//; s/'\$//" | sort -u
-}
-
-if grep -q '^_is_breaking_body()' "$E" && grep -q '^_is_breaking_body()' "$C"; then
+# 2. Every consumer sources the lib and does NOT redefine either function inline.
+for c in "${CONSUMERS[@]}"; do
+  [ -f "$c" ] || { echo "::error::detector-parity: consumer $c not found"; fail=1; continue; }
+  if ! grep -q 'lib/breaking-change-detect.sh' "$c"; then
+    echo "::error::detector-parity: $(basename "$c") does not source the shared detector lib"; fail=1
+  fi
   for fn in _is_breaking_subject _is_breaking_body; do
-    if [ "$(_fn "$E" "$fn")" != "$(_fn "$C" "$fn")" ]; then
-      echo "::error::INV-15 violated: $fn differs between the two scripts"
-      diff <(_fn "$E" "$fn") <(_fn "$C" "$fn") || true
-      exit 1
+    if grep -qE "^${fn}\(\)" "$c"; then
+      echo "::error::detector-parity: $(basename "$c") redefines ${fn}() inline — it would shadow the shared lib and can drift"; fail=1
     fi
   done
-  echo "INV-15 OK: _is_breaking_subject + _is_breaking_body are byte-identical functions in both scripts"
+done
+
+# 3. Behavioural smoke test: the shared predicate actually classifies. Guards
+# against an emptied/stubbed lib passing the wiring checks vacuously.
+# shellcheck source=scripts/lib/breaking-change-detect.sh
+. "$LIB"
+if ! _is_breaking_body $'fix: y\n\nBREAKING CHANGE: the flag was removed'; then
+  echo "::error::detector-parity: shared _is_breaking_body missed a real footer"; fail=1
+fi
+if _is_breaking_body $'fix: y\n\nthis is not a breaking change at all'; then
+  echo "::error::detector-parity: shared _is_breaking_body false-positived on prose"; fail=1
+fi
+if ! _is_breaking_subject 'feat!: drop v1'; then
+  echo "::error::detector-parity: shared _is_breaking_subject missed a bang subject"; fail=1
+fi
+if _is_breaking_subject 'feat: normal change'; then
+  echo "::error::detector-parity: shared _is_breaking_subject false-positived on a normal subject"; fail=1
+fi
+
+if [ "$fail" -eq 0 ]; then
+  echo "INV-15 OK: detector single-sourced in scripts/lib/breaking-change-detect.sh; all consumers source it, none shadow it, predicate behaves"
 else
-  ex="$(_regex "$E")"; cv="$(_regex "$C")"
-  if [ -z "$ex" ] || [ -z "$cv" ]; then
-    echo "::error::could not extract a BREAKING CHANGE detector from one of the scripts (extract='$ex' compute='$cv')"; exit 1
-  fi
-  if [ "$ex" != "$cv" ]; then
-    echo "::error::INV-15 violated: the BREAKING CHANGE detector regex differs between the two scripts"
-    echo "  extract: $ex"; echo "  compute: $cv"; exit 1
-  fi
-  echo "INV-15 OK (pre-#179 tree): detector regex identical across both scripts -> $ex"
+  echo "::error::detector-parity: one or more checks failed"; exit 1
 fi
