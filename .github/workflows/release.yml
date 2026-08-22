@@ -560,6 +560,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: read   # bonnyr-f5 #193 M4: the pre-push overwrite-guard reads ghcr manifests
     env:
       REF_NAME: ${{ github.ref_name }}   # env-indirected — see preflight
     steps:
@@ -600,12 +601,11 @@ jobs:
           # Cap the commit list but say so on truncation -- a silent `head -50`
           # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
           # The `|| true` here guards the FILTER only (an all-"release:" range
-          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
-          # claim extract-breaking-changes.sh is fail-closed: on this ref that
-          # script still ends its own range query with `|| true` (line 33), so a
-          # bogus range there yields rc 0 and an empty section. The fail-closed
-          # fix for that script lands with #179, which owns it — this PR does not
-          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
+          # leaves grep -v with no output, rc 1 under pipefail). extract-breaking-
+          # changes.sh is itself fail-closed now — #179's rewrite is in-tree and
+          # `exit 1`s on a bad range with no `|| true` (bonnyr-f5 #193 minor: the
+          # old comment here claiming this PR does not touch that script and that
+          # it still ends its range query with `|| true` at line 33 was stale).
           CAP=300
           if [ -n "$LAST_FINAL" ]; then
             FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
@@ -648,6 +648,16 @@ jobs:
             }
             { print }
           ' CHANGELOG.md > CHANGELOG.md.new
+          # Fail CLOSED if the insertion was a no-op: the awk anchors on the first
+          # `^---$`, and if that separator is ever absent every line passes through
+          # unchanged with rc 0 — the entry is silently dropped and the release
+          # ships with no CHANGELOG record (bonnyr-f5 #193 minor). Assert the output
+          # actually grew before replacing the file.
+          if cmp -s CHANGELOG.md CHANGELOG.md.new; then
+            echo "::error::CHANGELOG.md insertion was a no-op (no '---' anchor found?) — refusing to commit a release with no changelog entry."
+            rm -f CHANGELOG.md.new "$ENTRY_FILE"
+            exit 1
+          fi
           mv CHANGELOG.md.new CHANGELOG.md
           rm -f "$ENTRY_FILE"
 
@@ -682,7 +692,14 @@ jobs:
           while IFS= read -r f; do
             git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
           done < <(bash scripts/sync-version-artifacts.sh --list)
-          git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
+          # Stage dist/VERSION if it is tracked. `git add` of a tracked path can
+          # only fail for a real reason (permission, corrupt index), so do NOT
+          # swallow it with `|| true` — that would silently drop the dist bump from
+          # the release commit (bonnyr-f5 #193 minor). The ls-files guard already
+          # makes this a no-op when dist/VERSION is untracked.
+          if git ls-files --error-unmatch dist/VERSION >/dev/null 2>&1; then
+            git add dist/VERSION
+          fi
 
           git commit -m "release: v${NEW} [skip ci]
 
@@ -694,30 +711,35 @@ jobs:
           git tag -a "v${NEW}" \
             -m "Release v${NEW} (${BUMP} bump)"
 
-      - name: Push commit and tag
-        run: |
-          git push origin "${REF_NAME}"
-          git push origin "v${{ needs.preflight.outputs.new_version }}"
-
+      # bonnyr-f5 #193 M4 / INV-31: generate the release notes BEFORE the
+      # irreversible push. extract-breaking-changes.sh is fail-closed (exit 1 on a
+      # bad range, no `|| true`), so a failure here previously left main bumped and
+      # the tag pushed with no Release. Generating notes ahead of the push keeps
+      # the fail-closed step in front of anything irreversible; the output is
+      # consumed by "Create GitHub Release" after the push.
       - name: Generate final release notes
         id: notes
         run: |
           NEW="${{ needs.preflight.outputs.new_version }}"
           BUMP="${{ needs.preflight.outputs.bump_type }}"
 
+          # The local tag v$NEW was just created by "Commit and tag", so exclude it
+          # explicitly to find the PREVIOUS final tag. The old `tail -2 | head -1`
+          # returned the just-created tag on a first-ever release (only one tag
+          # exists), giving an empty v$NEW..HEAD range and empty notes (bonnyr-f5
+          # #193 minor). grep -vx is robust whether or not the new tag is present.
           LAST_FINAL=$(git tag -l 'v*' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -2 | head -1)
+            | grep -vx "v${NEW}" \
+            | sort -V | tail -1)
 
           # Cap the commit list but say so on truncation -- a silent `head -50`
-          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3).
-          # The `|| true` here guards the FILTER only (an all-"release:" range
-          # leaves grep -v with no output, rc 1 under pipefail). It does NOT
-          # claim extract-breaking-changes.sh is fail-closed: on this ref that
-          # script still ends its own range query with `|| true` (line 33), so a
-          # bogus range there yields rc 0 and an empty section. The fail-closed
-          # fix for that script lands with #179, which owns it — this PR does not
-          # touch scripts/extract-breaking-changes.sh (bonnyr-f5 #181 round 5, F4).
+          # dropped 17 of 67 commits from published notes (bonnyr-f5 #179 r3). The
+          # `|| true` below guards the FILTER only (an all-"release:" range leaves
+          # grep -v with no output, rc 1 under pipefail); extract-breaking-changes.sh
+          # is itself fail-closed on a bad range (it now `exit 1`s, no `|| true`),
+          # and this step runs BEFORE the push (INV-31), so a bad range fails the
+          # release before anything irreversible.
           CAP=300
           if [ -n "$LAST_FINAL" ]; then
             FULL_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | { grep -v "^- release: " || true; })
@@ -743,6 +765,25 @@ jobs:
           } > /tmp/release_notes.md
 
           echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
+
+      # bonnyr-f5 #193 M4 / INV-31: refuse a republish of an already-published
+      # immutable :VERSION tag BEFORE the push, not only inside release-publish
+      # (which runs after these pushes). Nothing irreversible happens before this
+      # fail-closed check. release-publish keeps its own authoritative in-critical-
+      # section re-check for the concurrency TOCTOU.
+      - name: Refuse to overwrite an already-published tag (pre-push)
+        env:
+          FORCE: ${{ inputs.force }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ needs.preflight.outputs.new_version }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/registry-overwrite-guard.sh
+
+      - name: Push commit and tag
+        run: |
+          git push origin "${REF_NAME}"
+          git push origin "v${{ needs.preflight.outputs.new_version }}"
 
       - name: Create GitHub Release
         run: |
@@ -778,6 +819,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: read   # bonnyr-f5 #193 M4: the pre-push overwrite-guard reads ghcr manifests
     env:
       # bonnyr-f5 #181: release_notes is free-text; read it from env so a value
       # with " or $() can't break out of a run: script (same rule as publish_only).
@@ -828,6 +870,14 @@ jobs:
             }
             { print }
           ' CHANGELOG.md > CHANGELOG.md.new
+          # Fail CLOSED if the awk insertion was a no-op (missing `^---$` anchor),
+          # so a release never ships with a silently-dropped changelog entry
+          # (bonnyr-f5 #193 minor).
+          if cmp -s CHANGELOG.md CHANGELOG.md.new; then
+            echo "::error::CHANGELOG.md insertion was a no-op (no '---' anchor found?) — refusing to commit a release with no changelog entry."
+            rm -f CHANGELOG.md.new "$ENTRY_FILE"
+            exit 1
+          fi
           mv CHANGELOG.md.new CHANGELOG.md
           rm -f "$ENTRY_FILE"
 
@@ -857,7 +907,11 @@ jobs:
           while IFS= read -r f; do
             git diff --quiet -- "$f" || { echo "::error::$f was synced but is not fully staged"; exit 1; }
           done < <(bash scripts/sync-version-artifacts.sh --list)
-          git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
+          # Do not swallow a real `git add` failure with `|| true` (bonnyr-f5 #193
+          # minor); the ls-files guard already no-ops when dist/VERSION is untracked.
+          if git ls-files --error-unmatch dist/VERSION >/dev/null 2>&1; then
+            git add dist/VERSION
+          fi
 
           git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]
 
@@ -870,6 +924,17 @@ jobs:
 
           git tag -a "v${{ needs.preflight.outputs.new_version }}" \
             -m "Release v${{ needs.preflight.outputs.new_version }}: ${RELEASE_NOTES}"
+
+      # bonnyr-f5 #193 M4 / INV-31: refuse a republish of an already-published
+      # immutable :VERSION tag BEFORE the push (mirrors release-final).
+      - name: Refuse to overwrite an already-published tag (pre-push)
+        env:
+          FORCE: ${{ inputs.force }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ needs.preflight.outputs.new_version }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/registry-overwrite-guard.sh
 
       - name: Push
         run: |
@@ -966,7 +1031,13 @@ jobs:
           path: .release-tooling
           sparse-checkout: |
             scripts/registry-tag-probe.sh
+            docker-bake.hcl
           sparse-checkout-cone-mode: false
+          # bonnyr-f5 #193 M3: docker-bake.hcl is sourced here too so the overwrite
+          # guard's INDEPENDENT vacuity floor comes from the CURRENT workflow ref
+          # (stable 7-image "default" group), not from the possibly-ancient release
+          # tag's tree — a publish_only recovery of an old tag must not depend on
+          # that tag's bake-file format.
 
       - name: Resolve release commit
         id: rev
@@ -1106,8 +1177,28 @@ jobs:
           # the loop would read zero lines, find nothing existing, and conclude
           # "safe to publish": a fail-OPEN. So treat any probe that does not
           # cleanly classify EVERY image as inconclusive and fail CLOSED.
-          IMAGES_N="$(bash .release-tooling/scripts/registry-tag-probe.sh --images | grep -c . || true)"
+          # bonnyr-f5 #193 M3: derive the vacuity floor from an INDEPENDENT source
+          # (docker-bake.hcl's "default" group, checked out at the workspace root),
+          # NOT from the probe script we are guarding. The old floor read
+          # `registry-tag-probe.sh --images`; if that script were unavailable (e.g.
+          # dropped from the sparse-checkout list at :967) both counts were 0,
+          # `0 -ne 0` was false, nothing was classified, and the step reported
+          # "safe to publish" -> bake --push ran UNGUARDED (fail-OPEN). The Makefile
+          # (:1263) already asserts the probe's exit status; mirror that here.
+          IMAGES_N="$(sed -n 's/.*targets = \[\(.*\)\].*/\1/p' .release-tooling/docker-bake.hcl | grep -oE '"[^"]+"' | grep -c . || true)"
+          if [ "${IMAGES_N:-0}" -lt 1 ]; then
+            echo "::error::could not read the canonical image set from .release-tooling/docker-bake.hcl's default group — refusing to publish rather than guard vacuously."; exit 1
+          fi
+          # ASSERT the probe's EXIT STATUS before trusting its output: a probe that
+          # cannot run at all (missing script / bad REGISTRY) must fail CLOSED, not
+          # be read as "zero images exist" (the M3 fail-open).
           if ! PROBE_OUT="$(bash .release-tooling/scripts/registry-tag-probe.sh)"; then
+            echo "::error::the registry existence probe (.release-tooling/scripts/registry-tag-probe.sh) could not run. Refusing to publish — an already-published immutable :${VERSION} tag cannot be ruled out. Re-run once the tooling checkout / REGISTRY is correct, or re-dispatch with force=true to overwrite deliberately."
+            if [ "$FORCE" = "true" ]; then
+              echo "::warning::force=true — publishing despite the probe being unrunnable; if any :${VERSION} tags were already published this overwrites the immutable tag and orphans its cosign/SBOM/SLSA attestations."
+            else
+              exit 1
+            fi
             PROBE_OUT=""
           fi
           PROBE_N="$(printf '%s\n' "$PROBE_OUT" | grep -c . || true)"

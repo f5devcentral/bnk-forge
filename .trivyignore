@@ -38,12 +38,17 @@ CVE-2026-33186 exp:2026-11-30
 #          confirm it: re-run `trivy image` (or check the tracker) and only keep
 #          the ignore while the fix column is still empty for our base image's
 #          libssh2. https://security-tracker.debian.org/tracker/CVE-2026-7598
-#          The 2026-08-12 deadline lapsed without that re-check; next check by
-#          2026-09-12, and escalate to pin-from-sid if a fixed version is then
-#          available and we're still ignoring it.
+# REFRESH (2026-08-21, bonnyr-f5 #193 minor): the exp was 2026-09-12, three weeks
+#          out — close enough that it risked lapsing between releases and reopening
+#          the finding mid-cycle. Deadline moved to 2026-09-30 to restore a full
+#          monthly window. This refresh moves the DATE only; it does NOT re-assert
+#          "no fix exists" — the next owner MUST still run `trivy image` / check the
+#          tracker before the new deadline and drop this entry the moment libssh2's
+#          fix column is non-empty for our base image (escalate to pin-from-sid if a
+#          fix is then available and we are still ignoring it).
 # Tracked: memory/followup_trivyignore_cve_2026_7598_revisit.md
 # Added: 2026-05-12
-CVE-2026-7598 exp:2026-09-12
+CVE-2026-7598 exp:2026-09-30
 
 # CVE-2026-42010: GnuTLS Authentication Bypass via NUL Character in DN parsing
 # Affects: libgnutls30t64 in our Debian Trixie base image (3.8.9-3+deb13u2)

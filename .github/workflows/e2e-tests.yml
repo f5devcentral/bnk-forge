@@ -68,7 +68,10 @@ jobs:
   check-changes:
     name: "Check for recent changes"
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' || true  # always run; schedule check is below
+    # This job always runs; the schedule-skip logic lives in the step below. The
+    # old `if: github.event_name != 'schedule' || true` was a dead condition (the
+    # `|| true` makes it unconditionally true), so it is dropped (bonnyr-f5 #193
+    # minor) — omitting `if:` runs the job on every trigger, same effect, no lie.
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:

@@ -4,6 +4,11 @@
 # Also validates alembic migration chain (catches commits made without pre-commit hook)
 # Install: git config core.hooksPath .githooks   (or: make setup-hooks)
 # Skip:    git push --no-verify (emergency only!)
+#
+# DEPENDENCY (bonnyr-f5 #193 minor): `make pre-push` below now runs `ci-gates`,
+# whose `secret-scan` gate executes gitleaks via `docker run`. A RUNNING Docker
+# daemon is therefore required to push. It fails loudly if Docker is down; start
+# Docker (or `git push --no-verify` for a genuine emergency) if you hit that.
 set -e
 
 # ─── Migration chain check ────────────────────────────────────────────────────
