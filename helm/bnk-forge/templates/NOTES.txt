@@ -7,6 +7,17 @@ Components:
 {{- if .Values.frontend.enabled }} frontend svc: {{ include "bnk-forge.fullname" . }}-frontend:{{ .Values.frontend.service.port }}{{- end }}
 {{- if .Values.proxy.enabled }}    proxy    svc: {{ include "bnk-forge.fullname" . }}-proxy ({{ .Values.proxy.service.type }}) {{ .Values.proxy.service.httpPort }}/{{ .Values.proxy.service.httpsPort }}{{- end }}
 {{- if .Values.mcp.enabled }}      mcp      svc: {{ include "bnk-forge.fullname" . }}-mcp:{{ .Values.mcp.service.port }}{{- end }}
+{{- if .Values.mcp.enabled }}
+
+MCP: the mcp server authenticates as the dedicated 'mcp' service account
+(secrets.mcpUsername). Do NOT point secrets.mcpUsername at a human identity such as
+'admin' — the backend refuses to reconcile a reserved human username as a service
+account, so the mcp account would be disabled on upgrade and MCP would go
+permanently down while this install reports success (the chart now fails the render
+if you set it to 'admin'). Set secrets.mcpPassword to a strong value (the same
+value the MCP server receives as BNK_FORGE_PASSWORD), or leave it empty to
+auto-generate one.
+{{- end }}
 
 To reach the UI:
 {{- if .Values.ingress.enabled }}

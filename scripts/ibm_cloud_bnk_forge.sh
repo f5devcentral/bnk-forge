@@ -385,10 +385,14 @@ x-backend-env: &backend-env
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
   # #186 BLOCKER 1 / #187 (bonnyr-f5 r5): this installer writes a per-install random
   # MCP_SERVICE_PASSWORD into .env (above). The backend reconciles the mcp account
-  # to it on boot, so it must receive it too — otherwise the backend generates its
-  # own secret and the mcp client can never authenticate.
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+  # to it on boot, so it must receive it too — otherwise the mcp account is never
+  # seeded and the mcp client can never authenticate (no secret is generated for
+  # MCP under the #188-over-#186 consolidation; bonnyr-f5 #193).
+  # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -590,14 +594,23 @@ services:
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
       # #186: authenticate as the 'mcp' service account (see .env above), not admin.
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # bonnyr-f5 #193 M7: auth-probe healthcheck (same as the other compose paths) so
+    # a "no usable MCP credentials -> 401" condition surfaces as UNHEALTHY here too.
+    healthcheck:
+      test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   module_catalog: { driver: local }

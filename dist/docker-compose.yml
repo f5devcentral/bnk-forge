@@ -20,7 +20,7 @@
 # ── Registry configuration ──────────────────────────────────────────────────
 # Set BNK_FORGE_REGISTRY and BNK_FORGE_VERSION in .env or environment:
 #   BNK_FORGE_REGISTRY=ghcr.io/f5devcentral    (no trailing slash)
-#   BNK_FORGE_VERSION=3.1.6                (or "latest")
+#   BNK_FORGE_VERSION=latest                (the shipped default; or pin e.g. 3.1.6)
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
@@ -42,11 +42,17 @@ x-backend-env: &backend-env
   DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
   # #186/#187 (bonnyr-f5 r5): the backend reconciles the mcp account to
   # MCP_SERVICE_PASSWORD on every boot and seeds it from the same value the MCP
-  # server authenticates with; plumb it (and the username) here or the backend
-  # generates a random secret the mcp client can never match. No shipped default —
-  # the operator sets MCP_SERVICE_PASSWORD in .env (see .env.example).
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+  # server authenticates with; plumb it (and the username) here or the mcp account
+  # is never seeded and the mcp client cannot authenticate (no secret is generated
+  # for MCP -- #188-over-#186 consolidation). No shipped default — the operator sets
+  # MCP_SERVICE_PASSWORD in .env (see .env.example).
+  # bonnyr-f5 #193 B2/B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases so an
+  # existing customer .env (which shipped those names) keeps working after upgrade.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so an operator who sets it to
+  # staging/production actually reaches config.py's fail-fast (validate_production).
+  ENVIRONMENT: ${ENVIRONMENT:-development}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -373,8 +379,9 @@ services:
       # and gates it), so the old admin/changeme wiring 403s every tool call.
       # Set MCP_SERVICE_PASSWORD in .env (no shipped default — the published one
       # can no longer authenticate); the backend reconciles the account to it.
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+      # bonnyr-f5 #193 B2/B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:

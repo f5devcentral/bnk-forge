@@ -40,6 +40,9 @@ secrets:
   #  - mcpPassword was `changeme`: a live, publicly-known credential on a public
   #    repo. Empty -> generated per-install in the release Secret (mirrors
   #    adminPassword) and reused on upgrade, so no shipped default ever exists.
+  # bonnyr-f5 #193 M8: the chart now FAILS the render if mcpUsername is set to a
+  # reserved human identity ("admin") -- a service account must not co-opt the
+  # human admin login, and pinning it would silently disable MCP on upgrade.
   mcpUsername: mcp
   mcpPassword: ""
 

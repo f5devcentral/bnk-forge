@@ -334,11 +334,14 @@
           <code>MCP_SERVICE_PASSWORD</code> to a strong secret in this <code>.env</code>: this
           compose file passes it to the backend (which provisions the <code>mcp</code> account from
           it) <em>and</em> to the MCP container (as <code>BNK_FORGE_PASSWORD</code>), so the two stay
-          in sync. The old <code>MCP_PASSWORD</code>/admin-password coupling is gone, and the shipped
-          <code>mcp-service-changeme</code> default can no longer authenticate. Under
-          <code>ENVIRONMENT=staging</code>/<code>production</code> the backend refuses to start while
-          <code>MCP_SERVICE_PASSWORD</code> is unset or set to a shipped default
-          (#186&nbsp;+&nbsp;#188), so set it to a real secret before upgrading.</li>
+          in sync. The old <code>MCP_PASSWORD</code>&rarr;<code>admin</code> coupling is gone; the short
+          name <code>MCP_PASSWORD</code> is still honored as a legacy alias for
+          <code>MCP_SERVICE_PASSWORD</code> so an existing <code>.env</code> keeps working, and the
+          shipped <code>mcp-service-changeme</code> default can no longer authenticate. Under
+          <code>ENVIRONMENT=staging</code>/<code>production</code> — which the compose files now plumb
+          through to the backend — it refuses to start while <code>MCP_SERVICE_PASSWORD</code> is
+          unset or set to a shipped default (#186&nbsp;+&nbsp;#188), so set it to a real secret
+          before upgrading.</li>
     </ul>
   </div>
 

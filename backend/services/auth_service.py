@@ -269,11 +269,11 @@ def _persist_generated_password(password: str, filename: str = "initial_admin_pa
     left 0o644) would be truncated in place but keep its old, looser mode — we
     fchmod(0o600) after open to force it tight regardless (CR-5).
 
-    Shared by the fresh-install admin seed (#184), the upgrade remediation
-    (#186), and the mcp service-account seed/rotation (#186 BLOCKER 1) so a
-    generated credential is surfaced identically on every path — ``filename``
-    keeps the admin and mcp secrets in distinct files so neither clobbers the
-    other.
+    Used by the fresh-install admin seed (#184) and the upgrade remediation
+    (#186). bonnyr-f5 #193: the ``filename`` parameter is now vestigial — after the
+    #188-over-#186 consolidation (MCP no longer generates a secret) every call uses
+    the default, so it only ever writes ``initial_admin_password``. It is kept as a
+    parameter to preserve the seam should a second generated credential return.
     """
     import os
     keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
@@ -553,12 +553,20 @@ def ensure_service_user(
     # Existing row. bonnyr-f5 #188: refuse to reconcile a row this seeder did NOT
     # provision as a service account — a name collision must never take over a
     # human account. Gate on provenance, not the username. EXCEPTION (#186
-    # integration): a row still authenticating with a shipped published default is
-    # a stale service credential from a pre-provenance install; neutralising it is
-    # the upgrade remediation, so we adopt it (and re-flag it below) rather than
-    # leave the published default live.
+    # integration, scoped by bonnyr-f5 #193 B1): a non-service row is adopted ONLY
+    # when it carries v2_155's exact backfill fingerprint — username 'mcp' AND
+    # email 'mcp@bnk-forge.local'. That is a stale service credential from a
+    # pre-provenance install (the migration deliberately used the same conservative
+    # rule so "a real human who merely happens to be named mcp is left untouched"),
+    # so neutralising it is the upgrade remediation. Keying the exception on the
+    # password value instead (as the pre-#193 code did) adopted ANY human row whose
+    # password was `changeme` — a takeover of the human account (bonnyr-f5 #193 B1).
+    is_adoption = False
     if not user.is_service_account:
-        holds_published_default = any(
+        fingerprint_match = (
+            user.username == "mcp" and str(user.email) == "mcp@bnk-forge.local"
+        )
+        holds_published_default = fingerprint_match and any(
             verify_password(p, str(user.hashed_password))
             for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS
         )
@@ -568,6 +576,7 @@ def ensure_service_user(
                 f"Point MCP_SERVICE_USERNAME at a dedicated name that isn't an "
                 f"existing user."
             )
+        is_adoption = True
 
     # Operator supplied a genuine (non-default) password: reconcile to it.
     # Re-activation is required and safe (disable_stale_service_user runs first on
@@ -575,14 +584,22 @@ def ensure_service_user(
     # configuring a real password "re-seeds and re-activates it"). Role is left
     # untouched — we do NOT widen privilege on reconcile (bonnyr-f5 #188).
     user.hashed_password = hash_password(password)  # type: ignore[assignment]
-    user.must_change_password = False  # type: ignore[assignment]
+    # bonnyr-f5 #193 B1: only clear the must-change gate on a genuine service row
+    # (provenance already set). Never clear it as a side effect of ADOPTING a row —
+    # doing so would defeat #184/#186's must-change gate on the adopted account.
+    if not is_adoption:
+        user.must_change_password = False  # type: ignore[assignment]
     user.is_active = True  # type: ignore[assignment]  # revive a disabled-stale row
     user.is_service_account = True  # type: ignore[assignment]  # adopt a backfilled/legacy row
     db.commit()  # ENG-006: Startup seed manages its own transaction
     logger.info(f"Reconciled service account: {username}")
 
 
-def disable_stale_service_user(db: Session) -> None:
+def disable_stale_service_user(
+    db: Session,
+    skip_username: str | None = None,
+    password_configured: bool = False,
+) -> None:
     """#188 (bonnyr-f5): a service account seeded by a prior release still holds
     the shipped 'mcp-service-changeme' default and keeps authenticating on upgrade.
     Deactivate EVERY active service-account row so no known default can be used
@@ -606,21 +623,42 @@ def disable_stale_service_user(db: Session) -> None:
     rows this seeder created, never on a human account, so disabling all service
     accounts can never touch a human login — which is also why no reserved-username
     guard is needed (or wanted: that guard is exactly what made this a no-op).
+
+    bonnyr-f5 #193 M2: ``skip_username`` leaves the row the caller is about to
+    reconcile untouched, so a correctly-configured install never commits an
+    inactive window for its live MCP account (a rolling restart would otherwise
+    401 live MCP traffic for a bcrypt-plus-commit window). ``password_configured``
+    only tunes the log wording: when a usable MCP_SERVICE_PASSWORD IS set, any row
+    still disabled here is a genuinely stale EXTRA service account, not the "no
+    password is set" case -- so the misleading "no usable MCP_SERVICE_PASSWORD is
+    set" warning no longer fires on every boot of a correct install.
     """
-    rows = db.query(User).filter(
+    query = db.query(User).filter(
         User.is_active.is_(True),
         User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
-    ).all()
+    )
+    if skip_username is not None:
+        query = query.filter(User.username != skip_username)
+    rows = query.all()
     if not rows:
         return
     for user in rows:
         user.is_active = False  # type: ignore[assignment]
     db.commit()
     for user in rows:
-        logger.warning(
-            "Disabled stale MCP service account '%s' — no usable "
-            "MCP_SERVICE_PASSWORD is set, so its pre-existing (possibly default) "
-            "credential must not keep authenticating. Set MCP_SERVICE_PASSWORD to "
-            "re-enable MCP.",
-            user.username,
-        )
+        if password_configured:
+            logger.warning(
+                "Disabled extra stale MCP service account '%s' -- a usable "
+                "MCP_SERVICE_PASSWORD is configured for '%s', so this additional "
+                "service row's pre-existing credential must not keep authenticating.",
+                user.username,
+                skip_username,
+            )
+        else:
+            logger.warning(
+                "Disabled stale MCP service account '%s' -- no usable "
+                "MCP_SERVICE_PASSWORD is set, so its pre-existing (possibly default) "
+                "credential must not keep authenticating. Set MCP_SERVICE_PASSWORD to "
+                "re-enable MCP.",
+                user.username,
+            )

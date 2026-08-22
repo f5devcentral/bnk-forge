@@ -48,10 +48,14 @@ x-local-backend-env: &local-backend-env
   DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
   # #186/#187 (bonnyr-f5 r5): the backend reconciles the mcp account to
   # MCP_SERVICE_PASSWORD on every boot and seeds it from the same .env value the
-  # MCP server authenticates with; plumb it (and the username) here or the backend
-  # generates a random secret the mcp client can never match. Unset -> not seeded.
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+  # MCP server authenticates with; plumb it (and the username) here or the mcp
+  # account is never seeded and the mcp client cannot authenticate. Unset -> not
+  # seeded (no secret is generated for MCP -- #188-over-#186 consolidation).
+  # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
 
 # Shared bridge network — all services can resolve each other by service name
 networks:
@@ -154,12 +158,13 @@ services:
       - "8081:8081"
     environment:
       BNK_FORGE_API_URL: http://backend:8000
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
       # every startup so backend and MCP always stay in sync. No shipped default
       # (#186): the old mcp-service-changeme can no longer authenticate.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
 
   postgres-backup:

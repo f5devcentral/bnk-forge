@@ -119,9 +119,10 @@ in-cluster services and pulls secrets from the generated Secret.
 # #186 BLOCKER 1 / #187 (bonnyr-f5 r5): the backend reconciles the mcp service
 # account to MCP_SERVICE_PASSWORD on every boot, so it must read the SAME
 # per-install secret the mcp client (mcp.yaml) reads -- otherwise removing the
-# shipped `changeme` default just makes the backend generate its own secret the
-# client can never match ("removes the default without plumbing the replacement").
-# Source both from the release Secret's mcp-* keys, identical to mcp.yaml.
+# shipped `changeme` default just leaves the mcp account unseeded and the client
+# can never authenticate ("removes the default without plumbing the replacement";
+# nothing is generated for MCP under the #188-over-#186 consolidation, bonnyr-f5
+# #193). Source both from the release Secret's mcp-* keys, identical to mcp.yaml.
 - name: MCP_SERVICE_USERNAME
   valueFrom:
     secretKeyRef:
@@ -178,4 +179,25 @@ sharedVolumes: PVC-backed volume references for pod spec.
   secret:
     secretName: {{ .Values.externalSecretsRef.name }}
 {{- end }}
+{{- end -}}
+
+{{/*
+secretsChecksum: a DETERMINISTIC digest of the inputs that determine the release
+Secret, for the pod `checksum/secret` annotations. bonnyr-f5 #193 (minor): hashing
+the rendered secrets.yaml directly (`include ".../secrets.yaml" . | sha256sum`)
+re-executes its `randAlphaNum` generate-fallbacks once per include, so api/worker/
+beat/mcp got four DIFFERENT checksums within a single render and every `helm
+template` churned them (perpetual GitOps drift). Hash the stable inputs instead:
+the values.yaml `secrets.*` block plus the persisted Secret's data (reused across
+upgrades via `lookup`, nil-folded exactly as secrets.yaml does). All four
+deployments now share one hash that is stable across renders and changes only when
+a real input changes -- including a genuine mcp-password rotation, which lands in
+the persisted `.data` and so flips this digest on the next sync.
+*/}}
+{{- define "bnk-forge.secretsChecksum" -}}
+{{- $name := printf "%s-secrets" (include "bnk-forge.fullname" .) -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
+{{- $data := dict -}}
+{{- if and $existing $existing.data -}}{{- $data = $existing.data -}}{{- end -}}
+{{- printf "%s|%s" (toYaml .Values.secrets) (toYaml $data) | sha256sum -}}
 {{- end -}}
