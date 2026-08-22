@@ -350,6 +350,48 @@ class TestSeedAdminUser:
         # No keys-file written: nothing was generated.
         assert not (tmp_path / "initial_admin_password").exists()
 
+    def test_must_change_false_seeds_without_gate_and_log_is_honest(
+        self, db, monkeypatch, tmp_path, caplog
+    ):
+        # bonnyr-f5 #193 test-gap 5: DEFAULT_ADMIN_MUST_CHANGE=false with an unset
+        # DEFAULT_ADMIN_PASSWORD seeds a GENERATED password AND no must-change gate.
+        # The old log unconditionally said "you must change it on first login" — a
+        # false instruction. The account must be seeded without the gate, and the
+        # log must NOT promise a first-login change that is not enforced.
+        import logging
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_MUST_CHANGE", False)
+        caplog.set_level(logging.INFO)
+        admin = seed_admin_user(db)
+        # Logic: no must-change gate was applied.
+        assert admin is not None
+        assert admin.must_change_password is False
+        assert (tmp_path / "initial_admin_password").exists()
+        # Log: does not promise a first-login change; says the gate is off.
+        seed_logs = " ".join(
+            r.getMessage() for r in caplog.records if "Seeded admin" in r.getMessage()
+        )
+        assert seed_logs, "expected a 'Seeded admin' log line"
+        assert "must change it on first login" not in seed_logs.lower()
+        assert "change it on first login" not in seed_logs.lower()
+        assert "DEFAULT_ADMIN_MUST_CHANGE is false" in seed_logs
+
+    def test_must_change_true_log_still_instructs_first_login_change(
+        self, db, monkeypatch, tmp_path, caplog
+    ):
+        # The complement: with the gate ON (default) the instruction is correct and
+        # must remain.
+        import logging
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_MUST_CHANGE", True)
+        caplog.set_level(logging.INFO)
+        admin = seed_admin_user(db)
+        assert admin.must_change_password is True
+        seed_logs = " ".join(
+            r.getMessage() for r in caplog.records if "Seeded admin" in r.getMessage()
+        )
+        assert "change it on first login" in seed_logs.lower()
+
     def test_rotation_refuses_to_rotate_to_a_published_default(self, db, monkeypatch, tmp_path):
         # #186: DEFAULT_ADMIN_PASSWORD=changeme must NOT be used as the rotation
         # target (that would re-publish the hole) -- fall through to a generated
@@ -778,3 +820,156 @@ class TestUnwritableKeysDirNeverLeaksPlaintext:
     # usable password; the unset case is owned by disable_stale_service_user), so
     # the two former "service seed/rotate fails closed" cases no longer exist. Only
     # the admin seed + admin rotation still generate, and are covered above.
+
+
+# ── bonnyr-f5 #193 test-gap 3: disable_stale_service_user(skip_username=...) ──
+
+
+class TestDisableStaleSkipUsername:
+    """The #193 M2 change (skip_username) had ZERO direct coverage. M2's PROPERTY
+    is that the skipped (live MCP) row never gets an inactive window — not merely
+    that it ends up active. Assert the skipped row is NEVER modified (is_active True
+    AND its hash byte-identical), while a genuinely stale EXTRA service row is
+    disabled and hash-scrubbed."""
+
+    def test_skip_username_leaves_live_row_completely_untouched(self, db):
+        from models import User
+        from services.auth_service import disable_stale_service_user
+
+        live = _seed_legacy_stale_service_row(db, username="mcp", password="live-real-secret")
+        extra = _seed_legacy_stale_service_row(
+            db, username="mcp-old", password="mcp-service-changeme"
+        )
+        live_hash_before = live.hashed_password
+        extra_hash_before = extra.hashed_password
+
+        disable_stale_service_user(db, skip_username="mcp", password_configured=True)
+
+        live = db.query(User).filter(User.username == "mcp").first()
+        extra = db.query(User).filter(User.username == "mcp-old").first()
+        # The skipped live row: never entered the disable set → no inactive window.
+        assert live.is_active is True
+        assert live.hashed_password == live_hash_before  # hash never scrubbed
+        # The stale EXTRA row: disabled and its credential neutralised.
+        assert extra.is_active is False
+        assert extra.hashed_password != extra_hash_before
+        assert verify_password("mcp-service-changeme", extra.hashed_password) is False
+
+    def test_skip_username_variant_still_skips_the_live_row(self, db):
+        # test-gap 6 at the disable site: a case/whitespace variant of the live
+        # name must still skip the live 'mcp' row (else M2's no-inactive-window
+        # property breaks for a variant-configured install).
+        from models import User
+        from services.auth_service import disable_stale_service_user
+
+        live = _seed_legacy_stale_service_row(db, username="mcp", password="live-real-secret")
+        live_hash_before = live.hashed_password
+
+        disable_stale_service_user(db, skip_username="  MCP  ", password_configured=True)
+
+        live = db.query(User).filter(User.username == "mcp").first()
+        assert live.is_active is True
+        assert live.hashed_password == live_hash_before
+
+
+# ── bonnyr-f5 #193 test-gap 6: MCP_SERVICE_USERNAME case/whitespace variant ──
+
+
+class TestServiceUsernameNormalisation:
+    @pytest.fixture(autouse=True)
+    def _isolate_keys_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+
+    def test_variant_reconciles_existing_row_not_a_second(self, db):
+        # A pre-existing 'mcp' service row + MCP_SERVICE_USERNAME=" mcp " (variant):
+        # the lookup used the RAW value, so the variant missed the 'mcp' row and
+        # minted a SECOND service account. Normalising at the lookup site reconciles
+        # the existing row instead.
+        from models import User
+        _seed_legacy_stale_service_row(db, username="mcp", password="mcp-service-changeme")
+        ensure_service_user(db, username="  mcp  ", password="a-real-strong-secret")
+        # Exactly one service row, named 'mcp' — no ' mcp ' twin.
+        assert db.query(User).filter(User.username == "mcp").count() == 1
+        assert db.query(User).filter(User.username == "  mcp  ").count() == 0
+        # It reconciled to the new secret and re-activated.
+        mcp = db.query(User).filter(User.username == "mcp").first()
+        assert mcp.is_active is True
+        assert authenticate_user(db, "mcp", "a-real-strong-secret").username == "mcp"
+
+    def test_variant_create_uses_normalised_name_and_email(self, db):
+        # Fresh install (no existing row) with a variant name: the created row is
+        # canonicalised so a later boot with the plain name reconciles it (and the
+        # synthesised email matches v2_155's 'mcp@bnk-forge.local' fingerprint).
+        from models import User
+        ensure_service_user(db, username=" MCP ", password="a-real-strong-secret")
+        row = db.query(User).filter(User.username == "mcp").one()
+        assert row.email == "mcp@bnk-forge.local"
+        assert db.query(User).filter(User.username == " MCP ").count() == 0
+        # Idempotent: the plain name reconciles the same single row.
+        ensure_service_user(db, username="mcp", password="rotated-strong-secret")
+        assert db.query(User).filter(User.username == "mcp").count() == 1
+
+
+# ── bonnyr-f5 #193 test-gap 4: db.commit() fails after the keys file is written ──
+
+
+class TestRotateCommitFailureLeavesRetriableState:
+    """If db.commit() raises AFTER _persist_generated_password wrote the keys file,
+    the keys file holds a password that does not authenticate while the published
+    default still does. It self-heals on the next boot (the rotation retries), but
+    the interim state must be exactly that — not a lockout."""
+
+    def test_commit_failure_after_file_write(self, monkeypatch, tmp_path):
+        # Uses its OWN throwaway engine (not the shared savepoint-based `db`
+        # fixture) so a rollback here is real and isolated — a rollback on the
+        # shared fixture session would discard the fixture's own savepoint.
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        import models  # noqa: F401 — register tables
+        from database import Base
+        from models import User
+        from services.auth_service import _rotate_known_default_admin
+
+        monkeypatch.setenv("KEYS_DIR", str(tmp_path))
+        monkeypatch.setattr(settings, "DEFAULT_ADMIN_PASSWORD", None)  # force generation
+
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
+        db = Session()
+        try:
+            create_user(db, "admin", "admin@bnk-forge.local", "changeme",
+                        role="admin", must_change_password=False)
+            db.commit()
+
+            def _boom():
+                raise RuntimeError("simulated commit failure after file write")
+            monkeypatch.setattr(db, "commit", _boom)
+
+            with pytest.raises(RuntimeError, match="simulated commit failure"):
+                _rotate_known_default_admin(db)
+
+            # Roll the uncommitted hash change back (as get_db_context would on the
+            # raised exception). Restore commit first so rollback works cleanly.
+            monkeypatch.undo()
+            db.rollback()
+
+            # The keys file WAS written with a generated secret ...
+            pw_file = tmp_path / "initial_admin_password"
+            assert pw_file.exists()
+            orphan_pw = pw_file.read_text().strip()
+            assert orphan_pw and orphan_pw != "changeme"
+
+            admin = db.query(User).filter(User.username == "admin").first()
+            # ... but the DB row's hash was NOT committed: the published default
+            # STILL authenticates (self-heals next boot) and the orphan file
+            # password does NOT.
+            assert verify_password("changeme", admin.hashed_password)
+            assert verify_password(orphan_pw, admin.hashed_password) is False
+        finally:
+            db.close()
+            engine.dispose()

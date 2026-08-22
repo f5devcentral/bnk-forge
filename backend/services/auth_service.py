@@ -39,12 +39,20 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def holds_known_default_password(user: User) -> bool:
     """True if the user's stored hash still matches a shipped default password.
 
-    bonnyr-f5 #188 (round 4): disable_stale_service_user only flips is_active — it
-    never touches the hash. So a disabled service account still carries
-    bcrypt("mcp-service-changeme"), and simply re-activating the row (e.g. via
-    PUT /api/auth/users/{id}) would bring the published default credential back to
-    life. The re-enable path checks this so a known default can never be revived
-    without first rotating to a real secret.
+    Guards the PUT /api/auth/users/{id} re-enable path: re-activating a service
+    account that still authenticates with a published default (e.g.
+    bcrypt("mcp-service-changeme")) would bring that publicly-known credential back
+    to life, so the re-enable is refused until the secret is rotated to a real one.
+
+    bonnyr-f5 #193 (minor, docstring correction): an earlier version of this
+    docstring claimed disable_stale_service_user "never touches the hash" and that
+    this guard therefore covered the row it disabled. That is no longer true —
+    disable_stale_service_user now SCRUBS the hash (overwrites it with a random
+    secret) when it deactivates a row, so a row disabled by THAT path no longer
+    holds a known default and this check would not fire on it. This guard remains
+    load-bearing for the OTHER disable paths that leave the credential intact — e.g.
+    a manual operator PUT is_active=false — where the stored hash can still be a
+    published default. (routes/auth.py:376-379 documents the same split honestly.)
     """
     stored = str(user.hashed_password)
     return any(verify_password(candidate, stored) for candidate in MCP_KNOWN_DEFAULT_PASSWORDS)
@@ -215,14 +223,22 @@ def change_password(db: Session, user: User, current_password: str, new_password
 # holding a publicly-known credential.
 _KNOWN_DEFAULT_ADMIN_PASSWORDS = ("changeme",)
 
-# Passwords this project has shipped as a default for the mcp SERVICE account
-# (role=admin, must_change bypassed) at some point -- the exact same #184 hazard
-# class as the admin defaults above, just a second account. Published in
-# config.py, the compose files, and .env.example, so any account still
+# The passwords ever shipped as a default for the mcp SERVICE account (role=admin,
+# must_change bypassed) are the SAME set as the fail-fast gate's — the exact same
+# #184 hazard class as the admin defaults above, just a second account. Published
+# in config.py, the compose files, and .env.example, so any account still
 # authenticating with one of these holds a publicly-known admin credential.
-# ``changeme`` is here too because the old shipped compose pointed the MCP client
-# at admin/changeme. Refused as a seed value and rotated out of any existing row.
-_KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
+# ``changeme`` is included because the old shipped compose pointed the MCP client
+# at admin/changeme.
+#
+# bonnyr-f5 #193 (minor): this was a SECOND local copy of the denylist. Asymmetric
+# drift was the hazard — a new default added only here would make
+# ensure_service_user raise ValueError, which startup_steps swallows as a log line,
+# leaving MCP silently dead. The tuple is deleted; ``MCP_KNOWN_DEFAULT_PASSWORDS``
+# (imported from core.config above) is the single Python source of truth, used both
+# by validate_production's fail-fast gate and by this seed/rotate path. (A third
+# copy lives in helm/templates/secrets.yaml — owned by the deploy surface and kept
+# in lockstep by a chart test there.)
 
 # #186 BLOCKER 3 (bonnyr-f5 r5): usernames that belong to a HUMAN identity and
 # must never be resolved by ensure_service_user. That function locates its target
@@ -237,6 +253,22 @@ _KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
 _RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
 
 
+def _normalize_service_username(username: str) -> str:
+    """Canonicalise a configured service username: trim, casefold to lowercase.
+
+    bonnyr-f5 #193 (test-gap 6): the reserved-name guard normalises, but the row
+    LOOKUP (ensure_service_user) and the skip filter (disable_stale_service_user)
+    used the RAW value, so a case/whitespace variant of a non-reserved name (e.g.
+    ``" mcp "`` or ``"MCP"``) failed to match the existing ``mcp`` row and minted a
+    SECOND service account instead of reconciling the first — and the skip filter,
+    keyed on the raw value, then disabled the live row it was supposed to keep. Both
+    sites now canonicalise through here so a variant reconciles the existing row.
+    Matches the Helm chart's ``lower | trim`` and the reserved-name guard below, so
+    every surface treats the same inputs identically.
+    """
+    return username.strip().lower()
+
+
 def _is_reserved_human_username(username: str) -> bool:
     """True if ``username`` collides with a reserved human identity.
 
@@ -247,7 +279,7 @@ def _is_reserved_human_username(username: str) -> bool:
     account. Match Helm: compare case-insensitively after trimming surrounding
     whitespace so both surfaces refuse the identical set of inputs.
     """
-    return username.strip().lower() in _RESERVED_HUMAN_USERNAMES
+    return _normalize_service_username(username) in _RESERVED_HUMAN_USERNAMES
 
 
 class GeneratedCredentialPersistError(RuntimeError):
@@ -469,15 +501,41 @@ def seed_admin_user(db: Session) -> User | None:
 
     # ENG-006: Startup seed manages its own transaction
     db.commit()
+    # bonnyr-f5 #193 (log/logic consistency): the must-change gate is
+    # settings.DEFAULT_ADMIN_MUST_CHANGE (passed to create_user above), and an e2e /
+    # ephemeral deployment sets it false. The log must not promise "you must change
+    # it on first login" when the account was seeded WITHOUT that gate — that was a
+    # false instruction. Word the line to match the gate that was actually applied.
+    must_change = settings.DEFAULT_ADMIN_MUST_CHANGE
     if generated:
-        logger.warning(
-            "Seeded admin user 'admin' with a GENERATED password, written to "
-            "%s (retrieve it, then delete it — you must change it on first login). "
-            "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
-            pw_path,
-        )
+        if must_change:
+            logger.warning(
+                "Seeded admin user 'admin' with a GENERATED password, written to "
+                "%s (retrieve it, then delete it — you must change it on first "
+                "login). Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
+                pw_path,
+            )
+        else:
+            logger.warning(
+                "Seeded admin user 'admin' with a GENERATED password, written to "
+                "%s (retrieve it, then delete it). DEFAULT_ADMIN_MUST_CHANGE is "
+                "false, so NO first-login change is enforced — this password stays "
+                "valid until you rotate it; never use this on a real deployment. "
+                "Set DEFAULT_ADMIN_PASSWORD to choose your own instead.",
+                pw_path,
+            )
     else:
-        logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
+        if must_change:
+            logger.info(
+                "Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change "
+                "required on first login"
+            )
+        else:
+            logger.warning(
+                "Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD with "
+                "DEFAULT_ADMIN_MUST_CHANGE=false — NO first-login change is "
+                "enforced (intended only for e2e/ephemeral environments)"
+            )
     return admin
 
 
@@ -522,12 +580,13 @@ def ensure_service_user(
     reconcile binds the mcp account to the SAME per-install secret the mcp client
     uses.
 
-    NOTE (multi-service-account limitation, bounded follow-up): today exactly one
-    service account ('mcp') exists, so disable_stale_service_user's blanket
-    deactivate-then-reconcile touches only that row. If more service accounts are
-    ever added, the disable/reconcile pairing would need to skip rows about to be
-    reconciled (or do disable+reconcile in one transaction) to avoid a momentary
-    inactive window — see the #193 integration triage.
+    NOTE (multi-service-account, momentary inactive window): the unconditional
+    disable-then-reconcile could take the live MCP row inactive for a
+    bcrypt-plus-commit window on a rolling restart. bonnyr-f5 #193 M2 closes this:
+    seed_auth_step passes ``skip_username`` so disable_stale_service_user leaves the
+    row this reconcile will touch untouched. The skip key and the name reconciled
+    here are canonicalised the same way (``_normalize_service_username``) so a
+    case/whitespace variant still lines the two sites up on the same row.
     """
     # #186 BLOCKER 3 / #188 (bonnyr-f5): fail closed BEFORE any lookup if the
     # caller points a service account at a reserved human username. Without this,
@@ -541,13 +600,20 @@ def ensure_service_user(
             f"'mcp' (a service account must not co-opt the human admin identity)"
         )
 
+    # bonnyr-f5 #193 (test-gap 6): canonicalise the configured name BEFORE the
+    # lookup/create below so a case/whitespace variant (e.g. " mcp ", "MCP")
+    # reconciles the existing 'mcp' row instead of minting a second service account.
+    # The synthesised email is derived from this normalised value too, so it stays
+    # equal to v2_155's 'mcp@bnk-forge.local' fingerprint on the create path.
+    username = _normalize_service_username(username)
+
     # This function only ever runs with a usable password (seed_auth_step's
     # _mcp_pw_usable gate). Fail closed and loudly if that contract is violated:
     # the unset / published-default case belongs to disable_stale_service_user,
     # never here. Seeding/reconciling the role=admin, must-change-EXEMPT mcp
     # account to a shipped published default would republish a live, publicly-known
     # admin credential (#186).
-    if not password or password in _KNOWN_DEFAULT_SERVICE_PASSWORDS:
+    if not password or password in MCP_KNOWN_DEFAULT_PASSWORDS:
         raise ValueError(
             f"refusing to seed service account '{username}' without a usable "
             f"MCP_SERVICE_PASSWORD (it is unset or a known published default); the "
@@ -594,7 +660,7 @@ def ensure_service_user(
         )
         holds_published_default = fingerprint_match and any(
             verify_password(p, str(user.hashed_password))
-            for p in _KNOWN_DEFAULT_SERVICE_PASSWORDS
+            for p in MCP_KNOWN_DEFAULT_PASSWORDS
         )
         if not holds_published_default:
             raise ValueError(
@@ -658,12 +724,31 @@ def disable_stale_service_user(
     still disabled here is a genuinely stale EXTRA service account, not the "no
     password is set" case -- so the misleading "no usable MCP_SERVICE_PASSWORD is
     set" warning no longer fires on every boot of a correct install.
+
+    bonnyr-f5 #193 (minor — the v2_155 "point MCP_SERVICE_USERNAME elsewhere"
+    remedy, stated precisely): because this disable is provenance-keyed and runs
+    UNCONDITIONALLY before the reconcile, the DEFAULT-named legacy row
+    ('mcp'/'mcp@bnk-forge.local' — the one v2_155 backfills is_service_account) IS
+    deactivated and hash-scrubbed on every boot even when MCP_SERVICE_USERNAME now
+    points at a different name (it is not the skip target, so it is not skipped). So
+    the documented remedy DOES revoke that stale default. The residual it does NOT
+    cover: a service account a pre-provenance release created under a CUSTOM
+    username (never the default 'mcp'). v2_155 deliberately will not backfill such a
+    row — it cannot prove the row is a service account rather than a human of that
+    name, and reclassifying a human is strictly worse — so is_service_account stays
+    False and this filter never sees it. That row must be disabled or deleted by
+    hand; pointing MCP_SERVICE_USERNAME elsewhere does not neutralise it.
     """
     query = db.query(User).filter(
         User.is_active.is_(True),
         User.is_service_account.is_(True),  # bonnyr-f5 #188: never a human row
     )
     if skip_username is not None:
+        # bonnyr-f5 #193 (test-gap 6): canonicalise the skip key the same way
+        # ensure_service_user canonicalises the name it reconciles, so a variant
+        # like " mcp " skips the live 'mcp' row instead of disabling it (which
+        # would open the exact inactive window M2 exists to prevent).
+        skip_username = _normalize_service_username(skip_username)
         query = query.filter(User.username != skip_username)
     rows = query.all()
     if not rows:

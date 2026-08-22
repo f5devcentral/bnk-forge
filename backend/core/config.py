@@ -42,36 +42,49 @@ def _persist_or_load_key(filename: str, generate_fn: Callable[[], str]) -> tuple
     BE-007: Load a key from persistent storage, or generate and save a new one.
     Returns (key_value, was_auto_generated).
 
-    bonnyr-f5 #193 B2: ``was_auto_generated`` must be True *only* for a key WE
-    generated — never for one the operator provisioned. The operator-facing path
-    is an env var (``JWT_SECRET_KEY`` / ``ENCRYPTION_KEY``), which never reaches
-    this function (Settings.__init__ only calls it when the field is None). The
-    SECONDARY operator path is pre-seeding the key file itself on the keys volume;
-    that value is NOT auto-generated and must not be flagged as such, or
-    ``validate_production`` would reject a perfectly good operator secret.
+    bonnyr-f5 #193 B2 (round 3): ``was_auto_generated`` gates SEC-006's fail-fast,
+    so it MUST fail closed — absence of evidence of provisioning is not evidence of
+    provisioning. The primary operator path is an env var (``JWT_SECRET_KEY`` /
+    ``ENCRYPTION_KEY``), which never reaches this function (Settings.__init__ only
+    calls it when the field is None). The SECONDARY operator path is pre-seeding the
+    key file on the keys volume; the app is the ONLY other writer of that file on
+    every shipped path, so a marker-less key file could equally be our own auto-gen
+    from a prior release — which is exactly the population that upgrades into
+    ``ENVIRONMENT=production``. The provenance signal is therefore an EXPLICIT
+    operator OPT-OUT marker ``<filename>.operator`` (fail closed on its absence):
+      * key file present + ``<filename>.operator`` marker present -> operator
+        provisioned it and said so explicitly -> auto=False
+      * key file present + NO ``.operator`` marker -> auto=True (fail closed: our
+        own prior-release auto-gen, or unknown provenance — refuse in production)
+      * key file absent -> generate now -> auto=True; we write NO marker (a
+        marker-less key already means auto=True, so there is nothing to record).
 
-    We distinguish the two on disk with a sidecar ``<filename>.autogen`` marker
-    that we write only when WE generate the key. So:
-      * key file present + marker present  -> we generated it  -> auto=True
-      * key file present + marker absent   -> operator-provided -> auto=False
-      * key file absent -> generate now, write the marker      -> auto=True
+    Round-3 note: the OLD polarity used a ``<filename>.autogen`` marker written on
+    generation and classified on its ABSENCE. Every keys volume from a previously
+    released version holds the key with no marker, so it classified as
+    operator-provided and ``validate_production`` passed on an auto-generated secret
+    across the entire upgrade population (SEC-006 failed OPEN). It also had a
+    "second trigger": the marker write shared a ``try`` with the key write, so a
+    partial write (key persisted, marker not) downgraded provenance on a fresh
+    install too. Inverting the sentinel to an opt-out marker fixes both — there is
+    no marker write on generation, so a partial write can no longer downgrade
+    provenance, and a marker-less key fails closed.
 
-    This keeps SEC-006's fail-fast intact: a fresh ``ENVIRONMENT=production`` boot
-    with no operator key generates one, writes the marker, and reports auto=True,
-    so ``validate_production`` fails on EVERY boot (the marker persists with the
-    key) until the operator sets a real value — it never degrades to "fail once,
-    then pass on restart".
+    An operator pre-seeding a key must therefore ALSO drop a ``<filename>.operator``
+    file beside it (any/empty contents) to assert provenance; otherwise the app
+    treats the pre-seeded key as auto-generated and refuses to boot in production.
     """
     key_path = os.path.join(_KEYS_DIR, filename)
-    marker_path = key_path + ".autogen"
+    operator_marker_path = key_path + ".operator"
     try:
         if os.path.exists(key_path):
             with open(key_path) as f:
                 key = f.read().strip()
             if key:
-                # Auto-generated only if OUR marker sits beside the key; a key on
-                # disk without the marker was placed there by the operator.
-                auto = os.path.exists(marker_path)
+                # Fail closed: operator-provided ONLY when the explicit opt-out
+                # marker sits beside the key. A marker-less key is auto-generated
+                # (our own prior-release gen, or unknown provenance).
+                auto = not os.path.exists(operator_marker_path)
                 return key, auto
     except (OSError, PermissionError) as e:
         logger.warning(f"Could not read {key_path}: {e}")
@@ -79,18 +92,19 @@ def _persist_or_load_key(filename: str, generate_fn: Callable[[], str]) -> tuple
     # Generate new key
     key = generate_fn()
 
-    # Try to persist it, plus the marker that records WE generated it.
+    # Try to persist it. We write NO marker: a marker-less key already classifies
+    # as auto-generated (fail closed), so there is nothing to record and no second
+    # write that a partial failure could use to downgrade provenance. Create the
+    # file 0o600 at open() time (os.open) and fchmod it so the secret is never even
+    # briefly world-readable under the usual umask (mirrors _persist_generated_password).
     try:
         os.makedirs(_KEYS_DIR, exist_ok=True)
-        with open(key_path, "w") as f:
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The mode arg only applies on CREATE; force 0o600 so a pre-existing looser
+        # file (e.g. 0o644 from an older release) is tightened before we write.
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(key)
-        os.chmod(key_path, 0o600)  # Read/write only by owner
-        with open(marker_path, "w") as f:
-            f.write(
-                "auto-generated by BNK-Forge; delete this marker to have the key "
-                "beside it treated as an operator-provided secret\n"
-            )
-        os.chmod(marker_path, 0o600)
         logger.info(f"Persisted auto-generated key to {key_path}")
     except (OSError, PermissionError) as e:
         logger.warning(f"Could not persist key to {key_path}: {e} — key will be lost on restart")

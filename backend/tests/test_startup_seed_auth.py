@@ -194,6 +194,32 @@ def test_ensure_service_user_refuses_reserved_username_case_insensitively(legacy
         db.close()
 
 
+@pytest.mark.parametrize("variant", [" mcp ", "MCP", "  Mcp  "])
+def test_service_username_variant_reconciles_legacy_row_end_to_end(legacy_db, monkeypatch, variant):
+    """bonnyr-f5 #193 test-gap 6, full seed_auth_step path: MCP_SERVICE_USERNAME set
+    to a case/whitespace variant of the legacy 'mcp' name must RECONCILE the existing
+    legacy row (rotate its hash, keep it active) — not disable it and mint a second
+    ' mcp ' service account. The disable's skip filter and the reconcile's lookup
+    must both canonicalise the variant onto the same 'mcp' row."""
+    _set_mcp_env(monkeypatch, variant, "brand-new-strong-secret")
+
+    startup_steps.seed_auth_step()
+
+    db = legacy_db()
+    try:
+        # Exactly one service row, canonical name — no variant twin.
+        assert db.query(User).filter(User.username == "mcp").count() == 1
+        assert db.query(User).filter(User.username == variant).count() == 0
+        mcp = db.query(User).filter(User.username == "mcp").one()
+        assert mcp.is_active is True  # reconciled + kept live, not disabled
+        # New secret authenticates; the shipped default no longer does.
+        assert authenticate_user(db, "mcp", "brand-new-strong-secret")
+        with pytest.raises(UnauthorizedError):
+            authenticate_user(db, "mcp", LEGACY_DEFAULT)
+    finally:
+        db.close()
+
+
 # ── bonnyr-f5 #193: admin still holding the DEFAULT (`changeme`) — the real ──
 # upgrade shape the previous fixtures never exercised (they gave admin a
 # non-default secret). Drives seed_auth_step against it.
