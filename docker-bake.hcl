@@ -36,12 +36,22 @@ variable "SOURCE_URL" {
 #   divergent digests). Because a republish may not resolve to the original
 #   digest, the immutable :VERSION tag is protected the honest way — an existence
 #   probe REFUSES a republish by default and requires an explicit force to
-#   overwrite — rather than by relying on determinism we do not have. That probe
-#   guards BOTH paths that bake --push this file: the release workflow (see
-#   release.yml "Refuse to overwrite an already-published tag") and the operator
-#   `make push-images` command (Makefile, FORCE_LATEST=1 to override). Both call
-#   scripts/registry-tag-probe.sh, so the protection is not fixed at one call
-#   site only (bonnyr-f5 #181 round 5, F3).
+#   overwrite — rather than by relying on determinism we do not have.
+#
+#   FOUR paths bake --push this file (bonnyr-f5 #193 minor — the old comment said
+#   "BOTH", there are four). The two that publish the IMMUTABLE release :VERSION
+#   tag are guarded by the existence probe, single-sourced through
+#   scripts/registry-overwrite-guard.sh -> scripts/registry-tag-probe.sh:
+#     • the release workflow  (release.yml "Refuse to overwrite an already-published tag")
+#     • `make push-images`    (Makefile, FORCE_LATEST=1 to override)
+#   The other two deliberately carry NO :VERSION probe, because they never touch
+#   the release tag — they push a SHA-pinned immutable tag `${BASE}-cb.${SHA}`
+#   (unique per commit) plus the ROLLING `customer-build` tag (rolling tags are
+#   MEANT to move):
+#     • `make push-customer-build`
+#     • `make push-customer-build-multiarch`
+#   So the release-tag protection is not fixed at one call site (bonnyr-f5 #181
+#   round 5, F3), and the customer-build paths are correctly out of its scope.
 variable "CREATED" {
   default = ""
 }

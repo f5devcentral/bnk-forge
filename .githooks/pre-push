@@ -12,9 +12,13 @@
 set -e
 
 # ─── Migration chain check ────────────────────────────────────────────────────
+# Test the command DIRECTLY in the `if`, not `$?` afterwards: under `set -e` a
+# non-zero `python3 ...` aborts the hook BEFORE the `if [ $? -ne 0 ]` runs, so the
+# "PUSH BLOCKED" message was unreachable — git still blocked the push, but with no
+# migration-specific guidance (bonnyr-f5 #193 minor). `if !` is exempt from `set -e`
+# and keeps the tailored message.
 echo "=== Migration chain check (pre-push) ==="
-python3 scripts/check-migrations.py
-if [ $? -ne 0 ]; then
+if ! python3 scripts/check-migrations.py; then
     echo ""
     echo "PUSH BLOCKED: Fix migration chain errors above before pushing."
     echo "Run 'python3 scripts/check-migrations.py' for details."

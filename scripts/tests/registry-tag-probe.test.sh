@@ -90,7 +90,12 @@ check "rate-limit -> refuse"         "$(verdict ratelimit)"            UNKNOWN
 check "exists -> refuse"             "$(verdict exists)"               EXISTS
 
 # ─── F6: image-list single-source parity with docker-bake.hcl ────────────────
-mapfile -t LIST < <(bash "$PROBE" --images)
+# `while read` not `mapfile`: mapfile is bash 4+, and this file is wired into
+# `make script-selftests` -> `ci-gates` -> `pre-push`, which stock macOS runs
+# under bash 3.2.57 (Makefile SHELL := /bin/bash). mapfile there is rc=127 and
+# BLOCKS every push (bonnyr-f5 #193 M3).
+LIST=()
+while IFS= read -r _img; do LIST+=("$_img"); done < <(bash "$PROBE" --images)
 check "image count is 7"             "${#LIST[@]}"                     7
 BAKE_TARGETS="$(sed -n 's/.*targets = \[\(.*\)\].*/\1/p' "$HERE/../../docker-bake.hcl" | tr -d '" ' | tr ',' '\n' | sort)"
 LIST_TARGETS="$(printf '%s\n' "${LIST[@]}" | sed 's/^bnk-forge-//' | sort)"

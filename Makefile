@@ -91,6 +91,7 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
         fetch-awsbnkctl \
         up down restart deploy deploy-backend deploy-frontend upgrade-safe \
         clean clean-docker check-disk setup-cleanup-cron check-migrations \
+        commit-lint script-selftests ci-gates secret-scan artifact-network-selftest \
         test-upgrade dist push-images push-customer-build buildx-setup publish-signed help
 
 # ─── Quick Start Commands ────────────────────────────────────────────────────
@@ -564,8 +565,20 @@ script-selftests:
 	    bash "$$t" || { echo "::error::$$t failed"; exit 1; }; \
 	  done
 
+# Mirror of ci.yml's "P1 · Artifact Network Self-Test" job (bonnyr-f5 #193 minor:
+# `make pre-push` ≡ CI was false — this job had no local target). Pure-logic, no
+# Docker/network.
+artifact-network-selftest:
+	@echo ""
+	@echo "=== Artifact network self-test (mirror of ci.yml artifact-network-self-test) ==="
+	@bash scripts/artifact_network.sh --self-test
+
 # Aggregate: every CI gate that is not already covered by quick-check/tests.
-ci-gates: shellcheck version-check commit-lint script-selftests secret-scan
+# bonnyr-f5 #193 minor (`make pre-push` ≡ CI): artifact-network-selftest is wired
+# in here, and ci.yml's "migration-collision-check" job runs `make check-migrations`
+# — already pulled in by quick-check (a pre-push prerequisite) — so both formerly
+# unmirrored CI jobs are now reachable from `make pre-push`.
+ci-gates: shellcheck version-check commit-lint script-selftests secret-scan artifact-network-selftest
 	@echo ""
 	@echo "=== CI-parity gates passed ==="
 
@@ -1286,35 +1299,15 @@ push-images:
 	    exit 1; \
 	  fi; \
 	fi; \
-	if [ "$${FORCE_LATEST:-}" != "1" ]; then \
-	  echo "  Probing the registry so this push can't silently overwrite an already-published :$$VERSION tag..."; \
-	  PROBE_OUT=$$(REGISTRY=$$REGISTRY VERSION=$$VERSION bash scripts/registry-tag-probe.sh 2>/dev/null) || { \
-	    echo "ERROR: could not run the registry existence probe (scripts/registry-tag-probe.sh)."; \
-	    echo "  Re-run with FORCE_LATEST=1 only if you intend to overwrite the immutable :$$VERSION tag."; \
+	if [ "$${FORCE_LATEST:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
+	echo "  Probing the registry via the single-sourced scripts/registry-overwrite-guard.sh so this push"; \
+	echo "  can't silently overwrite an already-published immutable :$$VERSION tag..."; \
+	REGISTRY=$$REGISTRY VERSION=$$VERSION FORCE=$$GUARD_FORCE \
+	  bash scripts/registry-overwrite-guard.sh || { \
+	    echo "  (Export REGISTRY_USERNAME/REGISTRY_PASSWORD for an authenticated probe, or re-run with"; \
+	    echo "   FORCE_LATEST=1 only if you intend to overwrite the immutable :$$VERSION tag.)"; \
 	    exit 1; \
 	  }; \
-	  EXISTING=$$(printf '%s\n' "$$PROBE_OUT" | awk -F'\t' '$$1=="exists"{print "    "$$2}'); \
-	  UNKNOWN=$$(printf '%s\n' "$$PROBE_OUT" | awk -F'\t' '$$1=="unknown"{print "    "$$2": "$$3}'); \
-	  if [ -n "$$EXISTING" ]; then \
-	    echo "ERROR: images for :$$VERSION already exist in $$REGISTRY. bake would move the IMMUTABLE :$$VERSION tag"; \
-	    echo "  and orphan the cosign/SBOM/SLSA attestations bound to the old digests:"; \
-	    printf '%s\n' "$$EXISTING"; \
-	    echo "  (VERSION == the highest tag is exactly the state of a fresh 'main' right after a release —"; \
-	    echo "   the recency guard above lets that through, so this existence probe is what protects the tag,"; \
-	    echo "   mirroring release.yml's 'Refuse to overwrite an already-published tag' step.)"; \
-	    echo "  Re-run with FORCE_LATEST=1 only if you intend to overwrite them."; \
-	    exit 1; \
-	  fi; \
-	  if [ -n "$$UNKNOWN" ]; then \
-	    echo "ERROR: could not confirm the :$$VERSION tag is free (auth / network / rate-limit). Refusing to"; \
-	    echo "  publish rather than risk overwriting an immutable tag that a probe simply could not see:"; \
-	    printf '%s\n' "$$UNKNOWN"; \
-	    echo "  Export REGISTRY_USERNAME/REGISTRY_PASSWORD for an authenticated probe, or re-run with"; \
-	    echo "  FORCE_LATEST=1 to override deliberately."; \
-	    exit 1; \
-	  fi; \
-	  echo "  No existing :$$VERSION manifests found — safe to publish."; \
-	fi; \
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \

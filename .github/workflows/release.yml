@@ -265,9 +265,16 @@ jobs:
           ELAPSED=0
 
           while true; do
+            # Filter by the commit SHA SERVER-SIDE (--commit), not by fetching the
+            # newest 20 runs on the branch and grepping (bonnyr-f5 #193 minor): with
+            # a busy branch, >20 CI runs newer than this SHA pushed the target run off
+            # the --limit=20 page, so the poll never saw it and the release timed out
+            # claiming no run existed. --commit returns only this SHA's runs, so the
+            # page holds every attempt for it; the jq keeps the latest attempt.
             RUN_JSON=$(gh run list \
               --workflow=ci.yml \
               --branch="$BRANCH" \
+              --commit="$SHA" \
               --limit=20 \
               --json headSha,status,conclusion,databaseId \
               --jq "[.[] | select(.headSha == \"${SHA}\")] | sort_by(.databaseId) | last" 2>/dev/null || echo "")
@@ -836,6 +843,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Lint the release notes before they become a commit
+        env:
+          # Untrusted free text -> env, NEVER interpolated into the shell (same rule
+          # as RELEASE_NOTES itself). Empty when no notes were given -> a no-op.
+          LINT_MESSAGE: ${{ inputs.release_notes }}
+          LINT_MESSAGE_LABEL: "release_notes input"
+        run: |
+          # bonnyr-f5 #193 M1: inputs.release_notes is interpolated into the release
+          # COMMIT body and the TAG message below, but was linted NOWHERE. Lint it
+          # HERE, before it is minted, through the SAME commit-lint script CI/pre-push
+          # use: a CI-control marker (which would suppress the workflow run) or a
+          # BREAKING CHANGE marker the version detectors would MISS (a mis-anchored
+          # note that ships the release silently as a patch) is caught while it can
+          # still be fixed — not after it is an unamendable commit on main. RANGE is
+          # an empty range so ONLY the LINT_MESSAGE text is checked (no commits).
+          RANGE="HEAD..HEAD" bash scripts/lint-commit-markers.sh
+
       - name: Bump version
         run: |
           echo "${{ needs.preflight.outputs.new_version }}" > VERSION
@@ -1031,6 +1055,7 @@ jobs:
           path: .release-tooling
           sparse-checkout: |
             scripts/registry-tag-probe.sh
+            scripts/registry-overwrite-guard.sh
             docker-bake.hcl
           sparse-checkout-cone-mode: false
           # bonnyr-f5 #193 M3: docker-bake.hcl is sourced here too so the overwrite
@@ -1149,92 +1174,25 @@ jobs:
           # release in a namespace.
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          # Single-source the overwrite policy: run the SAME guard the pre-push
+          # gates use, but from .release-tooling (the CURRENT workflow ref), so the
+          # probe AND the bake-file vacuity floor are the stable current versions —
+          # a publish_only recovery of an OLD tag never depends on that tag's tree.
+          PROBE: .release-tooling/scripts/registry-tag-probe.sh
+          BAKE_FILE: .release-tooling/docker-bake.hcl
         run: |
-          # docker-bake pushes ${REGISTRY}/<img>:${VERSION} unconditionally and
-          # the tag is declared IMMUTABLE. Probe the registry first: if the
-          # :VERSION manifest already exists, republishing moves that immutable
-          # tag under anyone who pinned it AND orphans the cosign / SBOM / SLSA
-          # attestations bound to the OLD digest. Refuse by default; require the
-          # force input to overwrite deliberately (bonnyr-f5 #181 round 3). The
-          # normal recovery case — a tag whose publish never completed — has no
-          # manifest yet, so it passes through untouched.
-          #
-          # The probe is scripts/registry-tag-probe.sh, which classifies each
-          # image by the registry's HTTP STATUS, not by grepping the docker CLI's
-          # error text. That text CANNOT tell "package does not exist yet" (the
-          # first release in a fork/mirror namespace — SAFE) apart from "no
-          # permission on an existing package" (MUST fail closed): both print
-          # `denied` (bonnyr-f5 #181 round 5, F1). The HTTP API is unambiguous —
-          # 200 exists, 404 absent (tag OR repo not found → safe), 401/403 auth,
-          # everything else transient. Only a definitive 404 is "safe to
-          # publish"; auth / network / rate-limit / 5xx all classify UNKNOWN and
-          # fail CLOSED — refuse unless force=true (INV-24). This same probe
-          # guards the operator `make push-images` path (F3), so the class is
-          # fixed everywhere, not at one call site.
-          # Capture the probe's OUTPUT and EXIT STATUS. A bare
-          # `while … done < <(probe)` would ignore a non-zero exit — if the
-          # script itself failed (missing dependency, bad REGISTRY, no output)
-          # the loop would read zero lines, find nothing existing, and conclude
-          # "safe to publish": a fail-OPEN. So treat any probe that does not
-          # cleanly classify EVERY image as inconclusive and fail CLOSED.
-          # bonnyr-f5 #193 M3: derive the vacuity floor from an INDEPENDENT source
-          # (docker-bake.hcl's "default" group, checked out at the workspace root),
-          # NOT from the probe script we are guarding. The old floor read
-          # `registry-tag-probe.sh --images`; if that script were unavailable (e.g.
-          # dropped from the sparse-checkout list at :967) both counts were 0,
-          # `0 -ne 0` was false, nothing was classified, and the step reported
-          # "safe to publish" -> bake --push ran UNGUARDED (fail-OPEN). The Makefile
-          # (:1263) already asserts the probe's exit status; mirror that here.
-          IMAGES_N="$(sed -n 's/.*targets = \[\(.*\)\].*/\1/p' .release-tooling/docker-bake.hcl | grep -oE '"[^"]+"' | grep -c . || true)"
-          if [ "${IMAGES_N:-0}" -lt 1 ]; then
-            echo "::error::could not read the canonical image set from .release-tooling/docker-bake.hcl's default group — refusing to publish rather than guard vacuously."; exit 1
-          fi
-          # ASSERT the probe's EXIT STATUS before trusting its output: a probe that
-          # cannot run at all (missing script / bad REGISTRY) must fail CLOSED, not
-          # be read as "zero images exist" (the M3 fail-open).
-          if ! PROBE_OUT="$(bash .release-tooling/scripts/registry-tag-probe.sh)"; then
-            echo "::error::the registry existence probe (.release-tooling/scripts/registry-tag-probe.sh) could not run. Refusing to publish — an already-published immutable :${VERSION} tag cannot be ruled out. Re-run once the tooling checkout / REGISTRY is correct, or re-dispatch with force=true to overwrite deliberately."
-            if [ "$FORCE" = "true" ]; then
-              echo "::warning::force=true — publishing despite the probe being unrunnable; if any :${VERSION} tags were already published this overwrites the immutable tag and orphans its cosign/SBOM/SLSA attestations."
-            else
-              exit 1
-            fi
-            PROBE_OUT=""
-          fi
-          PROBE_N="$(printf '%s\n' "$PROBE_OUT" | grep -c . || true)"
-          EXISTING=""
-          UNKNOWN=""
-          if [ "$PROBE_N" -ne "$IMAGES_N" ]; then
-            UNKNOWN="  the registry existence probe did not classify all ${IMAGES_N} images (classified ${PROBE_N}); treating as inconclusive"$'\n'
-          else
-            while IFS=$'\t' read -r status ref detail; do
-              case "$status" in
-                exists)  EXISTING="${EXISTING}  ${ref}"$'\n' ;;
-                absent)  : ;; # 404 — the immutable tag is free
-                unknown) UNKNOWN="${UNKNOWN}  ${ref}: ${detail}"$'\n' ;;
-              esac
-            done <<< "$PROBE_OUT"
-          fi
-          if [ -n "$UNKNOWN" ]; then
-            printf 'Registry existence probe was inconclusive (a non-not-found error) for:\n%s' "$UNKNOWN"
-            if [ "$FORCE" = "true" ]; then
-              echo "::warning::force=true — publishing despite an inconclusive existence probe; if any of these tags were in fact already published this overwrites the immutable :${VERSION} tag and orphans its cosign/SBOM/SLSA attestations."
-            else
-              echo "::error::Could not confirm whether the :${VERSION} tag is free: the registry probe failed with a non-not-found error (auth / network / rate-limit / bad ref). Refusing to publish because an existing immutable tag cannot be ruled out. Re-run once the registry is reachable, or re-dispatch with force=true only if you intend to overwrite."
-              exit 1
-            fi
-          fi
-          if [ -z "$EXISTING" ]; then
-            echo "No existing :${VERSION} manifests found — safe to publish."
-            exit 0
-          fi
-          printf 'Images already published for this tag:\n%s' "$EXISTING"
-          if [ "$FORCE" = "true" ]; then
-            echo "::warning::force=true — overwriting the existing :${VERSION} manifests; the cosign/SBOM/SLSA attestations bound to the previous digests are now orphaned."
-          else
-            echo "::error::Images for v${VERSION} already exist in ${REGISTRY}. Republishing would move the immutable :${VERSION} tag and orphan its attestations. Re-dispatch with force=true only if you intend to overwrite them."
-            exit 1
-          fi
+          # bonnyr-f5 #193 M2 + minor (single-source): this used to open-code ~85
+          # lines that DUPLICATED scripts/registry-overwrite-guard.sh — a third
+          # divergent copy of the policy whose vacuity floor counted EVERY
+          # `targets = [` line in docker-bake.hcl, so adding any second bake group
+          # made this gate refuse forever and blame the registry (M2). It now calls
+          # the ONE guard, whose floor is derived from the tool scoped to the bake
+          # DEFAULT group (`docker buildx bake --print default | jq …`) and which
+          # keeps "bake-file parse mismatch" distinct from "registry unreachable".
+          # docker-bake pushes ${REGISTRY}/<img>:${VERSION} to an IMMUTABLE tag, so
+          # a republish that moves it (and orphans the cosign/SBOM/SLSA attestations
+          # bound to the old digest) is refused unless force=true (INV-24 / F1/F3).
+          bash .release-tooling/scripts/registry-overwrite-guard.sh
 
       - name: Build and push all images (docker-bake.hcl)
         # Skipped in sign_only recovery: the images are already pushed, and the

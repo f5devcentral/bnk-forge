@@ -76,42 +76,15 @@ bump_version() {
 }
 
 # ── Breaking-change detectors ────────────────────────────────────────────────
-# INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
-# the copies in extract-breaking-changes.sh. This is an invariant these two files
-# must uphold themselves; the CI job that DIFFS the two copies and fails on any
-# drift lands with #182 (bonnyr-f5 #179 r6 F4) and is NOT present in this tree, so
-# until #182 merges keep the two copies in lock-step by hand.
-#
-# A marker counts as a real footer under two anchors:
-#   * preceded by a BLANK line -> accepted with OR without a colon (keeps the #2
-#     no-colon paragraph break);
-#   * preceded by another TRAILER, or folded directly onto a conventional-commit
-#     SUBJECT -> accepted ONLY with a colon (catches a footer folded onto a scoped
-#     subject `fix(core): x`, bonnyr-f5 #179 r6 F1, while rejecting a prose header
-#     `Before:` / `Note:` followed by colon-less prose, r6 F2).
-# Wrapped prose (a marker after a PROSE line) is still rejected. _is_breaking_subject
-# is BANG-ONLY: the folded-footer-in-subject is caught by running _is_breaking_body
-# on %B (which preserves the newline git folds into %s), and scanning the raw subject
-# for the marker over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
-_is_breaking_subject() {
-  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
-}
-_is_breaking_body() {
-  awk '
-    BEGIN { prev_blank = 1; prev_trailer = 0 }
-    /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
-    {
-      is_marker  = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE/)
-      is_colon   = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE(\*\*)?:/)
-      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
-      if (prev_blank && is_marker) found = 1
-      else if (prev_trailer && is_colon) found = 1
-      is_subject = (NR == 1 && $0 ~ /^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]/)
-      prev_blank = 0; prev_trailer = (is_trailer || is_subject)
-    }
-    END { exit(found ? 0 : 1) }
-  ' <<< "$1"
-}
+# INV-15: _is_breaking_subject / _is_breaking_body are SINGLE-SOURCED in
+# scripts/lib/breaking-change-detect.sh and shared with extract-breaking-changes.sh
+# and the commit-lint gate (bonnyr-f5 #179 r6 F4 / #193 M5). They used to be two
+# byte-identical inline copies kept in step by hand; the shared file makes drift
+# structurally impossible, and scripts/tests/detector-parity.test.sh asserts the
+# single-source wiring. Resolve the path from THIS script's location (not cwd) so the
+# self-test's recursive temp-repo invocations still find the lib.
+# shellcheck source=scripts/lib/breaking-change-detect.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/breaking-change-detect.sh"
 
 # ── Resolve baseline + since-tag ─────────────────────────────────────────────
 # Skipped entirely in SELF_TEST mode: the self-test runner below exercises
@@ -181,7 +154,8 @@ while IFS= read -r sha; do
   # review): `foo | grep -q` under `set -o pipefail` takes SIGPIPE (141) when grep
   # matches early on a large body, which pipefail turns into a failed test, so
   # *finding* the marker silently kept the bump at patch. Detection lives in
-  # _is_breaking_subject / _is_breaking_body (byte-identical to the extractor).
+  # _is_breaking_subject / _is_breaking_body, single-sourced in
+  # scripts/lib/breaking-change-detect.sh and shared with the extractor.
   if _is_breaking_subject "$subject" || _is_breaking_body "$message"; then
     BUMP_TYPE="major"
     break
@@ -230,6 +204,17 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
   # self-test mode and recurse indefinitely (fork bomb).
   unset SELF_TEST
 
+  # Expand the literal `\n` escape in a fixture to real newlines. Done with awk
+  # (linear) rather than bash `${_b//\\n/$'\n'}`: that global parameter-expansion
+  # substitution hits an O(n^2) cliff on bash 3.2 (stock macOS), where the ~80 KB
+  # Test-7 body alone took ~134 s and the self-test did not finish in 6 min
+  # (bonnyr-f5 #193 M3). awk is O(n) on every interpreter. RS="\1" reads the whole
+  # (newline-free, escaped) input as ONE record; printf keeps it exact (no trailing
+  # newline added).
+  _expand_nl() {
+    printf '%s' "$1" | awk 'BEGIN { RS = "\1" } { gsub(/\\n/, "\n"); printf "%s", $0 }'
+  }
+
   run_test() {
     local desc="$1" expected_bump="$2" expected_ver="$3"
     local since="$4" baseline="$5" commits_str="$6"
@@ -256,8 +241,7 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
       if [[ "$entry" == *"~~BODY~~"* ]]; then
         # A body may use a literal \n escape for a real newline: entries are
         # split on newlines, so a raw one would fork into extra commits.
-        _b="${entry#*~~BODY~~}"
-        _b=${_b//\\n/$'\n'}
+        _b="$(_expand_nl "${entry#*~~BODY~~}")"
         git -C "$tmpdir" commit --allow-empty \
           -m "${entry%%~~BODY~~*}" -m "$_b" -q
       else
@@ -265,7 +249,7 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
         # subject and footer on consecutive lines with NO blank between, so git
         # folds them into %s (leaving %b empty) but %B keeps the newline. One -m
         # with an embedded newline reproduces exactly that shape.
-        git -C "$tmpdir" commit --allow-empty -m "${entry//\\n/$'\n'}" -q
+        git -C "$tmpdir" commit --allow-empty -m "$(_expand_nl "$entry")" -q
       fi
     done <<< "$(echo "$commits_str" | tr ',' '\n')"
 
