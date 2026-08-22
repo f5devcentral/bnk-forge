@@ -25,7 +25,11 @@
 set -euo pipefail
 
 # ── Tunables (override via environment if desired) ───────────────────────────
-BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-latest}"   # image tag to pull
+# bonnyr-f5 #193 B1: default to the release this tree ships (the first image carrying
+# the credential guards this installer's env contract assumes), NOT `latest` — which
+# currently resolves to the pre-guard 3.1.6 image. Override only with a tag you have
+# confirmed ships the same guards.
+BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-4.0.0}"   # image tag to pull
 NAME_PREFIX="${NAME_PREFIX:-bnk-forge}"
 SUFFIX="$(date +%m%d%H%M)"
 VPC_NAME="${NAME_PREFIX}-vpc-${SUFFIX}"
@@ -388,11 +392,19 @@ x-backend-env: &backend-env
   # to it on boot, so it must receive it too — otherwise the mcp account is never
   # seeded and the mcp client can never authenticate (no secret is generated for
   # MCP under the #188-over-#186 consolidation; bonnyr-f5 #193).
-  # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  # bonnyr-f5 #193 B1: alias the PASSWORD only; the USERNAME is not aliased (a legacy
+  # MCP_USERNAME=admin must never resolve the service username — old default admin,
+  # new default mcp — or a pre-guard backend rewrites the human admin row).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
   ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on, so
+  # ENVIRONMENT=production does not brick the backend. Empty = unset (config.py treats
+  # "" as unset and auto-generates the keys, persisted on the keys volume).
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -474,7 +486,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -507,7 +519,7 @@ services:
       start_period: 30s
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -525,7 +537,7 @@ services:
     restart: unless-stopped
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -543,7 +555,7 @@ services:
     restart: unless-stopped
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -559,7 +571,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -575,7 +587,7 @@ services:
       start_period: 10s
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -587,15 +599,15 @@ services:
     restart: unless-stopped
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
       # #186: authenticate as the 'mcp' service account (see .env above), not admin.
-      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases.
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO

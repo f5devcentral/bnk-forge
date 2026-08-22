@@ -81,7 +81,10 @@ if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     cp .env.example .env
     echo "  ✓ Created .env from .env.example"
-    echo "  ⚠  Review .env and set BNK_FORGE_REGISTRY before continuing."
+    echo "  ⚠  Review .env before continuing. In particular:"
+    echo "       - BNK_FORGE_REGISTRY (where to pull images)"
+    echo "       - MCP_SERVICE_PASSWORD (bonnyr-f5 #193: ships EMPTY; the MCP/AI"
+    echo "         assistant integration stays unavailable until you set it)"
     echo ""
     echo "  Edit: nano .env"
     echo "  Then re-run: ./install.sh $([ "$MODE" = "local" ] && echo "--local")"
@@ -349,11 +352,29 @@ else
   URL="https://$HOST_IP"
 fi
 
+# bonnyr-f5 #193 (minor): the shipped .env leaves MCP_SERVICE_PASSWORD empty, so a
+# default install brings the mcp service up but its auth probe can never pass (the
+# backend leaves the 'mcp' account unseeded). Surface that here instead of printing
+# an unqualified "complete!" — the rest of the stack is genuinely healthy, MCP is not.
+MCP_PW=$(grep -E '^[[:space:]]*MCP_SERVICE_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+# Fall back to the legacy alias the compose files still honor (MCP_PASSWORD).
+if [ -z "$MCP_PW" ]; then
+  MCP_PW=$(grep -E '^[[:space:]]*MCP_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+fi
+
 echo "========================================="
 echo "  ✅ Installation complete!"
 echo ""
 echo "  Version: $(cat VERSION 2>/dev/null || echo 'unknown')"
 echo ""
+if [ -z "$MCP_PW" ]; then
+  echo "  ⚠  MCP (AI assistant) integration is NOT active: MCP_SERVICE_PASSWORD is"
+  echo "     unset in .env, so the bundled MCP server cannot authenticate and its"
+  echo "     health probe will report UNHEALTHY. The rest of the stack is unaffected."
+  echo "     To enable it: set MCP_SERVICE_PASSWORD in .env to a strong value and run"
+  echo "       $COMPOSE_CMD up -d"
+  echo ""
+fi
 echo "  Open: $URL"
 if [ "$URL" != "https://localhost" ]; then
   echo "        (accept the self-signed certificate warning)"

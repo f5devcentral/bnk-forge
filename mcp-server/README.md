@@ -95,9 +95,15 @@ pytest tests/
 - MCP runtime is healthy only when **both** conditions are true:
   1. MCP JSON-RPC endpoint responds (`ping`)
   2. MCP can authenticate to backend and execute governed read-only tools
-- The MCP service-account password (`MCP_SERVICE_PASSWORD`, exposed to MCP as
-  `MCP_PASSWORD`/`BNK_FORGE_PASSWORD`) must match what the backend seeded, or use
-  `BNK_FORGE_TOKEN`. It is decoupled from the human admin password (#187).
+- The MCP container process reads **only** `BNK_FORGE_*` (see the table above):
+  its login password comes from `BNK_FORGE_PASSWORD`. In the shipped compose
+  files the operator sets a single `.env` value, `MCP_SERVICE_PASSWORD`, which
+  compose maps to `BNK_FORGE_PASSWORD` for this container **and** to
+  `MCP_SERVICE_PASSWORD` for the backend — so the two always agree. That value
+  must match what the backend seeded, or supply `BNK_FORGE_TOKEN` instead. It is
+  decoupled from the human admin password (#187). (bonnyr-f5 #193 M7: earlier
+  text named `MCP_PASSWORD` here — nothing in this process reads that name; it is
+  only a legacy compose-level alias for the password `.env` value.)
 - Without this alignment, the MCP container may look healthy at protocol level
   while tool execution fails with backend login 401.
 
@@ -105,8 +111,13 @@ pytest tests/
 
 When the MCP service-account password (`MCP_SERVICE_PASSWORD`) is rotated:
 
-1. Update MCP runtime credentials in environment (`MCP_USERNAME`, `MCP_PASSWORD`)
-2. Recreate MCP so new env values are applied:
+1. Set the new password in the compose `.env` as `MCP_SERVICE_PASSWORD` (bonnyr-f5
+   #193 M7/B1: this is the ONLY var to set — compose maps it to the container's
+   `BNK_FORGE_PASSWORD` and the backend's `MCP_SERVICE_PASSWORD`. Do NOT set
+   `MCP_USERNAME`: it is not read by either process, and the username is fixed to
+   the dedicated `mcp` service account; the password's legacy alias `MCP_PASSWORD`
+   still works but prefer the canonical name.)
+2. Recreate MCP so the new env value is applied:
 
 ```bash
 # server/default compose

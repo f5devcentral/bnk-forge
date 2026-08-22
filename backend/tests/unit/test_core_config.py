@@ -184,6 +184,100 @@ class TestProductionValidation:
         s.validate_production()
 
 
+# ── Production validation is SATISFIABLE from the shipped env (bonnyr-f5 #193 B2) ──
+
+
+class TestProductionValidationSatisfiableFromEnv:
+    """bonnyr-f5 #193 B2: ENVIRONMENT=production is documented as the hardening
+    switch, and the compose files now plumb every var validate_production gates on
+    (MCP_SERVICE_PASSWORD, JWT_SECRET_KEY, ENCRYPTION_KEY, ALLOWED_ORIGINS). Freeze
+    that contract: each gated var must both (a) TRIP the fail-fast when left at the
+    shipped-empty/wildcard default, and (b) CLEAR it when set to a real value — so
+    the shipped .env can actually satisfy production on every path, not just trip it.
+    """
+
+    # A full set of operator-supplied real values (what a hardened .env delivers).
+    REAL = {
+        "JWT_SECRET_KEY": "a-real-jwt-secret-key-value-that-is-long-enough",
+        "ENCRYPTION_KEY": "a-real-operator-provided-encryption-key",
+        "MCP_SERVICE_PASSWORD": "a-real-mcp-service-shared-secret",
+        "ALLOWED_ORIGINS": "https://forge.example.com",
+    }
+
+    # The value each var carries when the operator has NOT set it, exactly as the
+    # compose anchors deliver it: keys/password default to "" (empty), CORS to "*".
+    SHIPPED_DEFAULT = {
+        "JWT_SECRET_KEY": "",
+        "ENCRYPTION_KEY": "",
+        "MCP_SERVICE_PASSWORD": "",
+        "ALLOWED_ORIGINS": "*",
+    }
+
+    def test_all_real_values_pass(self):
+        """Every var set to a real value → production validation passes."""
+        Settings(ENVIRONMENT="production", **self.REAL).validate_production()
+
+    @pytest.mark.parametrize("var", sorted(REAL.keys()))
+    def test_each_gated_var_trips_then_is_satisfiable(self, var):
+        # Only this one var left at its shipped default → must fail fast.
+        env = dict(self.REAL)
+        env[var] = self.SHIPPED_DEFAULT[var]
+        with pytest.raises(SystemExit):
+            Settings(ENVIRONMENT="production", **env).validate_production()
+        # Restoring a real value for it (all others already real) → passes.
+        env[var] = self.REAL[var]
+        Settings(ENVIRONMENT="production", **env).validate_production()
+
+    def test_empty_string_keys_are_treated_as_unset(self):
+        """bonnyr-f5 #193 B2: compose delivers `${JWT_SECRET_KEY:-}` = "" when the
+        operator does not set it. An empty value must count as unset (auto-generated,
+        flagged) — not as an explicitly-provided empty key that would pass."""
+        s = Settings(ENVIRONMENT="production", JWT_SECRET_KEY="", ENCRYPTION_KEY="")
+        assert s._jwt_key_auto_generated is True
+        assert s._encryption_key_auto_generated is True
+        # And an auto-generated (non-empty) value is still present for the app to use.
+        assert s.JWT_SECRET_KEY
+        assert s.ENCRYPTION_KEY
+
+    def test_all_shipped_defaults_raise(self):
+        """The pure default path (nothing set) still fails fast — the switch is real."""
+        with pytest.raises(SystemExit):
+            Settings(ENVIRONMENT="production", **self.SHIPPED_DEFAULT).validate_production()
+
+
+# ── _persist_or_load_key provenance marker (bonnyr-f5 #193 B2) ────────
+
+
+class TestPersistOrLoadKeyProvenance:
+    """A key WE generate is auto_generated=True (and stays so across restarts, via
+    the sidecar marker); a key the OPERATOR pre-seeds on the volume (no marker) is
+    auto_generated=False. This keeps SEC-006's fail-fast permanent on a fresh prod
+    boot while letting an operator provision keys on disk."""
+
+    def test_generated_key_is_flagged_and_stays_flagged(self, tmp_path, monkeypatch):
+        from core import config as config_mod
+
+        monkeypatch.setattr(config_mod, "_KEYS_DIR", str(tmp_path))
+        key1, auto1 = config_mod._persist_or_load_key("k.key", lambda: "generated-value")
+        assert auto1 is True
+        assert (tmp_path / "k.key").exists()
+        assert (tmp_path / "k.key.autogen").exists()
+        # Second boot loads from disk; the marker keeps it flagged auto-generated.
+        key2, auto2 = config_mod._persist_or_load_key("k.key", lambda: "unused")
+        assert key2 == key1
+        assert auto2 is True
+
+    def test_operator_provisioned_key_is_not_flagged(self, tmp_path, monkeypatch):
+        from core import config as config_mod
+
+        monkeypatch.setattr(config_mod, "_KEYS_DIR", str(tmp_path))
+        # Operator drops a key file on the volume, WITHOUT our marker.
+        (tmp_path / "k.key").write_text("operator-secret")
+        key, auto = config_mod._persist_or_load_key("k.key", lambda: "unused")
+        assert key == "operator-secret"
+        assert auto is False
+
+
 # ── Settings Config class ────────────────────────────────────────────
 
 

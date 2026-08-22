@@ -32,16 +32,27 @@ x-backend-env: &backend-env
   # from these and the MCP server authenticates with the SAME .env values. config.py
   # has no env_file, so an unpassed var never reaches the container. Unset -> empty
   # -> the account isn't seeded and the MCP server can't auth (clean, not a weak default).
-  # bonnyr-f5 #193 B2b: honor the legacy short names MCP_USERNAME/MCP_PASSWORD as
-  # aliases so an existing customer .env (which shipped those names) keeps working
-  # after upgrade; the canonical name wins when both are set.
-  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+  # bonnyr-f5 #193 B1: the PASSWORD is aliased from the legacy MCP_PASSWORD (aliasing
+  # a value is harmless). The USERNAME is NOT aliased: a legacy MCP_USERNAME value is
+  # never valid here (old default `admin`, new default `mcp`), and `${...:-${MCP_USERNAME:-mcp}}`
+  # would resolve a pre-existing `MCP_USERNAME=admin` (shipped by the old dist .env)
+  # to `admin` — which a pre-guard 3.1.x backend then uses to REWRITE the human admin
+  # row to `changeme`. So take only MCP_SERVICE_USERNAME, defaulting to `mcp`.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so an operator who sets it to
   # staging/production actually reaches config.py's fail-fast (validate_production);
   # config.py has no env_file, so without this the var never reaches the container
   # and the documented "refuses to boot" promise could never fire.
   ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: validate_production gates on these THREE as well as
+  # MCP_SERVICE_PASSWORD. They must be deliverable from .env or ENVIRONMENT=production
+  # bricks the backend into a restart loop listing problems the shipped .env cannot
+  # fix. Empty default = unset (config.py treats "" as unset and auto-generates the
+  # keys in development); set real values in .env to clear the production fail-fast.
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes
   # Module catalog persisted in Docker volume
@@ -479,10 +490,10 @@ services:
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      # bonnyr-f5 #193 B2b: legacy MCP_USERNAME/MCP_PASSWORD honored as aliases so an
-      # existing customer .env keeps working; the MCP client resolves the SAME value
-      # the backend does, so the two never drift.
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-${MCP_USERNAME:-mcp}}
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not
+      # (a legacy MCP_USERNAME=admin must never resolve the service username). The MCP
+      # client resolves the SAME value the backend does, so the two never drift.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env (no shipped default -- #186/#187: the old
       # mcp-service-changeme can no longer authenticate). The backend seeds the

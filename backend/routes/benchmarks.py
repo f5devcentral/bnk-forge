@@ -1510,8 +1510,15 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     except Exception:
         return 4001
     # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
-    # only, so this path waved a must-change human admin straight through — the
-    # one JWT-resolving entry point that skipped the gate the other five enforce.
+    # only, so this path waved a must-change human admin straight through.
+    # (bonnyr-f5 #193 minor: the earlier claim that this was "the one
+    # JWT-resolving entry point that skipped the gate" was wrong about the OTHER
+    # branch of this same function — the BENCHMARK_AGENT_AUTH_REQUIRED path above
+    # also resolves a JWT via decode_token and returns None without the
+    # must-change gate. It is safe there only because it additionally requires an
+    # agent_id claim, which no route mints for a human, so a must-change admin
+    # gets 4401 rather than a pass — but it is not gate-free, so don't describe
+    # this branch as unique.)
     # Agent tokens (role=agent) carry no User row and legitimately reach this
     # branch when agent auth is off, so gate ONLY a token that resolves to a real
     # user: refuse if that user owes a password change or no longer resolves
