@@ -1,8 +1,53 @@
 # Changelog
 
-All notable changes to BNK-Forge v2.
+All notable changes to BNK-Forge.
 
 ---
+
+## v3.1.6 (2026-08-10) — 3.1.x line
+
+Milestone `v3.1.6` — the last release before 4.0.0, and the initial public
+release tag on `f5devcentral`. This mirror is squashed: the `v3.1.6` tag is a
+single `feat: initial public release` commit, so there is no per-change history
+behind it to link here. Work that came *after* this tag — including the
+container-runner hardening series (#2, #123, #161) and the ADR-424 bare-metal/DPU
+work — is part of 4.0.0, not v3.1.6, and is recorded under the 4.0.0 entry when
+that release is cut.
+
+> **Heads-up for the 4.0.0 upgrade — two breaking changes:**
+>
+> 1. **Container runner non-root gate:** it now refuses *named* users — an image
+>    using the distroless-standard `USER nonroot` is rejected. Switch it to a
+>    numeric uid. Use **`USER 1000`**: the workspace is mounted from the host
+>    and chowned `1000:1000`, so uid 1000 is the only value that clears the gate
+>    *and* can write it. A higher uid such as `65532` passes the non-root gate but
+>    cannot write the workspace, so the step fails on its first write.
+> 2. **`MCP_SERVICE_PASSWORD` becomes required in 4.0.0 (via bonnyr-f5 #188):**
+>    starting with 4.0.0 the backend refuses to boot in staging/production if it
+>    is unset or still a shipped default (`changeme` / `mcp-service-changeme`).
+>    That boot-time check ships in #188 — it is *not* in the 3.1.x line and is
+>    called out here only so the upgrade step is ready before #188 lands. Every
+>    existing install still carries one of those defaults, so before upgrading to
+>    4.0.0 **set `MCP_SERVICE_PASSWORD` to a real secret** (the same value the MCP
+>    server receives as `BNK_FORGE_PASSWORD`); once #188 is in the tree, leaving
+>    it at a default will `SystemExit` the stack at startup.
+>
+> **Merge ordering (integration dependency).** The dist-bundle wiring these two
+> steps assume — the dedicated `mcp` service account for the bundled MCP server,
+> and the `MCP_SERVICE_PASSWORD` boot check — arrives in **bonnyr-f5 #186** (service
+> account + removal of the shipped `changeme` / `mcp-service-changeme` defaults) and
+> **#188** (boot check). This release documents them forward-looking and is therefore
+> sequenced to merge **with or after #186 + #188**. Merged ahead of them, the
+> `MCP_SERVICE_PASSWORD` guidance is inert for the dist stack (the compose file does
+> not pass that variable to the backend) and #186 will conflict in
+> `user-pack/install-guide.html` — resolve by taking #186's credential model, not by
+> re-adding the `changeme` default this guide describes as a stopgap.
+
+## v3.0.1 — 3.0.x line
+
+The first 3.x release after the 2.x line below (upstream tag dated 2026-04-09).
+Bridged entry; this repo is a squashed public mirror, so the `v3.0.1` tag and its
+per-change history live upstream, not here.
 
 ## v2.10.74 (2026-03-04) — TMM Debug Panel Enhancements: F5 Docs Commands, Netkvest, Bug Fix
 

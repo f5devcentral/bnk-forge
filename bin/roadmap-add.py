@@ -75,7 +75,7 @@ def main():
     ap = argparse.ArgumentParser(description="Append an item to docs/roadmap.yaml")
     ap.add_argument("--section", help="section id (see --list-sections)")
     ap.add_argument("--title")
-    ap.add_argument("--status", help="status key (shipped/in_progress/blocked/deferred/planned)")
+    ap.add_argument("--status", help="status key (shipped/merged/in_progress/blocked/deferred/planned)")
     ap.add_argument("--refs", default="", help='comma-separated, e.g. "#216,PR #188"')
     ap.add_argument("--note", default="")
     ap.add_argument("--group", default="")

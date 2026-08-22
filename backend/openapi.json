@@ -61016,6 +61016,11 @@
             "type": "boolean",
             "title": "Is Active"
           },
+          "is_service_account": {
+            "type": "boolean",
+            "title": "Is Service Account",
+            "default": false
+          },
           "must_change_password": {
             "type": "boolean",
             "title": "Must Change Password"
@@ -61160,6 +61165,11 @@
             "type": "boolean",
             "title": "Is Active"
           },
+          "is_service_account": {
+            "type": "boolean",
+            "title": "Is Service Account",
+            "default": false
+          },
           "must_change_password": {
             "type": "boolean",
             "title": "Must Change Password"
@@ -61282,6 +61292,11 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "is_service_account": {
+            "type": "boolean",
+            "title": "Is Service Account",
+            "default": false
           },
           "must_change_password": {
             "type": "boolean",

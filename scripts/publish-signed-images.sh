@@ -20,7 +20,7 @@
 #   BNK_FORGE_REGISTRY=ghcr.io/your-org BNK_FORGE_VERSION=3.1.6 ./scripts/publish-signed-images.sh --execute
 #
 # Environment variables:
-#   BNK_FORGE_REGISTRY  — required; e.g. ghcr.io/jlcode-tech
+#   BNK_FORGE_REGISTRY  — required; e.g. ghcr.io/f5devcentral
 #   BNK_FORGE_VERSION   — optional; defaults to contents of ./VERSION
 #   DRY_RUN             — set to 0 to execute (equivalent to --execute)
 #
@@ -32,8 +32,8 @@
 #
 # Consumer verification (see docs/DOCKER.md for full details):
 #   cosign verify <image>@<digest> \
-#     --certificate-identity <signer-email> \
-#     --certificate-oidc-issuer https://github.com/login/oauth
+#     --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 set -euo pipefail
 
@@ -135,14 +135,20 @@ resolve_digest() {
 
 # ─── Provenance predicate (minimal SLSA Build L1) ────────────────────────────
 # Written to a temp file and attached via cosign attest --type slsaprovenance.
+#
+# metadata.buildStartedOn is OMITTED, not stamped from `date -u` here: this script
+# runs at SIGNING time, AFTER the build (and a sign_only recovery re-signs an
+# already-built digest), so a wall-clock time taken here is not the build start and
+# would be a knowingly-wrong timestamp in the attestation. The field is optional in
+# SLSA v0.2; omitting it is honest, stamping the wrong value is not (bonnyr-f5 #193
+# minor). The build's real time is already carried by the OCI
+# org.opencontainers.image.created label (docker-bake.hcl CREATED).
 
 write_provenance() {
   local image_ref="$1"
   local digest="$2"
   local out_file="$3"
 
-  local build_ts
-  build_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local git_sha
   git_sha="$(git -C "$(dirname "$0")/.." rev-parse HEAD 2>/dev/null || echo "unknown")"
   # Provenance must name the remote this build actually came from. Prefer an
@@ -179,7 +185,6 @@ write_provenance() {
       "version": "${VERSION}"
     },
     "metadata": {
-      "buildStartedOn": "${build_ts}",
       "completeness": {
         "parameters": false,
         "environment": false,
@@ -289,19 +294,26 @@ if [[ "$DRY_RUN" == "1" ]]; then
   echo "  To sign for real:"
   echo "    BNK_FORGE_REGISTRY=${REGISTRY} $0 --execute"
 else
+  # Derive the GitHub org from REGISTRY (ghcr.io/<org>) so the printed cosign
+  # cert-identity matches the namespace that actually published — a fork/mirror that
+  # publishes to ghcr.io/<their-org> must verify against THEIR workflow identity, not a
+  # hardcoded f5devcentral (bonnyr-f5 #193 r4 minor). The repo name stays bnk-forge
+  # (the image basenames are bnk-forge-*); only the owner is owner-derived.
+  REPO_ORG="${REGISTRY#*/}"; REPO_ORG="${REPO_ORG%%/*}"
+  CERT_IDENTITY="https://github.com/${REPO_ORG}/bnk-forge/\\.github/workflows/release\\.yml@.*"
   echo "  All images signed + SBOM + provenance attached."
   echo ""
   echo "  Verify a signed image:"
   echo "    cosign verify \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest> \\"
-  echo "      --certificate-identity <your-email> \\"
-  echo "      --certificate-oidc-issuer https://github.com/login/oauth"
+  echo "      --certificate-identity-regexp '${CERT_IDENTITY}' \\"
+  echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com"
   echo ""
   echo "  Verify the SBOM attestation:"
   echo "    cosign verify-attestation \\"
   echo "      --type cyclonedx \\"
-  echo "      --certificate-identity <your-email> \\"
-  echo "      --certificate-oidc-issuer https://github.com/login/oauth \\"
+  echo "      --certificate-identity-regexp '${CERT_IDENTITY}' \\"
+  echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest>"
 fi
 echo "========================================================"

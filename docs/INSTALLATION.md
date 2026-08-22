@@ -27,7 +27,7 @@ cd bnk-forge
 make local-deploy
 ```
 
-Open **https://localhost** and accept the self-signed certificate warning. Log in with **admin** / **changeme**.
+Open **https://localhost** and accept the self-signed certificate warning. Log in as **admin** — no default password ships; retrieve the generated one from `/app/keys/initial_admin_password` (the boot log points at this file; the plaintext is never logged), or set `DEFAULT_ADMIN_PASSWORD`. You'll change it on first login.
 
 ### Linux Server
 
@@ -39,7 +39,7 @@ make deploy
 
 For first-time clean-slate bootstrap only (destructive), run `make install`.
 
-Log in with **admin** / **changeme** (you'll be prompted to change the password).
+Log in as **admin** using the generated password from `/app/keys/initial_admin_password` (or set `DEFAULT_ADMIN_PASSWORD`); you'll be prompted to change it on first login.
 
 ---
 
@@ -124,9 +124,33 @@ A default admin account is created automatically on first startup:
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup_ |
 
-You will be prompted to change the password on first login.
+No default password ships. Where the password comes from — and where to retrieve
+it — depends on whether `DEFAULT_ADMIN_PASSWORD` is set:
+
+- **`DEFAULT_ADMIN_PASSWORD` set** (Helm always sets it, wiring it from the
+  chart's per-install `admin-password` Secret): the backend seeds `admin` from
+  that value — and, on upgrade from a build that shipped a default password,
+  rotates `admin` to it. No keys-file is written. Retrieve it from that source:
+
+  ```bash
+  # Helm (the admin-password Secret is the source of truth)
+  kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d
+  ```
+
+- **`DEFAULT_ADMIN_PASSWORD` unset** (Docker Compose default): the backend
+  generates a random password and writes it to `/app/keys/initial_admin_password`
+  (mode 600); the boot log points at that file (the plaintext itself is never
+  logged). Retrieve it from the file:
+
+  ```bash
+  # Docker Compose
+  docker exec bnk-forge-backend cat /app/keys/initial_admin_password
+  ```
+
+You will be **required** to change it on first login (the API refuses other calls
+until you do).
 
 ### Managing Your Local Deployment
 
@@ -225,7 +249,7 @@ sudo firewall-cmd --reload
 
 Access from any browser: `https://your-server-ip`
 
-Log in with **admin** / **changeme** (you'll be prompted to change the password).
+Log in as **admin** using the generated password from `/app/keys/initial_admin_password` (or set `DEFAULT_ADMIN_PASSWORD`); you'll be prompted to change it on first login.
 
 Accept the self-signed certificate warning, or replace the certs with your own (see proxy/Dockerfile).
 
@@ -264,7 +288,7 @@ server topology). The VM path applies the same hardening this guide describes:
 key-only with root login disabled, and the GitHub deploy key is shredded once
 the clone completes.
 
-The default credentials (`admin` / `changeme`) and the Docker-socket mount
+The generated admin credentials (see the setup notes above) and the Docker-socket mount
 still apply — read the README's security notes before giving such a VM a
 public address.
 
@@ -348,11 +372,11 @@ After starting BNK Forge for the first time:
 
 ### 1. Log In
 
-Open the application URL and log in with the default credentials:
-- **Username:** `admin`
-- **Password:** `changeme`
-
-You will be prompted to set a new password on first login.
+Open the application URL and log in as **`admin`**. There is no default
+password: retrieve the one generated on first startup —
+`docker exec bnk-forge-backend cat /app/keys/initial_admin_password` (compose),
+or `kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d` (Helm).
+You will be **required** to set a new password before the API accepts other calls.
 
 ### 2. Connect a Kubernetes Cluster
 

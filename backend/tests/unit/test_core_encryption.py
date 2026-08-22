@@ -83,6 +83,33 @@ class TestDecryptEdgeCases:
             decrypt_value(encrypted_with_other)
 
 
+class TestEncryptionKeyIsTheOperatorEnvKey:
+    """bonnyr-f5 #193 B-3, asserted on the CONSUMER (core.encryption), not the config
+    flag: when the operator sets ENCRYPTION_KEY, core.config validates it and writes
+    it to the at-rest key file, so get_encryption_key() — what actually encrypts
+    stored secrets — returns THAT value. Previously ENCRYPTION_KEY gated
+    validate_production while a DIFFERENT, auto-generated file key did the encrypting."""
+
+    def test_operator_env_key_becomes_the_at_rest_key(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+
+        import core.encryption as enc
+        from core import config as config_mod
+
+        opkey = Fernet.generate_key().decode()
+        key_file = str(tmp_path / "encryption.key")
+        monkeypatch.setattr(config_mod, "_KEYS_DIR", str(tmp_path))
+        monkeypatch.setenv("ENCRYPTION_KEY_FILE", key_file)
+        # config validates + writes the env key to the at-rest file.
+        config_mod.Settings(ENVIRONMENT="production", ENCRYPTION_KEY=opkey)
+        # The SECOND consumer (this module) loads exactly that key from the file.
+        monkeypatch.setattr(enc, "ENCRYPTION_KEY_FILE", key_file)
+        assert enc.get_encryption_key().decode() == opkey
+        # And it genuinely encrypts/decrypts with it.
+        cipher = Fernet(enc.get_encryption_key())
+        assert cipher.decrypt(cipher.encrypt(b"bigip-admin-password")) == b"bigip-admin-password"
+
+
 class TestDecryptValueOrNone:
     def test_returns_none_on_failure(self):
         """decrypt_value_or_none returns None instead of raising."""

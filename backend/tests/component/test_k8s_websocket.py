@@ -57,11 +57,12 @@ class TestValidateWsToken:
         ws.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_valid_admin_token_returns_true(self):
+    async def test_valid_admin_token_returns_true(self, db):
         """Should return True for a valid admin JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "testadmin", "testadmin@t.com", "pw", role="admin", must_change_password=False)
+        db.commit()
         token = create_access_token(data={"sub": "testadmin", "role": "admin"})
         ws = AsyncMock()
         result = await _validate_ws_token(ws, token)
@@ -69,26 +70,54 @@ class TestValidateWsToken:
         ws.close.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_valid_operator_token_returns_true(self):
+    async def test_valid_operator_token_returns_true(self, db):
         """Should return True for a valid operator JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "testop", "testop@t.com", "pw", role="operator", must_change_password=False)
+        db.commit()
         token = create_access_token(data={"sub": "testop", "role": "operator"})
         ws = AsyncMock()
         result = await _validate_ws_token(ws, token)
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_valid_viewer_token_returns_true(self):
+    async def test_valid_viewer_token_returns_true(self, db):
         """Should return True for a valid viewer JWT token."""
         from routes.k8s_websocket import _validate_ws_token
-        from services.auth_service import create_access_token
-
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "testviewer", "testviewer@t.com", "pw", role="viewer", must_change_password=False)
+        db.commit()
         token = create_access_token(data={"sub": "testviewer", "role": "viewer"})
         ws = AsyncMock()
         result = await _validate_ws_token(ws, token)
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_must_change_user_refused(self, db):
+        """#184: a valid token whose user still owes a password change must be
+        refused at the WS boundary -- otherwise a seed-credential admin gets a
+        pod shell while REST refuses /api/auth/users."""
+        from routes.k8s_websocket import _validate_ws_token
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "wsmustchange", "wsmc@t.com", "pw", role="admin", must_change_password=True)
+        db.commit()
+        token = create_access_token(data={"sub": "wsmustchange", "role": "admin"})
+        ws = AsyncMock()
+        result = await _validate_ws_token(ws, token)
+        assert result is False
+        ws.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_token_for_missing_user_refused(self, db):
+        """#184 fail-closed: a token whose user doesn't exist is refused, not
+        allowed through on a resolution failure."""
+        from routes.k8s_websocket import _validate_ws_token
+        from services.auth_service import create_access_token
+        token = create_access_token(data={"sub": "nobody", "role": "admin"})
+        ws = AsyncMock()
+        result = await _validate_ws_token(ws, token)
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_invalid_role_closes_4401(self):

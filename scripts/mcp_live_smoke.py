@@ -144,8 +144,12 @@ def _extract_tool_payload(result: dict[str, Any], tool_name: str) -> dict[str, A
                         if "/api/auth/login" in text or "Invalid username or password" in text:
                             hint = (
                                 " Hint: MCP backend credentials are likely invalid. "
-                                "Set correct MCP_USERNAME/MCP_PASSWORD for the MCP container/service "
-                                "(seeded backend default is admin/changeme unless rotated)."
+                                "Set MCP_SERVICE_PASSWORD in the compose .env (bonnyr-f5 #193 M7: compose maps it to "
+                                "the MCP container's BNK_FORGE_PASSWORD and the backend's MCP_SERVICE_PASSWORD — the "
+                                "MCP process itself reads only BNK_FORGE_*, not MCP_SERVICE_*). MCP authenticates as the "
+                                "mcp service account (username fixed to 'mcp', not admin); the backend reconciles the mcp "
+                                "account to that SAME password every boot. When it is unset the mcp account is left "
+                                "disabled (#186)."
                             )
                         raise SmokeFailure(
                             f"Tool '{tool_name}' execution failed before returning MCP JSON payload: {text}.{hint}"
@@ -228,8 +232,10 @@ def _auth_bootstrap_hint(tool_name: str, payload: dict[str, Any]) -> str:
     if "invalid username or password" in detail or "/api/auth/login" in str(error.get("url", "")):
         return (
             " Hint: MCP endpoint is reachable, but MCP runtime auth/bootstrap failed. "
-            "Verify MCP_USERNAME/MCP_PASSWORD match current backend credentials "
-            "(default seeded admin password is changeme, unless rotated), then recreate the mcp container."
+            "Set MCP_SERVICE_PASSWORD in the compose .env so it matches the mcp service account the backend "
+            "reconciles (bonnyr-f5 #193 M7: compose delivers it to the container as BNK_FORGE_PASSWORD and to the "
+            "backend as MCP_SERVICE_PASSWORD — one value, both sides; the username is fixed to 'mcp'). When it is "
+            "unset the mcp account is left disabled. Then recreate the mcp container (#186)."
         )
 
     return (

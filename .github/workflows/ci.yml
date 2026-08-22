@@ -24,33 +24,28 @@ name: CI
 on:
   pull_request:
     branches: [main, staging, develop]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.agent/**'
-      - '.opencode/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.trivyignore'
-      - 'USER_GUIDE.md'
+    # No workflow-level paths-ignore: secret scanning (gitleaks) and the CI Gate
+    # must see EVERY change, doc-only PRs included — a secret lands in a .md as
+    # easily as in code, and this is a public repo (#182 review). Expensive jobs
+    # still skip on irrelevant paths via the per-job `changes` filter below; path
+    # filtering lives there (one source of truth), not at the trigger.
   push:
     # main (deploy trigger) + staging (release-automation preflight needs a
     # push-triggered CI run to match by SHA — see release.yml preflight);
-    # develop skipped.
+    # develop skipped. No paths-ignore, same reason as above.
     branches: [main, staging]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.agent/**'
-      - '.opencode/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.trivyignore'
-      - 'USER_GUIDE.md'
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # bonnyr-f5 #182 r2: on main/staging give every push its OWN group (append the
+  # SHA) so a later docs-only push can't cancel -- even as a PENDING run -- the CI
+  # run a release polls by SHA. Feature branches keep the per-ref group so rapid
+  # pushes still supersede each other and save minutes.
+  group: ci-${{ github.ref }}${{ (github.ref_name == 'main' || github.ref_name == 'staging') && github.sha || '' }}
+  # bonnyr-f5 #182: never cancel an in-flight CI run on the release branches --
+  # release.yml preflight polls that exact run by SHA, so a docs-only push (which
+  # triggers CI but not Release) would otherwise cancel it and strand the earlier
+  # commit's release. Feature branches still cancel to save minutes.
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'staging' }}
 
 permissions:
   contents: read
@@ -125,6 +120,193 @@ jobs:
         run: pip install -r backend/requirements-dev.txt
       - name: Run lint
         run: make lint-backend
+
+  version-consistency:
+    name: "P1 · Version Consistency"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert version-bearing artifacts agree with VERSION
+        # Helm chart tag/appVersion and frontend package.json must equal VERSION,
+        # or the release (which publishes only :${VERSION}) yields ImagePullBackOff
+        # / silent drift (#177 Blocker 2). Goes through `make version-check` so
+        # this job and `make pre-push` run the identical command (#182 r3).
+        run: make version-check
+
+  shellcheck:
+    name: "P1 · ShellCheck"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: make shellcheck
+
+  secret-scan:
+    name: "P1 · Secret Scan (gitleaks)"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history so the range scan sees add-then-remove
+      - name: gitleaks
+        run: |
+          # bonnyr-f5 #182 r2: scan the PR/push COMMIT RANGE in git mode, not the
+          # working tree. --no-git misses a secret added then REMOVED within the
+          # branch, which stays fetchable forever from a public clone -- the main
+          # thing a public repo needs a history-aware scan for.
+          #
+          # All of the scan + assertion logic (the r3 BLOCKER fix, the
+          # dubious-ownership safe.directory fix, the archive-depth fix, and the
+          # digest pin) lives in scripts/secret-scan.sh so `make secret-scan` and
+          # this job run byte-identical commands (#166 / ci.yml header: local==CI).
+          # We only compute the range from the event here and hand it to the
+          # script; RANGE is exported (even when empty => full history).
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE=""   # first push / no base — scan all reachable history
+          fi
+          export RANGE
+          make secret-scan
+
+  commit-lint:
+    name: "P1 · Commit Message Lint"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # need the whole PR range of commit messages
+      - name: Lint commit messages for CI-control / spurious-bump markers
+        env:
+          # Untrusted free text -> read from env, NEVER interpolated into the shell
+          # (same rule as release.yml's RELEASE_NOTES). Empty on non-PR events. The
+          # script lints it as the PENDING squash subject (bonnyr-f5 #193 B6b).
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # bonnyr-f5 #182 r3 (Minor -> enforcement): the AGENTS.md rule against
+          # CI-control markers in commit messages was documentation only, and
+          # "documentation is not enforcement" (#166). This gate FAILS a PR/push
+          # whose commit range carries a marker (which would suppress CI for that
+          # commit -- the #179/#181 case) or an accidental line-start BREAKING
+          # CHANGE prose that spuriously majors a release. The .githooks/pre-push
+          # hook runs the SAME script locally so it is caught before push too.
+          #
+          # The RANGE is base..head; on a push to main it is github.event.before..
+          # github.sha, which INCLUDES the merged branch's own commits (e.g. the PR
+          # merge-base). There is no already-merged exemption any more (bonnyr-f5
+          # #193 r3 M-6a: it was dead code — base..head excludes the base by
+          # construction, so no scanned commit could ever be an ancestor of it).
+          # rule 2 now flags ONLY a mis-anchored DECLARATIVE `BREAKING CHANGE:` (the
+          # colon form), so a marker-shaped PROSE line in an unamendable merged body
+          # no longer reds this ALWAYS_RUN gate on the merge that cuts the release
+          # (M-6b). The only exemption left is the release bot's own minted commit.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            # first push / no base: leave RANGE UNSET so commit-lint uses its tip
+            # default. Do NOT pass RANGE="" — commit-lint now FAILS CLOSED on an
+            # explicit empty RANGE (secret-scan reads empty as "all history", a
+            # meaning commit-lint must never take), so the same literal no longer
+            # means two different things across the two gates (bonnyr-f5 #193 r4).
+            unset RANGE
+          fi
+          export PR_TITLE
+          # Only export RANGE when it was actually set above (the first-push branch
+          # unsets it); guard with an if so the unset case does not return 1 and abort
+          # the step under `set -eo pipefail`.
+          if [ -n "${RANGE+set}" ]; then export RANGE; fi
+          make commit-lint
+
+  script-selftests:
+    name: "P1 · Script Self-Tests"
+    needs: changes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: compute_version_bump SELF_TEST
+        run: |
+          # Fail on a non-zero exit OR a FAIL: line. The harness historically
+          # printed FAIL: but still exited 0, so trusting the exit code alone
+          # made this job unable to catch a broken self-test until the exit-code
+          # fix landed (#182 review). Checking both decouples the two.
+          set +e
+          out="$(SELF_TEST=1 bash scripts/compute_version_bump.sh 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::compute_version_bump self-test exited $rc"; exit "$rc"
+          fi
+          if grep -qE '(^|[[:space:]])FAIL:' <<< "$out"; then
+            echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1
+          fi
+          # bonnyr-f5 #182: silence must not pass -- require positive evidence the
+          # harness actually ran (renaming its SELF_TEST guard produced empty
+          # output + rc=0, i.e. green with zero assertions).
+          # bonnyr-f5 #182 r2: require the END marker AND >=1 PASS. The marker
+          # prints only after the LAST assertion, so an early exit (the #179 shape,
+          # 5 of 6 unrun) is caught without hardcoding a per-branch test count.
+          if ! grep -qE '(^|[[:space:]])PASS:' <<< "$out"; then
+            echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1
+          fi
+          if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
+            echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
+          fi
+      - name: extract-breaking-changes SELF_TEST
+        run: |
+          # Run the extractor's self-test UNCONDITIONALLY with the SAME anti-vacuity
+          # assertions as compute's above (ok lines + END marker + no FAIL:). Do NOT
+          # gate on `grep -- '--self-test' <the script>`: the code under test must
+          # not decide whether it is tested -- deleting the flag would silence ~28
+          # assertions with this gate staying green (bonnyr-f5 #193 M6).
+          set +e
+          out="$(bash scripts/extract-breaking-changes.sh --self-test 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::extract-breaking-changes self-test exited $rc"; exit "$rc"
+          fi
+          if grep -qE '(^|[[:space:]])FAIL:' <<< "$out"; then
+            echo "::error::extract self-test reported FAIL: but exited 0"; exit 1
+          fi
+          if ! grep -qE '(^|[[:space:]])ok:' <<< "$out"; then
+            echo "::error::extract self-test produced no ok: lines -- the harness did not run"; exit 1
+          fi
+          if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
+            echo "::error::extract self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
+          fi
+      - name: Filesystem self-tests (scripts/tests/*.test.sh)
+        run: |
+          # bonnyr-f5 #193 B5 + M5: enumerate and run EVERY scripts/tests/*.test.sh
+          # from the filesystem, failing on an EMPTY enumeration or ANY non-zero rc.
+          # This is the SAME enumeration `make script-selftests` runs, so local ==
+          # CI. It covers the registry-tag-probe mutation suite (which had no caller
+          # at all and was dead code that would have caught B4) AND the INV-15
+          # detector-parity check (previously inline in this job only, making
+          # `make script-selftests` strictly narrower than CI -- M5).
+          set -euo pipefail
+          shopt -s nullglob
+          tests=(scripts/tests/*.test.sh)
+          if [ "${#tests[@]}" -lt 1 ]; then
+            echo "::error::no scripts/tests/*.test.sh found -- the self-test enumeration is empty"; exit 1
+          fi
+          echo "running ${#tests[@]} filesystem self-test(s):"
+          for t in "${tests[@]}"; do
+            echo "--- $t ---"
+            bash "$t" || { echo "::error::$t failed"; exit 1; }
+          done
 
   lint-frontend:
     name: "P1 · Lint Frontend"
@@ -668,12 +850,17 @@ jobs:
           # dependencies. No `|| true` here: if this cannot run, the job has
           # nothing to say and must fail loudly rather than silently continue.
           #
-          # Known fragility, accepted deliberately: the floor's models are
-          # imported under CURRENT pins, so the gap widens every time a
-          # dependency moves. v3.0.1 pins cryptography 44 and staging is on 50 —
-          # six majors — and it holds only because the floor tree touches just
-          # Fernet, hazmat.primitives.serialization and Ed25519PrivateKey, all
-          # unchanged across that range. When it does bite, it bites as a
+          # Known limitation on this repo: f5devcentral/bnk-forge is a squashed
+          # public mirror and carries exactly ONE final tag, v3.1.6, so the floor
+          # is currently that tag and the upgrade window is one release wide —
+          # the degenerate case this check otherwise warns against. It can't be
+          # widened by naming an older tag (v3.0.1 etc. from the upstream history
+          # aren't reachable here); it widens only as more finals are cut on this
+          # repo. Accepted deliberately.
+          #
+          # The floor's models are imported under CURRENT pins, so a dependency
+          # gap can still bite once the window does widen. When it does, it bites
+          # as a
           # MANDATORY gate failing hard on a commit that changed nothing
           # relevant. The fix then is to raise MIN_UPGRADE_FROM to a release
           # whose models import cleanly, not to add `|| true` here: a floor that
@@ -1063,6 +1250,11 @@ jobs:
       - changes
       # Phase 1
       - lint-backend
+      - version-consistency
+      - shellcheck
+      - secret-scan
+      - commit-lint
+      - script-selftests
       - lint-frontend
       - typecheck-backend
       - openapi-check
@@ -1094,8 +1286,32 @@ jobs:
 
           # Collect all job results (skipped jobs are OK — they were filtered by path)
           failed=false
+
+          # bonnyr-f5 #182 r3 (Major): the aggregator must verify the change-
+          # detection job itself SUCCEEDED. If `changes` fails/cancels, ~21 of the
+          # gates below resolve to `skipped` (their `needs: changes` was never
+          # satisfied), the old loop accepted skipped as success, and the required
+          # check printed "CI Gate PASSED" while nothing had actually run. Same
+          # class as the secret-scan blocker: cannot distinguish "passed" from
+          # "never evaluated". A non-success `changes` fails the gate outright.
+          changes_result="${{ needs.changes.result }}"
+          echo "changes (change-detection): $changes_result"
+          if [ "$changes_result" != "success" ]; then
+            echo "::error::change-detection job did not succeed ($changes_result) -- every downstream gate was skipped, so the gate cannot certify anything. Failing."
+            failed=true
+          fi
+
+          # bonnyr-f5 #182 r2/r3: these gates run `if: always()` on every change, so
+          # `skipped` for them means a future path-filter silently disabled the
+          # check. Treat skipped as a failure for exactly these.
+          ALWAYS_RUN="version-consistency shellcheck secret-scan commit-lint script-selftests"
           for job in \
             "lint-backend:${{ needs.lint-backend.result }}" \
+            "version-consistency:${{ needs.version-consistency.result }}" \
+            "shellcheck:${{ needs.shellcheck.result }}" \
+            "secret-scan:${{ needs.secret-scan.result }}" \
+            "commit-lint:${{ needs.commit-lint.result }}" \
+            "script-selftests:${{ needs.script-selftests.result }}" \
             "lint-frontend:${{ needs.lint-frontend.result }}" \
             "typecheck-backend:${{ needs.typecheck-backend.result }}" \
             "openapi-check:${{ needs.openapi-check.result }}" \
@@ -1119,9 +1335,13 @@ jobs:
           ; do
             name="${job%%:*}"
             result="${job##*:}"
-            # 'success' and 'skipped' are both acceptable
+            # 'success' and 'skipped' are acceptable, EXCEPT skipped for an
+            # always-run gate, which means the check silently didn't execute.
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "::error::$name: $result"
+              failed=true
+            elif [ "$result" = "skipped" ] && case " $ALWAYS_RUN " in *" $name "*) true;; *) false;; esac; then
+              echo "::error::$name was SKIPPED but is an always-run gate — the check never executed"
               failed=true
             else
               echo "$name: $result"

@@ -12,8 +12,23 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 logger = logging.getLogger(__name__)
 
-# Encryption key file path from environment or default
-ENCRYPTION_KEY_FILE = os.getenv("ENCRYPTION_KEY_FILE", "/app/keys/encryption.key")
+# Encryption key file path from environment or default.
+#
+# bonnyr-f5 #193 B-3: the FILE at ENCRYPTION_KEY_FILE (default
+# $KEYS_DIR/encryption.key, on the persistent keys volume) is the ONE source of
+# truth for the at-rest Fernet key actually used to encrypt/decrypt stored secrets.
+# There is no longer a shadow: core.config resolves this SAME path
+# (``_encryption_key_path()``) and, when the operator sets ``ENCRYPTION_KEY``,
+# VALIDATES it as a real Fernet key and WRITES it here (with a ``.operator``
+# provenance marker) before this module loads — so setting ``ENCRYPTION_KEY`` now
+# genuinely becomes the at-rest key that get_encryption_key() returns and that
+# validate_production's fail-fast gates on. When ``ENCRYPTION_KEY`` is unset,
+# core.config generates+persists a Fernet key here on first boot. Either way, one
+# key, one generator, one provenance signal. Resolution mirrors
+# core.config._encryption_key_path() so both modules name the identical file.
+ENCRYPTION_KEY_FILE = os.getenv("ENCRYPTION_KEY_FILE") or os.path.join(
+    os.environ.get("KEYS_DIR", "/app/keys"), "encryption.key"
+)
 
 
 def get_encryption_key() -> bytes:
@@ -21,6 +36,11 @@ def get_encryption_key() -> bytes:
 
     Tries to read from ENCRYPTION_KEY_FILE, or creates a new key if not found.
     Falls back to in-memory key generation if file operations fail (e.g., permissions).
+
+    The file is the single source of truth for the at-rest key; when the operator
+    sets ``ENCRYPTION_KEY``, core.config has already validated it and written it to
+    this file, so this returns THAT value — see the module note above
+    ENCRYPTION_KEY_FILE.
     """
     # Try to read existing key
     if os.path.exists(ENCRYPTION_KEY_FILE):
