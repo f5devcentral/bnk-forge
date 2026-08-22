@@ -237,6 +237,19 @@ _KNOWN_DEFAULT_SERVICE_PASSWORDS = ("mcp-service-changeme", "changeme")
 _RESERVED_HUMAN_USERNAMES = frozenset({"admin"})
 
 
+def _is_reserved_human_username(username: str) -> bool:
+    """True if ``username`` collides with a reserved human identity.
+
+    bonnyr-f5 #193 (minor): the Helm guard normalises with ``lower | trim`` before
+    comparing, so ``mcpUsername: Admin`` or ``" admin "`` is refused at render.
+    An exact-match Python check let those SAME values through on compose —
+    ``MCP_SERVICE_USERNAME=Admin`` minted a second role=admin, must_change=False
+    account. Match Helm: compare case-insensitively after trimming surrounding
+    whitespace so both surfaces refuse the identical set of inputs.
+    """
+    return username.strip().lower() in _RESERVED_HUMAN_USERNAMES
+
+
 class GeneratedCredentialPersistError(RuntimeError):
     """A generated credential could not be written to the keys dir.
 
@@ -387,6 +400,19 @@ def seed_admin_user(db: Session) -> User | None:
     # must_change_password, so it only survives until first login regardless.
     seed_password = settings.DEFAULT_ADMIN_PASSWORD
     generated = False
+    # bonnyr-f5 #193 (minor): the comment above promises we "never seed a
+    # known/published default", but a supplied DEFAULT_ADMIN_PASSWORD was taken
+    # verbatim — so an operator who set it to a shipped default (e.g. "changeme")
+    # got exactly the live, publicly-known admin credential #184 exists to remove.
+    # Mirror the MCP path: refuse a known default and fall through to generation.
+    # (_rotate_known_default_admin already refuses one on the upgrade path.)
+    if seed_password and seed_password in _KNOWN_DEFAULT_ADMIN_PASSWORDS:
+        logger.warning(
+            "DEFAULT_ADMIN_PASSWORD is a known published default and will not be "
+            "seeded (it would be a live, publicly-known admin credential); "
+            "generating a strong random admin password instead (#193)."
+        )
+        seed_password = None
     if not seed_password:
         seed_password = secrets.token_urlsafe(18)
         generated = True
@@ -508,7 +534,7 @@ def ensure_service_user(
     # a deployment that sets MCP_SERVICE_USERNAME=admin (or ships the chart's old
     # mcpUsername: admin) silently rewrites the human admin row and grants the mcp
     # secret admin access. A service account may never co-opt a human identity.
-    if username in _RESERVED_HUMAN_USERNAMES:
+    if _is_reserved_human_username(username):
         raise ValueError(
             f"refusing to reconcile reserved human username '{username}' as a "
             f"service account — set MCP_SERVICE_USERNAME to a dedicated name like "
@@ -644,6 +670,14 @@ def disable_stale_service_user(
         return
     for user in rows:
         user.is_active = False  # type: ignore[assignment]
+        # bonnyr-f5 #193 (minor): don't leave the (possibly published-default)
+        # hash intact and lean solely on is_active + the login route guard.
+        # Neutralise the credential too, so the stale default cannot authenticate
+        # even if some future caller checks the password before is_active, or the
+        # row is flipped active again out of band. Re-enabling the account always
+        # goes through ensure_service_user, which reconciles the hash to
+        # MCP_SERVICE_PASSWORD, so overwriting it here loses nothing recoverable.
+        user.hashed_password = hash_password(secrets.token_urlsafe(32))  # type: ignore[assignment]
     db.commit()
     for user in rows:
         if password_configured:

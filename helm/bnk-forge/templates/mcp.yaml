@@ -63,22 +63,30 @@ spec:
           ports:
             - containerPort: 8081
               name: mcp
-          # bonnyr-f5 #193 M7: exec the same auth-probe healthcheck the compose
-          # paths run (`python -m bnk_forge_mcp.healthcheck`) instead of a bare
-          # tcpSocket. A tcpSocket probe only proves the port is open; it cannot
-          # detect the "no usable MCP credentials -> 401 on every backend call"
-          # condition (M8: a disabled mcp row). The auth probe logs in to the
-          # backend and exits non-zero on 401, so a credential drift surfaces as
-          # UNHEALTHY on Kubernetes too, not just on the compose/dist paths.
+          # bonnyr-f5 #193 M7/M4: the auth-probe healthcheck
+          # (`python -m bnk_forge_mcp.healthcheck`) belongs on READINESS only. It
+          # logs in to the backend and exits non-zero on 401, so a credential
+          # drift or a disabled mcp row (M8) correctly takes the pod OUT OF
+          # SERVICE on Kubernetes too, not just the compose/dist paths — a
+          # tcpSocket readiness probe would only prove the port is open.
           readinessProbe:
             exec:
               command: ["python", "-m", "bnk_forge_mcp.healthcheck"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 10
+          # bonnyr-f5 #193 M4: LIVENESS must test the PROCESS, not its
+          # dependency. healthcheck.py returns 1 when the BACKEND is merely
+          # unreachable; on Kubernetes (no `start_period` for liveness) a backend
+          # rollout / Postgres blip / credential drift lasting > 3x periodSeconds
+          # would make kubelet kill and restart every mcp pod for a dependency
+          # outage — restarting mcp fixes neither cause, so it settles into
+          # CrashLoopBackOff. A tcpSocket check restarts only a genuinely wedged
+          # process, matching compose's `healthcheck` semantics (unhealthy, never
+          # a restart-for-dependency).
           livenessProbe:
-            exec:
-              command: ["python", "-m", "bnk_forge_mcp.healthcheck"]
+            tcpSocket:
+              port: mcp
             initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 10
