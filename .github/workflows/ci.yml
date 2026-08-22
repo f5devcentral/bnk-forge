@@ -217,9 +217,18 @@ jobs:
           elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             RANGE="${{ github.event.before }}..${{ github.sha }}"
           else
-            RANGE=""   # first push / no base — script scans just the tip commit
+            # first push / no base: leave RANGE UNSET so commit-lint uses its tip
+            # default. Do NOT pass RANGE="" — commit-lint now FAILS CLOSED on an
+            # explicit empty RANGE (secret-scan reads empty as "all history", a
+            # meaning commit-lint must never take), so the same literal no longer
+            # means two different things across the two gates (bonnyr-f5 #193 r4).
+            unset RANGE
           fi
-          export RANGE PR_TITLE
+          export PR_TITLE
+          # Only export RANGE when it was actually set above (the first-push branch
+          # unsets it); guard with an if so the unset case does not return 1 and abort
+          # the step under `set -eo pipefail`.
+          if [ -n "${RANGE+set}" ]; then export RANGE; fi
           make commit-lint
 
   script-selftests:

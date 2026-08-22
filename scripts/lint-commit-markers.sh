@@ -39,27 +39,31 @@
 #      triggers a major" message. Those three shapes are now negative fixtures in
 #      the self-test below (must NOT be flagged).
 #
-# EXEMPTION (both rules): the release bot's OWN release commit -- subject EXACTLY
+# EXEMPTION 2 (both rules): the release bot's OWN release commit -- subject EXACTLY
 # matching `^release: vX.Y.Z ... [skip ci]` (a version AND the trailing skip marker
-# it appends). This is release.yml's own loop-guard fingerprint (release.yml:131),
-# single-sourced as _is_release_bot_subject in scripts/lib/is-release-bot-subject.sh
-# and shared here rather than a second, looser predicate; the guard's inline copy
-# is byte-locked to it by scripts/tests/lint-commit-markers.test.sh. This reads the
-# commit SUBJECT, which the committing client controls -- it is NOT unforgeable: a
-# human could hand-write `release: v0.0.1 ... [skip ci]` to self-exempt. The
-# residual is low-exposure (a squash-merged PR is linted through PR_TITLE, which
-# gets NO exemption; a skip-marked push to a protected branch produces no workflow
-# run for the exemption to weaken), so this is honest about the trade rather than
-# claiming an unforgeability it does not have.
+# it appends), AND ONLY when it is the range TIP (bonnyr-f5 #193 r4). This is
+# release.yml's own loop-guard fingerprint (release.yml:131), single-sourced as
+# _is_release_bot_subject in scripts/lib/is-release-bot-subject.sh and shared here
+# rather than a second, looser predicate; the guard's inline copy is byte-locked to
+# it by scripts/tests/lint-commit-markers.test.sh. This reads the commit SUBJECT,
+# which the committing client controls -- it is NOT unforgeable. The honest residual
+# (a squash-merged PR is linted through PR_TITLE, which gets NO exemption; a
+# skip-marked push to a protected branch produces no workflow run for the exemption
+# to weaken) holds only for the HEAD commit -- the bot's release commit is ALWAYS the
+# tip being pushed. So the exemption is SCOPED TO THE TIP: a forged
+# `release: vX.Y.Z ... [skip ci]` buried MID-RANGE is NOT exempt and is caught (r4).
 #
-# There is deliberately NO "already-merged history" exemption (bonnyr-f5 #193 r3
-# M-6a). It was removed as dead code: the scanned range is `base..head`, which by
-# definition EXCLUDES every commit reachable from `base`, so no commit the script
-# iterates can ever be an ancestor of the range base -- the exemption could not
-# fire on any real caller. It is not needed either: rule 2 now flags ONLY a
-# mis-anchored DECLARATIVE `BREAKING CHANGE:` marker (the colon form), so a
-# marker-shaped PROSE line in an already-merged, unamendable body no longer reds
-# the push-to-main range (that was M-6b).
+# EXEMPTION 1 (both rules): PUBLISHED, UNAMENDABLE history -- a commit reachable from
+# the last final tag ON THIS branch (ancestry-filtered) already shipped. It cannot be
+# amended without rewriting released history, and flagging it can only RED this
+# ALWAYS_RUN gate on the merge that cuts the NEXT release, unfixably. The r3
+# "already-merged" exemption was removed as DEAD (base..head excludes the base, so no
+# iterated commit could be an ancestor of the base) -- but base..head CAN still
+# legitimately include a commit that is an ancestor of the last release TAG (a
+# re-push, a revert-merge, a mis-computed/over-wide range), so this replacement is
+# REACHABLE (bonnyr-f5 #193 r4). It is anchored to the last release tag, not the base.
+# Rule 2 also flags ONLY a mis-anchored DECLARATIVE `BREAKING CHANGE:` marker (the
+# colon form), so a marker-shaped PROSE line stays inert regardless (that was M-6b).
 #
 # PR TITLE (bonnyr-f5 #193 B6b): for any PR with >=2 commits GitHub's squash
 # SUBJECT is the PR title (squash_title=COMMIT_OR_PR_TITLE), linted NOWHERE else --
@@ -71,12 +75,13 @@
 # (release.yml passes inputs.release_notes) linted through both rules with no
 # exemption, before it becomes the release commit body + tag message.
 #
-# RANGE (env): "base..head" to scan. If unset/empty, defaults to
-# @{upstream}..HEAD, else just the tip commit. Never scans all history (old
-# release-bot commits legitimately carry the deliberate skip marker). An
-# explicitly-set RANGE that does not resolve is a HARD failure -- we never
-# silently fall back to scanning the tip while claiming we scanned the range
-# (bonnyr-f5 #182 r4; matches secret-scan.sh's fail-closed behaviour).
+# RANGE (env): "base..head" to scan. If UNSET, defaults to @{upstream}..HEAD, else
+# just the tip commit. Never scans all history (old release-bot commits legitimately
+# carry the deliberate skip marker). An explicitly-set RANGE that does not resolve is
+# a HARD failure, and so is an explicitly-set but EMPTY RANGE -- secret-scan.sh reads
+# empty as "scan all history", which commit-lint must never do, so it fails closed
+# rather than let the same literal RANGE="" mean two different things across the two
+# gates (bonnyr-f5 #182 r4 / #193 r4; matches secret-scan.sh's fail-closed ethos).
 set -uo pipefail
 
 # Single-sourced predicates. Resolve from THIS script's directory, not cwd.
@@ -90,7 +95,20 @@ _LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 
 # Resolve the commit list without ever falling back to full history, and fail
 # closed when an explicit RANGE is unresolvable.
-if [ -n "${RANGE:-}" ]; then
+#
+# RANGE="" reconciliation (bonnyr-f5 #193 r4 minor): secret-scan.sh reads an
+# explicitly-SET-but-EMPTY RANGE as "scan ALL reachable history" (its baseline
+# posture). commit-lint must NEVER scan all history — published release-bot commits
+# legitimately carry the deliberate skip marker — so rather than silently diverging
+# (the old `-n "${RANGE:-}"` test read empty as unset and quietly scanned only the
+# tip, so the SAME literal RANGE="" meant two different things in the two adjacent
+# ci.yml gates), it FAILS CLOSED on an empty-but-set RANGE, consistent with its own
+# rule below that an explicit-but-unresolvable RANGE is a hard error. Leave RANGE
+# UNSET for the local default; ci.yml no longer passes RANGE="" here.
+if [ -n "${RANGE+set}" ] && [ -z "$RANGE" ]; then
+  echo "::error::commit-lint: RANGE is set but EMPTY. secret-scan.sh reads an empty RANGE as 'scan all history', which commit-lint must never do. Leave RANGE UNSET for the local default, or pass an explicit base..head range."
+  exit 1
+elif [ -n "${RANGE:-}" ]; then
   if ! commits="$(git rev-list "$RANGE" 2>/dev/null)"; then
     echo "::error::commit-lint: RANGE '$RANGE' is not a resolvable revision range -- the scan did not run"
     exit 1
@@ -100,6 +118,22 @@ elif upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2
   [ -z "$commits" ] && commits="$(git rev-list -1 HEAD)"
 else
   commits="$(git rev-list -1 HEAD)"
+fi
+
+# The range TIP (newest commit; rev-list prints newest-first) — the commit actually
+# being pushed. The release-bot exemption is scoped to it (below).
+range_tip="$(printf '%s\n' "$commits" | grep -v '^[[:space:]]*$' | head -1)"
+
+# Published-history anchor (bonnyr-f5 #193 r4): the highest final vX.Y.Z tag that is
+# an ANCESTOR of the range tip — the newest release ON THIS line of history (ancestry-
+# filtered, so a tag cut on another branch cannot anchor here). Commits reachable from
+# it are PUBLISHED and unamendable; see exemption 1 in the loop.
+last_release=""
+if [ -n "$range_tip" ]; then
+  while IFS= read -r _t; do
+    [ -z "$_t" ] && continue
+    if git merge-base --is-ancestor "$_t" "$range_tip" 2>/dev/null; then last_release="$_t"; break; fi
+  done < <(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r)
 fi
 
 # CI-control markers (matched case-insensitively, as fixed strings).
@@ -151,12 +185,31 @@ while IFS= read -r sha; do
   msg="$(git log -1 --format='%B' "$sha")"
   subject="$(git log -1 --format='%s' "$sha")"
 
-  # BOTH rules share ONE exemption: the release-bot's OWN minted release commit
-  # (version + trailing skip marker). Every other commit is linted through both
-  # rules (bonnyr-f5 #193 r3 M-6a: there is no already-merged exemption -- see the
-  # header -- because the scanned range excludes the base by construction).
-  if _is_release_bot_subject "$subject"; then
-    echo "commit-lint: commit $sha ($subject) is exempt (release-bot commit: version + trailing skip marker)"
+  # Exemption 1 — PUBLISHED, UNAMENDABLE history (bonnyr-f5 #193 r4, REACHABLE
+  # replacement for the dead r3 M-6a exemption). A commit reachable from the last
+  # release tag on this branch already shipped: its markers already had whatever CI
+  # effect they will ever have, and it cannot be amended without rewriting released
+  # history. Flagging it can only RED this ALWAYS_RUN gate on the merge that cuts the
+  # NEXT release, unfixably. The r3 exemption was dead (base..head excludes the base),
+  # but base..head can still legitimately include a commit that is an ancestor of the
+  # last release tag (a re-push, a revert-merge, a mis-computed/over-wide range) — so
+  # this one is reachable. Scoped to NON-tip commits: the tip is the commit under
+  # active consideration and is always linted (via exemption 2 or the rules).
+  if [ -n "$last_release" ] && [ "$sha" != "$range_tip" ] \
+     && git merge-base --is-ancestor "$sha" "$last_release" 2>/dev/null; then
+    echo "commit-lint: commit $sha ($subject) is exempt (published history: reachable from $last_release, unamendable)"
+    continue
+  fi
+
+  # Exemption 2 — the release bot's OWN minted release commit (version + trailing
+  # skip marker), ONLY when it is the range TIP (bonnyr-f5 #193 r4). The subject is
+  # client-controlled and forgeable; the honest residual (a skip-marked push to a
+  # protected branch produces no workflow run for the exemption to weaken) holds only
+  # for the HEAD commit — the bot's release commit is ALWAYS the tip being pushed. So
+  # scoping to the tip means a forged `release: vX.Y.Z … [skip ci]` buried MID-RANGE
+  # is NOT exempt and is caught, closing the non-head forgeability.
+  if [ "$sha" = "$range_tip" ] && _is_release_bot_subject "$subject"; then
+    echo "commit-lint: commit $sha ($subject) is exempt (release-bot commit at the range tip: version + trailing skip marker)"
   else
     _lint_markers "commit $sha ($subject)" "$msg"
     _lint_under_detected "commit $sha ($subject)" "$msg"

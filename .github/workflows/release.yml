@@ -156,6 +156,62 @@ jobs:
           fi
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
+  # ── Dry-run: exercise the release-publish TOOLING without publishing ──────────
+  # bonnyr-f5 #193 r4 B-2 (bonnyr's suggestion): the r3 verify-image-pins step could
+  # NEVER execute — it ran the script from a sparse .release-tooling checkout that holds
+  # no compose file, and passed REGISTRY/VERSION as env vars the script ignores — yet it
+  # sat AFTER the tag/Release/push/signing, so the defect only surfaced post-signature.
+  # This job rebuilds the EXACT publish-job on-disk layout (full tree at the workspace
+  # root + the same 4-path sparse .release-tooling) and runs the pin-verify tooling
+  # against a FAKE probe, so a step that cannot execute is caught HERE — before it is
+  # ever wired ahead of a signature. release-publish `needs` it, so a broken layout
+  # blocks the publish instead of failing after it.
+  dryrun-release-tooling:
+    name: "Dry-run: release-publish tooling"
+    needs: guard
+    if: needs.guard.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full tree (compose files present at root, as in the tag checkout)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Materialize the tooling EXACTLY as release-publish does (sparse, no compose)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: |
+            scripts/registry-tag-probe.sh
+            scripts/registry-overwrite-guard.sh
+            scripts/verify-image-pins.sh
+            docker-bake.hcl
+          sparse-checkout-cone-mode: false
+      - name: bash -n the tooling scripts materialized in .release-tooling
+        run: |
+          for s in .release-tooling/scripts/*.sh; do bash -n "$s"; done
+      - name: Prove the POST-PUSH verify step can execute (sparse script + --file + FLAGS, fake probe)
+        run: |
+          # No live registry: a fake probe that always "exists" proves the pins RESOLVE
+          # from the sparse checkout via --file (the r3 bug was rc=1 "no pins"), and that
+          # REGISTRY/VERSION arrive as FLAGS the script actually reads.
+          printf '#!/usr/bin/env bash\nexit 0\n' > "$RUNNER_TEMP/fakeprobe"
+          chmod +x "$RUNNER_TEMP/fakeprobe"
+          IMAGE_PROBE="$RUNNER_TEMP/fakeprobe" \
+          bash .release-tooling/scripts/verify-image-pins.sh \
+            --registry "ghcr.io/${{ github.repository_owner }}" --version 0.0.0-dryrun \
+            --file dist/docker-compose.yml \
+            --file dist/docker-compose.local.yml \
+            --file scripts/ibm_cloud_bnk_forge.sh
+      - name: Prove the PRE-PUSH consistency gate can execute (committed pins == VERSION)
+        run: |
+          # The committed compose pins must equal the repo VERSION (what a real release
+          # sets $NEW to via sync-version-artifacts.sh --write). Fails loud here if the
+          # shipped pins have drifted from VERSION — the same gate release-final runs.
+          bash scripts/verify-image-pins.sh --expect-version "$(cat VERSION)"
+
   # ── Pre-flight: verify CI passed + derive version ────────────────────────────
   preflight:
     name: "Pre-flight Checks"
@@ -485,7 +541,13 @@ jobs:
           echo "rc_tag=v${TARGET}-rc.${RC_NUM}" >> "$GITHUB_OUTPUT"
           echo "RC tag will be: v${TARGET}-rc.${RC_NUM}"
 
-      - name: Create annotated RC tag
+      # bonnyr-f5 #193 r4 M-5 / INV-31: create the tag LOCALLY here but do NOT push it
+      # yet. The RC notes below run extract-breaking-changes.sh, which is fail-closed
+      # (exit 1 on a bad range). Generating notes AFTER the tag push previously left an
+      # RC tag on the remote with no pre-release when notes failed — the same
+      # irreversible-push-before-fail-closed-step class fixed in release-final. The push
+      # now happens AFTER notes succeed (see "Push RC tag").
+      - name: Create annotated RC tag (local)
         run: |
           RC_TAG="${{ steps.rc.outputs.rc_tag }}"
           TARGET="${{ needs.preflight.outputs.new_version }}"
@@ -497,8 +559,6 @@ jobs:
           Branch: ${REF_NAME}
           Commit: ${{ github.sha }}"
 
-          git push origin "$RC_TAG"
-
       - name: Generate RC release notes
         id: notes
         run: |
@@ -506,9 +566,11 @@ jobs:
           BUMP="${{ needs.preflight.outputs.bump_type }}"
           RC_TAG="${{ steps.rc.outputs.rc_tag }}"
 
-          # Find last final tag for commit range
+          # Find the last final tag for the commit range, ancestry-filtered to HEAD so
+          # a higher tag cut on another branch cannot skew LAST_FINAL..HEAD (#193 r4).
           LAST_FINAL=$(git tag -l 'v*' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | while IFS= read -r t; do git merge-base --is-ancestor "$t" HEAD 2>/dev/null && echo "$t"; done \
             | sort -V | tail -1)
 
           NOTES="## Pre-release ${RC_TAG}
@@ -544,6 +606,11 @@ jobs:
             printf '%s\n\n%s' "$NOTES" "$COMMIT_LOG" > /tmp/rc_notes.md
           fi
           echo "notes_file=/tmp/rc_notes.md" >> "$GITHUB_OUTPUT"
+
+      # bonnyr-f5 #193 r4 M-5 / INV-31: the fail-closed notes step above has passed, so
+      # the push is now safe — nothing irreversible happened before it.
+      - name: Push RC tag
+        run: git push origin "${{ steps.rc.outputs.rc_tag }}"
 
       - name: Create GitHub pre-release
         run: |
@@ -608,9 +675,14 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           BUMP="${{ needs.preflight.outputs.bump_type }}"
 
-          # Find last final tag for commit range (exclude the one we're about to create)
+          # Find the last final tag for the commit range. Ancestry-filter to HEAD
+          # (bonnyr-f5 #193 r4 minor): a numerically-higher tag cut on ANOTHER branch
+          # is not on this history, so `git tag | sort -V | tail -1` could pick it and
+          # yield a nonsensical LAST_FINAL..HEAD range. Only tags reachable from HEAD
+          # (merged into this release ref) are candidates; then take the highest.
           LAST_FINAL=$(git tag -l 'v*' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | while IFS= read -r t; do git merge-base --is-ancestor "$t" HEAD 2>/dev/null && echo "$t"; done \
             | sort -V | tail -1)
 
           # Cap the commit list but say so on truncation -- a silent `head -50`
@@ -688,17 +760,21 @@ jobs:
           # own --list, so a newly-synced file can never be left unstaged and die
           # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
           # files, the hard-coded `git add` staged three).
+          # LEAD (bonnyr-f5 #193 r4): derive the anti-vacuity floor from the artifact
+          # list ITSELF, not a stale literal. --list yields 8 paths today (the dist/+IBM
+          # pins added to close B-1); the old `-lt 5` left three of them free to vanish
+          # and still pass. EXPECTED tracks the true set and every listed path must stage
+          # (staged == EXPECTED), so a dropped path is caught; an empty/near-empty --list
+          # (script broke/truncated) trips EXPECTED<1 here AND the script's own
+          # `--check total < 8` vacuity floor. The old comment's "mirrors --check
+          # total < 5" was doubly stale — that guard is now < 8 and counts matched LINES
+          # (21), not paths. The per-file "not fully staged" check below still verifies
+          # each staged path individually.
+          EXPECTED=$(bash scripts/sync-version-artifacts.sh --list | grep -c . || true)
           staged=0
           while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
-          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
-          # if --list ever yields fewer paths (script broke / was truncated) the
-          # add + verify loops both go silent and we would commit a bare VERSION
-          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
-          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
-          # per-file "not fully staged" check below cannot catch this: it runs the
-          # same possibly-empty --list, so an empty list makes it vacuously pass.
-          if [ "$staged" -lt 5 ]; then
-            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          if [ "$EXPECTED" -lt 1 ] || [ "$staged" -ne "$EXPECTED" ]; then
+            echo "::error::sync-version-artifacts.sh --list: staged $staged of $EXPECTED path(s) — refusing to commit an unsynced release"; exit 1
           fi
           # Verify the INDEX, not the files: --write's post-write check re-reads
           # the files (correct on disk even when unstaged), so assert each synced
@@ -743,9 +819,12 @@ jobs:
           # returned the just-created tag on a first-ever release (only one tag
           # exists), giving an empty v$NEW..HEAD range and empty notes (bonnyr-f5
           # #193 minor). grep -vx is robust whether or not the new tag is present.
+          # Exclude the just-created v$NEW tag AND ancestry-filter to HEAD so a
+          # higher tag on another branch cannot become LAST_FINAL (bonnyr-f5 #193 r4).
           LAST_FINAL=$(git tag -l 'v*' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | grep -vx "v${NEW}" \
+            | while IFS= read -r t; do git merge-base --is-ancestor "$t" HEAD 2>/dev/null && echo "$t"; done \
             | sort -V | tail -1)
 
           # Cap the commit list but say so on truncation -- a silent `head -50`
@@ -794,6 +873,17 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/registry-overwrite-guard.sh
+
+      # bonnyr-f5 #193 r4 B-2 (PRIMARY pin gate): assert BEFORE the push that every
+      # shipped first-party compose pin already equals v$NEW. sync-version-artifacts.sh
+      # --write ran above, so the committed pins should be $NEW; if any is stale/forward-
+      # dated (the B-1 class dist/ pinned 4.0.0 nobody published), fail CLOSED here —
+      # before the tag/GitHub Release/image push/signing, while it is still recoverable.
+      # A post-push probe cannot retract those (INV-31). Run from the workspace root
+      # (full tag checkout — the compose files are present), NOT from the sparse
+      # .release-tooling. NO --version: the check must read the COMMITTED default.
+      - name: Verify shipped compose pins equal the release version (pre-push)
+        run: bash scripts/verify-image-pins.sh --expect-version "${{ needs.preflight.outputs.new_version }}"
 
       - name: Push commit and tag
         run: |
@@ -920,17 +1010,21 @@ jobs:
           # own --list, so a newly-synced file can never be left unstaged and die
           # with the runner (bonnyr-f5 #180 r3, BLOCKER 1: --write rewrote five
           # files, the hard-coded `git add` staged three).
+          # LEAD (bonnyr-f5 #193 r4): derive the anti-vacuity floor from the artifact
+          # list ITSELF, not a stale literal. --list yields 8 paths today (the dist/+IBM
+          # pins added to close B-1); the old `-lt 5` left three of them free to vanish
+          # and still pass. EXPECTED tracks the true set and every listed path must stage
+          # (staged == EXPECTED), so a dropped path is caught; an empty/near-empty --list
+          # (script broke/truncated) trips EXPECTED<1 here AND the script's own
+          # `--check total < 8` vacuity floor. The old comment's "mirrors --check
+          # total < 5" was doubly stale — that guard is now < 8 and counts matched LINES
+          # (21), not paths. The per-file "not fully staged" check below still verifies
+          # each staged path individually.
+          EXPECTED=$(bash scripts/sync-version-artifacts.sh --list | grep -c . || true)
           staged=0
           while IFS= read -r f; do git add "$f"; staged=$((staged + 1)); done < <(bash scripts/sync-version-artifacts.sh --list)
-          # Vacuity floor mirroring the script's own `--check` `total < 5` guard:
-          # if --list ever yields fewer paths (script broke / was truncated) the
-          # add + verify loops both go silent and we would commit a bare VERSION
-          # bump with every image pin left unsynced — the exact BLOCKER-1 failure
-          # the staging logic exists to prevent (bonnyr-f5 #180 r5, F2). The
-          # per-file "not fully staged" check below cannot catch this: it runs the
-          # same possibly-empty --list, so an empty list makes it vacuously pass.
-          if [ "$staged" -lt 5 ]; then
-            echo "::error::sync-version-artifacts.sh --list yielded only $staged path(s) (expected >=5) — refusing to commit an unsynced release"; exit 1
+          if [ "$EXPECTED" -lt 1 ] || [ "$staged" -ne "$EXPECTED" ]; then
+            echo "::error::sync-version-artifacts.sh --list: staged $staged of $EXPECTED path(s) — refusing to commit an unsynced release"; exit 1
           fi
           # Verify the INDEX, not the files: --write's post-write check re-reads
           # the files (correct on disk even when unstaged), so assert each synced
@@ -967,6 +1061,11 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/registry-overwrite-guard.sh
+
+      # bonnyr-f5 #193 r4 B-2 (PRIMARY pin gate — mirrors release-final): every shipped
+      # first-party compose pin must already equal v$NEW before the irreversible push.
+      - name: Verify shipped compose pins equal the release version (pre-push)
+        run: bash scripts/verify-image-pins.sh --expect-version "${{ needs.preflight.outputs.new_version }}"
 
       - name: Push
         run: |
@@ -1013,8 +1112,10 @@ jobs:
       - preflight
       - release-final
       - release-manual
+      - dryrun-release-tooling
     if: |
       always() &&
+      needs.dryrun-release-tooling.result == 'success' &&
       (
         (
           (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
@@ -1239,22 +1340,29 @@ jobs:
           BNK_FORGE_REGISTRY: ${{ env.REGISTRY }}
           BNK_FORGE_VERSION: ${{ env.VERSION }}
 
-      - name: Verify every shipped compose image pin resolves in the registry
-        # bonnyr-f5 #193 r3 (cross-agent): scripts/verify-image-pins.sh resolves
-        # every `image:` pin in every shipped compose file against the registry and
-        # fails on `manifest unknown`. Run it AFTER the push above so a release can
-        # NEVER complete while a packaged artifact pins a tag nobody published (the
-        # B-1 class: dist/ pinned 4.0.0 which never existed). Sourced from the
-        # workflow ref (.release-tooling), like the tag-safety probe, so a
-        # publish_only recovery of an older tag still runs the CURRENT verifier.
-        # NOTE: the script is authored by the deploy agent and lands with the B-1
-        # fix; this step references it by path and goes green once it exists.
-        run: bash .release-tooling/scripts/verify-image-pins.sh
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          VERSION: ${{ env.VERSION }}
-          REGISTRY_USERNAME: ${{ github.actor }}
-          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      - name: Confirm every shipped compose pin resolves in the registry (post-push)
+        # bonnyr-f5 #193 r4 B-2: this is the SECONDARY existence confirmation; the
+        # PRIMARY guard is the pre-push consistency gate in release-final/-manual
+        # (a post-push red step cannot retract a pushed tag/release/signature — INV-31).
+        # Three defects fixed here from r3:
+        #   1. FILE SET — the script derives ROOT from its own location, i.e.
+        #      .release-tooling, a SPARSE 4-file checkout with NO compose file, so the
+        #      default set resolved to nothing and the step went red "no pins" on every
+        #      run. The compose files live at the TAG checkout (workspace root), so pass
+        #      them EXPLICITLY by --file (dist compose, dist overlay, IBM installer).
+        #   2. FLAGS not ENV — the script reads --registry/--version FLAGS, never env
+        #      vars; the r3 step passed REGISTRY/VERSION as env and would have validated
+        #      the committed defaults, not the tag being published.
+        #   3. Sourced from .release-tooling (CURRENT workflow ref) like the tag-safety
+        #      probe, so a publish_only recovery of an older tag still runs the CURRENT
+        #      verifier. Now that the images were pushed above, every :$VERSION manifest
+        #      must resolve.
+        run: |
+          bash .release-tooling/scripts/verify-image-pins.sh \
+            --registry "$REGISTRY" --version "$VERSION" \
+            --file dist/docker-compose.yml \
+            --file dist/docker-compose.local.yml \
+            --file scripts/ibm_cloud_bnk_forge.sh
 
       - name: Publish summary
         env:

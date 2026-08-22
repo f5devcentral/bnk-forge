@@ -20,24 +20,47 @@
 #   as un-probeable (non-fatal by default) rather than silently skipped.
 #
 # ── RELEASE WIRING (for the release/CI owner) ────────────────────────────────────
-#   release.yml must call this AFTER images are pushed and BEFORE the release is
-#   finalized, so a bad pin is caught while it is still recoverable. Run it against the
-#   tag actually published (the release job knows REGISTRY + the new VERSION):
+#   Two gates, two modes (bonnyr-f5 #193 r4, B-2):
 #
-#       bash scripts/verify-image-pins.sh \
-#         --registry "$REGISTRY" --version "$NEW_VERSION"
+#   1. PRE-PUSH consistency gate (the PRIMARY guard). Before the tag/GitHub
+#      Release/image push, the new version is not yet in the registry, so a probe
+#      would fail on the very tag being published. Instead assert every shipped
+#      first-party pin already renders to $NEW — a pin left forward-dated (the B-1
+#      class) is caught while it is still recoverable. Run from a checkout where the
+#      compose files exist (release-final/-manual have a FULL checkout at the root):
 #
-#   (Without overrides it validates the pins as a fresh install would render them from
-#   the committed VERSION/defaults — useful in a pre-merge gate too.)
+#          bash scripts/verify-image-pins.sh --expect-version "$NEW_VERSION"
+#
+#      (No --version: the check must read the COMMITTED compose default, not an
+#      override, or it passes vacuously.)
+#
+#   2. POST-PUSH existence confirmation (secondary). After the push, confirm the
+#      published manifests actually resolve. The release-publish job runs the CURRENT
+#      tooling from a SPARSE .release-tooling checkout that holds NO compose file, so
+#      the compose files must be passed EXPLICITLY by path (they live at the tag
+#      checkout at the workspace root), and REGISTRY/VERSION as FLAGS (this script
+#      reads flags, NOT env vars):
+#
+#          bash .release-tooling/scripts/verify-image-pins.sh \
+#            --registry "$REGISTRY" --version "$NEW_VERSION" \
+#            --file dist/docker-compose.yml \
+#            --file dist/docker-compose.local.yml \
+#            --file scripts/ibm_cloud_bnk_forge.sh
 #
 # Usage:
-#   verify-image-pins.sh [--registry <host/ns>] [--version <tag>] [--file <compose>]...
+#   verify-image-pins.sh [--registry <host/ns>] [--version <tag>]
+#                        [--expect-version <tag>] [--file <compose>]...
 #     --registry   override ${BNK_FORGE_REGISTRY:-...} in every pin (default: the
 #                  compose default, ghcr.io/f5devcentral)
 #     --version    override ${BNK_FORGE_VERSION:-...} in every pin (default: the
 #                  compose-baked default, which sync-version-artifacts.sh keeps == VERSION)
+#     --expect-version <tag>   CONSISTENCY mode (no registry probe): assert every
+#                  first-party (${BNK_FORGE_VERSION}) pin renders to <tag>. For the
+#                  pre-push gate, where <tag> is not published yet. Mutually
+#                  exclusive with --version.
 #     --file       add a compose file to scan (repeatable). Default set: the shipped
-#                  dist/ and dev compose files.
+#                  dist/ compose, the dist local overlay, the IBM Cloud installer's
+#                  embedded compose, and the dev compose files.
 #     --strict-unresolved   treat an un-probeable (${...}-carrying) ref as a failure.
 #
 # Testability: the manifest probe is `${IMAGE_PROBE:-}` when set — invoked as
@@ -52,6 +75,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OVERRIDE_REGISTRY=""
 OVERRIDE_VERSION=""
+EXPECT_VERSION=""
 STRICT_UNRESOLVED=0
 FILES=()
 
@@ -59,6 +83,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --registry) OVERRIDE_REGISTRY="${2:?--registry needs a value}"; shift 2 ;;
     --version)  OVERRIDE_VERSION="${2:?--version needs a value}"; shift 2 ;;
+    --expect-version) EXPECT_VERSION="${2:?--expect-version needs a value}"; shift 2 ;;
     --file)     FILES+=("${2:?--file needs a path}"); shift 2 ;;
     --strict-unresolved) STRICT_UNRESOLVED=1; shift ;;
     -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
@@ -66,10 +91,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# --expect-version and --version are mutually exclusive: --version OVERRIDES the
+# rendered tag (so a consistency check would pass vacuously against its own
+# override), while --expect-version ASSERTS the committed default renders to a
+# specific tag. Refuse the combination rather than silently ignore one.
+if [ -n "$EXPECT_VERSION" ] && [ -n "$OVERRIDE_VERSION" ]; then
+  echo "::error::verify-image-pins: --expect-version and --version are mutually exclusive (the consistency check must read the committed compose default, not an override)." >&2
+  exit 2
+fi
+
 if [ "${#FILES[@]}" -eq 0 ]; then
+  # Default set = every SHIPPED registry-qualified pin source (bonnyr-f5 #193 r4,
+  # B-2 file-set widening): the dist/ compose the operator runs, the dist local
+  # overlay, AND the IBM Cloud installer's EMBEDDED compose (which pins the same
+  # ${BNK_FORGE_VERSION:-...} images via `image:` lines the grep below matches).
+  # The repo-root dev compose files carry only bare local build tags (skipped as
+  # non-registry-qualified) but are kept so a stray registry pin there is caught too.
   FILES=(
     "$ROOT/dist/docker-compose.yml"
     "$ROOT/dist/docker-compose.local.yml"
+    "$ROOT/scripts/ibm_cloud_bnk_forge.sh"
     "$ROOT/docker-compose.yml"
     "$ROOT/docker-compose.local.yml"
   )
@@ -117,6 +158,10 @@ for f in "${FILES[@]}"; do
     raw="${raw%%#*}"
     raw="$(printf '%s' "$raw" | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+$//')"
     [ -n "$raw" ] || continue
+    # Is this a FIRST-PARTY pin — i.e. does its tag come from our ${BNK_FORGE_VERSION}
+    # variable? (Used by the consistency gate; recorded BEFORE resolution flattens it.)
+    uses_our_version=0
+    case "$raw" in *'${BNK_FORGE_VERSION'*) uses_our_version=1 ;; esac
     ref="$(_resolve_ref "$raw")"
     # Only registry-qualified refs (contain a '/'): skip bare local build tags and
     # official single-segment images.
@@ -124,6 +169,27 @@ for f in "${FILES[@]}"; do
     if printf '%s' "$ref" | grep -q '\${'; then
       echo "::warning::verify-image-pins: cannot resolve '$ref' in ${f#"$ROOT"/} (a var with no default/override)"
       [ "$STRICT_UNRESOLVED" = 1 ] && fail=1
+      continue
+    fi
+    if [ -n "$EXPECT_VERSION" ]; then
+      # ── Consistency mode (bonnyr-f5 #193 r4, B-2 PRE-PUSH gate) ────────────────
+      # The registry does NOT yet hold $EXPECT_VERSION at pre-push time, so probing
+      # would fail-closed on the very version we are about to publish. Instead assert
+      # that every FIRST-PARTY pin (its tag rendered from ${BNK_FORGE_VERSION}) equals
+      # $EXPECT_VERSION. A shipped pin left at a stale / forward-dated default — the
+      # B-1 class dist/ pinned 4.0.0 nobody published — is caught HERE, before the
+      # tag/GitHub Release/image push/signing, while it is still recoverable. The
+      # push that follows then guarantees existence. Third-party pins (e.g.
+      # tecnativa/docker-socket-proxy) carry their own tag and are not asserted.
+      [ "$uses_our_version" = 1 ] || continue
+      probed=$((probed + 1))
+      tag="${ref##*:}"
+      if [ "$tag" = "$EXPECT_VERSION" ]; then
+        echo "  OK    (== $EXPECT_VERSION) $ref"
+      else
+        echo "::error::verify-image-pins: ${f#"$ROOT"/} pins '$ref' (tag '$tag') but the release being published is v$EXPECT_VERSION — a shipped compose pin does not match the version. Re-run scripts/sync-version-artifacts.sh --write $EXPECT_VERSION before releasing."
+        fail=1
+      fi
       continue
     fi
     probed=$((probed + 1))
@@ -143,8 +209,18 @@ for f in "${FILES[@]}"; do
 done
 
 if [ "$probed" -eq 0 ] && [ "$fail" -eq 0 ]; then
-  echo "::error::verify-image-pins: found no registry-qualified image pins to probe — refusing to pass vacuously" >&2
+  if [ -n "$EXPECT_VERSION" ]; then
+    echo "::error::verify-image-pins: no first-party (\${BNK_FORGE_VERSION}) compose pin found to check against v$EXPECT_VERSION — refusing to pass vacuously (wrong file set, or the pins lost their version variable?)" >&2
+  else
+    echo "::error::verify-image-pins: found no registry-qualified image pins to probe — refusing to pass vacuously" >&2
+  fi
   exit 1
 fi
-[ "$fail" -eq 0 ] && echo "verify-image-pins: all $probed registry-qualified pin(s) resolve." || echo "verify-image-pins: FAILURES above." >&2
+if [ "$fail" -ne 0 ]; then
+  echo "verify-image-pins: FAILURES above." >&2
+elif [ -n "$EXPECT_VERSION" ]; then
+  echo "verify-image-pins: all $probed first-party pin(s) equal v$EXPECT_VERSION."
+else
+  echo "verify-image-pins: all $probed registry-qualified pin(s) resolve."
+fi
 exit "$fail"

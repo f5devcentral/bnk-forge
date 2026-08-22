@@ -294,18 +294,25 @@ if [[ "$DRY_RUN" == "1" ]]; then
   echo "  To sign for real:"
   echo "    BNK_FORGE_REGISTRY=${REGISTRY} $0 --execute"
 else
+  # Derive the GitHub org from REGISTRY (ghcr.io/<org>) so the printed cosign
+  # cert-identity matches the namespace that actually published — a fork/mirror that
+  # publishes to ghcr.io/<their-org> must verify against THEIR workflow identity, not a
+  # hardcoded f5devcentral (bonnyr-f5 #193 r4 minor). The repo name stays bnk-forge
+  # (the image basenames are bnk-forge-*); only the owner is owner-derived.
+  REPO_ORG="${REGISTRY#*/}"; REPO_ORG="${REPO_ORG%%/*}"
+  CERT_IDENTITY="https://github.com/${REPO_ORG}/bnk-forge/\\.github/workflows/release\\.yml@.*"
   echo "  All images signed + SBOM + provenance attached."
   echo ""
   echo "  Verify a signed image:"
   echo "    cosign verify \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest> \\"
-  echo "      --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \\"
+  echo "      --certificate-identity-regexp '${CERT_IDENTITY}' \\"
   echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com"
   echo ""
   echo "  Verify the SBOM attestation:"
   echo "    cosign verify-attestation \\"
   echo "      --type cyclonedx \\"
-  echo "      --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \\"
+  echo "      --certificate-identity-regexp '${CERT_IDENTITY}' \\"
   echo "      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
   echo "      ${REGISTRY}/bnk-forge-api@<digest>"
 fi

@@ -43,6 +43,7 @@ echo ""
 # Deletions (all-zero local sha) contribute no commits. When stdin is empty (the
 # hook run by hand, not by git) we leave RANGE unset so the script default runs.
 zero="0000000000000000000000000000000000000000"
+remote_name="${1:-origin}"                         # git passes the remote name as $1
 prepush_range=""
 while read -r _localref localsha _remoteref remotesha; do
     [ -z "${localsha:-}" ] && continue
@@ -51,7 +52,24 @@ while read -r _localref localsha _remoteref remotesha; do
         prepush_range="__DEFAULT__"                # new branch: no base -> script default
         break
     fi
-    prepush_range="${remotesha}..${localsha}"      # normal update: exactly the pushed commits
+    # Normal update: the range BASE is the remote tip. If that object is not present
+    # locally (never fetched) the range is unresolvable, and passing it straight to
+    # commit-lint hard-failed with a MISLEADING "not a resolvable revision range"
+    # (bonnyr-f5 #193 r4 minor). Try a best-effort fetch of just that remote, then
+    # re-check; if it still is not local, say so PLAINLY and fall back to the
+    # script's own default range instead of a broken one.
+    if ! git rev-parse --verify --quiet "${remotesha}^{commit}" >/dev/null 2>&1; then
+        git fetch --quiet "$remote_name" >/dev/null 2>&1 || true
+    fi
+    if git rev-parse --verify --quiet "${remotesha}^{commit}" >/dev/null 2>&1; then
+        prepush_range="${remotesha}..${localsha}"  # exactly the pushed commits
+    else
+        echo "note: the remote tip ${remotesha} is not present locally even after a fetch"
+        echo "      of '${remote_name}', so the exact pushed range can't be resolved."
+        echo "      Linting the local default range (@{upstream}..HEAD, else the tip) instead;"
+        echo "      run 'git fetch ${remote_name}' to lint the precise range next time."
+        prepush_range="__DEFAULT__"
+    fi
     break
 done
 

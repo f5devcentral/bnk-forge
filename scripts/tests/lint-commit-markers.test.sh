@@ -137,6 +137,78 @@ else
 fi
 rm -rf "$D"
 
+# ── M6.PRTITLE (bonnyr-f5 #193 r4 M-6 / B6b) — the PR_TITLE lint has coverage ──
+# A skip marker in the PR title (GitHub's squash subject for a >=2-commit PR) is
+# CAUGHT, attributed to the PR-title path; a clean PR title passes. Mutation: delete
+# the PR_TITLE block in lint-commit-markers.sh and this reds.
+D="$(new_repo)"
+OUT="$(cd "$D" && RANGE="HEAD..HEAD" PR_TITLE="feat: shiny [skip ci]" LINT_MESSAGE="" bash "$SCRIPT" 2>&1)"; RC=$?
+expect "M6.PRTITLE marker in PR title caught" 1
+if printf '%s' "$OUT" | grep -q 'PR title'; then pass "M6.PRTITLE flagged via the PR-title path"; else bad "M6.PRTITLE not attributed to the PR title"; fi
+OUT="$(cd "$D" && RANGE="HEAD..HEAD" PR_TITLE="feat: shiny thing" LINT_MESSAGE="" bash "$SCRIPT" 2>&1)"; RC=$?
+expect "M6.PRTITLE clean PR title passes" 0
+rm -rf "$D"
+
+# ── M6.LINTMSG (bonnyr-f5 #193 r4 M-6 / M1) — the LINT_MESSAGE lint has coverage ─
+# Arbitrary pending text (release.yml passes inputs.release_notes) is linted through
+# both rules before it becomes the release commit/tag. A skip marker in it is CAUGHT,
+# attributed to the message-text path. Mutation: delete the LINT_MESSAGE block and this reds.
+D="$(new_repo)"
+OUT="$(cd "$D" && RANGE="HEAD..HEAD" PR_TITLE="" LINT_MESSAGE="ship notes [skip ci]" LINT_MESSAGE_LABEL="release_notes input" bash "$SCRIPT" 2>&1)"; RC=$?
+expect "M6.LINTMSG marker in message text caught" 1
+if printf '%s' "$OUT" | grep -q 'release_notes input'; then pass "M6.LINTMSG flagged via the message-text path"; else bad "M6.LINTMSG not attributed to the message text"; fi
+rm -rf "$D"
+
+# ── M6.RANGE (bonnyr-f5 #193 r4 M-6) — an explicit unresolvable RANGE fails CLOSED
+# rather than silently falling back to scanning the tip while claiming the range was
+# scanned. Mutation: replace the fail-closed branch with a `|| true` fallback and this
+# reds (an unresolvable range would then scan nothing and pass rc=0).
+D="$(new_repo)"
+OUT="$(cd "$D" && RANGE="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef..HEAD" PR_TITLE="" LINT_MESSAGE="" bash "$SCRIPT" 2>&1)"; RC=$?
+expect "M6.RANGE unresolvable RANGE fails closed" 1
+if printf '%s' "$OUT" | grep -q 'not a resolvable revision range'; then pass "M6.RANGE reported the range as unresolvable"; else bad "M6.RANGE wrong/absent unresolvable message"; fi
+rm -rf "$D"
+
+# ── M6.SKIPCHECKS (bonnyr-f5 #193 r4 M-6) — GitHub's `skip-checks: true` commit
+# trailer is CAUGHT even though it is NOT a bracketed token (the fixed-string marker
+# list alone misses it). Mutation: delete the skip-checks rule and this reds.
+D="$(new_repo)"; BASE="$(git -C "$D" rev-parse HEAD)"
+commit "$D" "fix: real work" $'legitimate body\nskip-checks: true'
+run "$D" "${BASE}..HEAD"
+expect "M6.SKIPCHECKS skip-checks:true trailer caught" 1
+if printf '%s' "$OUT" | grep -q "skip-checks: true"; then pass "M6.SKIPCHECKS flagged the trailer"; else bad "M6.SKIPCHECKS message missing"; fi
+rm -rf "$D"
+
+# ── R2.TIP (bonnyr-f5 #193 r4) — a forged release-bot subject buried MID-RANGE is
+# NOT exempt (the exemption is scoped to the range TIP). Its skip marker is CAUGHT.
+# Mutation: drop the `sha == range_tip` scoping and this reds (the forgery escapes).
+D="$(new_repo)"; BASE="$(git -C "$D" rev-parse HEAD)"
+commit "$D" "release: v9.9.9 [skip ci]" "sneaky marker [skip ci] buried in a mid-range forgery"
+commit "$D" "fix: clean tip commit"
+run "$D" "${BASE}..HEAD"
+expect "R2.TIP forged release-bot subject mid-range caught" 1
+rm -rf "$D"
+
+# ── R2.TIP2 — the REAL release-bot commit AS the tip is still exempt ────────────
+D="$(new_repo)"; BASE="$(git -C "$D" rev-parse HEAD)"
+commit "$D" "release: v1.2.3 [skip ci]"
+run "$D" "${BASE}..HEAD"
+expect "R2.TIP2 real release-bot commit at tip still exempt" 0
+if printf '%s' "$OUT" | grep -q 'range tip'; then pass "R2.TIP2 exempted via the tip-scoped path"; else bad "R2.TIP2 not exempted at the tip"; fi
+rm -rf "$D"
+
+# ── PUB1 (bonnyr-f5 #193 r4) — PUBLISHED, unamendable history is exempt. A commit
+# reachable from the last release tag carrying a mis-anchored colon marker is NOT
+# flagged when a later commit is the tip. Mutation: drop exemption 1 and this reds.
+D="$(new_repo)"; BASE="$(git -C "$D" rev-parse HEAD)"
+commit "$D" "fix: shipped" $'prose about the change\n- BREAKING CHANGE: this mis-anchored marker already shipped'
+git -C "$D" tag -a "v1.0.0" -m "release v1.0.0"
+commit "$D" "fix: later clean work on the next release"
+run "$D" "${BASE}..HEAD"
+expect "PUB1 mis-anchored marker in published history is exempt" 0
+if printf '%s' "$OUT" | grep -q 'published history'; then pass "PUB1 exempted via the published-history path"; else bad "PUB1 not exempted as published history"; fi
+rm -rf "$D"
+
 # ── SS-1 — release-bot fingerprint single-source: release.yml's inline copy of the
 # two grep predicates is byte-identical to scripts/lib/is-release-bot-subject.sh ──
 LIB="$ROOT/scripts/lib/is-release-bot-subject.sh"

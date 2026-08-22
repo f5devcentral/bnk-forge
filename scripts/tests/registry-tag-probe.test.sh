@@ -63,6 +63,14 @@ case "$SCENARIO" in
     if [ "$is_token" = 1 ]; then echo '{"token":"T"}';
     elif [ "$is_authed" = 1 ]; then echo 429;
     else emit_challenge; echo 401; fi ;;
+  server_error)                 # 5xx -> the `5??` arm -> unknown (fail closed)
+    if [ "$is_token" = 1 ]; then echo '{"token":"T"}';
+    elif [ "$is_authed" = 1 ]; then echo 503;
+    else emit_challenge; echo 401; fi ;;
+  unexpected)                   # any other code -> the `*)` arm -> unknown (fail closed)
+    if [ "$is_token" = 1 ]; then echo '{"token":"T"}';
+    elif [ "$is_authed" = 1 ]; then echo 418;
+    else emit_challenge; echo 401; fi ;;
 esac
 FAKE
 chmod +x "$WORK/curl"
@@ -92,7 +100,22 @@ check "no-permission(token)->refuse" "$(verdict no_permission_token)"  UNKNOWN
 check "no-permission(manifest)->ref" "$(verdict no_permission_manifest)" UNKNOWN
 check "network -> refuse"            "$(verdict network)"              UNKNOWN
 check "rate-limit -> refuse"         "$(verdict ratelimit)"            UNKNOWN
+check "5xx -> refuse"                "$(verdict server_error)"         UNKNOWN
+check "unexpected code -> refuse"    "$(verdict unexpected)"           UNKNOWN
 check "exists -> refuse"             "$(verdict exists)"               EXISTS
+
+# The 5xx and the catch-all `*)` arms must classify via their OWN messages, not leak
+# into a wrong bucket (bonnyr-f5 #193 r4: untested arms). Assert each detail fires.
+SE_DETAIL="$(run server_error)"; SE_DETAIL="${SE_DETAIL%%$'\n'*}"
+case "$SE_DETAIL" in
+  *"HTTP 503 (registry error"*) check "5xx arm fires (registry-error msg)" fires fires ;;
+  *) printf 'FAIL  5xx arm fires -> got detail: %s\n' "$SE_DETAIL"; fail=1 ;;
+esac
+UE_DETAIL="$(run unexpected)"; UE_DETAIL="${UE_DETAIL%%$'\n'*}"
+case "$UE_DETAIL" in
+  *"HTTP 418 (unexpected"*) check "catch-all arm fires (unexpected msg)" fires fires ;;
+  *) printf 'FAIL  catch-all arm fires -> got detail: %s\n' "$UE_DETAIL"; fail=1 ;;
+esac
 
 # The network failure must be classified by the dedicated ^000 arm, NOT the `*)`
 # unexpected-code fallback: real curl yields the doubled "000000" shape and the old

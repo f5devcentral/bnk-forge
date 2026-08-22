@@ -549,20 +549,36 @@ script-selftests:
 	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
 	    echo "::error::extract self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
 	  fi
-	@# B5 + M5: enumerate and run EVERY scripts/tests/*.test.sh from the filesystem
-	@# (registry-tag-probe mutation suite + INV-15 detector-parity), failing on an
-	@# EMPTY enumeration or ANY non-zero rc. ci.yml's script-selftests job runs the
-	@# SAME enumeration so local == CI. Before this, those tests had no caller at
-	@# all — the probe's mutation suite was dead code that would have caught B4
-	@# (bonnyr-f5 #193 B5/M5).
+	@# B5 + M5 + M4: enumerate and run EVERY scripts/tests/*.test.sh from the
+	@# filesystem, applying the SAME anti-vacuity discipline as the two inline
+	@# self-tests above (bonnyr-f5 #193 r4 M-4: the old loop checked ONLY a non-empty
+	@# enumeration and each file's exit 0, so a test gutted to `exit 0` passed and
+	@# deleting 7 of 8 files left n=1 and stayed green). Each file must now:
+	@#   1. EXIT 0;
+	@#   2. emit at least one PASS line   (the harness actually ran assertions);
+	@#   3. emit NO `FAIL` line           (a failure whose exit was swallowed);
+	@#   4. reach its `ALL PASS` terminal  (a gutted/early-exiting file never prints it).
+	@# PLUS a count floor DERIVED from the tests present, cross-checked against git's
+	@# tracked set: a test file deleted in the working tree makes the on-disk count fall
+	@# below the tracked count and is caught, instead of silently lowering a literal
+	@# floor. ci.yml's script-selftests job runs the SAME enumeration so local == CI.
 	@set -e; \
 	  tests="$$(ls scripts/tests/*.test.sh 2>/dev/null || true)"; \
 	  n=$$(printf '%s\n' "$$tests" | grep -c . || true); \
+	  tracked=$$(git ls-files 'scripts/tests/*.test.sh' 2>/dev/null | grep -c . || true); \
 	  if [ "$$n" -lt 1 ]; then echo "::error::no scripts/tests/*.test.sh found -- the self-test enumeration is empty"; exit 1; fi; \
-	  echo "  running $$n filesystem self-test(s):"; \
+	  if [ "$$tracked" -gt 0 ] && [ "$$n" -lt "$$tracked" ]; then \
+	    echo "::error::self-test enumeration found $$n file(s) on disk but git tracks $$tracked -- a *.test.sh was removed from the working tree; refusing to run a shrunken suite"; exit 1; \
+	  fi; \
+	  echo "  running $$n filesystem self-test(s) (git tracks $$tracked):"; \
 	  for t in $$tests; do \
 	    echo "--- $$t ---"; \
-	    bash "$$t" || { echo "::error::$$t failed"; exit 1; }; \
+	    set +e; out="$$(bash "$$t" 2>&1)"; rc=$$?; set -e; \
+	    printf '%s\n' "$$out"; \
+	    if [ "$$rc" -ne 0 ]; then echo "::error::$$t exited $$rc"; exit 1; fi; \
+	    if printf '%s\n' "$$out" | grep -qE '^FAIL'; then echo "::error::$$t printed a FAIL line but exited 0 -- a swallowed assertion failure"; exit 1; fi; \
+	    if ! printf '%s\n' "$$out" | grep -qE '^PASS'; then echo "::error::$$t produced no PASS line -- the harness did not run (gutted to a no-op?)"; exit 1; fi; \
+	    if ! printf '%s\n' "$$out" | grep -q 'ALL PASS'; then echo "::error::$$t did not reach its 'ALL PASS' terminal marker -- it exited early with assertions unrun"; exit 1; fi; \
 	  done
 
 # Mirror of ci.yml's "P1 · Artifact Network Self-Test" job (bonnyr-f5 #193 minor:
@@ -1370,6 +1386,21 @@ push-customer-build:
 	echo "  Rolling tag:   customer-build"; \
 	echo "  Platforms:     $(CB_PLATFORMS)"; \
 	echo ""; \
+	if [ "$${FORCE_OVERWRITE:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
+	echo "  Probing the registry via the single-sourced scripts/registry-overwrite-guard.sh"; \
+	echo "  so this push can't silently overwrite the already-published IMMUTABLE :$$FULLTAG"; \
+	echo "  tag and orphan its cosign/SBOM/SLSA attestations (INV-24 — the only push path"; \
+	echo "  that was still unguarded, bonnyr-f5 #193 r4)..."; \
+	REGISTRY=$$REGISTRY VERSION=$$FULLTAG FORCE=$$GUARD_FORCE \
+	  bash scripts/registry-overwrite-guard.sh || { \
+	    echo "  Remediation depends on WHY it failed (read the ::error:: line above):"; \
+	    echo "    - missing docker/buildx/jq or an unparseable bake file -> a TOOLING problem"; \
+	    echo "      (FORCE_OVERWRITE does NOT rescue this, by design)."; \
+	    echo "    - registry unreachable / auth -> export REGISTRY_USERNAME/REGISTRY_PASSWORD."; \
+	    echo "    - the immutable :$$FULLTAG tag genuinely already exists -> re-run with"; \
+	    echo "      FORCE_OVERWRITE=1 ONLY if you intend to overwrite it (orphans its attestations)."; \
+	    exit 1; \
+	  }; \
 	echo "=== Building + pushing customer-build images (docker buildx bake) ==="; \
 	REGISTRY=$$REGISTRY VERSION=$$FULLTAG ROLLING_TAG=customer-build PLATFORMS=$(CB_PLATFORMS) \
 	  docker buildx bake --builder $(CB_BUILDER) --push && \
