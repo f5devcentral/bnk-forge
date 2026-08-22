@@ -6,6 +6,11 @@
 #   - the packaged dist/ compose image pins (dist/docker-compose.yml — the 7
 #     `${BNK_FORGE_VERSION:-<v>}` defaults) and dist/.env.example's
 #     BNK_FORGE_VERSION default
+#   - the packaged dist/VERSION stamp (bonnyr-f5 #193 r4 deploy minor): a plain
+#     one-line version file `make dist` used to `cp` and release.yml used to
+#     `echo > dist/VERSION` by hand — i.e. maintained OUTSIDE this single-source
+#     writer, so it could drift from VERSION between releases. It is now synced and
+#     --check'd here like every other pin.
 #   - the IBM Cloud installer's BNK_FORGE_VERSION default AND the pins in the
 #     compose template it embeds (scripts/ibm_cloud_bnk_forge.sh)
 #
@@ -52,12 +57,14 @@ OPCHART="$ROOT/bnk-operator/charts/bnk-operator/Chart.yaml"
 DISTENV="$ROOT/dist/.env.example"
 DISTCOMPOSE="$ROOT/dist/docker-compose.yml"
 IBMCLOUD="$ROOT/scripts/ibm_cloud_bnk_forge.sh"
+# The packaged one-line version stamp (bonnyr-f5 #193 r4 deploy minor).
+DISTVERSION="$ROOT/dist/VERSION"
 
 # Canonical artifact list. --write, --list, and the release job's `git add` all
 # derive the file set from HERE, so the writer and its stager cannot diverge and
 # leave a synced-but-unstaged file behind (bonnyr-f5 #180 r3, BLOCKER 1).
 SYNCED_FILES=("$VALUES" "$CHART" "$PKG" "$OPVALUES" "$OPCHART" \
-              "$DISTENV" "$DISTCOMPOSE" "$IBMCLOUD")
+              "$DISTENV" "$DISTCOMPOSE" "$IBMCLOUD" "$DISTVERSION")
 
 # ── Value readers ─────────────────────────────────────────────────────────────
 # Each reads EVERY matching version line (not grep -m1), so a second occurrence
@@ -83,6 +90,10 @@ DISTENV_SED='s/^BNK_FORGE_VERSION=(.*)/\1/'
 # are escaped so grep -E / sed -E read them literally, not as anchor/interval.
 PIN_RE='\$\{BNK_FORGE_VERSION:-'
 PIN_SED='s/.*\$\{BNK_FORGE_VERSION:-([^}]*)\}.*/\1/'
+# dist/VERSION: a plain one-line stamp whose entire content is the version token.
+# Match that bare token line (semver incl. prerelease/build metadata) and extract it.
+DISTVER_RE='^[A-Za-z0-9._+-]+$'
+DISTVER_SED='s/^([A-Za-z0-9._+-]+).*/\1/'
 
 # The image tag lives inside the top-level `image:` block. The WRITER scopes its
 # substitution to that block (sed range below); the READERS (--check and --write's
@@ -145,6 +156,8 @@ case "${1:-}" in
     # BOTH the IBM installer default (line ~32) and its embedded compose pins.
     sed -i.syncbak -E 's|\$\{BNK_FORGE_VERSION:-[^}]*\}|${BNK_FORGE_VERSION:-'"${V}"'}|g' "$DISTCOMPOSE"
     sed -i.syncbak -E 's|\$\{BNK_FORGE_VERSION:-[^}]*\}|${BNK_FORGE_VERSION:-'"${V}"'}|g' "$IBMCLOUD"
+    # dist/VERSION is a plain one-line stamp — rewrite the whole file (no sed range).
+    printf '%s\n' "${V}" > "$DISTVERSION"
     for f in "${SYNCED_FILES[@]}"; do rm -f "${f}.syncbak"; done
 
     # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
@@ -176,8 +189,9 @@ case "${1:-}" in
     _verify_file "dist env default"    "$DISTENV"  "$DISTENV_RE" "$DISTENV_SED"
     _verify_file "dist compose pins"   "$DISTCOMPOSE" "$PIN_RE"  "$PIN_SED"
     _verify_file "ibm-cloud pins"      "$IBMCLOUD" "$PIN_RE"     "$PIN_SED"
+    _verify_file "dist VERSION stamp"  "$DISTVERSION" "$DISTVER_RE" "$DISTVER_SED"
     [ "$rc" -eq 0 ] || exit 1
-    echo "synced bnk-forge tag+appVersion, frontend package.json, operator tag+appVersion, dist compose+env, ibm-cloud installer -> ${V}" >&2
+    echo "synced bnk-forge tag+appVersion, frontend package.json, operator tag+appVersion, dist compose+env, ibm-cloud installer, dist/VERSION -> ${V}" >&2
     ;;
 
   --check)
@@ -221,12 +235,13 @@ case "${1:-}" in
     _check_file "dist env default"    "$DISTENV"  "$DISTENV_RE" "$DISTENV_SED"
     _check_file "dist compose pins"   "$DISTCOMPOSE" "$PIN_RE"  "$PIN_SED"
     _check_file "ibm-cloud pins"      "$IBMCLOUD" "$PIN_RE"     "$PIN_SED"
-    # Backstop: eight artifacts, each with >=1 version line, is the minimum a
+    _check_file "dist VERSION stamp"  "$DISTVERSION" "$DISTVER_RE" "$DISTVER_SED"
+    # Backstop: nine artifacts, each with >=1 version line, is the minimum a
     # healthy tree yields (the dist compose contributes 7 pins and the IBM
     # installer 8, so the real total is far higher — this floor only catches a
     # catastrophic "every key vanished"). Fewer means a key vanished — vacuous.
-    if [ "$total" -lt 8 ]; then
-      echo "::error::--check matched only $total version lines (expected >=8) — vacuous" >&2
+    if [ "$total" -lt 9 ]; then
+      echo "::error::--check matched only $total version lines (expected >=9) — vacuous" >&2
       exit 1
     fi
     exit "$rc"

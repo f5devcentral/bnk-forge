@@ -107,10 +107,17 @@ api:
   env:
     BNK_FORGE_DEPLOY_MODE: server
     ENVIRONMENT: production
-    # Override per-env. Wildcards rejected in production. Comma-separated origins.
-    ALLOWED_ORIGINS: "https://localhost"
-    # If running on a non-localhost cluster, set e.g.:
-    # ALLOWED_ORIGINS: "https://hgx2:30443,http://hgx2:30080"
+    # bonnyr-f5 #193 M10: ships EMPTY, not "https://localhost". Under
+    # ENVIRONMENT=production the backend's validate_production() SystemExits (crashloop)
+    # if ALLOWED_ORIGINS contains "localhost" or "*", so the old "https://localhost"
+    # default bricked every bare `helm install`. Empty is accepted by the backend (it is
+    # neither localhost nor a wildcard) so the default render boots; the chart also fails
+    # AT RENDER on a localhost/wildcard value under production/staging (see backendEnv).
+    # Set this to your actual browser origin(s) — comma-separated, no wildcard, no
+    # localhost in production, e.g.:
+    #   ALLOWED_ORIGINS: "https://forge.example.com"
+    #   ALLOWED_ORIGINS: "https://hgx2:30443,http://hgx2:30080"
+    ALLOWED_ORIGINS: ""
   resources:
     requests:
       cpu: 250m

@@ -405,18 +405,29 @@ x-backend-env: &backend-env
   # legacy MCP_USERNAME=admin must never resolve the service username — old default admin,
   # new default mcp — or a pre-guard backend rewrites the human admin row).
   # #193: also plumb the DEFAULT_ADMIN_* gate — config.py has no env_file, so an
-  # unpassed var never reaches the container. Unset -> generated + must-change (secure).
-  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # unpassed var never reaches the container.
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset. This installer pins the 3.1.6 image, whose
+  # `DEFAULT_ADMIN_PASSWORD: str = "changeme"` is a plain str — a present-but-empty ""
+  # (what `${VAR:-}` delivers) would OVERRIDE it and seed admin with "" (login schema
+  # rejects "" with 422, locking everyone out). A map entry with NO value is passthrough
+  # (this heredoc is quoted, so it is written verbatim and resolved by compose at runtime):
+  # omitted when the var is absent from .env, forwarded when set — so 3.1.6 falls through
+  # to its usable "changeme" default; a generating backend randomises.
+  DEFAULT_ADMIN_PASSWORD:
   DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
   MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
   ENVIRONMENT: ${ENVIRONMENT:-development}
   # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on, so
-  # ENVIRONMENT=production does not brick the backend. Empty = unset (config.py treats
-  # "" as unset and auto-generates the keys, persisted on the keys volume).
-  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  # ENVIRONMENT=production does not brick the backend. bonnyr-f5 #193 B1 (r4): OMIT-when-unset
+  # (null-value passthrough) — this installer does NOT generate JWT/ENCRYPTION, and the pinned
+  # 3.1.6 backend uses `if self.KEY is None`, so a present-but-empty "" would boot with an empty
+  # JWT secret / invalid Fernet key. A map entry with NO value is passthrough: omitted when
+  # unset, forwarded when set — so 3.1.6 auto-generates and persists the keys to the /app/keys
+  # volume. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes
@@ -661,16 +672,21 @@ PYEOF
 fi
 
 # Substitute the scalar placeholders (| delimiter avoids clashes with / in registry).
-sed -i \
+# bonnyr-f5 #193 M11: use `sed -i.bak … && rm` — the ONLY in-place form both GNU and
+# BSD/macOS sed accept. Bare `sed -i` (GNU) fails on BSD sed ("extra characters"),
+# and `sed -i ''` (BSD) fails on GNU; the `.bak` suffix form is portable to both.
+sed -i.bak \
   -e "s|__VERSION__|${BNK_FORGE_VERSION}|g" \
   -e "s|__REGISTRY__|${REGISTRY}|g" \
   -e "s|__REGISTRY_HOST__|${REGISTRY_HOST}|g" \
   -e "s|__REGISTRY_USER__|${REGISTRY_USER}|g" \
   -e "s|__PUBLIC__|${PUBLIC}|g" \
   "${UD}"
+rm -f "${UD}.bak"
 # PAT last and on its own (may contain no sed-special chars for GitHub PATs).
 PAT_ESCAPED="$(printf '%s' "${PAT}" | sed -e 's/[&|\\]/\\&/g')"
-sed -i "s|__PAT__|${PAT_ESCAPED}|g" "${UD}"
+sed -i.bak "s|__PAT__|${PAT_ESCAPED}|g" "${UD}"
+rm -f "${UD}.bak"
 
 # ── Create VPC + subnet + security-group rules ───────────────────────────────
 log "Creating VPC '${VPC_NAME}'..."

@@ -41,7 +41,17 @@ x-backend-env: &backend-env
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
   # #186: plumb the operator-chosen initial admin password to the backend
   # (config.py has no env_file, so an unpassed var never reaches the container).
-  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset. This image pins 3.1.6, whose config.py
+  # declares `DEFAULT_ADMIN_PASSWORD: str = "changeme"` — a plain str, NOT str|None. A
+  # present-but-empty "" (what `${VAR:-}` delivers) would OVERRIDE that default, seeding
+  # admin with "" and locking everyone out (the login schema rejects min_length<1 with
+  # 422). NOTE: interpolation (`${VAR}` / `${VAR:-}`) always renders a value, so an unset
+  # var still arrives as ""; only a map entry with NO value (below) is passthrough —
+  # `docker run -e KEY` semantics: omitted when the var is absent from the env/.env,
+  # forwarded when set. So each backend applies its OWN default when the operator leaves
+  # it unset: 3.1.6 → usable "changeme" (operator logs in, is forced to change it); a
+  # generating backend → random, written to /app/keys/initial_admin_password.
+  DEFAULT_ADMIN_PASSWORD:
   # #186: plumb the must-change gate too, or the seeded admin owes a password
   # change no route accepts (login is exempt; every other /api route 403s).
   # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
@@ -71,10 +81,15 @@ x-backend-env: &backend-env
   ENVIRONMENT: ${ENVIRONMENT:-development}
   # bonnyr-f5 #193 B2: validate_production also gates on these three. Plumb them or
   # ENVIRONMENT=production bricks the backend into a restart loop listing problems the
-  # shipped .env cannot fix. Empty = unset (config.py treats "" as unset and
-  # auto-generates the keys in development); set real values in .env for production.
-  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  # shipped .env cannot fix. bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value
+  # passthrough, NOT `${VAR:-}`). HEAD's config.py treats "" as unset (`if not self.KEY`),
+  # but the pinned 3.1.6 backend uses `if self.KEY is None` — a present-but-empty "" (what
+  # `${VAR:-}` delivers) is NOT auto-generated there, so it would boot with an empty JWT
+  # secret / an invalid ("") Fernet key. A map entry with NO value is passthrough: omitted
+  # when unset, forwarded when set — so 3.1.6 falls through to None and auto-generates +
+  # persists the keys to /app/keys/. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes

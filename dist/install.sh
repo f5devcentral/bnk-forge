@@ -48,6 +48,41 @@ done
 
 cd "$SCRIPT_DIR"
 
+# ── bonnyr-f5 #193 M12: strong per-install DB/redis credentials ───────────────
+# dist/ runs postgres and redis under host networking, so a published default
+# password (`bnkforge_dev_password` / `bnkforge_redis_dev`) is a live, known
+# credential on the host loopback. The Helm chart and the IBM installer both
+# GENERATE these; dist/ must not be the one path that ships them. Generate strong
+# values into the fresh .env at creation time (below), before the DB volume
+# initializes, and warn if a pre-existing .env still carries a default.
+_gen_secret() {  # $1 = length in chars (default 32); hex only, so it is sed-safe
+  local n="${1:-32}"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$(( (n + 1) / 2 ))" | cut -c1-"$n"
+  else
+    LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c "$n"
+  fi
+}
+_env_get() {  # $1 = var name; prints the raw value of the last matching line
+  grep -E "^[[:space:]]*$1=" .env 2>/dev/null | tail -n1 | cut -d= -f2- || true
+}
+_env_set() {  # $1 = var, $2 = value (must be sed-safe: hex/alnum). In-place, portable.
+  local var="$1" val="$2"
+  if grep -qE "^[[:space:]]*$var=" .env 2>/dev/null; then
+    sed -i.bak "s|^[[:space:]]*$var=.*|$var=$val|" .env && rm -f .env.bak
+  else
+    printf '%s=%s\n' "$var" "$val" >> .env
+  fi
+}
+_ensure_strong_db_cred() {  # $1 = var, $2 = known shipped default. Returns 0 if it generated.
+  local cur; cur="$(_env_get "$1")"
+  if [ -z "$cur" ] || [ "$cur" = "$2" ]; then
+    _env_set "$1" "$(_gen_secret 32)"
+    return 0
+  fi
+  return 1
+}
+
 # ── Preflight checks ────────────────────────────────────────────────────────
 echo ""
 echo "========================================="
@@ -81,6 +116,13 @@ if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     cp .env.example .env
     echo "  ✓ Created .env from .env.example"
+    # bonnyr-f5 #193 M12: replace the published default DB/redis passwords with
+    # strong per-install secrets NOW, while the .env is fresh and the postgres/redis
+    # data volumes do not yet exist (rotating them after first boot would lock the
+    # backend out of an already-initialized DB). Mirrors the Helm chart + IBM installer.
+    _ensure_strong_db_cred POSTGRES_PASSWORD bnkforge_dev_password || true
+    _ensure_strong_db_cred REDIS_PASSWORD bnkforge_redis_dev || true
+    echo "  ✓ Generated strong POSTGRES_PASSWORD and REDIS_PASSWORD (host-networked)"
     echo "  ⚠  Review .env before continuing. In particular:"
     echo "       - BNK_FORGE_REGISTRY (where to pull images)"
     echo "       - MCP_SERVICE_PASSWORD (bonnyr-f5 #193: ships EMPTY; the MCP/AI"
@@ -93,6 +135,27 @@ if [ ! -f .env ]; then
     echo "  ERROR: No .env.example found. Cannot continue."
     exit 1
   fi
+fi
+
+# bonnyr-f5 #193 M12: a PRE-EXISTING .env may still carry the published default DB/
+# redis credentials (an older bundle shipped them, or the operator restored them). We
+# do NOT silently rotate here: postgres bakes its password into the data volume on
+# first init, so a rotate would lock the backend out of an already-initialized DB.
+# Warn instead — a known password on a host-networked datastore is a real exposure.
+_pg_now="$(_env_get POSTGRES_PASSWORD)"
+_rd_now="$(_env_get REDIS_PASSWORD)"
+if [ -z "$_pg_now" ] || [ "$_pg_now" = "bnkforge_dev_password" ] \
+   || [ -z "$_rd_now" ] || [ "$_rd_now" = "bnkforge_redis_dev" ]; then
+  echo ""
+  echo "  ⚠  SECURITY: .env still uses a published default database/redis password"
+  echo "     (bnkforge_dev_password / bnkforge_redis_dev). postgres and redis run under"
+  echo "     host networking, so these are known credentials reachable on the host."
+  echo "     For a FRESH install: set strong POSTGRES_PASSWORD and REDIS_PASSWORD in .env"
+  echo "     (e.g. openssl rand -hex 24) BEFORE first boot, then re-run — the DB has not"
+  echo "     initialized yet. For an EXISTING install: the current password is baked into"
+  echo "     the postgres data volume; rotate it deliberately (ALTER USER + update .env)"
+  echo "     rather than by editing .env alone."
+  echo ""
 fi
 
 # Create secrets directory if missing
@@ -358,12 +421,20 @@ fi
 # carries `MCP_PASSWORD=changeme`, which the backend REFUSES as a known-default, so
 # MCP is just as dead — but the value is non-empty, so the old check missed it and
 # printed "complete!" with no warning (fail-open). Surface all three cases here.
-_mcp_strip_quotes() {  # echo $1 with one layer of surrounding single/double quotes removed
+_mcp_strip_quotes() {  # normalize $1: trim surrounding whitespace + one quote layer
   local v="$1"
+  # bonnyr-f5 #193 M8: TRIM whitespace as well as quotes, before AND after the quote
+  # strip. Without this, `MCP_SERVICE_PASSWORD=changeme ` (a stray trailing space, or a
+  # leading one, or `" changeme "`) slipped past the known-default `case` below, so the
+  # guard printed "complete!" (fail-open) on a value the backend still treats as the
+  # `changeme` default and refuses — MCP silently dead. Trim outer space, strip one
+  # matched quote layer, trim again (covers `" changeme "`).
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"   # trim outer whitespace
   case "$v" in
     \"*\") v="${v#\"}"; v="${v%\"}" ;;   # "..."  -> compose strips these, so must we
     \'*\') v="${v#\'}"; v="${v%\'}" ;;   # '...'
   esac
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"   # trim inside-quote whitespace
   printf '%s' "$v"
 }
 MCP_PW=$(_mcp_strip_quotes "$(grep -E '^[[:space:]]*MCP_SERVICE_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)")
@@ -390,8 +461,18 @@ echo ""
 if [ "$MCP_USABLE" = "0" ]; then
   echo "  ⚠  MCP (AI assistant) integration is NOT active: MCP_SERVICE_PASSWORD is"
   echo "     unset or set to a known default (e.g. 'changeme', which the backend"
-  echo "     refuses) in .env, so the bundled MCP server cannot authenticate and its"
-  echo "     health probe will report UNHEALTHY. The rest of the stack is unaffected."
+  echo "     refuses) in .env, so the bundled MCP server cannot authenticate — every"
+  echo "     tool call 401s. The rest of the stack is unaffected."
+  # bonnyr-f5 #193 (deploy minor): describe what the PINNED image's healthcheck
+  # actually reports, not an aspirational signal. The mcp auth-probe
+  # (bnk_forge_mcp.healthcheck) SKIPS the probe and returns healthy when NO
+  # credential is set (has_credentials == False), so an unset password shows a
+  # GREEN/healthy mcp container even though it cannot serve; a known-default value
+  # is non-empty, so the probe runs and the container goes UNHEALTHY on the 401.
+  echo "     Note: with MCP_SERVICE_PASSWORD unset the mcp container may still report"
+  echo "     healthy (the probe is skipped when no credential is set); a known-default"
+  echo "     value instead drives it UNHEALTHY. Either way MCP will not serve — confirm"
+  echo "     with a real tool call rather than the container's health status."
   echo "     To enable it: set MCP_SERVICE_PASSWORD in .env to a strong, non-default"
   echo "     value and run"
   echo "       $COMPOSE_CMD up -d"
@@ -402,7 +483,15 @@ if [ "$URL" != "https://localhost" ]; then
   echo "        (accept the self-signed certificate warning)"
 fi
 echo ""
-echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else run: docker compose exec backend cat /app/keys/initial_admin_password)"
+# bonnyr-f5 #193 B1: with DEFAULT_ADMIN_PASSWORD unset the value is OMITTED from the
+# container (passthrough), so the pinned image applies its OWN default: an image that
+# generates writes it to /app/keys/initial_admin_password; an older pinned image seeds
+# its documented built-in default (e.g. "changeme") and that file does not exist.
+echo "  Login: admin  (password: the DEFAULT_ADMIN_PASSWORD you set in .env, if any."
+echo "         Otherwise, on an image that generates one:"
+echo "           docker compose exec backend cat /app/keys/initial_admin_password"
+echo "         If that file does not exist, this image seeds its built-in default"
+echo "         (e.g. 'changeme') — log in and change it immediately.)"
 echo ""
 echo "  Next steps:"
 echo "    1. Change your password on first login"

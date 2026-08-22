@@ -322,7 +322,7 @@
      match the new bundle's <code>VERSION</code> file before running the command above.</p>
 
   <div class="callout-warn">
-    <div class="callout-title">Before upgrading an older install to 4.0.0</div>
+    <div class="callout-title">Before upgrading an older install to this release</div>
     If your <code>.env</code> predates this release, reconcile it first, or the upgrade will fail
     to pull or refuse to boot:
     <ul>
@@ -334,7 +334,7 @@
       <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
           <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
           your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
-      <li><b>MCP service credential (from 4.0.0).</b> The bundled MCP server now authenticates as a
+      <li><b>MCP service credential (new in this release).</b> The bundled MCP server now authenticates as a
           dedicated <code>mcp</code> service account, not the human <code>admin</code>. Set
           <code>MCP_SERVICE_PASSWORD</code> to a strong secret in this <code>.env</code>: this
           compose file passes it to the backend (which provisions the <code>mcp</code> account from

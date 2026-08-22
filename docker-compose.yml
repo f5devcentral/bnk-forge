@@ -20,7 +20,13 @@ x-backend-env: &backend-env
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
   # #186: plumb the operator-chosen initial admin password to the backend
   # (config.py has no env_file, so an unpassed var never reaches the container).
-  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough). This root compose
+  # builds from source (HEAD backend), which treats "" as unset and generates — but keep
+  # the same omit-form as the shipped dist/ compose so a `BNK_FORGE_VERSION`-pinned 3.1.6
+  # image (whose `DEFAULT_ADMIN_PASSWORD: str = "changeme"` would be OVERRIDDEN by an
+  # empty "" and lock admin out) is safe here too. A map entry with NO value is passthrough
+  # (`docker run -e KEY` semantics): omitted when unset, forwarded when set in .env.
+  DEFAULT_ADMIN_PASSWORD:
   # #186: plumb the must-change gate too, or the seeded admin owes a password
   # change no route accepts (login is exempt; every other /api route 403s).
   # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
@@ -50,10 +56,13 @@ x-backend-env: &backend-env
   # bonnyr-f5 #193 B2: validate_production gates on these THREE as well as
   # MCP_SERVICE_PASSWORD. They must be deliverable from .env or ENVIRONMENT=production
   # bricks the backend into a restart loop listing problems the shipped .env cannot
-  # fix. Empty default = unset (config.py treats "" as unset and auto-generates the
-  # keys in development); set real values in .env to clear the production fail-fast.
-  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  # fix. bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough) — HEAD treats ""
+  # as unset and auto-generates, but a `BNK_FORGE_VERSION`-pinned 3.1.6 image uses
+  # `if self.KEY is None` and would boot with an empty JWT secret / invalid Fernet key. A
+  # map entry with NO value is passthrough: omitted when unset, forwarded when set — so
+  # every backend auto-generates. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes

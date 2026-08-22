@@ -40,7 +40,12 @@ x-local-backend-env: &local-backend-env
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
   # #186: plumb the operator-chosen initial admin password to the backend
   # (config.py has no env_file, so an unpassed var never reaches the container).
-  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough) — a present-but-empty
+  # "" (from `${VAR:-}`) would OVERRIDE a pinned 3.1.6 image's `DEFAULT_ADMIN_PASSWORD:
+  # str = "changeme"` and lock admin out (login schema rejects ""). A map entry with NO
+  # value is passthrough: omitted when unset, forwarded when set — so each backend applies
+  # its own default (3.1.6 "changeme"; generating backend a random pw).
+  DEFAULT_ADMIN_PASSWORD:
   # #186: plumb the must-change gate too, or the seeded admin owes a password
   # change no route accepts (login is exempt; every other /api route 403s).
   # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
@@ -61,10 +66,13 @@ x-local-backend-env: &local-backend-env
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
   ENVIRONMENT: ${ENVIRONMENT:-development}
   # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on, or
-  # ENVIRONMENT=production bricks the backend. Empty = unset (config.py treats "" as
-  # unset); set real values in .env to clear the production fail-fast.
-  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  # ENVIRONMENT=production bricks the backend. bonnyr-f5 #193 B1 (r4): OMIT-when-unset
+  # (null-value passthrough) — a pinned 3.1.6 backend uses `if self.KEY is None`, so a
+  # present-but-empty "" would boot with an empty JWT secret / invalid Fernet key instead
+  # of auto-generating. A map entry with NO value is passthrough: omitted when unset,
+  # forwarded when set; set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 # Shared bridge network — all services can resolve each other by service name

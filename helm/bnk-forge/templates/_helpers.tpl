@@ -72,6 +72,28 @@ backendEnv: env block shared by api/worker/beat. Wires DB + Redis URLs to
 in-cluster services and pulls secrets from the generated Secret.
 */}}
 {{- define "bnk-forge.backendEnv" -}}
+{{/* bonnyr-f5 #193 M10: render-time CORS/production guard, mirroring the backend's
+     core/config.py validate_production() SystemExit conditions exactly, so a fatal
+     posture is caught at `helm install` time instead of as a crashloop:
+       * "*" (wildcard) in ALLOWED_ORIGINS  -> fatal under staging AND production;
+       * "localhost"     in ALLOWED_ORIGINS -> fatal under production only.
+     An EMPTY ALLOWED_ORIGINS is deliberately NOT failed: the backend accepts it
+     (no wildcard, no localhost) and boots, so the default render (ENVIRONMENT
+     production + the empty ALLOWED_ORIGINS shipped in values.yaml) stays green under
+     `helm lint` and a bare `helm template` — this guard fires only once an operator
+     puts a genuinely fatal value in a real production/staging posture. Mirrors the
+     deterministic fail-at-render pattern secrets.yaml uses for mcpPassword/mcpUsername. */}}
+{{- $benv := .Values.api.env | default dict -}}
+{{- $environment := $benv.ENVIRONMENT | default "" -}}
+{{- if or (eq $environment "production") (eq $environment "staging") -}}
+{{- $origins := $benv.ALLOWED_ORIGINS | default "" -}}
+{{- if contains "*" $origins -}}
+{{- fail (printf "api.env.ALLOWED_ORIGINS contains '*' (wildcard) under ENVIRONMENT=%s; the backend rejects this at boot (validate_production) and crashloops. Set api.env.ALLOWED_ORIGINS to your explicit origin(s), e.g. https://forge.example.com." $environment) -}}
+{{- end -}}
+{{- if and (eq $environment "production") (contains "localhost" $origins) -}}
+{{- fail "api.env.ALLOWED_ORIGINS contains 'localhost' under ENVIRONMENT=production; the backend rejects this at boot (validate_production) and crashloops. Set api.env.ALLOWED_ORIGINS to your actual domain/IP, e.g. https://forge.example.com (or set ENVIRONMENT=development for a local trial)." -}}
+{{- end -}}
+{{- end -}}
 - name: POSTGRES_HOST
   value: {{ include "bnk-forge.fullname" . }}-postgres
 - name: REDIS_HOST
@@ -182,22 +204,37 @@ sharedVolumes: PVC-backed volume references for pod spec.
 {{- end -}}
 
 {{/*
-secretsChecksum: a DETERMINISTIC digest of the inputs that determine the release
-Secret, for the pod `checksum/secret` annotations. bonnyr-f5 #193 (minor): hashing
-the rendered secrets.yaml directly (`include ".../secrets.yaml" . | sha256sum`)
-re-executes its `randAlphaNum` generate-fallbacks once per include, so api/worker/
-beat/mcp got four DIFFERENT checksums within a single render and every `helm
-template` churned them (perpetual GitOps drift). Hash the stable inputs instead:
-the values.yaml `secrets.*` block plus the persisted Secret's data (reused across
-upgrades via `lookup`, nil-folded exactly as secrets.yaml does). All four
-deployments now share one hash that is stable across renders and changes only when
-a real input changes -- including a genuine mcp-password rotation, which lands in
-the persisted `.data` and so flips this digest on the next sync.
+deriveSecret: DETERMINISTIC per-release material for a GENERATED secret fallback.
+bonnyr-f5 #193 M7. Generation must be stable across renders and across template
+includes, or two things break: (a) the rendered Secret churns on every GitOps sync
+(perpetual drift), and (b) checksum/secret cannot faithfully track the Secret.
+`randAlphaNum` satisfies neither -- it returns a fresh value on every call, so the
+Secret's mcp-password differed from render to render while a checksum hashed only
+the raw inputs stayed byte-identical (M7: the rotated/generated credential lands in
+the Secret but the pods never roll). This derives the fallback from the release
+identity plus a purpose tag: identical on every include and every render, different
+per release and per key. Operator-supplied values and values persisted in the Secret
+(via `lookup`) are ALWAYS honoured verbatim upstream of this, so a production
+operator's strong secret is never replaced by a derived one -- this only fills the
+"nothing set, nothing persisted" bootstrap slot. Args: dict "ctx" $ "purpose" str "len" int.
+*/}}
+{{- define "bnk-forge.deriveSecret" -}}
+{{- $seed := printf "%s|%s|%s|%s" .ctx.Release.Name .ctx.Release.Namespace (include "bnk-forge.fullname" .ctx) .purpose -}}
+{{- $seed | sha256sum | trunc (int .len) -}}
+{{- end -}}
+
+{{/*
+secretsChecksum: digest for the pod `checksum/secret` annotations. bonnyr-f5 #193 M7:
+hash the RENDERED Secret so the annotation tracks exactly what the Secret contains --
+including a generated or rotated mcp-password. This is only correct because every
+generate-fallback in secrets.yaml is now DETERMINISTIC (see deriveSecret): re-rendering
+secrets.yaml here yields byte-identical output to the emitted Secret, so all four
+deployments (api/worker/beat/mcp) get the SAME digest, it is stable across renders when
+nothing changed, and it flips the moment any resolved value changes (an operator edit, a
+persisted-value change, or a rotation of a known-default persisted credential). The prior
+input-only hash (values + persisted .data) missed exactly the rotation/generation case:
+the new credential never appears in either input, so the digest never moved.
 */}}
 {{- define "bnk-forge.secretsChecksum" -}}
-{{- $name := printf "%s-secrets" (include "bnk-forge.fullname" .) -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
-{{- $data := dict -}}
-{{- if and $existing $existing.data -}}{{- $data = $existing.data -}}{{- end -}}
-{{- printf "%s|%s" (toYaml .Values.secrets) (toYaml $data) | sha256sum -}}
+{{- include (print .Template.BasePath "/secrets.yaml") . | sha256sum -}}
 {{- end -}}
