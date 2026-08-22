@@ -59,8 +59,10 @@ readiness verification explicit and repeatable.
 - Typical cause: the MCP service-account password drifted from the backend's seeded
   value (e.g. `MCP_SERVICE_PASSWORD` changed on one side only). MCP uses its own
   dedicated `mcp` service account, never the human admin login (#187).
-- Action: set `MCP_USERNAME=mcp` / `MCP_PASSWORD` (backend `MCP_SERVICE_PASSWORD`) for
-  the MCP service and recreate the `mcp` container, then rerun smoke.
+- Action: set `MCP_SERVICE_PASSWORD` in `.env` (compose maps it to the container's
+  `BNK_FORGE_PASSWORD` and the backend's `MCP_SERVICE_PASSWORD`) and recreate the `mcp`
+  container, then rerun smoke. Do NOT set `MCP_USERNAME` — it is not read by either
+  process; the service username is fixed to the dedicated `mcp` account.
 
 ### Scope boundaries (intentional)
 

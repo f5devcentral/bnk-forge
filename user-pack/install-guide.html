@@ -166,8 +166,8 @@
     </tr>
     <tr>
       <td><code>BNK_FORGE_VERSION</code></td>
-      <td><code>latest</code></td>
-      <td>Rolling latest release. To pin a specific version, use its tag, e.g. <code>3.1.6</code>.</td>
+      <td><em>leave as shipped</em></td>
+      <td>Pre-set to this bundle's version (see the <code>VERSION</code> file) — it always names an image the release actually published. Do <b>not</b> change it to <code>latest</code>: a floating tag can resolve to an image whose credential contract differs from this bundle.</td>
     </tr>
     <tr>
       <td><code>POSTGRES_PASSWORD</code></td>
@@ -259,9 +259,12 @@
     </li>
     <li>
       <p><b>Log in as <code>admin</code>.</b><br>
-         No default password ships. Unless you set <code>DEFAULT_ADMIN_PASSWORD</code> before
-         install, the backend generates a random one on first start and writes it to a file
-         (the plaintext is never written to the logs). Retrieve it with:</p>
+         No default password ships. The simplest path is to set
+         <code>DEFAULT_ADMIN_PASSWORD</code> in <code>.env</code> before install and log in with
+         that value. On releases that generate an admin password, the backend instead writes a
+         random one to a file on first start (the plaintext is never written to the logs);
+         retrieve it with the command below. If that file is absent, use the
+         <code>DEFAULT_ADMIN_PASSWORD</code> you set.</p>
       <pre><span class="prompt">$ </span>docker compose exec backend cat /app/keys/initial_admin_password</pre>
       <div class="callout-warn">
         <div class="callout-title">Change the admin password immediately</div>
@@ -304,8 +307,9 @@
   <!-- ── Updating ── -->
   <h2>Updating to a newer build</h2>
 
-  <p>Because <code>BNK_FORGE_VERSION=latest</code> is a rolling tag, updating is simple.
-     From the install directory:</p>
+  <p>Each bundle pins <code>BNK_FORGE_VERSION</code> to its own release. To update, download the
+     newer bundle and run its installer from the new install directory — the shipped
+     <code>BNK_FORGE_VERSION</code> already points at the matching images:</p>
 
   <pre><span class="comment"># Recommended — uses the installer for any migration steps:</span>
 <span class="prompt">$ </span>./install.sh          <span class="comment"># Linux</span>
@@ -314,8 +318,8 @@
 <span class="comment"># Alternative — manual pull and restart:</span>
 <span class="prompt">$ </span>docker compose pull &amp;&amp; docker compose up -d</pre>
 
-  <p>If you pinned a specific build tag in <code>.env</code>, update <code>BNK_FORGE_VERSION</code>
-     to the new tag before running the command above.</p>
+  <p>If you carried an old <code>.env</code> forward, update its <code>BNK_FORGE_VERSION</code> to
+     match the new bundle's <code>VERSION</code> file before running the command above.</p>
 
   <div class="callout-warn">
     <div class="callout-title">Before upgrading an older install to 4.0.0</div>
@@ -324,8 +328,9 @@
     <ul>
       <li><b>Registry &amp; version.</b> Set <code>BNK_FORGE_REGISTRY=ghcr.io/f5devcentral</code>
           (older packages pointed at a private org that no longer resolves), and replace any pinned
-          <code>BNK_FORGE_VERSION</code> such as <code>3.0.1</code> with <code>latest</code> or a
-          current tag like <code>3.1.6</code> — a stale pin pulls a tag that no longer exists.</li>
+          <code>BNK_FORGE_VERSION</code> such as <code>3.0.1</code> with the version this bundle
+          ships (see its <code>VERSION</code> file) — a stale pin pulls a tag that no longer exists.
+          Do not substitute <code>latest</code>.</li>
       <li><b>Non-root artifact images.</b> The container runner now refuses any image whose
           <code>USER</code> is root or a <em>named</em> user (e.g. <code>USER nonroot</code>). Rebuild
           your own runner images with a numeric <code>USER 1000</code> before upgrading.</li>
@@ -382,7 +387,7 @@
 
 <footer>
   BNK Forge install guide &mdash; generated for the current release &nbsp;&middot;&nbsp;
-  Registry: <code>ghcr.io/f5devcentral</code> &nbsp;&middot;&nbsp; Tag: <code>latest</code>
+  Registry: <code>ghcr.io/f5devcentral</code> &nbsp;&middot;&nbsp; Tag: this bundle's <code>VERSION</code>
 </footer>
 
 </body>

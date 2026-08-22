@@ -1,27 +1,38 @@
 #!/usr/bin/env bash
-# Keep the version-bearing release artifacts in lockstep with VERSION:
+# Keep EVERY version-bearing DEPLOYMENT artifact in lockstep with VERSION:
 #   - the bnk-forge Helm chart image tag (values.yaml) and Chart `appVersion`
 #   - the frontend package.json version
 #   - the sibling bnk-operator chart image tag (values.yaml) and `appVersion`
+#   - the packaged dist/ compose image pins (dist/docker-compose.yml — the 7
+#     `${BNK_FORGE_VERSION:-<v>}` defaults) and dist/.env.example's
+#     BNK_FORGE_VERSION default
+#   - the IBM Cloud installer's BNK_FORGE_VERSION default AND the pins in the
+#     compose template it embeds (scripts/ibm_cloud_bnk_forge.sh)
 #
-# All five publish at :${VERSION} on the release train — docker-bake.hcl's
-# `default` group builds the operator image alongside the rest — so any drift
-# means an image tag the release never publishes -> ImagePullBackOff. This is the
-# one place that writes THESE FIVE, and --check verifies them in CI so drift
-# can't reappear silently.
+# ALL of these resolve to an image published at :${VERSION} on the release train
+# — docker-bake.hcl's `default` group builds the operator image alongside the
+# rest — so any drift means an image tag the release never publishes ->
+# ImagePullBackOff / `manifest unknown`. This is the ONE place that writes them,
+# and --check verifies them in CI so drift can't reappear silently.
 #
-# Scope, precisely: this owns the five release-train image-pin artifacts above —
-# NOT every version string in the repo. Deliberately out of scope, and NOT
-# claimed here: frontend-v2/package-lock.json's root `version` (npm owns it; it
-# desyncs harmlessly — `npm ci` tolerates it), and the dist/ documentation
-# copies (dist/.env.example, dist/README.md), which are packaged separately and
-# tracked under PR #183. Don't read "the one place" as "every version site."
+# WHY dist/ is now IN scope (bonnyr-f5 #193 r3, B1): the dist/ compose + env +
+# the IBM installer previously hard-pinned a FORWARD-DATED version (`4.0.0`) that
+# nothing had published, so a fresh install rendered `manifest unknown` while
+# --check stayed green because it could not see dist/. The pins are now DERIVED
+# from VERSION here: at release, `--write $NEW` re-stamps every one atomically and
+# release.yml stages exactly `--list`, so the packaged pin can never name a tag
+# the release did not cut. Never re-hardcode a version into these files — set it
+# here and let --write propagate it.
 #
-# Synced: the bnk-forge image tag + appVersion, the frontend package.json, AND
-# the bnk-operator image tag + appVersion. NOT synced, deliberately: each
-# Chart.yaml's own `version:` — Helm treats the chart version and appVersion as
-# independent, and release.yml neither packages nor pushes the chart, so a static
-# chart version publishes nothing wrong. Leave it alone rather than "fixing" it.
+# STILL out of scope, deliberately:
+#   - frontend-v2/package-lock.json's root `version` (npm owns it; `npm ci`
+#     tolerates the desync).
+#   - dist/docker-compose.local.yml — a pure networking OVERLAY that carries NO
+#     image: line of its own (it inherits every pin from dist/docker-compose.yml),
+#     so there is nothing here to stamp; adding it would only make --check vacuous.
+#   - each Chart.yaml's own `version:` — Helm treats chart version and appVersion
+#     as independent, and release.yml neither packages nor pushes the chart, so a
+#     static chart version publishes nothing wrong. Leave it alone.
 #
 # Usage:
 #   sync-version-artifacts.sh --write <version>   # set all artifacts to <version>
@@ -37,11 +48,16 @@ PKG="$ROOT/frontend-v2/package.json"
 # :${VERSION}), so it is synced here too rather than pinned.
 OPVALUES="$ROOT/bnk-operator/charts/bnk-operator/values.yaml"
 OPCHART="$ROOT/bnk-operator/charts/bnk-operator/Chart.yaml"
+# Packaged dist/ install path and the IBM Cloud installer (bonnyr-f5 #193 r3, B1).
+DISTENV="$ROOT/dist/.env.example"
+DISTCOMPOSE="$ROOT/dist/docker-compose.yml"
+IBMCLOUD="$ROOT/scripts/ibm_cloud_bnk_forge.sh"
 
 # Canonical artifact list. --write, --list, and the release job's `git add` all
 # derive the file set from HERE, so the writer and its stager cannot diverge and
 # leave a synced-but-unstaged file behind (bonnyr-f5 #180 r3, BLOCKER 1).
-SYNCED_FILES=("$VALUES" "$CHART" "$PKG" "$OPVALUES" "$OPCHART")
+SYNCED_FILES=("$VALUES" "$CHART" "$PKG" "$OPVALUES" "$OPCHART" \
+              "$DISTENV" "$DISTCOMPOSE" "$IBMCLOUD")
 
 # ── Value readers ─────────────────────────────────────────────────────────────
 # Each reads EVERY matching version line (not grep -m1), so a second occurrence
@@ -54,6 +70,19 @@ APPVER_RE='^appVersion:'
 APPVER_SED='s/^appVersion: "?([^"]*)"?.*/\1/'
 PKGVER_RE='^  "version":'
 PKGVER_SED='s/^  "version": "([^"]*)".*/\1/'
+# dist/.env.example: a bare shell assignment `BNK_FORGE_VERSION=<v>` (the compose
+# files read this at runtime as ${BNK_FORGE_VERSION:-<default>}). Only the
+# top-level (column-0) assignment matches — the commented example above it is
+# `#   BNK_FORGE_VERSION=...` and is skipped.
+DISTENV_RE='^BNK_FORGE_VERSION='
+DISTENV_SED='s/^BNK_FORGE_VERSION=(.*)/\1/'
+# Compose image pins AND the IBM installer default, both written as the shell
+# default-expansion `${BNK_FORGE_VERSION:-<v>}`. The reader pulls the <v> out of
+# EVERY such site (7 pins in dist/docker-compose.yml; 1 default + 7 embedded pins
+# in the IBM installer), so a second occurrence can't drift unseen. `$`, `{`, `}`
+# are escaped so grep -E / sed -E read them literally, not as anchor/interval.
+PIN_RE='\$\{BNK_FORGE_VERSION:-'
+PIN_SED='s/.*\$\{BNK_FORGE_VERSION:-([^}]*)\}.*/\1/'
 
 # The image tag lives inside the top-level `image:` block. The WRITER scopes its
 # substitution to that block (sed range below); the READERS (--check and --write's
@@ -106,6 +135,16 @@ case "${1:-}" in
     sed -i.syncbak -E "s|^  \"version\": \"[^\"]*\"|  \"version\": \"${V}\"|" "$PKG"
     sed -i.syncbak -E "${IMG_RANGE} s|^  tag: .*|  tag: \"${V}\"|" "$OPVALUES"
     sed -i.syncbak -E "s|^appVersion: .*|appVersion: \"${V}\"|" "$OPCHART"
+    # dist/.env.example: rewrite the bare top-level assignment only.
+    sed -i.syncbak -E 's|^BNK_FORGE_VERSION=.*|BNK_FORGE_VERSION='"${V}"'|' "$DISTENV"
+    # Every `${BNK_FORGE_VERSION:-<old>}` default -> `${BNK_FORGE_VERSION:-<V>}`.
+    # The LHS pattern is single-quoted (literal to the shell) and the replacement
+    # concatenates single-quoted literals around the interpolated ${V}; V is
+    # validated above to [A-Za-z0-9._+-], so it carries no sed-replacement
+    # metacharacter (`&`/`\`/delimiter). Applies to the dist compose pins and to
+    # BOTH the IBM installer default (line ~32) and its embedded compose pins.
+    sed -i.syncbak -E 's|\$\{BNK_FORGE_VERSION:-[^}]*\}|${BNK_FORGE_VERSION:-'"${V}"'}|g' "$DISTCOMPOSE"
+    sed -i.syncbak -E 's|\$\{BNK_FORGE_VERSION:-[^}]*\}|${BNK_FORGE_VERSION:-'"${V}"'}|g' "$IBMCLOUD"
     for f in "${SYNCED_FILES[@]}"; do rm -f "${f}.syncbak"; done
 
     # Fail closed: a sed whose pattern matched nothing no-ops silently, and the
@@ -134,8 +173,11 @@ case "${1:-}" in
     _verify_file "frontend version"    "$PKG"      "$PKGVER_RE" "$PKGVER_SED"
     _verify_file "operator image.tag"  "$OPVALUES" "$TAG_RE"    "$TAG_SED"    "$IMG_RANGE"
     _verify_file "operator appVersion" "$OPCHART"  "$APPVER_RE" "$APPVER_SED"
+    _verify_file "dist env default"    "$DISTENV"  "$DISTENV_RE" "$DISTENV_SED"
+    _verify_file "dist compose pins"   "$DISTCOMPOSE" "$PIN_RE"  "$PIN_SED"
+    _verify_file "ibm-cloud pins"      "$IBMCLOUD" "$PIN_RE"     "$PIN_SED"
     [ "$rc" -eq 0 ] || exit 1
-    echo "synced bnk-forge tag+appVersion, frontend package.json, operator tag+appVersion -> ${V}" >&2
+    echo "synced bnk-forge tag+appVersion, frontend package.json, operator tag+appVersion, dist compose+env, ibm-cloud installer -> ${V}" >&2
     ;;
 
   --check)
@@ -176,10 +218,15 @@ case "${1:-}" in
     _check_file "frontend version"    "$PKG"      "$PKGVER_RE" "$PKGVER_SED"
     _check_file "operator image.tag"  "$OPVALUES" "$TAG_RE"    "$TAG_SED"    "$IMG_RANGE"
     _check_file "operator appVersion" "$OPCHART"  "$APPVER_RE" "$APPVER_SED"
-    # Backstop: five artifacts, each with >=1 version line, is the minimum a
-    # healthy tree yields. Fewer means a key vanished — treat as vacuous.
-    if [ "$total" -lt 5 ]; then
-      echo "::error::--check matched only $total version lines (expected >=5) — vacuous" >&2
+    _check_file "dist env default"    "$DISTENV"  "$DISTENV_RE" "$DISTENV_SED"
+    _check_file "dist compose pins"   "$DISTCOMPOSE" "$PIN_RE"  "$PIN_SED"
+    _check_file "ibm-cloud pins"      "$IBMCLOUD" "$PIN_RE"     "$PIN_SED"
+    # Backstop: eight artifacts, each with >=1 version line, is the minimum a
+    # healthy tree yields (the dist compose contributes 7 pins and the IBM
+    # installer 8, so the real total is far higher — this floor only catches a
+    # catastrophic "every key vanished"). Fewer means a key vanished — vacuous.
+    if [ "$total" -lt 8 ]; then
+      echo "::error::--check matched only $total version lines (expected >=8) — vacuous" >&2
       exit 1
     fi
     exit "$rc"

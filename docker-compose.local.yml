@@ -51,9 +51,11 @@ x-local-backend-env: &local-backend-env
   # MCP server authenticates with; plumb it (and the username) here or the mcp
   # account is never seeded and the mcp client cannot authenticate. Unset -> not
   # seeded (no secret is generated for MCP -- #188-over-#186 consolidation).
-  # bonnyr-f5 #193 B1: alias the PASSWORD only. The USERNAME is not aliased — a legacy
-  # MCP_USERNAME=admin must never resolve the service username (old default admin, new
-  # default mcp), or a pre-guard backend rewrites the human admin row to changeme.
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased — a
+  # legacy MCP_USERNAME=admin must never resolve the service username (old default admin,
+  # new default mcp), or a pre-guard backend rewrites the human admin row to changeme.
   MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.

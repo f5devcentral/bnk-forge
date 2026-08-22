@@ -20,15 +20,14 @@
 # ── Registry configuration ──────────────────────────────────────────────────
 # Set BNK_FORGE_REGISTRY and BNK_FORGE_VERSION in .env or environment:
 #   BNK_FORGE_REGISTRY=ghcr.io/f5devcentral    (no trailing slash)
-#   BNK_FORGE_VERSION=4.0.0                  (the shipped default: the release this
-#                                            bundle ships with — the first image that
-#                                            carries the credential guards this compose
-#                                            file's contract assumes. bonnyr-f5 #193 B1:
-#                                            do NOT default to `latest`, which currently
-#                                            resolves to the pre-guard 3.1.6 image and
-#                                            would let this new contract rewrite the human
-#                                            admin row. Pin a newer tag only when you have
-#                                            confirmed it ships the same guards.)
+#   BNK_FORGE_VERSION=<this bundle's VERSION>   (the shipped default below is
+#     NOT hand-edited: it is DERIVED from the repo VERSION file and re-stamped at
+#     release by scripts/sync-version-artifacts.sh --write, so it always names an
+#     image the same release actually published — never a forward-dated guess
+#     (bonnyr-f5 #193 B1). Do NOT default to `latest`: the floating tag can point
+#     at an image whose credential contract differs from what this compose file
+#     assumes. Pin a specific tag only when you have confirmed it ships the same
+#     guards as the bundle you are installing.)
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
@@ -54,12 +53,17 @@ x-backend-env: &backend-env
   # is never seeded and the mcp client cannot authenticate (no secret is generated
   # for MCP -- #188-over-#186 consolidation). No shipped default — the operator sets
   # MCP_SERVICE_PASSWORD in .env (see .env.example).
-  # bonnyr-f5 #193 B1: alias the PASSWORD only (a value alias is harmless). The
-  # USERNAME is NOT aliased: an existing customer .env built from the old published
-  # dist/.env.example carries `MCP_USERNAME=admin`, and `${...:-${MCP_USERNAME:-mcp}}`
-  # would resolve the service username to `admin`, which a pre-guard 3.1.x backend
-  # (what `latest` still points at) uses to rewrite the human admin row to `changeme`.
-  # A legacy MCP_USERNAME value is never valid here, so take only MCP_SERVICE_USERNAME.
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and mind what the alias can
+  # resolve to. The old published dist/.env.example shipped `MCP_PASSWORD=changeme`,
+  # which the backend rejects as a known-default (MCP_KNOWN_DEFAULT_PASSWORDS) — so
+  # the alias only actually ENABLES MCP for a NON-DEFAULT legacy value; a legacy
+  # `changeme`/`mcp-service-changeme` resolves through but leaves MCP disabled
+  # (install.sh warns on exactly those). The USERNAME is NOT aliased: an existing
+  # customer .env built from the old published dist/.env.example carries
+  # `MCP_USERNAME=admin`, and `${...:-${MCP_USERNAME:-mcp}}` would resolve the
+  # service username to `admin`, which a pre-guard backend uses to rewrite the human
+  # admin row. A legacy MCP_USERNAME value is never valid here, so take only
+  # MCP_SERVICE_USERNAME.
   MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so an operator who sets it to
@@ -200,7 +204,7 @@ services:
           memory: 32M
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -241,7 +245,7 @@ services:
           memory: 256M
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -273,7 +277,7 @@ services:
           memory: 512M
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -305,7 +309,7 @@ services:
           memory: 512M
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -335,7 +339,7 @@ services:
           memory: 64M
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -361,7 +365,7 @@ services:
           memory: 32M
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -387,7 +391,7 @@ services:
           memory: 32M
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
@@ -408,11 +412,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     # Auth-probe healthcheck (bonnyr-f5 #188, INV-10): log in to the backend with
-    # the configured MCP credentials and exit non-zero on 401 OR when no credential
-    # is configured. MCP_SERVICE_PASSWORD ships empty (see .env.example), so without this the
-    # container would report green while every tool call 401s. A bare liveness ping
-    # can't see that — it only proves the HTTP port answers. Same probe the dev
-    # compose uses, so the "no creds -> unhealthy" signal fires on the shipped path too.
+    # the configured MCP credentials and exit non-zero on 401. MCP_SERVICE_PASSWORD
+    # ships empty (see .env.example), so a bare liveness ping would report green
+    # while every tool call 401s — it only proves the HTTP port answers. This is the
+    # same probe the dev compose uses. NOTE: the "no credentials at all -> UNHEALTHY"
+    # signal depends on the probe returning non-zero when no credential is set; that
+    # behaviour lands with the credential-guard release (the image this bundle pins
+    # is derived from VERSION and moves to the guard-carrying tag at release, in
+    # lockstep with the chart). On an older pinned image the probe treats "no
+    # credentials" as healthy, so verify MCP with a real tool call after install.
     healthcheck:
       test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
       interval: 30s

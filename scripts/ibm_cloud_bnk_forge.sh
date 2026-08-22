@@ -25,11 +25,13 @@
 set -euo pipefail
 
 # ── Tunables (override via environment if desired) ───────────────────────────
-# bonnyr-f5 #193 B1: default to the release this tree ships (the first image carrying
-# the credential guards this installer's env contract assumes), NOT `latest` — which
-# currently resolves to the pre-guard 3.1.6 image. Override only with a tag you have
-# confirmed ships the same guards.
-BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-4.0.0}"   # image tag to pull
+# bonnyr-f5 #193 B1: the default below is DERIVED from the repo VERSION file and
+# re-stamped at release by scripts/sync-version-artifacts.sh --write, so it always
+# names an image the same release actually published — never a forward-dated guess
+# and never `latest` (a floating tag can point at an image whose credential contract
+# differs from this installer's). Do NOT hand-edit it; override at runtime only with
+# a tag you have confirmed ships the same guards.
+BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-3.1.6}"   # image tag to pull (sync-managed)
 NAME_PREFIX="${NAME_PREFIX:-bnk-forge}"
 SUFFIX="$(date +%m%d%H%M)"
 VPC_NAME="${NAME_PREFIX}-vpc-${SUFFIX}"
@@ -88,7 +90,12 @@ ibmcloud is instance-profiles --output json | jq -e --arg p "${PROFILE}" '[.[].n
 log "Selected profile '${PROFILE}' (>= ${VCPU} vCPU, >= ${RAM} GB)."
 
 # ── Prompt 4: existing SSH key ───────────────────────────────────────────────
-mapfile -t SSH_KEYS < <(ibmcloud is keys --output json | jq -r '.[].name')
+# `while read` not `mapfile`: mapfile/readarray is bash 4+, and stock macOS ships
+# bash 3.2.57 where it is rc=127 (bonnyr-f5 #193 — same class fixed in the release
+# scripts). Read the JSON array line-by-line into SSH_KEYS portably.
+SSH_KEYS=()
+while IFS= read -r _k; do [ -n "$_k" ] && SSH_KEYS+=("$_k"); done \
+  < <(ibmcloud is keys --output json | jq -r '.[].name')
 [ "${#SSH_KEYS[@]}" -gt 0 ] || die "No SSH keys found in region '${REGION}'. Create one: ibmcloud is key-create ..."
 echo "Available IBM Cloud SSH keys:"
 PS3="Select the SSH key to install on the VSI: "
@@ -392,9 +399,15 @@ x-backend-env: &backend-env
   # to it on boot, so it must receive it too — otherwise the mcp account is never
   # seeded and the mcp client can never authenticate (no secret is generated for
   # MCP under the #188-over-#186 consolidation; bonnyr-f5 #193).
-  # bonnyr-f5 #193 B1: alias the PASSWORD only; the USERNAME is not aliased (a legacy
-  # MCP_USERNAME=admin must never resolve the service username — old default admin,
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased (a
+  # legacy MCP_USERNAME=admin must never resolve the service username — old default admin,
   # new default mcp — or a pre-guard backend rewrites the human admin row).
+  # #193: also plumb the DEFAULT_ADMIN_* gate — config.py has no env_file, so an
+  # unpassed var never reaches the container. Unset -> generated + must-change (secure).
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
   MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
@@ -486,7 +499,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -519,7 +532,7 @@ services:
       start_period: 30s
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -537,7 +550,7 @@ services:
     restart: unless-stopped
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -555,7 +568,7 @@ services:
     restart: unless-stopped
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -571,7 +584,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -587,7 +600,7 @@ services:
       start_period: 10s
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -599,7 +612,7 @@ services:
     restart: unless-stopped
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-4.0.0}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging

@@ -25,8 +25,10 @@ x-local-backend-env: &local-backend-env
   # 127.0.0.1:2375 is the container's own loopback here, not the host).
   DOCKER_HOST: tcp://docker-socket-proxy:2375
   # MCP service account (see base compose): no shipped default (#186/#187).
-  # bonnyr-f5 #193 B1: alias the PASSWORD only; the USERNAME is not aliased (a legacy
-  # MCP_USERNAME=admin must never resolve the service username).
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased (a
+  # legacy MCP_USERNAME=admin must never resolve the service username).
   MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
   MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
   # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.

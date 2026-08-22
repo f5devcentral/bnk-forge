@@ -28,7 +28,7 @@ nano .env   # Set BNK_FORGE_REGISTRY and passwords
 | Variable | Description | Example |
 |---|---|---|
 | `BNK_FORGE_REGISTRY` | Container registry URL (no trailing slash) | `ghcr.io/f5devcentral` (public) |
-| `BNK_FORGE_VERSION` | Image version tag | `latest` (or pin e.g. `3.1.6`) |
+| `BNK_FORGE_VERSION` | Image version tag. Ships pre-set to this bundle's version (see the `VERSION` file); leave it as shipped. Do **not** set it to `latest` — a floating tag can resolve to an image whose credential contract differs from this bundle. | *(pre-set — leave as shipped)* |
 | `POSTGRES_PASSWORD` | PostgreSQL password | *(change for production)* |
 | `REDIS_PASSWORD` | Redis password | *(change for production)* |
 | `MCP_SERVICE_PASSWORD` | Password for the dedicated `mcp` service account (the MCP server receives the same value as `BNK_FORGE_PASSWORD`). Ships **empty** — MCP stays disabled until you set a strong secret. Never `admin`. The legacy name `MCP_PASSWORD` is still honored as an alias for existing `.env` files. | *(required to enable MCP)* |
@@ -52,7 +52,7 @@ chmod +x install.sh
 - **Mac/Windows (`--local`):** open **https://localhost**
 - **Linux server:** open **https://\<server-ip\>** — the installer prints the exact URL at the end
 
-Accept the self-signed certificate warning. Login as **admin** — retrieve the generated password with `docker compose exec backend cat /app/keys/initial_admin_password`, or set `DEFAULT_ADMIN_PASSWORD` before install. You'll change it on first login.
+Accept the self-signed certificate warning. Login as **admin**. Set `DEFAULT_ADMIN_PASSWORD` in `.env` before install to choose the initial password; otherwise the backend generates one on first boot and writes it to `/app/keys/initial_admin_password` — retrieve it with `docker compose exec backend cat /app/keys/initial_admin_password` (available on releases that generate an admin password; if the file is absent, use the `DEFAULT_ADMIN_PASSWORD` you set). You'll change it on first login.
 
 ---
 

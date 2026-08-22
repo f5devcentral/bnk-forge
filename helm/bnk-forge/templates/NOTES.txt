@@ -16,8 +16,21 @@ account, so the mcp account would be disabled on upgrade and MCP would go
 permanently down while this install reports success (the chart now fails the render
 if you set it to 'admin'). Set secrets.mcpPassword to a strong value (the same
 value the MCP server receives as BNK_FORGE_PASSWORD), or leave it empty to
-auto-generate one.
+auto-generate one. Note: the mcp readiness probe only takes the pod out of service
+when no/ bad credentials are detected on the credential-guard release; the guarantee
+lands with the image the chart pins (image.tag == this chart's appVersion), so on an
+older pinned image confirm MCP with a real tool call rather than trusting readiness.
 {{- end }}
+
+REQUIRED BEFORE THE PODS CAN START — set ALLOWED_ORIGINS:
+  The api/worker/beat run with ENVIRONMENT=production, which REFUSES to boot unless
+  ALLOWED_ORIGINS names real external origins (no '*', no localhost). The chart's
+  default (https://localhost) is a placeholder that fails that check, so a bare
+  `helm install` leaves api/worker/beat in CrashLoopBackOff. Install/upgrade with your
+  cluster's real origin(s), e.g.:
+    --set api.env.ALLOWED_ORIGINS="https://forge.example.com"
+  (comma-separate multiple; match the host/port you actually reach the proxy on).
+  Until this is set the login steps below will not succeed because no pod is up.
 
 To reach the UI:
 {{- if .Values.ingress.enabled }}
@@ -29,13 +42,15 @@ To reach the UI:
   open https://localhost:8443/
 {{- end }}
 
-Admin login: username 'admin'. Retrieve the password with:
+Admin login (once the pods are up — see the ALLOWED_ORIGINS requirement above):
+username 'admin'. Retrieve the chart-provisioned password with:
   kubectl get secret {{ include "bnk-forge.fullname" . }}-secrets -o jsonpath='{.data.admin-password}' | base64 -d
-This is the per-install value the backend seeds the 'admin' account with on a fresh
-install — and rotates it to if you upgraded from a build that shipped a default
-password — so it is what authenticates now. You will be required to change it on
-first login (the API refuses other calls until you do). After you change it, use your
-new password — the value above no longer authenticates.
+This is the per-install value carried in the Secret. How the backend USES it depends
+on the image this chart pins (image.tag {{ .Values.image.tag }}): a build that seeds
+the admin account from this Secret and rotates a shipped-default admin will authenticate
+you with the value above and require a password change on first login; an older image
+that predates that behaviour may still accept its own default credential. Treat the
+value above as the intended admin password and change it on first login.
 
 IMPORTANT:
   * Shared volumes use ReadWriteMany. Set global.sharedStorageClass to a

@@ -63,12 +63,17 @@ spec:
           ports:
             - containerPort: 8081
               name: mcp
-          # bonnyr-f5 #193 M7/M4: the auth-probe healthcheck
+          # bonnyr-f5 #193 M7/M4/M5: the auth-probe healthcheck
           # (`python -m bnk_forge_mcp.healthcheck`) belongs on READINESS only. It
           # logs in to the backend and exits non-zero on 401, so a credential
-          # drift or a disabled mcp row (M8) correctly takes the pod OUT OF
-          # SERVICE on Kubernetes too, not just the compose/dist paths — a
-          # tcpSocket readiness probe would only prove the port is open.
+          # drift or a disabled mcp row (M8) takes the pod OUT OF SERVICE on
+          # Kubernetes too, not just the compose/dist paths — a tcpSocket readiness
+          # probe would only prove the port is open. The "no credentials at all ->
+          # NOT READY" half of that guarantee depends on the probe returning
+          # non-zero when no credential is configured; that behaviour ships with the
+          # credential-guard image (the tag this chart pins, image.tag, moves to it
+          # in lockstep at release). On an older pinned image the probe treats "no
+          # credentials" as ready, so verify MCP with a real tool call.
           readinessProbe:
             exec:
               command: ["python", "-m", "bnk_forge_mcp.healthcheck"]

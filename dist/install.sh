@@ -352,14 +352,34 @@ else
   URL="https://$HOST_IP"
 fi
 
-# bonnyr-f5 #193 (minor): the shipped .env leaves MCP_SERVICE_PASSWORD empty, so a
-# default install brings the mcp service up but its auth probe can never pass (the
-# backend leaves the 'mcp' account unseeded). Surface that here instead of printing
-# an unqualified "complete!" — the rest of the stack is genuinely healthy, MCP is not.
-MCP_PW=$(grep -E '^[[:space:]]*MCP_SERVICE_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+# bonnyr-f5 #193 M3: the shipped .env leaves MCP_SERVICE_PASSWORD empty, so a default
+# install brings the mcp service up but its auth probe can never pass (the backend
+# leaves the 'mcp' account unseeded). An UPGRADING operator's legacy .env is worse: it
+# carries `MCP_PASSWORD=changeme`, which the backend REFUSES as a known-default, so
+# MCP is just as dead — but the value is non-empty, so the old check missed it and
+# printed "complete!" with no warning (fail-open). Surface all three cases here.
+_mcp_strip_quotes() {  # echo $1 with one layer of surrounding single/double quotes removed
+  local v="$1"
+  case "$v" in
+    \"*\") v="${v#\"}"; v="${v%\"}" ;;   # "..."  -> compose strips these, so must we
+    \'*\') v="${v#\'}"; v="${v%\'}" ;;   # '...'
+  esac
+  printf '%s' "$v"
+}
+MCP_PW=$(_mcp_strip_quotes "$(grep -E '^[[:space:]]*MCP_SERVICE_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)")
 # Fall back to the legacy alias the compose files still honor (MCP_PASSWORD).
 if [ -z "$MCP_PW" ]; then
-  MCP_PW=$(grep -E '^[[:space:]]*MCP_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+  MCP_PW=$(_mcp_strip_quotes "$(grep -E '^[[:space:]]*MCP_PASSWORD=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)")
+fi
+# Treat a known-default (what the backend's MCP_KNOWN_DEFAULT_PASSWORDS rejects) as
+# unusable — MCP will not come up on it, so it is functionally unset here.
+MCP_USABLE=1
+if [ -z "$MCP_PW" ]; then
+  MCP_USABLE=0
+else
+  case "$MCP_PW" in
+    changeme|mcp-service-changeme) MCP_USABLE=0 ;;
+  esac
 fi
 
 echo "========================================="
@@ -367,11 +387,13 @@ echo "  ✅ Installation complete!"
 echo ""
 echo "  Version: $(cat VERSION 2>/dev/null || echo 'unknown')"
 echo ""
-if [ -z "$MCP_PW" ]; then
+if [ "$MCP_USABLE" = "0" ]; then
   echo "  ⚠  MCP (AI assistant) integration is NOT active: MCP_SERVICE_PASSWORD is"
-  echo "     unset in .env, so the bundled MCP server cannot authenticate and its"
+  echo "     unset or set to a known default (e.g. 'changeme', which the backend"
+  echo "     refuses) in .env, so the bundled MCP server cannot authenticate and its"
   echo "     health probe will report UNHEALTHY. The rest of the stack is unaffected."
-  echo "     To enable it: set MCP_SERVICE_PASSWORD in .env to a strong value and run"
+  echo "     To enable it: set MCP_SERVICE_PASSWORD in .env to a strong, non-default"
+  echo "     value and run"
   echo "       $COMPOSE_CMD up -d"
   echo ""
 fi
