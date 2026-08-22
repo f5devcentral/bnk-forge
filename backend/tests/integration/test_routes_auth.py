@@ -265,16 +265,17 @@ class TestServiceAccountReEnableGuard:
     """
 
     def _seed_disabled_default_mcp(self, db):
-        # Simulate a pre-#186 upgrade row that GENUINELY holds bcrypt("mcp-service
-        # -changeme"). The merged ensure_service_user (integration: #186 + #188)
-        # REFUSES a published default as a seed value (#193: the generate-on-default
-        # path was removed — the unset/default case is owned by
-        # disable_stale_service_user), so build the legacy row directly, exactly as
-        # an already-deployed DB carries it: the v2_155 migration flags it
-        # is_service_account=True, and disable_stale_service_user then deactivates
-        # it. This is precisely the state the PUT-route guard defends against
-        # (re-enabling would resurrect the publicly-known default).
-        from services.auth_service import create_user, disable_stale_service_user
+        # A service-account row that is DISABLED while still holding the published
+        # default bcrypt("mcp-service-changeme"). This is the exact state the
+        # PUT-route re-enable guard defends against — a row taken inactive by a path
+        # that leaves the credential intact (a manual operator PUT, or any
+        # disable that is not disable_stale_service_user, which #193 now scrubs the
+        # hash on). We build it directly rather than via disable_stale precisely so
+        # the default hash survives for the guard to detect (re-enabling it would
+        # resurrect the publicly-known default). ensure_service_user REFUSES a
+        # published default as a seed value, so create_user is the only way to
+        # reproduce a legacy row that genuinely carries it.
+        from services.auth_service import create_user, verify_password
         mcp = create_user(
             db,
             username="mcp",
@@ -284,11 +285,12 @@ class TestServiceAccountReEnableGuard:
             must_change_password=False,
         )
         mcp.is_service_account = True  # v2_155 backfill marks the legacy mcp row
+        mcp.is_active = False  # disabled with the default hash intact (not via disable_stale)
         db.commit()
-        disable_stale_service_user(db)
         mcp = db.query(User).filter(User.username == "mcp").first()
         assert mcp.is_active is False
         assert mcp.is_service_account is True
+        assert verify_password("mcp-service-changeme", str(mcp.hashed_password))  # default preserved
         return mcp
 
     def test_reenable_refused_while_default_hash_present(

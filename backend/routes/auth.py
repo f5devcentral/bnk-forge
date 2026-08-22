@@ -374,11 +374,14 @@ def update_user(
 
     if request.is_active is not None:
         # bonnyr-f5 #188: re-enabling a service account that still holds a shipped
-        # default password would resurrect the published default credential (disable
-        # only flips is_active — the bcrypt("mcp-service-changeme") hash is left in
-        # place). Refuse the re-enable until the secret is rotated; the operator sets
-        # MCP_SERVICE_PASSWORD (startup re-seeds and re-activates the row with a real
-        # hash) or changes the password explicitly. Never restore a known default.
+        # default password would resurrect the published default credential. This is
+        # defence-in-depth for a row taken inactive by a path that LEAVES the
+        # credential intact — e.g. a manual operator PUT is_active=false.
+        # (disable_stale_service_user itself now scrubs the hash on the upgrade path,
+        # #193, so this guard covers the other disable paths.) Refuse the re-enable
+        # until the secret is rotated; the operator sets MCP_SERVICE_PASSWORD
+        # (startup re-seeds and re-activates the row with a real hash) or changes
+        # the password explicitly. Never restore a known default.
         if (
             request.is_active
             and not target.is_active
