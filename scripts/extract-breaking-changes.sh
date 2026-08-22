@@ -249,6 +249,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   if [[ $assertions -eq 0 ]]; then
     echo "FAIL: harness ran zero assertions"; fail=1
   fi
+  # END marker mirroring compute_version_bump.sh's self-test: it prints only after
+  # the LAST assertion, so the script-selftests gate can assert the harness reached
+  # the end (an early `exit 0` or a deleted assertion block is caught) WITHOUT the
+  # gate having to grep this script for its own --self-test flag (bonnyr-f5 #193 M6).
+  echo "=== END SELF-TEST ==="
   [[ $fail -eq 0 ]] && echo "extract-breaking-changes self-test: OK ($assertions assertions)"
   exit "$fail"
 fi
@@ -262,13 +267,11 @@ UNTIL="${2:-HEAD}"
 # a silent failure that fools a reviewer will fool a release). A VALID range with
 # no breaking commits is still fine — it prints nothing and exits 0.
 #
-# MERGE-ORDER DEPENDENCY (bonnyr-f5 #179 r6 F3): this rc=1 is only *effective*
-# once the `|| true` is dropped from the three call sites in .github/workflows/
-# release.yml (currently `BREAKING=$(bash scripts/extract-breaking-changes.sh ...
-# || true)`), which swallow rc=1 back into rc=0 with BREAKING="" -- exactly the
-# outcome this guard exists to prevent. release.yml is not owned by #179; PR #181
-# removes those `|| true`. Merge #179 WITH or AFTER #181 so this guard actually
-# fails the release instead of being decorative.
+# FAIL-CLOSED IS NOW EFFECTIVE (bonnyr-f5 #179 r6 F3; #193 minor): the three
+# call sites in .github/workflows/release.yml invoke this script WITHOUT `|| true`,
+# so this rc=1 propagates and fails the release instead of being swallowed into
+# BREAKING="". (The old note here said to "merge #179 WITH or AFTER #181" — that
+# already happened; both are in-tree and the `|| true` on the extract call is gone.)
 for _ref in "$SINCE" "$UNTIL"; do
   if ! git rev-parse --verify --quiet "${_ref}^{commit}" >/dev/null 2>&1; then
     echo "::error::extract-breaking-changes: '${_ref}' does not resolve to a commit — refusing to emit an empty breaking-changes section from a bad range." >&2

@@ -479,13 +479,14 @@ shellcheck:
 # claims `make pre-push` == CI. #166: "a local gate that does not run the CI
 # command is not a gate." These targets ARE the CI command (ci.yml calls the
 # same `make` targets / same scripts), and `pre-push` now depends on `ci-gates`.
-.PHONY: ci-gates version-check secret-scan commit-lint script-selftests
+.PHONY: ci-gates secret-scan commit-lint script-selftests
 
-# Helm chart tag/appVersion + frontend package.json must equal VERSION.
-version-check:
-	@echo ""
-	@echo "=== Version artifacts consistency (sync-version-artifacts.sh --check) ==="
-	@bash scripts/sync-version-artifacts.sh --check
+# NOTE: `version-check` is defined once, in the "Version-artifact consistency"
+# section below (near quick-check, which depends on it). A duplicate recipe used
+# to sit here; `make` silently discarded one and warned "overriding commands for
+# target" on every invocation, so any future divergence between the two copies
+# would have been invisible (bonnyr-f5 #193 minor). ci-gates references the single
+# surviving target by name.
 
 # gitleaks range-aware secret scan + assertion backstop (single source of truth,
 # shared with ci.yml's secret-scan job and the scheduled baseline workflow).
@@ -530,11 +531,38 @@ script-selftests:
 	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
 	    echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
 	  fi
-	@if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then \
-	  bash scripts/extract-breaking-changes.sh --self-test; \
-	else \
-	  echo "  (extract-breaking-changes.sh has no --self-test yet; it lands with #179)"; \
-	fi
+	@# extract-breaking-changes.sh self-test, run UNCONDITIONALLY with the same
+	@# anti-vacuity assertions as compute's (ok lines + END marker). Do NOT gate on
+	@# `grep -- '--self-test' <the script>`: the code under test must not decide
+	@# whether it is tested — deleting the flag would silence ~28 assertions with
+	@# the gate staying green (bonnyr-f5 #193 M6).
+	@set +e; out="$$(bash scripts/extract-breaking-changes.sh --self-test 2>&1)"; rc=$$?; \
+	  echo "$$out"; \
+	  if [ "$$rc" -ne 0 ]; then echo "::error::extract-breaking-changes self-test exited $$rc"; exit "$$rc"; fi; \
+	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
+	    echo "::error::extract self-test reported FAIL: but exited 0"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])ok:'; then \
+	    echo "::error::extract self-test produced no ok: lines -- the harness did not run"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
+	    echo "::error::extract self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
+	  fi
+	@# B5 + M5: enumerate and run EVERY scripts/tests/*.test.sh from the filesystem
+	@# (registry-tag-probe mutation suite + INV-15 detector-parity), failing on an
+	@# EMPTY enumeration or ANY non-zero rc. ci.yml's script-selftests job runs the
+	@# SAME enumeration so local == CI. Before this, those tests had no caller at
+	@# all — the probe's mutation suite was dead code that would have caught B4
+	@# (bonnyr-f5 #193 B5/M5).
+	@set -e; \
+	  tests="$$(ls scripts/tests/*.test.sh 2>/dev/null || true)"; \
+	  n=$$(printf '%s\n' "$$tests" | grep -c . || true); \
+	  if [ "$$n" -lt 1 ]; then echo "::error::no scripts/tests/*.test.sh found -- the self-test enumeration is empty"; exit 1; fi; \
+	  echo "  running $$n filesystem self-test(s):"; \
+	  for t in $$tests; do \
+	    echo "--- $$t ---"; \
+	    bash "$$t" || { echo "::error::$$t failed"; exit 1; }; \
+	  done
 
 # Aggregate: every CI gate that is not already covered by quick-check/tests.
 ci-gates: shellcheck version-check commit-lint script-selftests secret-scan

@@ -89,7 +89,12 @@ _fetch_token() {
     body="$(curl -sS --max-time 20 "$url" 2>/dev/null || true)"
   fi
   # GHCR/Docker return {"token":...}; some registries use {"access_token":...}.
-  printf '%s' "$body" | sed -n 's/.*"\(access_token\|token\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1
+  # Use `sed -nE` (ERE): the `\|` BRE alternation is a GNU-only extension, so on
+  # BSD/macOS sed the old expression matched nothing, _fetch_token returned empty,
+  # every image classified `unknown`, and the operator was routed into FORCE_LATEST=1
+  # (which SKIPS this probe) — the exact INV-24 harm (bonnyr-f5 #193 B4). ERE
+  # `(access_token|token)` is portable across GNU and BSD sed.
+  printf '%s' "$body" | sed -nE 's/.*"(access_token|token)"[[:space:]]*:[[:space:]]*"([^"]*)".*/\2/p' | head -1
 }
 
 # HTTP status for GET <manifest_url>, following one Bearer challenge if issued.

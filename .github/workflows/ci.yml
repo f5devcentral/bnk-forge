@@ -189,6 +189,11 @@ jobs:
         with:
           fetch-depth: 0   # need the whole PR range of commit messages
       - name: Lint commit messages for CI-control / spurious-bump markers
+        env:
+          # Untrusted free text -> read from env, NEVER interpolated into the shell
+          # (same rule as release.yml's RELEASE_NOTES). Empty on non-PR events. The
+          # script lints it as the PENDING squash subject (bonnyr-f5 #193 B6b).
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           # bonnyr-f5 #182 r3 (Minor -> enforcement): the AGENTS.md rule against
           # CI-control markers in commit messages was documentation only, and
@@ -197,6 +202,12 @@ jobs:
           # commit -- the #179/#181 case) or an accidental line-start BREAKING
           # CHANGE prose that spuriously majors a release. The .githooks/pre-push
           # hook runs the SAME script locally so it is caught before push too.
+          #
+          # Fetch the protected-branch tips so the script's already-merged marker
+          # exemption (reachable from origin/main|origin/staging) can resolve them;
+          # best-effort, and the check fails CLOSED if a ref is unavailable
+          # (bonnyr-f5 #193 B6a).
+          git fetch --quiet origin main staging 2>/dev/null || true
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
@@ -204,7 +215,7 @@ jobs:
           else
             RANGE=""   # first push / no base — script scans just the tip commit
           fi
-          export RANGE
+          export RANGE PR_TITLE
           make commit-lint
 
   script-selftests:
@@ -241,62 +252,48 @@ jobs:
           if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
             echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
           fi
-      - name: BREAKING CHANGE detector parity + extractor self-test
+      - name: extract-breaking-changes SELF_TEST
         run: |
-          # bonnyr-f5 #179 r3 (cross-PR / INV-15): the BREAKING CHANGE detector
-          # MUST be byte-identical between the two scripts -- if they drift, a
-          # major bump ships with empty notes (or a note ships with no bump). This
-          # asserts identity in code, replacing the "MUST stay identical" comment.
-          #
-          # The extraction is version-agnostic on purpose: it pulls the regex out
-          # of whichever `grep -qE '...BREAKING...CHANGE...'` detector each script
-          # uses, so it enforces parity whether the tree is pre- or post-#179
-          # (both scripts use the SAME form as each other in either state). That
-          # keeps this gate meaningful on this PR today AND on the merged stack.
+          # Run the extractor's self-test UNCONDITIONALLY with the SAME anti-vacuity
+          # assertions as compute's above (ok lines + END marker + no FAIL:). Do NOT
+          # gate on `grep -- '--self-test' <the script>`: the code under test must
+          # not decide whether it is tested -- deleting the flag would silence ~28
+          # assertions with this gate staying green (bonnyr-f5 #193 M6).
+          set +e
+          out="$(bash scripts/extract-breaking-changes.sh --self-test 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::extract-breaking-changes self-test exited $rc"; exit "$rc"
+          fi
+          if grep -qE '(^|[[:space:]])FAIL:' <<< "$out"; then
+            echo "::error::extract self-test reported FAIL: but exited 0"; exit 1
+          fi
+          if ! grep -qE '(^|[[:space:]])ok:' <<< "$out"; then
+            echo "::error::extract self-test produced no ok: lines -- the harness did not run"; exit 1
+          fi
+          if ! grep -qE '=== END SELF-TEST ===' <<< "$out"; then
+            echo "::error::extract self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1
+          fi
+      - name: Filesystem self-tests (scripts/tests/*.test.sh)
+        run: |
+          # bonnyr-f5 #193 B5 + M5: enumerate and run EVERY scripts/tests/*.test.sh
+          # from the filesystem, failing on an EMPTY enumeration or ANY non-zero rc.
+          # This is the SAME enumeration `make script-selftests` runs, so local ==
+          # CI. It covers the registry-tag-probe mutation suite (which had no caller
+          # at all and was dead code that would have caught B4) AND the INV-15
+          # detector-parity check (previously inline in this job only, making
+          # `make script-selftests` strictly narrower than CI -- M5).
           set -euo pipefail
-          E=scripts/extract-breaking-changes.sh
-          C=scripts/compute_version_bump.sh
-          # Adaptive check. #179 factors detection into _is_breaking_subject and
-          # _is_breaking_body FUNCTIONS (the body one is a paragraph-aware awk, not
-          # a single grep). When those functions exist, diff their full bodies --
-          # that guards the awk detector too, and answers bonnyr-f5 #179 r4's nit
-          # that compute had no function to diff. On the pre-#179 tree (inline
-          # greps, no functions) fall back to extracting the detector regex, so the
-          # gate stays meaningful on this PR before the stack merges.
-          _fn() { sed -n "/^$2()/,/^}/p" "$1"; }        # print a function definition
-          _regex() {
-            grep -oE "grep -qE '[^']*BREAKING[^']*CHANGE[^']*'" "$1" \
-              | sed -E "s/^grep -qE '//; s/'\$//" | sort -u
-          }
-          if grep -q '^_is_breaking_body()' "$E" && grep -q '^_is_breaking_body()' "$C"; then
-            for fn in _is_breaking_subject _is_breaking_body; do
-              if [ "$(_fn "$E" "$fn")" != "$(_fn "$C" "$fn")" ]; then
-                echo "::error::INV-15 violated: $fn differs between the two scripts"
-                diff <(_fn "$E" "$fn") <(_fn "$C" "$fn") || true
-                exit 1
-              fi
-            done
-            echo "INV-15 OK: _is_breaking_subject + _is_breaking_body are byte-identical functions in both scripts"
-          else
-            ex="$(_regex "$E")"; cv="$(_regex "$C")"
-            if [ -z "$ex" ] || [ -z "$cv" ]; then
-              echo "::error::could not extract a BREAKING CHANGE detector from one of the scripts (extract='$ex' compute='$cv')"; exit 1
-            fi
-            if [ "$ex" != "$cv" ]; then
-              echo "::error::INV-15 violated: the BREAKING CHANGE detector regex differs between the two scripts"
-              echo "  extract: $ex"; echo "  compute: $cv"; exit 1
-            fi
-            echo "INV-15 OK (pre-#179 tree): detector regex identical across both scripts -> $ex"
+          shopt -s nullglob
+          tests=(scripts/tests/*.test.sh)
+          if [ "${#tests[@]}" -lt 1 ]; then
+            echo "::error::no scripts/tests/*.test.sh found -- the self-test enumeration is empty"; exit 1
           fi
-          # Run the extractor's own self-test once #179's anchored extractor (which
-          # adds --self-test) is in the tree. Until #179 merges to staging, this
-          # PR's base carries the older extractor; warn LOUDLY (not a silent skip)
-          # so the pending activation is visible in the log.
-          if grep -q -- '--self-test' scripts/extract-breaking-changes.sh; then
-            bash scripts/extract-breaking-changes.sh --self-test
-          else
-            echo "::warning::extract-breaking-changes.sh has no --self-test yet (it lands with #179); the parity gate above is still enforced this run"
-          fi
+          echo "running ${#tests[@]} filesystem self-test(s):"
+          for t in "${tests[@]}"; do
+            echo "--- $t ---"
+            bash "$t" || { echo "::error::$t failed"; exit 1; }
+          done
 
   lint-frontend:
     name: "P1 · Lint Frontend"
