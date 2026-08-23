@@ -125,3 +125,45 @@ class TestDecryptValueOrNone:
 
     def test_empty_input_returns_none(self):
         assert decrypt_value_or_none("") is None
+
+
+class TestAtRestKeyFileNeverRegeneratedOverBytes:
+    """bonnyr-f5 #193 I-1 (r5): get_encryption_key() must NEVER overwrite an existing
+    key file that holds bytes -- those bytes may be the key live data is encrypted
+    under. A truncated / mis-shaped key fails CLOSED (crashloop, recoverable) instead
+    of being regenerated (silent, permanent data loss on a green boot)."""
+
+    def _point(self, monkeypatch, tmp_path):
+        import core.encryption as enc
+        key_file = str(tmp_path / "encryption.key")
+        monkeypatch.setattr(enc, "ENCRYPTION_KEY_FILE", key_file)
+        return enc, key_file
+
+    def test_truncated_key_fails_closed_and_is_not_overwritten(self, tmp_path, monkeypatch):
+        enc, key_file = self._point(monkeypatch, tmp_path)
+        truncated = b"gAAAAABm" + b"x" * 22  # 30 bytes: non-empty, not a valid Fernet key
+        with open(key_file, "wb") as f:
+            f.write(truncated)
+        with pytest.raises(SystemExit):
+            enc.get_encryption_key()
+        # The original bytes survive on disk -- recoverable, not clobbered.
+        with open(key_file, "rb") as f:
+            assert f.read() == truncated
+
+    def test_valid_key_is_returned_and_not_overwritten(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+        enc, key_file = self._point(monkeypatch, tmp_path)
+        good = Fernet.generate_key()
+        with open(key_file, "wb") as f:
+            f.write(good)
+        assert enc.get_encryption_key() == good
+        with open(key_file, "rb") as f:
+            assert f.read() == good  # untouched
+
+    def test_absent_file_generates_a_valid_key(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+        enc, key_file = self._point(monkeypatch, tmp_path)  # no file created
+        key = enc.get_encryption_key()
+        Fernet(key)  # a real Fernet key
+        with open(key_file, "rb") as f:
+            assert f.read() == key  # persisted for next boot

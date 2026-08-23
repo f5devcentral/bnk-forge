@@ -42,22 +42,45 @@ def get_encryption_key() -> bytes:
     this file, so this returns THAT value — see the module note above
     ENCRYPTION_KEY_FILE.
     """
-    # Try to read existing key
+    # Try to read an existing key. bonnyr-f5 #193 I-1: the file is the single source of
+    # truth and may hold the key LIVE DATA is encrypted under, so once it holds bytes we
+    # NEVER regenerate over them -- that would destroy that data permanently and silently
+    # on an otherwise-green boot (the .operator marker keeps validate_production passing).
     if os.path.exists(ENCRYPTION_KEY_FILE):
         try:
             with open(ENCRYPTION_KEY_FILE, 'rb') as f:
-                key = f.read().strip()
-                if key and len(key) >= 32:  # Valid Fernet key is 44 bytes base64
-                    return key
-                logger.warning(f"Invalid key in {ENCRYPTION_KEY_FILE}, regenerating")
+                existing = f.read().strip()
         except PermissionError as e:
             logger.warning(f"Could not read encryption key from {ENCRYPTION_KEY_FILE}: {e}")
             logger.warning("Will generate in-memory key (NOT RECOMMENDED for production)")
             logger.warning("Fix with: docker exec -u root bnk-forge-backend chown -R bnkforge:bnkforge /app/keys")
+            existing = b""
         except Exception as e:
             logger.warning(f"Error reading encryption key: {e}")
+            existing = b""
+        else:
+            if existing:
+                # The file holds bytes. Validate it as a real Fernet key; if it is
+                # unusable (truncated/partial write, bad restore, wrong format) FAIL
+                # CLOSED rather than regenerate -- a crashloop is recoverable, an
+                # overwritten key is not. (Also closes the "any >=32 bytes accepted"
+                # gap: a mis-shaped key now surfaces as a clear message, not a later
+                # cipher error.)
+                try:
+                    Fernet(existing)
+                except Exception as e:
+                    raise SystemExit(
+                        f"FATAL: the at-rest encryption key at {ENCRYPTION_KEY_FILE} exists "
+                        f"but is not a valid Fernet key ({e}). Refusing to regenerate over it "
+                        f"-- that would permanently destroy any data already encrypted under the "
+                        f"original key. Restore a good key file (e.g. from a keys-volume backup); "
+                        f"only if this deployment has NO encrypted data yet, delete the file to "
+                        f"let a fresh key be generated."
+                    ) from e
+                return existing
+            # Empty file (0 bytes): no committed key to lose -> fall through to generate.
 
-    # Generate new key
+    # File genuinely absent (or empty / unreadable): generate a new key and persist it.
     key = Fernet.generate_key()
 
     # Try to persist it
