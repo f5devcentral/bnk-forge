@@ -24,20 +24,28 @@ class TestStreamSubprocess:
     def test_delivers_each_line_before_process_finishes(self, tmp_path):
         """A handshake proves lines arrive live, not buffered until exit.
 
-        The child prints ``line-1`` then blocks until the test's ``on_output``
-        (which only runs when it actually *receives* ``line-1``) creates a
-        sentinel file; only then does the child print ``line-2``. If output were
-        buffered until process exit — the #195 bug — ``on_output`` would never
-        fire, the sentinel would never appear, the child would block until the
-        watchdog kills it, and the call would raise TimeoutExpired. A clean pass
-        is only possible with genuine incremental streaming.
+        The child prints ``line-1`` then blocks on a sentinel that the test's
+        ``on_output`` writes only when it *receives* ``line-1``; only then does
+        the child print ``line-2``. The blocking loop runs FAR longer than the
+        watchdog (``timeout`` below), so a buffered implementation — the #195 bug,
+        where ``on_output`` fires only after the process exits — cannot
+        self-release: the sentinel never appears, the child deadlocks, and the
+        watchdog kills it → ``_stream_subprocess`` raises ``TimeoutExpired`` and
+        this test ERRORS. Genuine streaming releases the child within
+        milliseconds, so the call returns well under the watchdog. Both the raise
+        AND the timing bound below make the distinction non-vacuous — a fully
+        buffered impl fails, proven by mutation.
         """
+        import time
+
         go = tmp_path / "go"
+        # ~300s of blocking: >> the 8s watchdog, so a buffered impl MUST deadlock
+        # rather than self-release before the watchdog fires.
         script = (
             "import sys, time, pathlib\n"
             "print('line-1', flush=True)\n"
             "sentinel = pathlib.Path(sys.argv[1])\n"
-            "for _ in range(200):\n"
+            "for _ in range(6000):\n"
             "    if sentinel.exists():\n"
             "        break\n"
             "    time.sleep(0.05)\n"
@@ -51,18 +59,23 @@ class TestStreamSubprocess:
             if line == "line-1":
                 go.write_text("go")  # unblock the child only after we SEE line-1
 
+        started = time.monotonic()
         code, output = _stream_subprocess(
             [sys.executable, "-c", script, str(go)],
             cwd=str(tmp_path),
             env=dict(os.environ),
-            timeout=20,
+            timeout=8,
             on_output=on_output,
         )
+        elapsed = time.monotonic() - started
 
         assert code == 0
         # line-2 was printed *only* because on_output saw line-1 and released it.
         assert received == ["line-1", "line-2"]
         assert "line-1" in output and "line-2" in output
+        # Live streaming releases the child in ms; a buffered impl would deadlock
+        # and blow the 8s watchdog. The timing bound makes that explicit.
+        assert elapsed < 5, f"took {elapsed:.1f}s — output looks buffered, not streamed"
 
     def test_returns_combined_output_and_exit_code(self, tmp_path):
         script = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"
