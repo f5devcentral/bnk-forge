@@ -102,7 +102,7 @@ class ClusterScanner:
             data["crds"], data["cert_manager_pods"], data["helm_releases"]
         )
         multus = analyze_multus(
-            data["crds"], data["crd_names"], data["kube_system_pods"], data["daemonsets"]
+            data["crds"], data["crd_names"], data["multus_pods"], data["daemonsets"]
         )
         sriov = analyze_sriov(data["nodes"], data["daemonsets"], data["kube_system_pods"])
         hugepages = analyze_hugepages(data["nodes"])

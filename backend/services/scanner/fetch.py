@@ -282,6 +282,39 @@ def _fetch_pods_in_ns(api_client, namespace: str) -> list[dict[str, Any]]:
         return []
 
 
+def _multus_daemonset_namespace(daemonsets: list[dict[str, Any]]) -> str | None:
+    """Return the namespace of the Multus DaemonSet, or None if not present.
+
+    The DaemonSet is discovered cluster-wide via
+    ``list_daemon_set_for_all_namespaces``, so its namespace is authoritative:
+    ``kube-system`` on vanilla k8s, ``openshift-multus`` on ROKS/OpenShift.
+    """
+    for ds in daemonsets:
+        if "multus" in (ds.get("name") or "").lower():
+            return ds.get("namespace")
+    return None
+
+
+def _fetch_multus_pods(
+    api_client,
+    daemonsets: list[dict[str, Any]],
+    kube_system_pods: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Fetch pods from the Multus DaemonSet's own namespace.
+
+    Vanilla k8s runs Multus in ``kube-system`` (already fetched — reuse that
+    list, no extra API call). OpenShift/ROKS runs it in ``openshift-multus``,
+    which the hardcoded fetch set never queried (Issue #202) — so fetch pods
+    from whatever namespace the DaemonSet actually lives in. If no Multus
+    DaemonSet exists, fall back to the kube-system pods (Multus absent → the
+    running-pod count is correctly 0).
+    """
+    ns = _multus_daemonset_namespace(daemonsets)
+    if not ns or ns == "kube-system":
+        return kube_system_pods
+    return _fetch_pods_in_ns(api_client, ns)
+
+
 def _decode_helm_release_secret(raw: str | None) -> dict | None:
     """Decode a Helm 3 release secret payload: base64(base64(gzip(json))).
 
@@ -900,6 +933,13 @@ def fetch_scan_data(
     f5_tenant_pods, f5_utils_pods = f5_pods_f.result()
     crds = crds_f.result()
 
+    # Multus pods must come from the DaemonSet's own namespace, not a hardcoded
+    # kube-system (Issue #202): on OpenShift/ROKS Multus runs in
+    # openshift-multus, which the fixed namespace set never fetched.
+    daemonsets = daemonsets_f.result()
+    kube_system_pods = kube_system_pods_f.result()
+    multus_pods = _fetch_multus_pods(api_client, daemonsets, kube_system_pods)
+
     return {
         "version_info": version_f.result(),
         "nodes": nodes_f.result(),
@@ -908,12 +948,14 @@ def fetch_scan_data(
         "crd_groups": {c["group"] for c in crds},
         "storage_classes": storage_f.result(),
         "namespaces": namespaces_f.result(),
-        "daemonsets": daemonsets_f.result(),
+        "daemonsets": daemonsets,
         "helm_releases": helm_f.result(),
         "f5_tenant_pods": f5_tenant_pods,
         "f5_utils_pods": f5_utils_pods,
         "cert_manager_pods": cert_manager_pods_f.result(),
-        "kube_system_pods": kube_system_pods_f.result(),
+        "kube_system_pods": kube_system_pods,
+        # Multus pods scoped to the DaemonSet's namespace (Issue #202).
+        "multus_pods": multus_pods,
         "cneinstances": _or_empty(cneinstances_f),
         "vlans": _or_empty(vlans_f),
         "gateways": _or_empty(gateways_f),

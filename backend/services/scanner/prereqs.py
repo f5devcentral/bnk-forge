@@ -173,18 +173,23 @@ def _extract_cert_manager_version(pods: list[dict]) -> str | None:
 def analyze_multus(
     crds: list[dict],
     crd_names: set[str],
-    kube_system_pods: list[dict],
+    multus_pods: list[dict],
     daemonsets: list[dict],
 ) -> dict[str, Any]:
-    """Detect Multus CNI installation."""
+    """Detect Multus CNI installation.
+
+    ``multus_pods`` are the pods fetched from the Multus DaemonSet's own
+    namespace (kube-system on vanilla k8s, openshift-multus on ROKS/OpenShift —
+    Issue #202), so the running-pod count reflects reality regardless of layout.
+    """
     has_nad_crd = "network-attachment-definitions.k8s.cni.cncf.io" in crd_names
 
     multus_ds = [
         ds for ds in daemonsets if "multus" in ds.get("name", "").lower()
     ]
-    multus_pods = [
+    running_multus_pods = [
         p
-        for p in kube_system_pods
+        for p in multus_pods
         if "multus" in p.get("name", "").lower() and p.get("phase") == "Running"
     ]
 
@@ -198,7 +203,7 @@ def analyze_multus(
             "ready": ds["ready"],
         }
 
-    if has_nad_crd and (multus_pods or multus_ds):
+    if has_nad_crd and (running_multus_pods or multus_ds):
         status = PrerequisiteStatus.DETECTED
     elif has_nad_crd:
         status = PrerequisiteStatus.PARTIAL
@@ -209,7 +214,7 @@ def analyze_multus(
         "status": status,
         "nad_crd_installed": has_nad_crd,
         "daemonset": multus_daemonset_info,
-        "running_pods": len(multus_pods),
+        "running_pods": len(running_multus_pods),
     }
 
 

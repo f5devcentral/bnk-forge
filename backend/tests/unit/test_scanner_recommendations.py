@@ -490,7 +490,7 @@ class TestClusterScannerOrderingRegression:
                 "crd_groups": set(),
                 "cert_manager_pods": [],
                 "helm_releases": [],
-                "kube_system_pods": [],
+                "kube_system_pods": [], "multus_pods": [],
                 "daemonsets": [],
                 "storage_classes": [],
                 "gateways": [],
