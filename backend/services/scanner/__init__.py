@@ -227,6 +227,16 @@ class ClusterScanner:
         end_time = datetime.now(UTC)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
+        # Issue #194: record when this cluster was last successfully scanned so
+        # "never scanned" (last_synced_at IS NULL) is distinguishable from
+        # "scanned and genuinely empty". Set only after all analysis has
+        # completed — a scan that raises earlier must NOT stamp a sync time.
+        # Every scan path (registration/PUT async task, the /scan endpoint,
+        # upgrade pre-checks) flows through here, so this is the single place
+        # that keeps last_synced_at honest. Flushed here; the caller commits.
+        cluster.last_synced_at = end_time
+        self.db.flush()
+
         return {
             "cluster_id": cluster_id,
             "cluster_name": cluster.name,
