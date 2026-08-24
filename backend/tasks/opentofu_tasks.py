@@ -38,6 +38,7 @@ from services.project_service import update_project_counts
 from tasks._task_lookup import fetch_task_or_raise
 from tasks._tofu_helpers import (
     CallbackTask,
+    TofuLogStreamer,
     _cleanup_stuck_finalizers,
     _create_notification,
     _is_namespace_finalizer_issue,
@@ -244,8 +245,12 @@ def run_opentofu_init(self, task_db_id: int, module_id: int, keep_workspace: boo
                 # Get credentials
                 env = get_cloud_credentials_env(project, db)
 
-                # Run init
-                exit_code, logs = engine.run_init(work_dir, env)
+                # Run init — stream output so logs_full_size grows during the
+                # run instead of only at completion (#195).
+                streamer = TofuLogStreamer(task, db)
+                exit_code, logs = engine.run_init(
+                    work_dir, env, on_output=streamer.begin(""),
+                )
 
                 # Update task
                 task.exit_code = exit_code
@@ -424,6 +429,8 @@ def run_opentofu_plan(self, task_db_id: int, module_id: int, keep_workspace: boo
                 db.commit()
 
                 all_logs = ""
+                # Stream tofu output into task.logs during the run (#195).
+                streamer = TofuLogStreamer(task, db)
 
                 # Check if workspace is initialized - run init if needed
                 needs_reinit, reinit_reason = workspace.needs_reinit(module)
@@ -438,7 +445,9 @@ def run_opentofu_plan(self, task_db_id: int, module_id: int, keep_workspace: boo
                     # Need to run init first
                     task.command = "tofu init && tofu plan"
                     all_logs += f"[{_ts()}] --- INIT ---\n"
-                    init_code, init_logs = engine.run_init(work_dir, env)
+                    init_code, init_logs = engine.run_init(
+                        work_dir, env, on_output=streamer.begin(all_logs),
+                    )
                     all_logs += init_logs
 
                     if init_code != 0:
@@ -458,7 +467,9 @@ def run_opentofu_plan(self, task_db_id: int, module_id: int, keep_workspace: boo
 
                 # Run plan (saves plan.out to workspace)
                 all_logs += f"[{_ts()}] --- PLAN ---\n"
-                exit_code, plan_logs = engine.run_plan(work_dir, env)
+                exit_code, plan_logs = engine.run_plan(
+                    work_dir, env, on_output=streamer.begin(all_logs),
+                )
                 all_logs += plan_logs
 
                 task.exit_code = exit_code
@@ -603,6 +614,8 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
 
                 all_logs = ""
                 used_saved_plan = False
+                # Stream tofu output into task.logs during the run (#195).
+                streamer = TofuLogStreamer(task, db)
 
                 def _ensure_workspace_initialized() -> bool:
                     """Ensure providers/modules are installed before reconcile/plan/apply."""
@@ -616,7 +629,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
                         all_logs += f"[{_ts()}] === INIT REQUIRED: {reinit_reason} ===\n"
 
                     all_logs += f"[{_ts()}] --- INIT ---\n"
-                    init_code, init_logs = engine.run_init(work_dir, env)
+                    init_code, init_logs = engine.run_init(
+                        work_dir, env, on_output=streamer.begin(all_logs),
+                    )
                     all_logs += init_logs
                     if init_code != 0:
                         task.exit_code = init_code
@@ -705,7 +720,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
 
                     # Run plan
                     all_logs += f"[{_ts()}] --- PLAN ---\n"
-                    plan_code, plan_logs = engine.run_plan(work_dir, env)
+                    plan_code, plan_logs = engine.run_plan(
+                        work_dir, env, on_output=streamer.begin(all_logs),
+                    )
                     all_logs += plan_logs
                     if plan_code != 0:
                         task.exit_code = plan_code
@@ -725,7 +742,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
 
                 # Apply (uses plan.out which exists either from saved plan or just-created plan)
                 all_logs += f"[{_ts()}] --- APPLY ---\n"
-                apply_code, apply_logs, outputs = engine.run_apply(work_dir, env, module=module)
+                apply_code, apply_logs, outputs = engine.run_apply(
+                    work_dir, env, module=module, on_output=streamer.begin(all_logs),
+                )
 
                 # Bounded stale-plan recovery: clear stale plan, re-plan once, then retry apply.
                 # This prevents repeated failures when remote state changed after plan creation.
@@ -746,7 +765,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
                     else:
                         if reinit_reason:
                             all_logs += f"[{_ts()}] === INIT REQUIRED: {reinit_reason} ===\n"
-                        init_code, init_logs = engine.run_init(work_dir, env)
+                        init_code, init_logs = engine.run_init(
+                            work_dir, env, on_output=streamer.begin(all_logs),
+                        )
                         all_logs += init_logs
                         if init_code != 0:
                             task.exit_code = init_code
@@ -763,7 +784,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
                         all_logs += "\n"
 
                     all_logs += f"[{_ts()}] --- PLAN (RETRY AFTER STALE PLAN) ---\n"
-                    plan_code, plan_logs = engine.run_plan(work_dir, env)
+                    plan_code, plan_logs = engine.run_plan(
+                        work_dir, env, on_output=streamer.begin(all_logs),
+                    )
                     all_logs += plan_logs
                     if plan_code != 0:
                         task.exit_code = plan_code
@@ -781,7 +804,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
 
                     all_logs += "\n"
                     all_logs += f"[{_ts()}] --- APPLY (RETRY) ---\n"
-                    apply_code, apply_logs, outputs = engine.run_apply(work_dir, env, module=module)
+                    apply_code, apply_logs, outputs = engine.run_apply(
+                        work_dir, env, module=module, on_output=streamer.begin(all_logs),
+                    )
 
                 all_logs += apply_logs
 
@@ -1041,6 +1066,8 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                 db.commit()
 
                 all_logs = ""
+                # Stream tofu output into task.logs during the run (#195).
+                streamer = TofuLogStreamer(task, db)
 
                 # Check if workspace is initialized
                 needs_reinit, reinit_reason = workspace.needs_reinit(module)
@@ -1053,7 +1080,9 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                     task.command = "tofu init && tofu destroy"
                     # Init
                     all_logs += f"[{_ts()}] --- INIT ---\n"
-                    init_code, init_logs = engine.run_init(work_dir, env)
+                    init_code, init_logs = engine.run_init(
+                        work_dir, env, on_output=streamer.begin(all_logs),
+                    )
                     all_logs += init_logs
                     if init_code != 0:
                         task.exit_code = init_code
@@ -1073,7 +1102,8 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                 all_logs += f"[{_ts()}] --- DESTROY ---\n"
                 timeout = engine.get_destroy_timeout(module)
                 destroy_code, destroy_logs = engine.run_destroy_with_retry(
-                    work_dir, env, module=module, timeout=timeout
+                    work_dir, env, module=module, timeout=timeout,
+                    on_output=streamer.begin(all_logs),
                 )
                 all_logs += destroy_logs
 
@@ -1090,7 +1120,8 @@ def run_opentofu_destroy(self, task_db_id: int, module_id: int, keep_workspace: 
                         logger.info("Retrying destroy after finalizer cleanup")
                         all_logs += f"\n[{_ts()}] --- DESTROY RETRY ---\n"
                         retry_code, retry_logs = engine.run_destroy_with_retry(
-                            work_dir, env, module=module, timeout=300  # Shorter timeout for retry
+                            work_dir, env, module=module, timeout=300,  # Shorter timeout for retry
+                            on_output=streamer.begin(all_logs),
                         )
                         all_logs += f"{retry_logs}\n"
 

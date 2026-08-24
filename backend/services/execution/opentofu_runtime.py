@@ -23,7 +23,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -34,6 +36,72 @@ from services.git_auth_service import GitAuthService
 from services.infrastructure_access_service import normalize_infrastructure_access_outputs
 
 logger = logging.getLogger(__name__)
+
+
+def _stream_subprocess(
+    cmd: list[str],
+    *,
+    cwd: str,
+    env: dict,
+    timeout: int,
+    on_output: Callable[[str], None],
+) -> tuple[int, str]:
+    """Run ``cmd`` streaming stdout+stderr line-by-line to ``on_output``.
+
+    Behaves like ``subprocess.run(..., capture_output=True, text=True,
+    timeout=...)`` from the caller's point of view: it returns
+    ``(returncode, combined_output)`` and raises ``subprocess.TimeoutExpired``
+    (with ``output`` populated) on timeout, so the existing timeout-handling
+    branches in each ``run_*`` method work unchanged.
+
+    The difference — and the whole point (issue #195) — is that output is
+    delivered incrementally: each line is handed to ``on_output`` the moment
+    OpenTofu emits it, letting the caller persist progress (``task.logs`` /
+    ``logs_full_size``) *during* a long run instead of only at completion.
+    stderr is merged into stdout (``STDOUT``) so lines interleave in the order
+    they were produced. A watchdog timer kills the process at ``timeout``,
+    mirroring ``subprocess.run``'s timeout semantics.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,  # line-buffered so lines surface as they are produced
+    )
+
+    timed_out = threading.Event()
+
+    def _kill_on_timeout() -> None:
+        timed_out.set()
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001 — process may have already exited
+            pass
+
+    timer = threading.Timer(timeout, _kill_on_timeout)
+    timer.start()
+
+    chunks: list[str] = []
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            chunks.append(line)
+            try:
+                on_output(line.rstrip("\n"))
+            except Exception:  # noqa: BLE001 — a log sink must never break the run
+                logger.exception("on_output callback raised while streaming subprocess output")
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    output = "".join(chunks)
+    if timed_out.is_set():
+        # Match subprocess.run: surface a TimeoutExpired carrying what we read.
+        raise subprocess.TimeoutExpired(cmd, timeout, output=output)
+    return proc.returncode, output
 
 
 def _add_provider_lock_timeout_hint(output: str) -> str:
@@ -1516,7 +1584,43 @@ class OpenTofuRuntime:
     APPLY_TIMEOUT = 90 * 60     # 90 minutes - long-running resource creation
     REFRESH_TIMEOUT = 30 * 60   # 30 minutes - state refresh
 
-    def run_init(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    @staticmethod
+    def _run_tofu(
+        cmd: list[str],
+        work_dir: str,
+        tofu_env: dict,
+        timeout: int,
+        on_output: Callable[[str], None] | None,
+    ) -> tuple[int, str]:
+        """Execute a tofu command, returning ``(returncode, stdout+stderr)``.
+
+        When ``on_output`` is provided the output is streamed line-by-line via
+        :func:`_stream_subprocess` (issue #195); otherwise it falls back to the
+        classic blocking ``subprocess.run`` capture. Both paths raise
+        ``subprocess.TimeoutExpired`` on timeout so each caller's existing
+        timeout branch is unchanged.
+        """
+        if on_output is not None:
+            return _stream_subprocess(
+                cmd, cwd=work_dir, env=tofu_env, timeout=timeout, on_output=on_output,
+            )
+        result = subprocess.run(
+            cmd,
+            cwd=work_dir,
+            env=tofu_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    def run_init(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu init.
 
@@ -1524,6 +1628,9 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: INIT_TIMEOUT)
+            on_output: Optional line callback. When provided, output is streamed
+                line-by-line (issue #195) so callers can persist progress during
+                the run; when None, behaviour is the classic blocking capture.
 
         Returns:
             Tuple of (exit_code, output)
@@ -1535,19 +1642,15 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu init in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, raw_output = self._run_tofu(
                 ["tofu", "init", "-no-color", "-input=false"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = _add_provider_lock_timeout_hint(result.stdout + result.stderr)
-            logger.info(f"tofu init completed with exit code {result.returncode}")
+            output = _add_provider_lock_timeout_hint(raw_output)
+            logger.info(f"tofu init completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for init
@@ -1565,7 +1668,13 @@ class OpenTofuRuntime:
             output = _add_provider_lock_timeout_hint((stdout or "") + (stderr or "") + timeout_msg)
             return 1, output
 
-    def run_plan(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    def run_plan(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu plan.
 
@@ -1573,6 +1682,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: PLAN_TIMEOUT)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output)
@@ -1584,19 +1694,14 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu plan in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "plan", "-no-color", "-input=false", "-out=plan.out"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu plan completed with exit code {result.returncode}")
+            logger.info(f"tofu plan completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for plan
@@ -1673,6 +1778,7 @@ class OpenTofuRuntime:
         env: dict,
         timeout: int | None = None,
         module: ProjectModule | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> tuple[int, str, dict]:
         """
         Run tofu apply and capture outputs.
@@ -1681,6 +1787,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: APPLY_TIMEOUT)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output, captured_outputs)
@@ -1693,21 +1800,16 @@ class OpenTofuRuntime:
 
         try:
             # Apply the plan
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "apply", "-no-color", "-input=false", "-auto-approve", "plan.out"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu apply completed with exit code {result.returncode}")
+            logger.info(f"tofu apply completed with exit code {returncode}")
 
             # Capture outputs if apply succeeded
             outputs = {}
-            if result.returncode == 0:
+            if returncode == 0:
                 outputs = self._capture_outputs(work_dir, tofu_env)
                 if module is not None:
                     normalized = normalize_infrastructure_access_outputs(
@@ -1717,7 +1819,7 @@ class OpenTofuRuntime:
                     )
                     outputs = normalized.outputs
 
-            return result.returncode, output, outputs
+            return returncode, output, outputs
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for apply
@@ -1841,7 +1943,13 @@ class OpenTofuRuntime:
         )
         return normalized.outputs
 
-    def run_destroy(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    def run_destroy(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu destroy.
 
@@ -1849,6 +1957,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Timeout in seconds (default: 30 minutes)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output)
@@ -1860,19 +1969,14 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu destroy in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "destroy", "-no-color", "-input=false", "-auto-approve"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu destroy completed with exit code {result.returncode}")
+            logger.info(f"tofu destroy completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             timeout_msg = (
@@ -1895,7 +1999,8 @@ class OpenTofuRuntime:
         module: ProjectModule | None = None,
         max_retries: int | None = None,
         initial_delay: float | None = None,
-        timeout: int | None = None
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> tuple[int, str]:
         """
         Run tofu destroy with retry logic for dependency violations.
@@ -1941,7 +2046,9 @@ class OpenTofuRuntime:
                 time.sleep(delay)
 
             # Run destroy
-            exit_code, output = self.run_destroy(work_dir, env, timeout=timeout)
+            exit_code, output = self.run_destroy(
+                work_dir, env, timeout=timeout, on_output=on_output,
+            )
             all_output += output
 
             # Success - return immediately
