@@ -3,7 +3,7 @@ name: bnk-forge
 description: BNK-Forge — F5 BNK lifecycle / deployment platform (api, workers, beat, frontend, proxy, mcp)
 type: application
 version: 0.1.0
-appVersion: "3.1.6"
+appVersion: "4.0.0"
 home: https://github.com/f5devcentral/bnk-forge
 maintainers:
   - name: BNK Forge Maintainers

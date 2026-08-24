@@ -1,7 +1,7 @@
 {
   "name": "frontend-v2",
   "private": true,
-  "version": "3.1.6",
+  "version": "4.0.0",
   "type": "module",
   "sideEffects": [
     "*.css"

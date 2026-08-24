@@ -31,7 +31,7 @@ set -euo pipefail
 # and never `latest` (a floating tag can point at an image whose credential contract
 # differs from this installer's). Do NOT hand-edit it; override at runtime only with
 # a tag you have confirmed ships the same guards.
-BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-3.1.6}"   # image tag to pull (sync-managed)
+BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-4.0.0}"   # image tag to pull (sync-managed)
 NAME_PREFIX="${NAME_PREFIX:-bnk-forge}"
 SUFFIX="$(date +%m%d%H%M)"
 VPC_NAME="${NAME_PREFIX}-vpc-${SUFFIX}"
@@ -510,7 +510,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -543,7 +543,7 @@ services:
       start_period: 30s
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -561,7 +561,7 @@ services:
     restart: unless-stopped
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -579,7 +579,7 @@ services:
     restart: unless-stopped
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -595,7 +595,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -611,7 +611,7 @@ services:
       start_period: 10s
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -623,7 +623,7 @@ services:
     restart: unless-stopped
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging

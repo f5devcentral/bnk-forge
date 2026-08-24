@@ -4,6 +4,85 @@ All notable changes to BNK-Forge.
 
 ---
 
+## v4.0.0 (2026-08-24) — major bump
+
+### ⚠️ Breaking Changes
+
+- **Integrate #177 follow-up stack: #179 #180 #181 #182 #183 #186 #188 (#193)**
+  BREAKING CHANGE: MCP_SERVICE_PASSWORD is now required — the backend SystemExits under ENVIRONMENT=staging|production when it is unset or a known default; the shipped admin/changeme default is removed and rotated out on upgrade; the dist bundle renames MCP_USERNAME/MCP_PASSWORD to MCP_SERVICE_USERNAME/MCP_SERVICE_PASSWORD; and the Helm chart ships mcpUsername=mcp with a generated mcpPassword instead of admin/changeme.
+- **Container runner hardening: non-root gate bypass, outputs_file traversal, secret leaks, destroy/action time limits (#2)**
+  BREAKING CHANGE, called out deliberately. This also refuses named users — USER nonroot, the distroless convention, must become USER 65532. That is the point: a name cannot be resolved to a uid without the image's own /etc/passwd, so USER toor mapped to uid 0 previously sailed through the gate that exists to stop exactly that, and it was documented as a known gap rather than fixed. The Kubernetes substrate already enforces this (runAsNonRoot is kubelet-checked against a resolved numeric uid), so the two backends now agree instead of disagreeing on the same security property. The rejection message says what to change. A pre-existing test asserting named users pass was rewritten to assert the new behaviour, with the cost recorded in its docstring rather than deleted.
+
+- Merge pull request #198 from f5devcentral/staging
+- Integrate #177 follow-up stack: #179 #180 #181 #182 #183 #186 #188 (#193)
+- Merge pull request #177 from f5devcentral/staging
+- Version derivation and release notes must read commit bodies (→ 4.0.0) (#178)
+- Redact bnk_config from the instance-wide global cluster list (#174)
+- test: hold the Login loading-state request open without a live timer (#163)
+- fix: give every MCP tool result one universal outcome key (ok) (#66) (#173)
+- Surface backend error code/details as JSON fields, not a Python repr (#166)
+- f5spkegress create template emits the current snatType/pseudoCNIConfig shape (#171)
+- fix: warn (per-project) when sync deactivates a still-pinned module version (#170)
+- Mount DriftDetailPanel in the drift-check dialog so Reconcile is reachable (#169)
+- test: reset the reachability circuit-breaker registry between tests (#168)
+- Scope KubernetesCluster name uniqueness to (project_id, name) (#167)
+- fix: skip blueprint auto-sync when the linked blueprint source is inactive (#165)
+- fix: record the failure cause as the state-transition reason (#164)
+- Make the staging auto-close parser accept the PR template's own form (#158)
+- Resolve the registry-host allowlist fail-closed at runtime, same as ingest (#162)
+- Container-runner hardening remainder: cluster ownership, mount_path, route hygiene (#161)
+- Make container (and every engine's) step output discoverable from the module (#159)
+- RunModuleActionDialog: submit re-guard, reports invalidation on completion, escaping guards (#160)
+- Set secret-file mode via fchmod on the open descriptor, not chmod by path (#157)
+- Restore @pytest.mark.unit on TestRootUserGate; guard this file against it recurring (#156)
+- Derive container time limits from the canonical step-set (#155)
+- Stop SSOAuthDialog updating state after unmount; mock the real endpoint (#152)
+- Never delete an interrupted-apply module without attempting a destroy (#151)
+- Verify TLS on SSH-tunnelled clusters via tls-server-name (#150)
+- Require an agent-class token on the benchmark ingest/register endpoints (#149)
+- Bind the benchmark agent WS token to the agent identity (#41 F5) (#142)
+- Report the flashed DPU's allocated tmfifo address, not a constant (#147)
+- Resolve path-only module references through one canonical ordering (#146)
+- Reset modules stuck in a transient state when their worker dies (#145)
+- Release the helm advisory lock even from an aborted transaction (#144)
+- Contain a failed initial blueprint sync in a SAVEPOINT (#143)
+- Enforce risk_class at runtime for destructive MCP tools (#141)
+- Destroy cli-bnkctl modules from the applied config, not the current form (#140)
+- Pair the dist proxy conf with an unprivileged container port mapping (#139)
+- Package the dist tarball from the tracked set, not the working tree (#138)
+- Refuse project deletion while modules still own cloud resources (#129)
+- Narrow the dist/nginx un-ignore rule to the two tracked confs (#132)
+- Run the 746 integration tests CI never executed (#131)
+- Container runner hardening: non-root gate bypass, outputs_file traversal, secret leaks, destroy/action time limits (#2)
+- Merge pull request #126 from f5devcentral/fix/v2152-regression-test
+- Merge pull request #123 from f5devcentral/fix/container-runner-hardening-2
+- Merge pull request #1 from f5devcentral/fix/module-lifecycle-control
+- docs: record the residual adoption race rather than shipping an unverified mitigation
+- self-review fix: the derived-host patterns refused real provider endpoints
+- self-review fix: a scratch-database failure must not skip past the required-tests guard
+- review fixes: adopt in-flight destroys into the run, resolve the substrate, filter rather than raise
+- fix(ci): scope the migration-test guard to its own job, and exclude the directory from the legacy suite
+- review fixes: one canonical step resolver, canonical host comparison, derived-host constraint
+- review fixes: give the migration tests their own database, and stop the CI step skipping silently
+- safety: refuse to run the migration regression tests against a non-disposable database
+- test: pin the v2_152 unique-index invariant, and correct its downgrade comment
+- style: fix import ordering in the new hardening tests (ruff I001)
+- review fixes: kill on the worker, scope from the executing run, fail closed on unknown scope, gate at the chokepoint
+- review fixes: unconditional credential clearing, scoped egress, precise collision check, scalar check at the render point
+- test: pin the invariant that a project destroy still tears down DISABLED modules
+- review fix: clear EVERY credential family on a registry host change, not just basic-auth
+- style: split multi-statement lines flagged by ruff (E702)
+- fix(container-runner): registry credential exfil, deny-all egress, non-scalar action inputs, secret_files collision
+- Merge remote-tracking branch 'f5dc/staging' into ci-fix/pr1
+- Merge pull request #122 from f5devcentral/fix/v2152-unique-index-guard
+- fix(migrations): stop v2_152 dropping the unique index on container_registries.name
+- Merge remote-tracking branch 'f5dc/staging' into ci-fix/pr1
+- Merge pull request #121 from f5devcentral/fix/restore-mirror-dropped-files
+- fix(mirror): restore files the public export silently dropped, and fix the rules that dropped them
+- review fixes: close three more enabled bypasses, fix the cancel guard regression, truncate on bytes
+- fix: module lifecycle control — destroy blast radius, disabled gating, real cancel, step output
+- chore: integration branch snapshot (internal origin/staging)
+
 ## v3.1.6 (2026-08-10) — 3.1.x line
 
 Milestone `v3.1.6` — the last release before 4.0.0, and the initial public

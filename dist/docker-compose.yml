@@ -219,7 +219,7 @@ services:
           memory: 32M
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -260,7 +260,7 @@ services:
           memory: 256M
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -292,7 +292,7 @@ services:
           memory: 512M
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -324,7 +324,7 @@ services:
           memory: 512M
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -354,7 +354,7 @@ services:
           memory: 64M
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -380,7 +380,7 @@ services:
           memory: 32M
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -406,7 +406,7 @@ services:
           memory: 32M
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-3.1.6}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-4.0.0}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
