@@ -121,6 +121,27 @@ class TestCreateCredentialTemplate:
         assert data["provider"] == "ibm"
         assert data["has_ibmcloud_api_key"] is True
 
+    @patch("routes.credential_templates.CredentialTemplateService")
+    def test_create_rejects_misspelled_provider_with_422(self, mock_svc_cls, client, operator_headers, all_test_users):
+        """Issue #191: provider='ibmcloud' is a 422 at the API boundary, not a
+        silently-empty template — and the service is never reached."""
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.post(
+            "/api/credential-templates",
+            json={"name": "IBM ROKs Testing", "provider": "ibmcloud",
+                  "region": "us-east", "ibmcloud_api_key": "secret"},
+            headers=operator_headers,
+        )
+        assert response.status_code == 422
+        body = response.json()
+        # The validation error names the bad provider and the supported set.
+        detail = str(body["detail"])
+        assert "ibmcloud" in detail
+        assert "ibm" in detail
+        mock_svc.create_template.assert_not_called()
+
 
 class TestGetCredentialTemplate:
     """GET /api/credential-templates/{id}."""

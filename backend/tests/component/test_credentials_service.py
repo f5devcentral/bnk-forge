@@ -127,6 +127,40 @@ class TestCredentialTemplate:
         assert env["IBMCLOUD_API_KEY"] == "ibm-api-key"
         assert env["IBMCLOUD_REGION"] == "us-south"
 
+    @patch("services.credentials_service.decrypt_value", return_value="ibm-api-key")
+    def test_misspelled_ibmcloud_provider_injects_nothing(self, mock_dec, db):
+        """Issue #191 reproduction at the injection layer.
+
+        A template stored with provider='ibmcloud' (the natural misspelling of
+        the canonical 'ibm', matching every adjacent ibmcloud_* field name)
+        matches NO branch in the resolver, so it silently contributes no IBM
+        credentials — the deploy then fails far away with a BearerToken error.
+        The create/update validation (issue #191) now prevents such a row from
+        being created; this locks the resolver contract that made it dangerous.
+        """
+        template = _make_template(
+            db,
+            name="IBM ROKs Testing",
+            provider="ibmcloud",  # unknown to the resolver -> no-op
+            region="us-east",
+            aws_auth_method=None,
+            aws_access_key_id=None,
+            aws_secret_access_key_encrypted=None,
+            ibmcloud_api_key_encrypted="enc_ibm_key",
+        )
+        project = _make_project(
+            db,
+            credential_template_id=template.id,
+            project_type="cloud-aws",
+            cloud_provider="ibm",
+        )
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        # The stored API key never reaches the deployment environment.
+        assert "IC_API_KEY" not in env
+        assert "IBMCLOUD_API_KEY" not in env
+
     @patch("services.credentials_service.decrypt_value", side_effect=Exception("Bad key"))
     def test_ibm_template_decrypt_failure_omits_api_key(self, mock_dec, db):
         template = _make_template(
