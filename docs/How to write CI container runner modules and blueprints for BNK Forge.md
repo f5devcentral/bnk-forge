@@ -654,9 +654,14 @@ The container engine is deliberately constrained:
   which is the default for most base images*). The workspace is mounted from the host, so
   a root container would be a host-root write primitive. Forge does **not** silently remap
   you to another uid with `--user`: that would override your image's `USER` and break your
-  own state writes. So: put `USER <non-root>` in your Dockerfile. uid **1000** matches the
-  workspace owner and is the safe choice. This mirrors Kubernetes `runAsNonRoot`, which the
-  Kubernetes runner applies to the same artifacts.
+  own state writes. So: put a **numeric** `USER` in your Dockerfile. The gate requires a bare
+  decimal uid — uid **1000** matches the workspace owner and is the safe choice. A **named**
+  user such as `USER nonroot` (the distroless default) is now **refused**: a name can't be
+  resolved to a uid without the image's own `/etc/passwd`, so it can't be proven non-root.
+  If you were on `USER nonroot`, switch to `USER 1000` — it matches the workspace owner (chowned
+  `1000:1000`), so your state writes under `mount_path` succeed. A higher uid such as `65532` clears
+  the non-root gate but cannot write the host-mounted workspace.
+  This mirrors Kubernetes `runAsNonRoot`, which the Kubernetes runner applies to the same artifacts.
 - **A dedicated network** — steps attach to the `bnk-forge-artifacts` bridge network rather
   than the daemon's default bridge, so artifact containers don't sit alongside unrelated
   containers. Egress still works (you can reach cloud control planes); you just don't share

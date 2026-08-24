@@ -56,7 +56,7 @@ class TestPodExecAuth:
             msg = ws.receive_json()
             assert msg["type"] == "error"
 
-    def test_exec_valid_viewer_token_accepted(self, client, sample_user):
+    def test_exec_valid_viewer_token_accepted(self, client, sample_viewer_user):
         """Valid viewer JWT passes auth — connection accepted."""
         token = _make_token("viewer")
         with client.websocket_connect(
@@ -65,7 +65,7 @@ class TestPodExecAuth:
             msg = ws.receive_json()
             assert msg["type"] == "error"
 
-    def test_exec_valid_operator_token_accepted(self, client, sample_user):
+    def test_exec_valid_operator_token_accepted(self, client, sample_operator_user):
         """Valid operator JWT passes auth — connection accepted."""
         token = _make_token("operator")
         with client.websocket_connect(

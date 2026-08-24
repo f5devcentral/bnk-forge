@@ -19,6 +19,42 @@ variable "GIT_REVISION" {
 variable "SOURCE_URL" {
   default = "https://github.com/f5devcentral/bnk-forge"
 }
+# Build timestamp for org.opencontainers.image.created (RFC 3339). Empty by
+# default so a plain `docker buildx bake` does not stamp a wall-clock time into
+# the image config.
+#   A timestamp() default stamped a FRESH time into every build, guaranteeing a
+#   different config digest on every rebuild. CI instead sets CREATED to the
+#   release commit's committer date (fixed for a given tag) and also exports
+#   SOURCE_DATE_EPOCH. That removes the two most obvious sources of variance.
+#
+#   It does NOT make a rebuild byte-reproducible, and a republish CAN move the
+#   digest. The Dockerfiles run `apt-get update` / `apk upgrade` / `pip` / `npm`
+#   against live package indexes, and there is no buildkit `rewrite-timestamp`
+#   pass normalizing layer mtimes to SOURCE_DATE_EPOCH — so two builds of the
+#   same tag can produce different layer diff_ids and a different image digest
+#   (bonnyr-f5 #181 round 4, verified: two SOURCE_DATE_EPOCH-pinned builds gave
+#   divergent digests). Because a republish may not resolve to the original
+#   digest, the immutable :VERSION tag is protected the honest way — an existence
+#   probe REFUSES a republish by default and requires an explicit force to
+#   overwrite — rather than by relying on determinism we do not have.
+#
+#   FOUR paths bake --push this file (bonnyr-f5 #193 minor — the old comment said
+#   "BOTH", there are four). The two that publish the IMMUTABLE release :VERSION
+#   tag are guarded by the existence probe, single-sourced through
+#   scripts/registry-overwrite-guard.sh -> scripts/registry-tag-probe.sh:
+#     • the release workflow  (release.yml "Refuse to overwrite an already-published tag")
+#     • `make push-images`    (Makefile, FORCE_LATEST=1 to override)
+#   The other two deliberately carry NO :VERSION probe, because they never touch
+#   the release tag — they push a SHA-pinned immutable tag `${BASE}-cb.${SHA}`
+#   (unique per commit) plus the ROLLING `customer-build` tag (rolling tags are
+#   MEANT to move):
+#     • `make push-customer-build`
+#     • `make push-customer-build-multiarch`
+#   So the release-tag protection is not fixed at one call site (bonnyr-f5 #181
+#   round 5, F3), and the customer-build paths are correctly out of its scope.
+variable "CREATED" {
+  default = ""
+}
 
 group "default" {
   targets = ["api", "worker", "beat", "frontend", "proxy", "mcp", "operator"]
@@ -26,12 +62,21 @@ group "default" {
 
 target "_common" {
   platforms = split(",", PLATFORMS)
-  labels = {
-    "org.opencontainers.image.source"   = SOURCE_URL
-    "org.opencontainers.image.revision" = GIT_REVISION
-    "org.opencontainers.image.version"  = VERSION
-    "org.opencontainers.image.created"  = timestamp()
-  }
+  # Omit org.opencontainers.image.created entirely when CREATED is empty instead
+  # of stamping an empty-string label: an empty value is spec-invalid and
+  # falsifies the label table in docs/DOCKER.md. A plain `docker buildx bake`
+  # (e.g. `make push-images`, which does not set CREATED) must not emit the key
+  # at all; CI sets CREATED to the release commit's committer date. This is the
+  # same conditional shape the ROLLING_TAG tags use below (bonnyr-f5 #181 round
+  # 5, F7).
+  labels = merge(
+    {
+      "org.opencontainers.image.source"   = SOURCE_URL
+      "org.opencontainers.image.revision" = GIT_REVISION
+      "org.opencontainers.image.version"  = VERSION
+    },
+    CREATED != "" ? { "org.opencontainers.image.created" = CREATED } : {},
+  )
 }
 
 target "_backend" {

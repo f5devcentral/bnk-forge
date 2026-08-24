@@ -32,6 +32,7 @@ from services.auth_service import (
     create_access_token,
     create_user,
     get_user_from_token,
+    holds_known_default_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,9 +107,23 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         # Re-clamp to the owner's *current* role too, so demoting a user
         # immediately narrows every token they already issued.
         user.request_role = clamp_role(api_token.role, user.role)
+        _enforce_password_change(request, user)
         return user
 
-    return get_user_from_token(db, token)
+    user = get_user_from_token(db, token)
+    _enforce_password_change(request, user)
+    return user
+
+
+# The gate now lives in services.auth_service so AuthMiddleware and this
+# dependency enforce it from ONE place -- a dependency-less route was bypassing
+# the dependency-only version (see enforce_password_change).
+from services.auth_service import enforce_password_change  # noqa: E402
+
+
+def _enforce_password_change(request: Request, user: User) -> None:
+    """#184: gate a must-change user at the get_current_user dependency."""
+    enforce_password_change(request.url.path, user)
 
 
 def require_role(*allowed_roles: str):
@@ -229,6 +244,9 @@ def _user_to_dict(user: User) -> dict:
         # carries a request_role, so admin user listings are unaffected.
         "role": effective_role(user),
         "is_active": user.is_active,
+        # bonnyr-f5 #188: surface provenance so the UI can distinguish a service
+        # account (whose re-enable is guarded) from a human account.
+        "is_service_account": bool(user.is_service_account),
         "must_change_password": user.must_change_password,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
@@ -355,6 +373,28 @@ def update_user(
         target.email = request.email
 
     if request.is_active is not None:
+        # bonnyr-f5 #188: re-enabling a service account that still holds a shipped
+        # default password would resurrect the published default credential. This is
+        # defence-in-depth for a row taken inactive by a path that LEAVES the
+        # credential intact — e.g. a manual operator PUT is_active=false.
+        # (disable_stale_service_user itself now scrubs the hash on the upgrade path,
+        # #193, so this guard covers the other disable paths.) Refuse the re-enable
+        # until the secret is rotated; the operator sets MCP_SERVICE_PASSWORD
+        # (startup re-seeds and re-activates the row with a real hash) or changes
+        # the password explicitly. Never restore a known default.
+        if (
+            request.is_active
+            and not target.is_active
+            and target.is_service_account
+            and holds_known_default_password(target)
+        ):
+            from core.errors import BadRequestError
+            raise BadRequestError(
+                f"Cannot re-enable service account '{target.username}': it still "
+                "holds a known default password. Rotate the credential first — set "
+                "MCP_SERVICE_PASSWORD to a strong secret and restart the backend "
+                "(it re-seeds and re-activates the account with a real hash)."
+            )
         target.is_active = request.is_active
 
     db.commit()

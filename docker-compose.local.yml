@@ -38,6 +38,42 @@ x-local-backend-env: &local-backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
   TF_PLUGIN_CACHE_DIR: /app/provider-cache
+  # #186: plumb the operator-chosen initial admin password to the backend
+  # (config.py has no env_file, so an unpassed var never reaches the container).
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough) — a present-but-empty
+  # "" (from `${VAR:-}`) would OVERRIDE a pinned 3.1.6 image's `DEFAULT_ADMIN_PASSWORD:
+  # str = "changeme"` and lock admin out (login schema rejects ""). A map entry with NO
+  # value is passthrough: omitted when unset, forwarded when set — so each backend applies
+  # its own default (3.1.6 "changeme"; generating backend a random pw).
+  DEFAULT_ADMIN_PASSWORD:
+  # #186: plumb the must-change gate too, or the seeded admin owes a password
+  # change no route accepts (login is exempt; every other /api route 403s).
+  # Defaults to "true" (secure); ephemeral CI overrides to "false" to let the
+  # e2e suite reach protected routes.
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  # #186/#187 (bonnyr-f5 r5): the backend reconciles the mcp account to
+  # MCP_SERVICE_PASSWORD on every boot and seeds it from the same .env value the
+  # MCP server authenticates with; plumb it (and the username) here or the mcp
+  # account is never seeded and the mcp client cannot authenticate. Unset -> not
+  # seeded (no secret is generated for MCP -- #188-over-#186 consolidation).
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased — a
+  # legacy MCP_USERNAME=admin must never resolve the service username (old default admin,
+  # new default mcp), or a pre-guard backend rewrites the human admin row to changeme.
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on, or
+  # ENVIRONMENT=production bricks the backend. bonnyr-f5 #193 B1 (r4): OMIT-when-unset
+  # (null-value passthrough) — a pinned 3.1.6 backend uses `if self.KEY is None`, so a
+  # present-but-empty "" would boot with an empty JWT secret / invalid Fernet key instead
+  # of auto-generating. A map entry with NO value is passthrough: omitted when unset,
+  # forwarded when set; set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 # Shared bridge network — all services can resolve each other by service name
 networks:
@@ -140,11 +176,13 @@ services:
       - "8081:8081"
     environment:
       BNK_FORGE_API_URL: http://backend:8000
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not.
       BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
       # MCP authenticates as the dedicated service account seeded by the backend.
       # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
-      # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      # every startup so backend and MCP always stay in sync. No shipped default
+      # (#186): the old mcp-service-changeme can no longer authenticate.
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
 
   postgres-backup:

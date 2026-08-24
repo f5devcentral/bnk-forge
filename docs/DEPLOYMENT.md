@@ -56,9 +56,21 @@ Need the host itself provisioned too? [`vm-bnk-forge/`](../vm-bnk-forge/README.m
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup_ |
 
-**You must change the admin password on first login.** Navigate to Settings → Change Password.
+No default password ships (#184). Where to retrieve it depends on how the account
+was provisioned:
+
+- **Helm** — the chart generates a per-install `admin-password` Secret and wires it to
+  the backend, which seeds `admin` from it (or, on upgrade from a build that shipped a
+  default, rotates `admin` to it). That Secret value is what authenticates:
+  `kubectl get secret <release>-bnk-forge-secrets -o jsonpath='{.data.admin-password}' | base64 -d`
+- **Compose** — if you set `DEFAULT_ADMIN_PASSWORD`, that is the password. Otherwise the
+  backend generates one and writes it to a file (the plaintext is never logged — only a
+  pointer to the file is):
+  `docker exec bnk-forge-backend cat /app/keys/initial_admin_password`
+
+**The API refuses all other calls until you change it on first login** — Settings → Change Password.
 
 ---
 
@@ -247,13 +259,20 @@ MCP has two distinct readiness layers:
 A deployment can pass layer 1 and still fail layer 2 if MCP credentials are out
 of sync with backend credentials.
 
-Current compose defaults assume backend seeded admin credentials (`admin/changeme`).
-If you rotate the admin password (recommended), also set MCP credentials in your
-runtime environment before deploy/restart:
+The backend runs MCP as its OWN dedicated **service account** (`mcp`), never the
+human admin login (#186/#187) — MCP no longer authenticates with the admin
+password, so rotating `admin` does not affect it. The backend seeds/reconciles
+that account from `MCP_SERVICE_PASSWORD` on every boot; no default ships, so MCP
+stays disabled until you set a real value. Set it in your runtime environment
+before deploy/restart — the SAME value is read by the backend (which provisions
+the `mcp` account from it) and by the MCP container. Do **not** point
+`MCP_SERVICE_USERNAME` at `admin`: the backend refuses to reconcile a reserved
+human username as a service account (it would otherwise take over the admin row),
+which would leave MCP down. Keep the dedicated default name `mcp`:
 
 ```bash
-MCP_USERNAME=admin
-MCP_PASSWORD=<current-admin-password>
+MCP_SERVICE_USERNAME=mcp   # optional; defaults to "mcp"
+MCP_SERVICE_PASSWORD=<a-strong-secret-shared-with-the-MCP-server>
 ```
 
 Then recreate MCP:
@@ -340,7 +359,7 @@ Before deploying to production:
 - [ ] Configure `MODULE_LIBRARY_GIT_URL` and `MODULE_LIBRARY_GIT_REF`
 - [ ] Set `HOST_REPO_PATH` if you want GUI upgrades
 - [ ] Set strong `POSTGRES_PASSWORD` and `REDIS_PASSWORD` in `.env`
-- [ ] If backend admin password changed, set matching `MCP_USERNAME` / `MCP_PASSWORD` for MCP runtime
+- [ ] Set a strong `MCP_SERVICE_PASSWORD` — MCP runs as its own dedicated `mcp` account, never `admin` (reserved; the backend refuses it and MCP stays down) — #186/#187
 - [ ] After MCP credential changes, recreate MCP (`make mcp-recreate` or `make local-mcp-recreate`)
 - [ ] Run `make mcp-readiness` and confirm runtime tool calls pass
 - [ ] Ensure firewall rules allow ports 80/443 only from trusted networks
