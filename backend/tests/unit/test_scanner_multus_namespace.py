@@ -164,3 +164,33 @@ class TestMultusNamespaceScopedFetch:
             [], _NAD_CRD["crd_names"], data["multus_pods"], data["daemonsets"]
         )
         assert result["running_pods"] == 1
+
+
+def test_analyze_multus_prefers_exact_multus_daemonset_over_sibling():
+    """bonnyr-f5 #203 review (MINOR 2): with both a sibling and the primary
+    DaemonSet present, and the sibling FIRST in the list, analyze_multus reports
+    the exact-named ``multus`` DaemonSet (deterministic, not list-order-dependent)."""
+    from services.scanner.prereqs import analyze_multus
+
+    daemonsets = [
+        {"name": "multus-additional-cni-plugins", "namespace": "sib-ns", "desired": 6, "ready": 6},
+        {"name": "multus", "namespace": "openshift-multus", "desired": 3, "ready": 3},
+    ]
+    multus_pods = [{"name": "multus-abc", "phase": "Running"}]
+    result = analyze_multus(
+        [], {"network-attachment-definitions.k8s.cni.cncf.io"}, multus_pods, daemonsets
+    )
+    assert result["daemonset"]["name"] == "multus"
+    assert result["daemonset"]["namespace"] == "openshift-multus"
+
+
+def test_multus_namespace_selector_prefers_exact_multus():
+    """The fetch's namespace picker also prefers exact ``multus`` over a sibling,
+    so the fetched namespace matches the reported DaemonSet."""
+    from services.scanner.fetch import _multus_daemonset_namespace
+
+    daemonsets = [
+        {"name": "multus-additional-cni-plugins", "namespace": "sib-ns"},
+        {"name": "multus", "namespace": "openshift-multus"},
+    ]
+    assert _multus_daemonset_namespace(daemonsets) == "openshift-multus"

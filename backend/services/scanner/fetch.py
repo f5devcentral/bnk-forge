@@ -289,10 +289,17 @@ def _multus_daemonset_namespace(daemonsets: list[dict[str, Any]]) -> str | None:
     ``list_daemon_set_for_all_namespaces``, so its namespace is authoritative:
     ``kube-system`` on vanilla k8s, ``openshift-multus`` on ROKS/OpenShift.
     """
-    for ds in daemonsets:
-        if "multus" in (ds.get("name") or "").lower():
-            return ds.get("namespace")
-    return None
+    multus = [ds for ds in daemonsets if "multus" in (ds.get("name") or "").lower()]
+    if not multus:
+        return None
+    # bonnyr-f5 #203 review (MINOR 2): prefer the DaemonSet named EXACTLY "multus"
+    # over siblings like "multus-additional-cni-plugins" so the namespace choice is
+    # deterministic regardless of list order and matches analyze_multus's pick.
+    primary = next(
+        (ds for ds in multus if (ds.get("name") or "").lower() == "multus"),
+        multus[0],
+    )
+    return primary.get("namespace")
 
 
 def _fetch_multus_pods(

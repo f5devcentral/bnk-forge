@@ -184,9 +184,25 @@ def analyze_multus(
     """
     has_nad_crd = "network-attachment-definitions.k8s.cni.cncf.io" in crd_names
 
-    multus_ds = [
+    multus_ds_all = [
         ds for ds in daemonsets if "multus" in ds.get("name", "").lower()
     ]
+    # bonnyr-f5 #203 review (MINOR 2): prefer the DaemonSet named EXACTLY "multus"
+    # over siblings like "multus-additional-cni-plugins", so the reported
+    # DaemonSet is deterministic regardless of list order.
+    primary_ds = next(
+        (d for d in multus_ds_all if d.get("name", "").lower() == "multus"),
+        multus_ds_all[0] if multus_ds_all else None,
+    )
+
+    # bonnyr-f5 #203 review (MINOR 1): running_pods is intentionally the broad
+    # Multus-networking pod set — any Running pod whose name carries "multus". On a
+    # cluster with a separate "multus-additional-cni-plugins" DaemonSet this
+    # includes those pods too, so the count can exceed the primary DaemonSet's
+    # ready number. That is by design for this display metric: precise
+    # per-DaemonSet attribution needs pod ownerReferences we do not fetch, and a
+    # name-prefix heuristic mis-handles real-world names (a "multus" DaemonSet
+    # whose pods are named "kube-multus-ds-*"), so the tolerant name match is kept.
     running_multus_pods = [
         p
         for p in multus_pods
@@ -194,16 +210,15 @@ def analyze_multus(
     ]
 
     multus_daemonset_info = None
-    if multus_ds:
-        ds = multus_ds[0]
+    if primary_ds:
         multus_daemonset_info = {
-            "name": ds["name"],
-            "namespace": ds["namespace"],
-            "desired": ds["desired"],
-            "ready": ds["ready"],
+            "name": primary_ds["name"],
+            "namespace": primary_ds["namespace"],
+            "desired": primary_ds["desired"],
+            "ready": primary_ds["ready"],
         }
 
-    if has_nad_crd and (running_multus_pods or multus_ds):
+    if has_nad_crd and (running_multus_pods or primary_ds):
         status = PrerequisiteStatus.DETECTED
     elif has_nad_crd:
         status = PrerequisiteStatus.PARTIAL
