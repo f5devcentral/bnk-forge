@@ -7,6 +7,31 @@ Components:
 {{- if .Values.frontend.enabled }} frontend svc: {{ include "bnk-forge.fullname" . }}-frontend:{{ .Values.frontend.service.port }}{{- end }}
 {{- if .Values.proxy.enabled }}    proxy    svc: {{ include "bnk-forge.fullname" . }}-proxy ({{ .Values.proxy.service.type }}) {{ .Values.proxy.service.httpPort }}/{{ .Values.proxy.service.httpsPort }}{{- end }}
 {{- if .Values.mcp.enabled }}      mcp      svc: {{ include "bnk-forge.fullname" . }}-mcp:{{ .Values.mcp.service.port }}{{- end }}
+{{- if .Values.mcp.enabled }}
+
+MCP: the mcp server authenticates as the dedicated 'mcp' service account
+(secrets.mcpUsername). Do NOT point secrets.mcpUsername at a human identity such as
+'admin' — the backend refuses to reconcile a reserved human username as a service
+account, so the mcp account would be disabled on upgrade and MCP would go
+permanently down while this install reports success (the chart now fails the render
+if you set it to 'admin'). Set secrets.mcpPassword to a strong value (the same
+value the MCP server receives as BNK_FORGE_PASSWORD), or leave it empty to
+auto-generate one. Note: the mcp readiness probe only takes the pod out of service
+when no/ bad credentials are detected on the credential-guard release; the guarantee
+lands with the image the chart pins (image.tag == this chart's appVersion), so on an
+older pinned image confirm MCP with a real tool call rather than trusting readiness.
+{{- end }}
+
+SET ALLOWED_ORIGINS FOR BROWSER ACCESS:
+  The api/worker/beat run with ENVIRONMENT=production. Under production the backend
+  REFUSES to boot (validate_production SystemExit) if ALLOWED_ORIGINS contains '*' or
+  'localhost' — and this chart now ALSO fails those AT RENDER (bonnyr-f5 #193 M10), so a
+  bad value is caught by `helm install` instead of as a CrashLoopBackOff. The default
+  ships EMPTY, which boots cleanly, but with no cross-origin allowed the browser UI
+  cannot call the API until you name your real origin(s). Install/upgrade with:
+    --set api.env.ALLOWED_ORIGINS="https://forge.example.com"
+  (comma-separate multiple; match the host/port you actually reach the proxy on; no '*',
+  no localhost in production — set ENVIRONMENT=development for a local trial instead).
 
 To reach the UI:
 {{- if .Values.ingress.enabled }}
@@ -18,7 +43,15 @@ To reach the UI:
   open https://localhost:8443/
 {{- end }}
 
-Default admin login: admin / changeme  (change immediately via UI).
+Admin login (from a browser origin listed in ALLOWED_ORIGINS — see above):
+username 'admin'. Retrieve the chart-provisioned password with:
+  kubectl get secret {{ include "bnk-forge.fullname" . }}-secrets -o jsonpath='{.data.admin-password}' | base64 -d
+This is the per-install value carried in the Secret. How the backend USES it depends
+on the image this chart pins (image.tag {{ .Values.image.tag }}): a build that seeds
+the admin account from this Secret and rotates a shipped-default admin will authenticate
+you with the value above and require a password change on first login; an older image
+that predates that behaviour may still accept its own default credential. Treat the
+value above as the intended admin password and change it on first login.
 
 IMPORTANT:
   * Shared volumes use ReadWriteMany. Set global.sharedStorageClass to a

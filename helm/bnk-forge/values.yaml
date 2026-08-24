@@ -16,7 +16,7 @@ global:
 
 image:
   pullPolicy: IfNotPresent
-  tag: "3.0.1"
+  tag: "3.1.6"
 
 # Generated/explicit secrets. If left empty, helm generates random values on
 # first install and reuses them on upgrade (lookup-based).
@@ -25,8 +25,26 @@ secrets:
   redisPassword: ""
   jwtSecretKey: ""
   encryptionKey: ""
-  mcpUsername: admin
-  mcpPassword: changeme
+  # Empty -> generated on first install and reused on upgrade. The seeded admin
+  # account is must_change_password; retrieve this to log in the first time.
+  adminPassword: ""
+  # #186: whether the seeded admin must change its password before using the API.
+  # Keep true on any real deployment (the shipped-default hazard #184 closes).
+  # Set false only for an ephemeral test stack seeding a known throwaway admin.
+  adminMustChange: true
+  # #186 BLOCKER 2/3 / #187 (bonnyr-f5 r5): NEVER ship a default admin credential.
+  #  - mcpUsername was `admin`: it pointed the MCP client at the human admin
+  #    account and, once the backend receives MCP_SERVICE_USERNAME, made
+  #    ensure_service_user rewrite the human admin row (BLOCKER 3). The MCP
+  #    client authenticates as its own dedicated, non-human service account.
+  #  - mcpPassword was `changeme`: a live, publicly-known credential on a public
+  #    repo. Empty -> generated per-install in the release Secret (mirrors
+  #    adminPassword) and reused on upgrade, so no shipped default ever exists.
+  # bonnyr-f5 #193 M8: the chart now FAILS the render if mcpUsername is set to a
+  # reserved human identity ("admin") -- a service account must not co-opt the
+  # human admin login, and pinning it would silently disable MCP on upgrade.
+  mcpUsername: mcp
+  mcpPassword: ""
 
 # Common pod settings
 # fsGroup=1000 so PVC-backed shared volumes are writable by the bnkforge user (UID 1000).
@@ -89,10 +107,17 @@ api:
   env:
     BNK_FORGE_DEPLOY_MODE: server
     ENVIRONMENT: production
-    # Override per-env. Wildcards rejected in production. Comma-separated origins.
-    ALLOWED_ORIGINS: "https://localhost"
-    # If running on a non-localhost cluster, set e.g.:
-    # ALLOWED_ORIGINS: "https://hgx2:30443,http://hgx2:30080"
+    # bonnyr-f5 #193 M10: ships EMPTY, not "https://localhost". Under
+    # ENVIRONMENT=production the backend's validate_production() SystemExits (crashloop)
+    # if ALLOWED_ORIGINS contains "localhost" or "*", so the old "https://localhost"
+    # default bricked every bare `helm install`. Empty is accepted by the backend (it is
+    # neither localhost nor a wildcard) so the default render boots; the chart also fails
+    # AT RENDER on a localhost/wildcard value under production/staging (see backendEnv).
+    # Set this to your actual browser origin(s) — comma-separated, no wildcard, no
+    # localhost in production, e.g.:
+    #   ALLOWED_ORIGINS: "https://forge.example.com"
+    #   ALLOWED_ORIGINS: "https://hgx2:30443,http://hgx2:30080"
+    ALLOWED_ORIGINS: ""
   resources:
     requests:
       cpu: 250m

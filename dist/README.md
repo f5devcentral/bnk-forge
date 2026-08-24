@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Docker Engine 24+** with **Docker Compose v2.24+**
-- Access to the BNK Forge container registry (if private)
+- Network access to `ghcr.io` (images are public — no registry login required)
 - 4 GB RAM minimum (8 GB recommended)
 - 10 GB disk space
 
@@ -12,8 +12,8 @@
 ### 1. Download and extract
 
 ```bash
-tar xzf bnk-forge-3.0.1.tar.gz
-cd bnk-forge-3.0.1
+tar xzf bnk-forge-3.1.6.tar.gz
+cd bnk-forge-3.1.6
 ```
 
 ### 2. Configure
@@ -27,25 +27,13 @@ nano .env   # Set BNK_FORGE_REGISTRY and passwords
 
 | Variable | Description | Example |
 |---|---|---|
-| `BNK_FORGE_REGISTRY` | Container registry URL (no trailing slash) | `ghcr.io/your-org` |
-| `BNK_FORGE_VERSION` | Image version tag | `3.0.1` |
+| `BNK_FORGE_REGISTRY` | Container registry URL (no trailing slash) | `ghcr.io/f5devcentral` (public) |
+| `BNK_FORGE_VERSION` | Image version tag. Ships pre-set to this bundle's version (see the `VERSION` file); leave it as shipped. Do **not** set it to `latest` — a floating tag can resolve to an image whose credential contract differs from this bundle. | *(pre-set — leave as shipped)* |
 | `POSTGRES_PASSWORD` | PostgreSQL password | *(change for production)* |
 | `REDIS_PASSWORD` | Redis password | *(change for production)* |
+| `MCP_SERVICE_PASSWORD` | Password for the dedicated `mcp` service account (the MCP server receives the same value as `BNK_FORGE_PASSWORD`). Ships **empty** — MCP stays disabled until you set a strong secret. Never `admin`. The legacy name `MCP_PASSWORD` is still honored as an alias for existing `.env` files. | *(required to enable MCP)* |
 
-### 3. Authenticate to registry (if private)
-
-```bash
-# GitHub Container Registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
-
-# Docker Hub
-docker login
-
-# AWS ECR
-aws ecr get-login-password | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.REGION.amazonaws.com
-```
-
-### 4. Install
+### 3. Install
 
 **Linux server** (host networking — production):
 ```bash
@@ -59,12 +47,12 @@ chmod +x install.sh
 ./install.sh --local
 ```
 
-### 5. Access
+### 4. Access
 
 - **Mac/Windows (`--local`):** open **https://localhost**
 - **Linux server:** open **https://\<server-ip\>** — the installer prints the exact URL at the end
 
-Accept the self-signed certificate warning. Login: **admin** / **changeme**
+Accept the self-signed certificate warning. Login as **admin**. Set `DEFAULT_ADMIN_PASSWORD` in `.env` before install to choose the initial password; otherwise the backend generates one on first boot and writes it to `/app/keys/initial_admin_password` — retrieve it with `docker compose exec backend cat /app/keys/initial_admin_password` (available on releases that generate an admin password; if the file is absent, use the `DEFAULT_ADMIN_PASSWORD` you set). You'll change it on first login.
 
 ---
 
@@ -183,7 +171,7 @@ gunzip -c backup_20260417.sql.gz | docker exec -i bnk-forge-postgres psql -U bnk
 ## File Structure
 
 ```
-bnk-forge-3.0.1/
+bnk-forge-3.1.6/
 ├── docker-compose.yml          # Main compose (Linux server — host networking)
 ├── docker-compose.local.yml    # Overlay for macOS/Windows (bridge networking)
 ├── .env.example                # Configuration template
@@ -235,17 +223,17 @@ This creates `dist/bnk-forge-VERSION.tar.gz` containing all files needed for ins
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 
 # Build + push all images for amd64 + arm64 (default)
-make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
+make push-images BNK_FORGE_REGISTRY=ghcr.io/f5devcentral
 
 # Or push only amd64 (faster, if you don't need ARM)
-make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org PLATFORMS=linux/amd64
+make push-images BNK_FORGE_REGISTRY=ghcr.io/f5devcentral PLATFORMS=linux/amd64
 ```
 
-This uses `docker buildx build --push` to build all 6 images (api, worker, beat, frontend, proxy, mcp) for both architectures and push **multi-arch manifest lists** to the registry. Each tag (e.g., `bnk-forge-api:3.0.1`) is a manifest that Docker automatically resolves to the correct platform on `docker pull`.
+This uses `docker buildx build --push` to build all 7 images (api, worker, beat, frontend, proxy, mcp, operator) for both architectures and push **multi-arch manifest lists** to the registry. Each tag (e.g., `bnk-forge-api:3.1.6`) is a manifest that Docker automatically resolves to the correct platform on `docker pull`.
 
 **Verify the manifest:**
 ```bash
-docker manifest inspect ghcr.io/your-org/bnk-forge-api:3.0.1
+docker manifest inspect ghcr.io/f5devcentral/bnk-forge-api:3.1.6
 ```
 
 You should see entries for both `linux/amd64` and `linux/arm64`.
@@ -266,18 +254,21 @@ gh release create v${VERSION} dist/bnk-forge-${VERSION}.tar.gz \
 
 ### What `gh release create` does
 
-1. Creates a Git tag (`v3.0.1`) on the current commit
-2. Creates a GitHub Release page at `https://github.com/your-org/bnk-forge/releases/tag/v3.0.1`
+1. Creates a Git tag (`v3.1.6`) on the current commit
+2. Creates a GitHub Release page at `https://github.com/f5devcentral/bnk-forge/releases/tag/v3.1.6`
 3. Uploads the tarball as a downloadable release asset
 
 ### End-user download URL
 
-After publishing, users can download and install with:
+Once a full (non-prerelease) `vX.Y.Z` release with an attached tarball exists, users
+download and install with the URL below — substitute the version you actually published
+(the example `3.1.6` is illustrative; no release asset exists until you cut one):
 
 ```bash
-# Download from GitHub Releases
-curl -L https://github.com/your-org/bnk-forge/releases/download/v3.0.1/bnk-forge-3.0.1.tar.gz | tar xz
-cd bnk-forge-3.0.1
+# Download from GitHub Releases — replace 3.1.6 with your published version
+VERSION=3.1.6
+curl -L https://github.com/f5devcentral/bnk-forge/releases/download/v${VERSION}/bnk-forge-${VERSION}.tar.gz | tar xz
+cd bnk-forge-${VERSION}
 ./install.sh
 ```
 

@@ -8,7 +8,7 @@
 #   ports: !override [...]       → replace host port mapping
 #   image: adr424-*             → project-scoped image tags
 #
-# Entrypoint: https://localhost:11443  (admin / changeme)
+# Entrypoint: https://localhost:11443  (admin / password generated on first start — see backend logs)
 # Bring up command:
 #   docker compose -p adr424 \
 #     -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.adr424.yml \

@@ -24,6 +24,24 @@ x-local-backend-env: &local-backend-env
   # Bridge mode: reach the socket proxy by service DNS (the base compose's
   # 127.0.0.1:2375 is the container's own loopback here, not the host).
   DOCKER_HOST: tcp://docker-socket-proxy:2375
+  # MCP service account (see base compose): no shipped default (#186/#187).
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased (a
+  # legacy MCP_USERNAME=admin must never resolve the service username).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on.
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough) — the pinned 3.1.6
+  # backend uses `if self.KEY is None`, so a present-but-empty "" (from `${VAR:-}`) would
+  # boot with an empty JWT secret / invalid Fernet key rather than auto-generating. A map
+  # entry with NO value is passthrough: omitted when unset, forwarded when set — letting
+  # 3.1.6 fall through to None → auto-generate. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 networks:
   bnk-local:
@@ -124,8 +142,13 @@ services:
       - "8081:8081"
     environment:
       BNK_FORGE_API_URL: http://backend:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: MCP authenticates as the dedicated 'mcp' service account, NOT the
+      # human admin. admin/changeme is gone (#184 generates the admin password
+      # and gates it). Set MCP_SERVICE_PASSWORD in .env (no shipped default — the
+      # published one can no longer authenticate); the backend reconciles to it.
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
 
   postgres-backup:

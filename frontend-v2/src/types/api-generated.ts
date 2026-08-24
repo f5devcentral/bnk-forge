@@ -22745,6 +22745,11 @@ export interface components {
             role: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Is Service Account
+             * @default false
+             */
+            is_service_account: boolean;
             /** Must Change Password */
             must_change_password: boolean;
             /** Last Login At */
@@ -22808,6 +22813,11 @@ export interface components {
             role: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Is Service Account
+             * @default false
+             */
+            is_service_account: boolean;
             /** Must Change Password */
             must_change_password: boolean;
             /** Last Login At */
@@ -22860,6 +22870,11 @@ export interface components {
             role: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Is Service Account
+             * @default false
+             */
+            is_service_account: boolean;
             /** Must Change Password */
             must_change_password: boolean;
             /** Last Login At */

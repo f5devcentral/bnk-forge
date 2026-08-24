@@ -25,7 +25,13 @@
 set -euo pipefail
 
 # ── Tunables (override via environment if desired) ───────────────────────────
-BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-latest}"   # image tag to pull
+# bonnyr-f5 #193 B1: the default below is DERIVED from the repo VERSION file and
+# re-stamped at release by scripts/sync-version-artifacts.sh --write, so it always
+# names an image the same release actually published — never a forward-dated guess
+# and never `latest` (a floating tag can point at an image whose credential contract
+# differs from this installer's). Do NOT hand-edit it; override at runtime only with
+# a tag you have confirmed ships the same guards.
+BNK_FORGE_VERSION="${BNK_FORGE_VERSION:-3.1.6}"   # image tag to pull (sync-managed)
 NAME_PREFIX="${NAME_PREFIX:-bnk-forge}"
 SUFFIX="$(date +%m%d%H%M)"
 VPC_NAME="${NAME_PREFIX}-vpc-${SUFFIX}"
@@ -84,7 +90,12 @@ ibmcloud is instance-profiles --output json | jq -e --arg p "${PROFILE}" '[.[].n
 log "Selected profile '${PROFILE}' (>= ${VCPU} vCPU, >= ${RAM} GB)."
 
 # ── Prompt 4: existing SSH key ───────────────────────────────────────────────
-mapfile -t SSH_KEYS < <(ibmcloud is keys --output json | jq -r '.[].name')
+# `while read` not `mapfile`: mapfile/readarray is bash 4+, and stock macOS ships
+# bash 3.2.57 where it is rc=127 (bonnyr-f5 #193 — same class fixed in the release
+# scripts). Read the JSON array line-by-line into SSH_KEYS portably.
+SSH_KEYS=()
+while IFS= read -r _k; do [ -n "$_k" ] && SSH_KEYS+=("$_k"); done \
+  < <(ibmcloud is keys --output json | jq -r '.[].name')
 [ "${#SSH_KEYS[@]}" -gt 0 ] || die "No SSH keys found in region '${REGION}'. Create one: ibmcloud is key-create ..."
 echo "Available IBM Cloud SSH keys:"
 PS3="Select the SSH key to install on the VSI: "
@@ -174,8 +185,10 @@ BNK_FORGE_REGISTRY=__REGISTRY__
 BNK_FORGE_VERSION=__VERSION__
 POSTGRES_PASSWORD=${PG}
 REDIS_PASSWORD=${RD}
-MCP_USERNAME=admin
-MCP_PASSWORD=${MCP}
+# #186/#187: MCP authenticates as the dedicated 'mcp' service account with a
+# per-install random secret, NOT the human admin (whose password #184 generates + gates).
+MCP_SERVICE_USERNAME=mcp
+MCP_SERVICE_PASSWORD=${MCP}
 ENV
 chmod 600 .env
 case "${__XTRACE__}" in *x*) set -x ;; esac
@@ -343,7 +356,7 @@ done
 docker compose up -d
 
 # 9. Wait for backend health then drop a ready marker
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -sf http://localhost:8000/api/system/health >/dev/null 2>&1 && break || sleep 5
 done
 touch /opt/bnk-forge/.bnk-forge-ready
@@ -381,6 +394,41 @@ x-backend-env: &backend-env
   # Artifact (container-image) engine reaches the Docker daemon through the
   # scoped socket proxy below (loopback-published), never the raw host socket.
   DOCKER_HOST: ${DOCKER_HOST:-tcp://127.0.0.1:2375}
+  # #186 BLOCKER 1 / #187 (bonnyr-f5 r5): this installer writes a per-install random
+  # MCP_SERVICE_PASSWORD into .env (above). The backend reconciles the mcp account
+  # to it on boot, so it must receive it too — otherwise the mcp account is never
+  # seeded and the mcp client can never authenticate (no secret is generated for
+  # MCP under the #188-over-#186 consolidation; bonnyr-f5 #193).
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased (a
+  # legacy MCP_USERNAME=admin must never resolve the service username — old default admin,
+  # new default mcp — or a pre-guard backend rewrites the human admin row).
+  # #193: also plumb the DEFAULT_ADMIN_* gate — config.py has no env_file, so an
+  # unpassed var never reaches the container.
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset. This installer pins the 3.1.6 image, whose
+  # `DEFAULT_ADMIN_PASSWORD: str = "changeme"` is a plain str — a present-but-empty ""
+  # (what `${VAR:-}` delivers) would OVERRIDE it and seed admin with "" (login schema
+  # rejects "" with 422, locking everyone out). A map entry with NO value is passthrough
+  # (this heredoc is quoted, so it is written verbatim and resolved by compose at runtime):
+  # omitted when the var is absent from .env, forwarded when set — so 3.1.6 falls through
+  # to its usable "changeme" default; a generating backend randomises.
+  DEFAULT_ADMIN_PASSWORD:
+  DEFAULT_ADMIN_MUST_CHANGE: ${DEFAULT_ADMIN_MUST_CHANGE:-true}
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on, so
+  # ENVIRONMENT=production does not brick the backend. bonnyr-f5 #193 B1 (r4): OMIT-when-unset
+  # (null-value passthrough) — this installer does NOT generate JWT/ENCRYPTION, and the pinned
+  # 3.1.6 backend uses `if self.KEY is None`, so a present-but-empty "" would boot with an empty
+  # JWT secret / invalid Fernet key. A map entry with NO value is passthrough: omitted when
+  # unset, forwarded when set — so 3.1.6 auto-generates and persists the keys to the /app/keys
+  # volume. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
 
 x-worker-volumes: &worker-volumes
   - module_catalog:/tmp/bnk-forge-modules
@@ -462,7 +510,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-api:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-api:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-backend
     network_mode: host
     logging: *default-logging
@@ -495,7 +543,7 @@ services:
       start_period: 30s
 
   celery-worker:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker
     network_mode: host
     logging: *default-logging
@@ -513,7 +561,7 @@ services:
     restart: unless-stopped
 
   celery-worker-2:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-worker:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-worker:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-worker-2
     network_mode: host
     logging: *default-logging
@@ -531,7 +579,7 @@ services:
     restart: unless-stopped
 
   celery-beat:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-beat:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-beat:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-celery-beat
     network_mode: host
     logging: *default-logging
@@ -547,7 +595,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-frontend:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-frontend:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-frontend
     network_mode: host
     logging: *default-logging
@@ -563,7 +611,7 @@ services:
       start_period: 10s
 
   proxy:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-proxy:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-proxy:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-proxy
     network_mode: host
     logging: *default-logging
@@ -575,20 +623,30 @@ services:
     restart: unless-stopped
 
   mcp:
-    image: ${BNK_FORGE_REGISTRY:-ghcr.io/your-org}/bnk-forge-mcp:${BNK_FORGE_VERSION:-latest}
+    image: ${BNK_FORGE_REGISTRY:-ghcr.io/f5devcentral}/bnk-forge-mcp:${BNK_FORGE_VERSION:-3.1.6}
     container_name: bnk-forge-mcp
     network_mode: host
     logging: *default-logging
     environment:
       BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_USERNAME:-admin}
-      BNK_FORGE_PASSWORD: ${MCP_PASSWORD:-changeme}
+      # #186: authenticate as the 'mcp' service account (see .env above), not admin.
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
       MCP_PORT: "8081"
       MCP_LOG_LEVEL: INFO
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # bonnyr-f5 #193 M7: auth-probe healthcheck (same as the other compose paths) so
+    # a "no usable MCP credentials -> 401" condition surfaces as UNHEALTHY here too.
+    healthcheck:
+      test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   module_catalog: { driver: local }
@@ -614,16 +672,21 @@ PYEOF
 fi
 
 # Substitute the scalar placeholders (| delimiter avoids clashes with / in registry).
-sed -i \
+# bonnyr-f5 #193 M11: use `sed -i.bak … && rm` — the ONLY in-place form both GNU and
+# BSD/macOS sed accept. Bare `sed -i` (GNU) fails on BSD sed ("extra characters"),
+# and `sed -i ''` (BSD) fails on GNU; the `.bak` suffix form is portable to both.
+sed -i.bak \
   -e "s|__VERSION__|${BNK_FORGE_VERSION}|g" \
   -e "s|__REGISTRY__|${REGISTRY}|g" \
   -e "s|__REGISTRY_HOST__|${REGISTRY_HOST}|g" \
   -e "s|__REGISTRY_USER__|${REGISTRY_USER}|g" \
   -e "s|__PUBLIC__|${PUBLIC}|g" \
   "${UD}"
+rm -f "${UD}.bak"
 # PAT last and on its own (may contain no sed-special chars for GitHub PATs).
 PAT_ESCAPED="$(printf '%s' "${PAT}" | sed -e 's/[&|\\]/\\&/g')"
-sed -i "s|__PAT__|${PAT_ESCAPED}|g" "${UD}"
+sed -i.bak "s|__PAT__|${PAT_ESCAPED}|g" "${UD}"
+rm -f "${UD}.bak"
 
 # ── Create VPC + subnet + security-group rules ───────────────────────────────
 log "Creating VPC '${VPC_NAME}'..."
@@ -650,7 +713,7 @@ VM_ID="$(echo "${INST_JSON}" | jq -r '.id')"
 [ -n "${VM_ID}" ] && [ "${VM_ID}" != "null" ] || die "Instance creation failed."
 
 log "Waiting for the VSI to reach 'running'..."
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   ST="$(ibmcloud is instance "${VM_ID}" --output json | jq -r '.status')"
   [ "${ST}" = "running" ] && break
   [ "${ST}" = "failed" ] && die "Instance entered 'failed' state."
@@ -684,7 +747,7 @@ log "Floating IP: ${FIP}"
 URL="https://${FIP}"
 log "Installing bnk-forge on the VSI (this can take 5–10 minutes)..."
 READY=0
-for i in $(seq 1 90); do
+for _ in $(seq 1 90); do
   CODE="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 "${URL}/api/system/health" 2>/dev/null || true)"
   if [ "${CODE}" = "200" ]; then READY=1; break; fi
   sleep 10
@@ -702,7 +765,7 @@ fi
 echo
 echo "  URL:      ${URL}"
 echo "            (self-signed certificate — accept the browser warning)"
-echo "  Login:    admin / changeme   (change on first login)"
+echo "  Login:    admin / <generated> (see backend logs or /app/keys/initial_admin_password; change on first login)"
 echo
 echo "  Host IP:  ${FIP}   (SSH: ssh ubuntu@${FIP})"
 echo "  Region:   ${REGION} / ${ZONE}    Profile: ${PROFILE}    Image: Ubuntu 24.04"

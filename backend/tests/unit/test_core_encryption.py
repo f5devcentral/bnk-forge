@@ -83,6 +83,33 @@ class TestDecryptEdgeCases:
             decrypt_value(encrypted_with_other)
 
 
+class TestEncryptionKeyIsTheOperatorEnvKey:
+    """bonnyr-f5 #193 B-3, asserted on the CONSUMER (core.encryption), not the config
+    flag: when the operator sets ENCRYPTION_KEY, core.config validates it and writes
+    it to the at-rest key file, so get_encryption_key() — what actually encrypts
+    stored secrets — returns THAT value. Previously ENCRYPTION_KEY gated
+    validate_production while a DIFFERENT, auto-generated file key did the encrypting."""
+
+    def test_operator_env_key_becomes_the_at_rest_key(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+
+        import core.encryption as enc
+        from core import config as config_mod
+
+        opkey = Fernet.generate_key().decode()
+        key_file = str(tmp_path / "encryption.key")
+        monkeypatch.setattr(config_mod, "_KEYS_DIR", str(tmp_path))
+        monkeypatch.setenv("ENCRYPTION_KEY_FILE", key_file)
+        # config validates + writes the env key to the at-rest file.
+        config_mod.Settings(ENVIRONMENT="production", ENCRYPTION_KEY=opkey)
+        # The SECOND consumer (this module) loads exactly that key from the file.
+        monkeypatch.setattr(enc, "ENCRYPTION_KEY_FILE", key_file)
+        assert enc.get_encryption_key().decode() == opkey
+        # And it genuinely encrypts/decrypts with it.
+        cipher = Fernet(enc.get_encryption_key())
+        assert cipher.decrypt(cipher.encrypt(b"bigip-admin-password")) == b"bigip-admin-password"
+
+
 class TestDecryptValueOrNone:
     def test_returns_none_on_failure(self):
         """decrypt_value_or_none returns None instead of raising."""
@@ -98,3 +125,45 @@ class TestDecryptValueOrNone:
 
     def test_empty_input_returns_none(self):
         assert decrypt_value_or_none("") is None
+
+
+class TestAtRestKeyFileNeverRegeneratedOverBytes:
+    """bonnyr-f5 #193 I-1 (r5): get_encryption_key() must NEVER overwrite an existing
+    key file that holds bytes -- those bytes may be the key live data is encrypted
+    under. A truncated / mis-shaped key fails CLOSED (crashloop, recoverable) instead
+    of being regenerated (silent, permanent data loss on a green boot)."""
+
+    def _point(self, monkeypatch, tmp_path):
+        import core.encryption as enc
+        key_file = str(tmp_path / "encryption.key")
+        monkeypatch.setattr(enc, "ENCRYPTION_KEY_FILE", key_file)
+        return enc, key_file
+
+    def test_truncated_key_fails_closed_and_is_not_overwritten(self, tmp_path, monkeypatch):
+        enc, key_file = self._point(monkeypatch, tmp_path)
+        truncated = b"gAAAAABm" + b"x" * 22  # 30 bytes: non-empty, not a valid Fernet key
+        with open(key_file, "wb") as f:
+            f.write(truncated)
+        with pytest.raises(SystemExit):
+            enc.get_encryption_key()
+        # The original bytes survive on disk -- recoverable, not clobbered.
+        with open(key_file, "rb") as f:
+            assert f.read() == truncated
+
+    def test_valid_key_is_returned_and_not_overwritten(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+        enc, key_file = self._point(monkeypatch, tmp_path)
+        good = Fernet.generate_key()
+        with open(key_file, "wb") as f:
+            f.write(good)
+        assert enc.get_encryption_key() == good
+        with open(key_file, "rb") as f:
+            assert f.read() == good  # untouched
+
+    def test_absent_file_generates_a_valid_key(self, tmp_path, monkeypatch):
+        from cryptography.fernet import Fernet
+        enc, key_file = self._point(monkeypatch, tmp_path)  # no file created
+        key = enc.get_encryption_key()
+        Fernet(key)  # a real Fernet key
+        with open(key_file, "rb") as f:
+            assert f.read() == key  # persisted for next boot

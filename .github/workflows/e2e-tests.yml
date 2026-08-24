@@ -68,7 +68,10 @@ jobs:
   check-changes:
     name: "Check for recent changes"
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' || true  # always run; schedule check is below
+    # This job always runs; the schedule-skip logic lives in the step below. The
+    # old `if: github.event_name != 'schedule' || true` was a dead condition (the
+    # `|| true` makes it unconditionally true), so it is dropped (bonnyr-f5 #193
+    # minor) — omitting `if:` runs the job on every trigger, same effect, no lie.
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
@@ -108,6 +111,12 @@ jobs:
       # ── Start app (local mode) ──────────────────────────────────────────
       - name: Start application stack
         if: inputs.environment != 'staging'
+        env:
+          # bonnyr-f5 #186 r2: the seeded admin is now generated + must-change, so
+          # the suite's hardcoded login would fail. Seed a KNOWN, non-default admin
+          # with the gate off -- ephemeral CI stack only, never a real deployment.
+          DEFAULT_ADMIN_PASSWORD: e2e-Admin-Pass-1
+          DEFAULT_ADMIN_MUST_CHANGE: "false"
         run: |
           docker compose up -d
           echo "Waiting for application to be healthy..."

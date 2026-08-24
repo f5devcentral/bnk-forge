@@ -4,15 +4,85 @@
 # Also validates alembic migration chain (catches commits made without pre-commit hook)
 # Install: git config core.hooksPath .githooks   (or: make setup-hooks)
 # Skip:    git push --no-verify (emergency only!)
+#
+# DEPENDENCY (bonnyr-f5 #193 minor): `make pre-push` below now runs `ci-gates`,
+# whose `secret-scan` gate executes gitleaks via `docker run`. A RUNNING Docker
+# daemon is therefore required to push. It fails loudly if Docker is down; start
+# Docker (or `git push --no-verify` for a genuine emergency) if you hit that.
 set -e
 
 # ─── Migration chain check ────────────────────────────────────────────────────
+# Test the command DIRECTLY in the `if`, not `$?` afterwards: under `set -e` a
+# non-zero `python3 ...` aborts the hook BEFORE the `if [ $? -ne 0 ]` runs, so the
+# "PUSH BLOCKED" message was unreachable — git still blocked the push, but with no
+# migration-specific guidance (bonnyr-f5 #193 minor). `if !` is exempt from `set -e`
+# and keeps the tailored message.
 echo "=== Migration chain check (pre-push) ==="
-python3 scripts/check-migrations.py
-if [ $? -ne 0 ]; then
+if ! python3 scripts/check-migrations.py; then
     echo ""
     echo "PUSH BLOCKED: Fix migration chain errors above before pushing."
     echo "Run 'python3 scripts/check-migrations.py' for details."
+    exit 1
+fi
+
+echo ""
+
+# ─── Commit-message marker lint (bonnyr-f5 #182 r3) ───────────────────────────
+# Fail fast, before the heavy suite, if any commit about to be pushed carries a
+# CI-control marker (which would suppress the workflow run) or a spurious major-
+# bump prose line. Same script the ci.yml commit-lint gate runs, so local == CI.
+#
+# RANGE from the pre-push stdin protocol (bonnyr-f5 #182 r5, Minor). git feeds
+# this hook one "<local ref> <local sha> <remote ref> <remote sha>" line per ref
+# being pushed. Scanning the script's default `@{upstream}..HEAD` misses every
+# non-tip commit when the branch has no upstream yet (a FIRST push) -- exactly
+# when a bad commit is most likely to slip in. Deriving `<remote sha>..<local
+# sha>` from stdin scans precisely the commits this push introduces. A new remote
+# branch reports an all-zero remote sha (no merge-base to diff against); there we
+# fall back to the script's own default rather than scanning all of history.
+# Deletions (all-zero local sha) contribute no commits. When stdin is empty (the
+# hook run by hand, not by git) we leave RANGE unset so the script default runs.
+zero="0000000000000000000000000000000000000000"
+remote_name="${1:-origin}"                         # git passes the remote name as $1
+prepush_range=""
+while read -r _localref localsha _remoteref remotesha; do
+    [ -z "${localsha:-}" ] && continue
+    [ "$localsha" = "$zero" ] && continue          # branch deletion: nothing to lint
+    if [ "${remotesha:-$zero}" = "$zero" ]; then
+        prepush_range="__DEFAULT__"                # new branch: no base -> script default
+        break
+    fi
+    # Normal update: the range BASE is the remote tip. If that object is not present
+    # locally (never fetched) the range is unresolvable, and passing it straight to
+    # commit-lint hard-failed with a MISLEADING "not a resolvable revision range"
+    # (bonnyr-f5 #193 r4 minor). Try a best-effort fetch of just that remote, then
+    # re-check; if it still is not local, say so PLAINLY and fall back to the
+    # script's own default range instead of a broken one.
+    if ! git rev-parse --verify --quiet "${remotesha}^{commit}" >/dev/null 2>&1; then
+        git fetch --quiet "$remote_name" >/dev/null 2>&1 || true
+    fi
+    if git rev-parse --verify --quiet "${remotesha}^{commit}" >/dev/null 2>&1; then
+        prepush_range="${remotesha}..${localsha}"  # exactly the pushed commits
+    else
+        echo "note: the remote tip ${remotesha} is not present locally even after a fetch"
+        echo "      of '${remote_name}', so the exact pushed range can't be resolved."
+        echo "      Linting the local default range (@{upstream}..HEAD, else the tip) instead;"
+        echo "      run 'git fetch ${remote_name}' to lint the precise range next time."
+        prepush_range="__DEFAULT__"
+    fi
+    break
+done
+
+echo "=== Commit message marker lint (pre-push) ==="
+if [ -n "$prepush_range" ] && [ "$prepush_range" != "__DEFAULT__" ]; then
+    lint_status() { RANGE="$prepush_range" bash scripts/lint-commit-markers.sh; }
+else
+    lint_status() { bash scripts/lint-commit-markers.sh; }
+fi
+if ! lint_status; then
+    echo ""
+    echo "PUSH BLOCKED: a commit message carries a CI-control / spurious-major marker."
+    echo "Reword it (see AGENTS.md 'Commit conventions') and try again."
     exit 1
 fi
 

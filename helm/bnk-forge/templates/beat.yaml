@@ -15,6 +15,11 @@ spec:
       {{- include "bnk-forge.componentLabels" (list . "beat") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # #187 (bonnyr-f5 #188): beat consumes the same backendEnv Secret as the
+        # api/mcp pods, so it must roll on the one-shot changeme -> random rotation
+        # too — otherwise it keeps the old credential until something else restarts it.
+        checksum/secret: {{ include "bnk-forge.secretsChecksum" . }}
       labels:
         {{- include "bnk-forge.componentLabels" (list . "beat") | nindent 8 }}
     spec:
