@@ -591,7 +591,9 @@ export interface paths {
          *     relied on a no-op ``PUT`` to force a refresh; this endpoint makes that
          *     intent first-class and reliable. It enqueues a background scan (the same
          *     task registration/PUT use) and returns immediately — the scan stamps
-         *     ``last_synced_at`` on completion. 404s if the cluster does not exist.
+         *     ``last_synced_at`` on completion. An unknown cluster 404s via the
+         *     ``require_cluster_owner`` dependency before this body runs, so there is no
+         *     silently-swallowed background no-op.
          */
         post: operations["resync_cluster_api_k8s_clusters__cluster_id__resync_post"];
         delete?: never;
