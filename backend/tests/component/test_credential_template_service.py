@@ -238,6 +238,79 @@ class TestCreateTemplate:
 
 
 # ---------------------------------------------------------------------------
+# provider validation (issue #191)
+# ---------------------------------------------------------------------------
+
+class TestProviderValidation:
+    """A credential template's provider must match a real injection path.
+
+    Regression guard for issue #191: ``provider="ibmcloud"`` (a misspelling of
+    the canonical ``ibm``) used to be stored happily and then inject NO
+    credentials at deploy time — silently. Every provider the service accepts
+    must be one a credential-resolution consumer actually handles.
+    """
+
+    @patch("services.credential_template_service.get_default", return_value="us-east-1")
+    def test_create_rejects_misspelled_ibmcloud_provider(self, mock_get_default, db):
+        """The exact bug from #191: 'ibmcloud' looks right but injects nothing."""
+        svc = CredentialTemplateService(db)
+        with pytest.raises(BadRequestError, match="Unsupported credential-template provider 'ibmcloud'"):
+            svc.create_template(_make_template_data(name="ibm-roks", provider="ibmcloud"))
+        # And nothing was persisted.
+        assert db.query(CloudCredentialTemplate).filter(
+            CloudCredentialTemplate.name == "ibm-roks"
+        ).first() is None
+
+    @patch("services.credential_template_service.get_default", return_value="us-east-1")
+    def test_create_rejects_unknown_provider_with_enumerated_message(self, mock_get_default, db):
+        svc = CredentialTemplateService(db)
+        with pytest.raises(BadRequestError) as exc:
+            svc.create_template(_make_template_data(name="bogus", provider="digitalocean"))
+        msg = str(exc.value)
+        # Message names the offender and enumerates the supported set.
+        assert "digitalocean" in msg
+        for supported in ("aws", "azure", "gcp", "ibm", "ssh"):
+            assert supported in msg
+
+    @patch("services.credential_template_service.get_default", return_value="us-east-1")
+    def test_create_rejects_empty_provider(self, mock_get_default, db):
+        svc = CredentialTemplateService(db)
+        with pytest.raises(BadRequestError):
+            svc.create_template(_make_template_data(name="empty-prov", provider=""))
+
+    @pytest.mark.parametrize("provider", ["aws", "gcp", "azure", "ibm", "ssh"])
+    @patch("services.credential_template_service.get_default", return_value="us-east-1")
+    def test_create_accepts_every_supported_provider(self, mock_get_default, provider, db):
+        """Each canonical provider is accepted — validation matches the injection set."""
+        svc = CredentialTemplateService(db)
+        result = svc.create_template(_make_template_data(
+            name=f"tpl-{provider}",
+            provider=provider,
+            # give IBM its required key; other providers don't need extra fields here
+            ibmcloud_api_key="ibm-api-key-value" if provider == "ibm" else None,
+        ))
+        assert result["provider"] == provider
+
+    def test_update_rejects_switch_to_unknown_provider(self, db):
+        """An update can't move a healthy template onto a no-op provider."""
+        t = _create_template_in_db(db, name="aws-live", provider="aws")
+        svc = CredentialTemplateService(db)
+        with pytest.raises(BadRequestError, match="Unsupported credential-template provider 'ibmcloud'"):
+            svc.update_template(t.id, _make_update_data(provider="ibmcloud"))
+        # Provider unchanged.
+        db.refresh(t)
+        assert t.provider == "aws"
+
+    def test_update_without_provider_change_is_allowed(self, db):
+        """Omitting provider on update leaves it untouched (no false rejection)."""
+        t = _create_template_in_db(db, name="aws-keep", provider="aws")
+        svc = CredentialTemplateService(db)
+        result = svc.update_template(t.id, _make_update_data(description="just a note"))
+        assert result["provider"] == "aws"
+        assert result["description"] == "just a note"
+
+
+# ---------------------------------------------------------------------------
 # list_templates / get_template
 # ---------------------------------------------------------------------------
 

@@ -25,6 +25,38 @@ from services.defaults_service import get_default
 
 logger = logging.getLogger(__name__)
 
+# Canonical set of providers a credential template may declare.
+#
+# This is the single source of truth for provider validation.  It must stay in
+# lock-step with every consumer that branches on ``template.provider`` to inject
+# or resolve credentials, otherwise a template can be created that looks healthy
+# in the API yet contributes no credentials at deploy time (see issue #191):
+#   - ``aws``   -> AWS_* env + TF_VAR_* mirror   (credentials_service, injection)
+#   - ``ibm``   -> IC_API_KEY / IBMCLOUD_API_KEY  (credentials_service, injection)
+#   - ``gcp``   -> GCP service-account JSON        (credentials_service.get_gcp_service_account_info)
+#   - ``azure`` -> Azure credential resolution     (execution.engine_router)
+#   - ``ssh``   -> SSH tunnel / on-prem            (credential test + tunnel manager)
+# These are exactly the four cloud providers the UI offers plus the legacy
+# ``ssh`` on-prem provider.  Adding a new provider here without wiring its
+# injection path (or vice-versa) is the bug this constant exists to prevent.
+SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"aws", "gcp", "azure", "ibm", "ssh"})
+
+
+def validate_provider(provider: Any) -> str:
+    """Return ``provider`` if it is a supported credential-template provider.
+
+    Raises ``BadRequestError`` with a clear, enumerated message otherwise so a
+    misspelled or unknown value (e.g. ``"ibmcloud"``) is rejected at the point
+    of the mistake instead of silently injecting nothing later.
+    """
+    if provider not in SUPPORTED_PROVIDERS:
+        supported = ", ".join(sorted(SUPPORTED_PROVIDERS))
+        raise BadRequestError(
+            f"Unsupported credential-template provider '{provider}'. "
+            f"Must be one of: {supported}."
+        )
+    return provider
+
 
 class _AwsTestError(Exception):
     """Carrier object mimicking botocore ClientError shape for cloud observation.
@@ -215,6 +247,11 @@ class CredentialTemplateService:
 
     def create_template(self, template_data) -> dict:
         """Create a new credential template."""
+        # Reject unknown/misspelled providers before persisting: a template whose
+        # provider matches no injection path is created "successfully" yet
+        # contributes no credentials at deploy time (issue #191).
+        validate_provider(template_data.provider)
+
         # Duplicate name check
         existing = self.db.query(CloudCredentialTemplate).filter(
             CloudCredentialTemplate.name == template_data.name
@@ -304,6 +341,12 @@ class CredentialTemplateService:
             ).update({"is_default": False})
 
         update_data = template_data.model_dump(exclude_unset=True)
+
+        # If the caller is changing the provider, hold it to the same canonical
+        # set as create so an update can't move a template onto a value that
+        # injects nothing (issue #191).  A None/absent provider leaves it unchanged.
+        if update_data.get("provider") is not None:
+            validate_provider(update_data["provider"])
 
         # Handle encrypted fields
         encrypted_map = {
