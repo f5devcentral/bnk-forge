@@ -31,14 +31,19 @@ logger = logging.getLogger(__name__)
 # lock-step with every consumer that branches on ``template.provider`` to inject
 # or resolve credentials, otherwise a template can be created that looks healthy
 # in the API yet contributes no credentials at deploy time (see issue #191):
-#   - ``aws``   -> AWS_* env + TF_VAR_* mirror   (credentials_service, injection)
-#   - ``ibm``   -> IC_API_KEY / IBMCLOUD_API_KEY  (credentials_service, injection)
-#   - ``gcp``   -> GCP service-account JSON        (credentials_service.get_gcp_service_account_info)
-#   - ``azure`` -> Azure credential resolution     (execution.engine_router)
+#   - ``aws``   -> AWS_* env + TF_VAR_* mirror   (credentials_service, terraform-env injection)
+#   - ``ibm``   -> IC_API_KEY / IBMCLOUD_API_KEY  (credentials_service, terraform-env injection)
+#   - ``gcp``   -> GKE kubeconfig token            (credentials_service.get_gcp_service_account_info; post-provision cluster access, not terraform env)
+#   - ``azure`` -> AKS kubeconfig token            (execution.engine_router; post-provision cluster access, not terraform env)
 #   - ``ssh``   -> SSH tunnel / on-prem            (credential test + tunnel manager)
 # These are exactly the four cloud providers the UI offers plus the legacy
 # ``ssh`` on-prem provider.  Adding a new provider here without wiring its
-# injection path (or vice-versa) is the bug this constant exists to prevent.
+# consumer (or vice-versa) is the bug this constant exists to prevent.  NOTE:
+# ``aws``/``ibm`` inject credentials into the terraform provisioning env, so
+# #191's "looks healthy, injects nothing" class is fully closed for them;
+# ``azure``/``gcp`` are consumed only for post-provision cluster access, so a
+# mis-set provider is still rejected here but the underlying #191 class for the
+# terraform-env path only ever applied to aws/ibm.
 SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"aws", "gcp", "azure", "ibm", "ssh"})
 
 
