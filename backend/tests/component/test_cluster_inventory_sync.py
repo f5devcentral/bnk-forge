@@ -10,9 +10,13 @@ Two defects are locked here:
    (a scan that raises early must NOT stamp), and that it persists across a
    commit (the async registration/PUT task path).
 
-2. A populated fetch surfaces pod inventory — the issue reported 0 Multus pods
-   on a cluster where Multus was running. With real analysis over a populated
-   fetch, the scan reports the running pods, not 0.
+2. Over a fetch that surfaces Multus pods in a namespace the scan actually reads
+   (kube-system), real analyze_multus counts them (not 0) and the scan records
+   ``last_synced_at`` — so "genuinely empty" is decidable from "never scanned".
+   NOTE: the reporter's own "0 Multus pods on OpenShift" was a SEPARATE,
+   pre-existing namespace-scoping gap — Multus runs in ``openshift-multus``,
+   which the pod fetch never queries (tracked in #202) — retracted by the
+   reporter; this PR does not fix or claim to fix that symptom.
 """
 
 import contextlib
@@ -127,17 +131,20 @@ class TestLastSyncedAtStamp:
 
 class TestPodInventoryPopulated:
     def test_multus_pods_are_counted_not_zero(self, db, make_k8s_cluster):
-        """Issue #194 ground truth: 18 Multus pods running must not read as 0.
+        """analyze_multus counts Multus pods the fetch surfaced, and the scan stamps.
 
-        Real analyze_multus over a populated fetch reports the running pods and
-        DETECTED status — the opposite of the reported bug.
+        Locks the analysis + ``last_synced_at`` behaviour: over a fetch whose
+        Multus pods sit in kube-system (the namespace the scan actually reads),
+        the running count is reported, not 0. This is NOT a proof of the
+        reporter's OpenShift "0 pods" symptom, which is a separate
+        namespace-scoping gap (#202: Multus lives in openshift-multus, unfetched).
         """
         cluster = make_k8s_cluster()
 
         fetch = dict(_EMPTY_FETCH_DATA)
         fetch["crd_names"] = {"network-attachment-definitions.k8s.cni.cncf.io"}
         fetch["daemonsets"] = [
-            {"name": "multus", "namespace": "openshift-multus", "desired": 6, "ready": 6},
+            {"name": "multus", "namespace": "kube-system", "desired": 6, "ready": 6},
         ]
         fetch["kube_system_pods"] = [
             {"name": f"multus-{i}", "phase": "Running"} for i in range(6)

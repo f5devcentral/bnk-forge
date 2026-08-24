@@ -122,11 +122,10 @@ def resync_cluster(cluster_id: int, user: User = Depends(require_cluster_owner),
     relied on a no-op ``PUT`` to force a refresh; this endpoint makes that
     intent first-class and reliable. It enqueues a background scan (the same
     task registration/PUT use) and returns immediately — the scan stamps
-    ``last_synced_at`` on completion. 404s if the cluster does not exist.
+    ``last_synced_at`` on completion. An unknown cluster 404s via the
+    ``require_cluster_owner`` dependency before this body runs, so there is no
+    silently-swallowed background no-op.
     """
-    # Validate existence so a resync of an unknown cluster is a clean 404
-    # rather than a silently-swallowed background no-op.
-    ClusterManagementService(db).get_cluster_details(cluster_id)
     enqueue_cluster_scan(cluster_id)
     return {
         "success": True,
