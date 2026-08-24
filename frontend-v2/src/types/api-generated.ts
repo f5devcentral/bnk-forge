@@ -574,6 +574,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/resync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resync Cluster
+         * @description Force a fresh inventory sync for a cluster (owner or admin only).
+         *
+         *     Issue #194: an explicit, documented rescan trigger. Operators previously
+         *     relied on a no-op ``PUT`` to force a refresh; this endpoint makes that
+         *     intent first-class and reliable. It enqueues a background scan (the same
+         *     task registration/PUT use) and returns immediately — the scan stamps
+         *     ``last_synced_at`` on completion. 404s if the cluster does not exist.
+         */
+        post: operations["resync_cluster_api_k8s_clusters__cluster_id__resync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/refresh-kubeconfig": {
         parameters: {
             query?: never;
@@ -24040,6 +24066,37 @@ export interface operations {
         };
     };
     delete_cluster_api_k8s_clusters__cluster_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resync_cluster_api_k8s_clusters__cluster_id__resync_post: {
         parameters: {
             query?: never;
             header?: never;
