@@ -111,6 +111,10 @@ class FleetOperatorHealth(BaseModel):
     node_count: int | None
     operator_version: str | None
     connectivity_mode: str
+    cloud_provider: str | None = None
+    region: str | None = None
+    account_id: str | None = None
+    discovery_status: str | None = None
     # DPF (NVIDIA DPU) fields — P5 fleet integration
     dpf_detected: bool = False
     dpf_version: str | None = None

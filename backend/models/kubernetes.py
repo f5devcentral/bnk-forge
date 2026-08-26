@@ -41,6 +41,8 @@ class KubernetesCluster(Base):
     kubeconfig_encrypted = Column(Text, nullable=True)  # Base64 encoded encrypted kubeconfig
     cloud_provider = Column(String(50))  # aws, azure, gcp, on-prem
     region = Column(String(100))  # Cloud region
+    account_id = Column(String(100))  # Cloud account ID
+    discovery_status = Column(String(50))  # e.g., 'discovered', 'pending', 'failed'
     default_namespace = Column(String(255), default="default")
 
     # PLATFORM-CONTEXT-002: detected cluster platform context (additive)
