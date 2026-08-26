@@ -54,5 +54,8 @@ Jinja2==3.1.6
 # Rate limiting
 slowapi==0.1.9
 
+# ClickHouse client for WAF dashboard analytics (optional — degrades gracefully if not installed)
+clickhouse-connect==0.8.17
+
 # Process metrics (CPU/RAM/network for self-monitoring endpoint)
 psutil==6.1.1

@@ -22,13 +22,11 @@ from fastapi import APIRouter, Depends, Query
 
 from core.errors import handle_route_errors
 from routes.auth import require_viewer
-from services.clickhouse import get_clickhouse
-
+from services.clickhouse import get_clickhouse, CLICKHOUSE_DB as _DB
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-_DB = "bnkforge"
 
 # Supported time ranges → hours
 _RANGE_HOURS: dict[str, int] = {
@@ -352,4 +350,295 @@ def dashboard_top_uris(
             }
             for r in rows
         ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/top-policies",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF top policies")
+def dashboard_top_policies(
+    cluster_id: int,
+    time_range: Annotated[str, Query()] = "24h",
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+):
+    """Top policies by hit count — mirrors NIM's 'Top WAF Policies' panel."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    h = _hours(time_range)
+    rows = ch.query(
+        f"""
+        SELECT
+            policy_name,
+            count()                        AS hits,
+            countIf(outcome = 'REJECTED')  AS blocked,
+            uniqExact(uri)                 AS unique_uris,
+            uniqExact(ip_client)           AS unique_ips
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND policy_name != ''
+        GROUP BY policy_name
+        ORDER BY hits DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        {"cid": cluster_id, "h": h, "lim": limit},
+    )
+
+    return {
+        "available": True,
+        "time_range": time_range,
+        "items": [
+            {
+                "policy_name": r["policy_name"],
+                "hits": int(r["hits"]),
+                "blocked": int(r.get("blocked", 0)),
+                "unique_uris": int(r.get("unique_uris", 0)),
+                "unique_ips": int(r.get("unique_ips", 0)),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/request-methods",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF request methods")
+def dashboard_request_methods(
+    cluster_id: int,
+    time_range: Annotated[str, Query()] = "24h",
+):
+    """HTTP method distribution — mirrors NIM's 'Request Methods' panel."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    h = _hours(time_range)
+    rows = ch.query(
+        f"""
+        SELECT method, count() AS cnt
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND method != ''
+        GROUP BY method
+        ORDER BY cnt DESC
+        LIMIT 10
+        """,
+        {"cid": cluster_id, "h": h},
+    )
+
+    return {
+        "available": True,
+        "time_range": time_range,
+        "items": [{"method": r["method"], "count": int(r["cnt"])} for r in rows],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/severity",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF severity distribution")
+def dashboard_severity(
+    cluster_id: int,
+    time_range: Annotated[str, Query()] = "24h",
+):
+    """Violation-rating distribution — mirrors NIM's 'Severity' panel."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    h = _hours(time_range)
+    rows = ch.query(
+        f"""
+        SELECT
+            violation_rating,
+            count() AS cnt
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+        GROUP BY violation_rating
+        ORDER BY violation_rating DESC
+        LIMIT 10
+        """,
+        {"cid": cluster_id, "h": h},
+    )
+
+    # Map numeric rating to severity label matching BIG-IP NAP conventions
+    def _label(rating: int) -> str:
+        if rating >= 5: return "Critical"
+        if rating >= 4: return "Error"
+        if rating >= 2: return "Warning"
+        return "Info"
+
+    return {
+        "available": True,
+        "time_range": time_range,
+        "items": [
+            {
+                "rating": int(r["violation_rating"]),
+                "label": _label(int(r["violation_rating"])),
+                "count": int(r["cnt"]),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/top-signatures",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF top signatures")
+def dashboard_top_signatures(
+    cluster_id: int,
+    time_range: Annotated[str, Query()] = "24h",
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+):
+    """Top triggered signature names — mirrors NIM's 'Top Signatures' panel."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    h = _hours(time_range)
+    rows = ch.query(
+        f"""
+        SELECT
+            sig_names,
+            count()                        AS hits,
+            uniqExact(ip_client)           AS unique_ips,
+            uniqExact(uri)                 AS unique_uris,
+            countIf(outcome = 'REJECTED')  AS blocked
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND sig_names != ''
+          AND sig_names != 'N/A'
+        GROUP BY sig_names
+        ORDER BY hits DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        {"cid": cluster_id, "h": h, "lim": limit},
+    )
+
+    return {
+        "available": True,
+        "time_range": time_range,
+        "items": [
+            {
+                "sig_name": r["sig_names"],
+                "hits": int(r["hits"]),
+                "unique_ips": int(r.get("unique_ips", 0)),
+                "unique_uris": int(r.get("unique_uris", 0)),
+                "blocked": int(r.get("blocked", 0)),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/top-instances",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF top attacked instances")
+def dashboard_top_instances(
+    cluster_id: int,
+    time_range: Annotated[str, Query()] = "24h",
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+):
+    """Top virtual servers (instances) by hit count — mirrors NIM's 'Top Attacked Instances' panel."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    h = _hours(time_range)
+    rows = ch.query(
+        f"""
+        SELECT
+            vs_name,
+            count()                        AS hits,
+            countIf(outcome = 'REJECTED')  AS blocked,
+            uniqExact(uri)                 AS unique_uris,
+            uniqExact(ip_client)           AS unique_ips
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND vs_name != ''
+        GROUP BY vs_name
+        ORDER BY hits DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        {"cid": cluster_id, "h": h, "lim": limit},
+    )
+
+    return {
+        "available": True,
+        "time_range": time_range,
+        "items": [
+            {
+                "vs_name": r["vs_name"],
+                "hits": int(r["hits"]),
+                "blocked": int(r.get("blocked", 0)),
+                "unique_uris": int(r.get("unique_uris", 0)),
+                "unique_ips": int(r.get("unique_ips", 0)),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/support-id",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF event by support ID")
+def dashboard_support_id(
+    cluster_id: int,
+    support_id: Annotated[str, Query(min_length=1)],
+):
+    """Look up a specific WAF event by support ID."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    rows = ch.query(
+        f"""
+        SELECT *
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND support_id = {{sid:String}}
+        LIMIT 1
+        """,
+        {"cid": cluster_id, "sid": support_id},
+    )
+
+    if not rows:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"No event found for support_id '{support_id}'")
+
+    r = rows[0]
+    return {
+        "available": True,
+        "ts": str(r.get("ts", "")).replace(" ", "T"),
+        "outcome": r.get("outcome", ""),
+        "attack_type": r.get("attack_type", ""),
+        "ip_client": r.get("ip_client", ""),
+        "method": r.get("method", ""),
+        "uri": r.get("uri", ""),
+        "policy_name": r.get("policy_name", ""),
+        "vs_name": r.get("vs_name", ""),
+        "violation_rating": int(r.get("violation_rating", 0)),
+        "sig_ids": r.get("sig_ids", ""),
+        "sig_names": r.get("sig_names", ""),
+        "support_id": r.get("support_id", ""),
+        "namespace": r.get("namespace", ""),
+        "ingest_source": r.get("ingest_source", ""),
+        "raw_message": r.get("raw_message", ""),
     }

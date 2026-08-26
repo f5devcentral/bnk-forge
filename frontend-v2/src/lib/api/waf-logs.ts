@@ -35,12 +35,14 @@ export interface WafSecurityLogsResponse {
 
 export interface WafLogsParams {
   namespace: string;
-  cr_kind: 'appolicy' | 'f5virtualserver';
-  cr_name: string;
+  cr_kind?: 'appolicy' | 'f5virtualserver';
+  cr_name?: string;
   limit?: number;
   outcome_filter?: string;
   attack_type_filter?: string;
   vs_name_filter?: string;
+  ip_filter?: string;
+  uri_filter?: string;
 }
 
 export const wafLogsApi = {

@@ -1055,9 +1055,14 @@ interface APPolicyFormProps {
   namespace: string;
   existingItem?: APPolicyResource | null;
   onClose: () => void;
+  onAfterSave?: () => void;
+  // Pre-seed values from the Create wizard step 1
+  initialName?: string;
+  initialEnforcementMode?: 'blocking' | 'transparent';
+  initialTemplate?: string;
 }
 
-export function APPolicyForm({ clusterId, namespace, existingItem, onClose }: APPolicyFormProps) {
+export function APPolicyForm({ clusterId, namespace, existingItem, onClose, initialName, initialEnforcementMode, initialTemplate }: APPolicyFormProps) {
   const isEdit = !!existingItem;
   const initialPolicy = existingItem?.spec?.policy as Record<string, unknown> | undefined;
 
@@ -1065,13 +1070,19 @@ export function APPolicyForm({ clusterId, namespace, existingItem, onClose }: AP
   const { data: allPoliciesData } = useWafPolicies(clusterId, namespace, { enabled: !isEdit, autoRefresh: false });
 
   const [apiVersion, setApiVersion] = useState<'v1' | 'v1beta1'>('v1');
-  const [crName, setCrName] = useState(existingItem?.metadata.name ?? '');
+  const [crName, setCrName] = useState(existingItem?.metadata.name ?? initialName ?? '');
   const [activeTab, setActiveTab] = useState('core');
-  const [policy, setPolicy] = useState<Record<string, unknown>>(
-    initialPolicy ? { ...initialPolicy } : defaultPolicy(crName)
-  );
+  const _basePolicy = initialPolicy ? { ...initialPolicy } : defaultPolicy(crName);
+  if (!isEdit && initialEnforcementMode) _basePolicy['enforcement-mode'] = initialEnforcementMode;
+  if (!isEdit && initialTemplate !== undefined) _basePolicy['template'] = { name: initialTemplate };
+  const [policy, setPolicy] = useState<Record<string, unknown>>(_basePolicy);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [jsonText, setJsonText] = useState(() => JSON.stringify(initialPolicy ?? defaultPolicy(crName), null, 2));
+  const [jsonText, setJsonText] = useState(() => JSON.stringify(_basePolicy, null, 2));
+
+
+
+
+
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Sync policy state → JSON textarea whenever fields change (unless JSON tab active)

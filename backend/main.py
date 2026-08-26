@@ -83,6 +83,9 @@ from routes.k8s import (
     tmm_debug_router,
     topology_router,
     tunnels_router,
+    waf_dashboard_router,
+    waf_panels_router,
+    waf_dashboard_tabs_router,
     waf_logs_router,
     waf_policies_router,
 )
@@ -358,8 +361,11 @@ app.include_router(resources_router)    # K8s resource CRUD, pod/node ops, metri
 app.include_router(f5bnk_router)        # F5 BNK gateways, topology, health
 app.include_router(llm_observability_router)  # AI-gateway observability — Loki request analytics
 app.include_router(dpf_router)          # NVIDIA DPF — DPU devices, clusters, services, health
-app.include_router(waf_policies_router) # WAF Policy Manager — appprotect.f5.com CRDs via PLM
-app.include_router(waf_logs_router)     # WAF Security Logs — syslog endpoint resolution + log fetch
+app.include_router(waf_policies_router)   # WAF Policy Manager — appprotect.f5.com CRDs via PLM
+app.include_router(waf_logs_router)       # WAF Security Logs — syslog endpoint resolution + log fetch
+app.include_router(waf_dashboard_router)  # WAF Dashboard — ClickHouse analytics
+app.include_router(waf_panels_router)     # WAF Panel Builder — CRUD + data queries
+app.include_router(waf_dashboard_tabs_router)  # WAF Dashboard — custom tab CRUD
 app.include_router(bare_metal_hosts_router)               # Bare-metal DPU hosts — CRUD + discovery
 app.include_router(f5_devices_router)                     # F5 BIG-IP devices — CRUD + read-only probe (D-023 P1)
 app.include_router(f5_credentials_router)                 # F5 BIG-IP credentials — CRUD + test (D-023 P1)

@@ -12,7 +12,8 @@
  * See docs/WAF_POLICY_MANAGER_DESIGN.md.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -31,7 +32,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { DestructiveConfirmDialog } from '@/components/ui/destructive-confirm-dialog';
-import { Plus, Shield, Trash2, FileText, Key, RefreshCw, PenLine, Pencil, AlertTriangle, RotateCcw, Info, Download, RefreshCcw } from 'lucide-react';
+import { Plus, Shield, Trash2, FileText, Key, RefreshCw, PenLine, Pencil, AlertTriangle, RotateCcw, Info, Download, RefreshCcw, ExternalLink, CheckSquare, Square, Filter, X, ChevronDown } from 'lucide-react';
 
 // Refresh button — spins while loading, then pulses green briefly on success
 function RefreshButton({ refetch, isLoading }: { refetch: () => void; isLoading?: boolean }) {
@@ -71,7 +72,168 @@ import type {
   APPolicyResource, APLogConfResource, APUserSigResource, BundleState,
 } from '@/types';
 
-type PageTab = 'log-profiles' | 'policies' | 'signatures' | 'user-sigs';
+type PageTab = 'policies' | 'log-profiles' | 'signatures' | 'user-sigs';
+
+// NIM-style pill filter — "+ Add Filter" button opens a field+value picker,
+// creates dismissible pill chips above the table
+interface FilterPill { field: string; value: string; }
+
+interface TabToolbarProps {
+  filterDef: { field: string; label: string; options?: string[] }[];
+  pills: FilterPill[];
+  onAddPill: (p: FilterPill) => void;
+  onRemovePill: (i: number) => void;
+  onRefresh: () => void;
+  isLoading?: boolean;
+  onDelete?: () => void;
+  deleteCount?: number;
+  onCreate: () => void;
+  createLabel: string;
+  docsUrl?: string;
+}
+
+function TabToolbar({
+  filterDef, pills, onAddPill, onRemovePill, onRefresh, isLoading,
+  onDelete, deleteCount, onCreate, createLabel, docsUrl,
+}: TabToolbarProps) {
+  const [open, setOpen] = useState(false);
+  const [field, setField] = useState(filterDef[0]?.field ?? '');
+  const [value, setValue] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleAdd = () => {
+    const v = value.trim();
+    if (!v) return;
+    onAddPill({ field, value: v });
+    setValue('');
+    setOpen(false);
+  };
+
+  const currentDef = filterDef.find(f => f.field === field);
+
+  return (
+    <div className="space-y-2">
+      {/* Action bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Add Filter button + dropdown */}
+        <div className="relative" ref={ref}>
+          <button
+            onClick={() => setOpen(v => !v)}
+            className={cn(
+              'inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-xs font-medium transition-colors',
+              open ? 'border-primary text-primary bg-primary/5' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent',
+            )}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Add Filter
+            <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
+          </button>
+
+          {open && (
+            <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-popover shadow-lg p-3 space-y-2">
+              <p className="text-xs font-medium text-foreground">Add Filter</p>
+              {/* Field selector */}
+              <select
+                value={field}
+                onChange={(e) => { setField(e.target.value); setValue(''); }}
+                className="w-full h-8 rounded-md border border-input bg-background text-xs px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {filterDef.map(f => <option key={f.field} value={f.field}>{f.label}</option>)}
+              </select>
+              {/* Value input or select */}
+              {currentDef?.options ? (
+                <select
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  className="w-full h-8 rounded-md border border-input bg-background text-xs px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Select value…</option>
+                  {currentDef.options.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                  placeholder="Enter value…"
+                  className="w-full h-8 rounded-md border border-input bg-background text-xs px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" className="flex-1 h-7 text-xs" onClick={handleAdd} disabled={!value}>Apply</Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setOpen(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          {docsUrl && (
+            <a href={docsUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" /> Docs
+            </a>
+          )}
+          <Button variant="ghost" size="sm" className="h-9 px-3 gap-1.5" onClick={onRefresh}>
+            <RotateCcw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin text-primary')} />
+            <span className="text-xs">Refresh</span>
+          </Button>
+          {onDelete && (
+            <Button variant="ghost" size="sm" className="h-9 px-3 gap-1.5 text-muted-foreground" onClick={onDelete} disabled={!deleteCount}>
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="text-xs">Delete{deleteCount ? ` (${deleteCount})` : ''}</span>
+            </Button>
+          )}
+          <Button size="sm" className="h-9 px-3 gap-1.5 min-w-[196px] justify-center" onClick={onCreate}>
+            <Plus className="h-3.5 w-3.5" /> {createLabel}
+          </Button>
+        </div>
+      </div>
+
+      {/* Active filter pills */}
+      {pills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pills.map((p, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-[11px] px-2.5 py-0.5">
+              <span className="text-muted-foreground">{filterDef.find(f => f.field === p.field)?.label ?? p.field}:</span>
+              <span className="font-medium">{p.value}</span>
+              <button onClick={() => onRemovePill(i)} className="ml-0.5 hover:text-destructive transition-colors">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <button onClick={() => pills.forEach((_, i) => onRemovePill(pills.length - 1 - i))}
+            className="text-[11px] text-muted-foreground hover:text-foreground underline">
+            Clear all
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Table footer row count like NIM
+// Table footer row count like NIM — handles irregular plurals (policy -> policies)
+function pluralize(label: string, count: number): string {
+  if (count === 1) return label;
+  if (label.endsWith('y') && !/[aeiou]y$/i.test(label)) return `${label.slice(0, -1)}ies`;
+  return `${label}s`;
+}
+
+function TableCount({ count, label }: { count: number; label: string }) {
+  return (
+    <p className="text-xs text-muted-foreground pt-1">
+      <strong>{count}</strong> {pluralize(label, count)}
+    </p>
+  );
+}
 
 // Download a CR as formatted JSON file for backup / GitOps use
 function exportCR(resource: unknown, name: string, kind: string) {
@@ -146,37 +308,63 @@ function NamespacePicker({
 
 // ── Edit sheet: APLogConf ──────────────────────────────────────────────────
 
-function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; namespace: string; isDark: boolean }) {
+function LogProfilesTab({ clusterId, namespace }: { clusterId: number; namespace: string; isDark: boolean }) {
   const [showCreate, setShowCreate] = useState(false);
   const [viewingItem, setViewingItem]   = useState<APLogConfResource | null>(null);
   const [editingItem, setEditingItem]   = useState<APLogConfResource | null>(null);
   const [deletingItem, setDeletingItem] = useState<APLogConfResource | null>(null);
+  const [pills, setPills] = useState<{ field: string; value: string }[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data, isLoading, refetch: refetchLogConfs } = useWafLogConfs(clusterId, namespace, { enabled: !!clusterId });
   const logConfs = useMemo(() => data?.log_confs ?? [], [data]);
   const deleteLc = useDeleteWafLogConf(clusterId);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
-          APLogConf CRs define WAF security event log format. Create them first — they can be reused across multiple policies.
-        </p>
-        <div className="flex gap-2">
-          <RefreshButton refetch={refetchLogConfs} isLoading={isLoading} />
-          <Button size="sm" className="gap-1.5" onClick={() => setShowCreate(!showCreate)}>
-            <Plus className="h-4 w-4" /> {showCreate ? 'Cancel' : 'Create Log Profile'}
-          </Button>
-        </div>
-      </div>
+  const filtered = useMemo(() => logConfs.filter((lc: APLogConfResource) =>
+    pills.every(p => {
+      if (p.field === 'name') return lc.metadata.name.toLowerCase().includes(p.value.toLowerCase());
+      if (p.field === 'format') return ((lc.spec?.content as { format?: string } | undefined)?.format ?? '') === p.value;
+      if (p.field === 'state') return (lc.status?.bundle?.state ?? '') === p.value;
+      return true;
+    })
+  ), [logConfs, pills]);
 
+  return (
+    <div className="space-y-3">
+      <TabToolbar
+        filterDef={[
+          { field: 'name',   label: 'Name' },
+          { field: 'format', label: 'Format', options: ['default', 'splunk', 'arcsight', 'grpc', 'user-defined'] },
+          { field: 'state',  label: 'Bundle State', options: ['ready', 'processing', 'invalid'] },
+        ]}
+        pills={pills}
+        onAddPill={(p) => setPills(prev => [...prev, p])}
+        onRemovePill={(i) => setPills(prev => prev.filter((_, idx) => idx !== i))}
+        onRefresh={refetchLogConfs} isLoading={isLoading}
+        docsUrl="https://docs.nginx.com/nginx-app-protect-waf/configuration-guide/configuration/#security-log"
+        onDelete={() => { /* bulk delete not yet wired */ }}
+        deleteCount={selected.size}
+        onCreate={() => setShowCreate(!showCreate)}
+        createLabel={showCreate ? 'Cancel' : 'Create Log Profile'}
+      />
+
+      {/* Create Log Profile — opens APLogConfForm in a wide side sheet */}
       {showCreate && (
-        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-border' : 'border-border')}>
-          <APLogConfForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
-        </div>
+        <Sheet open={showCreate} onOpenChange={(open) => !open && setShowCreate(false)}>
+          <SheetContent className="w-full sm:max-w-[75vw] p-0 flex flex-col h-full overflow-hidden">
+            <SheetHeader className="px-6 pt-5 pb-3 border-b border-border shrink-0">
+              <SheetTitle className="flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Create Log Profile
+              </SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 min-h-0">
+              <APLogConfForm clusterId={clusterId} namespace={namespace} onClose={() => setShowCreate(false)} />
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
 
-      {isLoading && <SkeletonTable rows={3} columns={4} />}
+      {isLoading && <SkeletonTable rows={3} columns={5} />}
       {!isLoading && logConfs.length === 0 && (
         <EmptyState icon={FileText} title="No log profiles yet" description="Create an APLogConf to define WAF security event log format." />
       )}
@@ -184,18 +372,28 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" />
               <TableHead>Name</TableHead>
               <TableHead>Format</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Request Filter</TableHead>
+              <TableHead>Bundle State</TableHead>
               <TableHead>Age</TableHead>
-              <TableHead className="w-20" />
+              <TableHead className="w-24" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {logConfs.map((lc: APLogConfResource) => (
-              <TableRow key={`${lc.metadata.namespace}/${lc.metadata.name}`} className="cursor-pointer" onClick={() => setViewingItem(lc)}>
+            {filtered.map((lc: APLogConfResource) => {
+              const key = `${lc.metadata.namespace}/${lc.metadata.name}`;
+              return (
+              <TableRow key={key} className="cursor-pointer" onClick={() => setViewingItem(lc)}>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => setSelected(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
+                    {selected.has(key) ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
+                  </button>
+                </TableCell>
                 <TableCell className="font-medium">{lc.metadata.name}</TableCell>
                 <TableCell className="text-xs">{(lc.spec?.content as { format?: string } | undefined)?.format ?? '—'}</TableCell>
+                <TableCell className="text-xs">{lc.spec?.filter?.request_type ?? '—'}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className={cn('text-[10px]', getBundleStateBadgeClass(lc.status?.bundle?.state as BundleState | undefined))}>
                     {(lc.status?.bundle?.state as string | undefined) ?? 'unknown'}
@@ -216,14 +414,15 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+            ); })}
           </TableBody>
         </Table>
       )}
+      {!isLoading && logConfs.length > 0 && <TableCount count={filtered.length} label="log profile" />}
 
       {/* Detail sheet */}
       <Sheet open={!!viewingItem} onOpenChange={(open) => !open && setViewingItem(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto p-0">
+        <SheetContent className="w-full sm:max-w-[75vw] overflow-y-auto p-0">
           <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>{viewingItem?.metadata.name}</SheetTitle></SheetHeader>
           {viewingItem && <APLogConfDetail resource={viewingItem} />}
         </SheetContent>
@@ -231,16 +430,18 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
 
       {/* Edit sheet */}
       <Sheet open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto p-0">
-          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>Edit Log Profile — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
+        <SheetContent className="w-full sm:max-w-[75vw] p-0 flex flex-col h-full overflow-hidden">
+          <SheetHeader className="px-6 pt-5 pb-3 border-b border-border shrink-0"><SheetTitle>Edit Log Profile — {editingItem?.metadata.name}</SheetTitle></SheetHeader>
           {editingItem && (
-            <APLogConfForm
-              key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid}`}
-              clusterId={clusterId}
-              namespace={namespace}
-              existingItem={editingItem}
-              onClose={() => setEditingItem(null)}
-            />
+            <div className="flex-1 min-h-0">
+              <APLogConfForm
+                key={`${editingItem.metadata.namespace}/${editingItem.metadata.name}/${editingItem.metadata.uid}`}
+                clusterId={clusterId}
+                namespace={namespace}
+                existingItem={editingItem}
+                onClose={() => setEditingItem(null)}
+              />
+            </div>
           )}
         </SheetContent>
       </Sheet>
@@ -266,35 +467,80 @@ function LogProfilesTab({ clusterId, namespace, isDark }: { clusterId: number; n
 // Tab 2: Policies (APPolicy) — references log profiles
 // ============================================================================
 
-function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; namespace: string; isDark: boolean }) {
+function PoliciesTab({ clusterId, namespace, isDark, initialOpenPolicy, onConsumeInitialOpen }: { clusterId: number; namespace: string; isDark: boolean; initialOpenPolicy?: string | null; onConsumeInitialOpen?: () => void }) {
   const [showWizard, setShowWizard] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<APPolicyResource | null>(null);
   const [editingPolicy, setEditingPolicy]   = useState<APPolicyResource | null>(null);
   const [deletingPolicy, setDeletingPolicy] = useState<APPolicyResource | null>(null);
+  const [pills, setPills] = useState<{ field: string; value: string }[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error, refetch } = useWafPolicies(clusterId, namespace, { enabled: !!clusterId });
   const policies = useMemo(() => data?.policies ?? [], [data]);
   const deletePolicy = useDeleteWafPolicy(clusterId);
   const recompile = useRecompileWafPolicy(clusterId);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
-          APPolicy CRs define WAF rules. Click a row to inspect bundle status.
-        </p>
-        <div className="flex gap-2">
-          <RefreshButton refetch={refetch} isLoading={isLoading} />
-          <Button size="sm" className="gap-1.5" onClick={() => setShowWizard(!showWizard)}>
-            <Plus className="h-4 w-4" /> {showWizard ? 'Cancel' : 'Create Policy'}
-          </Button>
-        </div>
-      </div>
+  // Deep-link support: /waf-policies?policy=name auto-opens that policy's detail sheet
+  useEffect(() => {
+    if (!initialOpenPolicy || policies.length === 0) return;
+    const match = policies.find((p: APPolicyResource) => p.metadata.name === initialOpenPolicy);
+    if (match) {
+      setSelectedPolicy(match);
+      onConsumeInitialOpen?.();
+    }
+  }, [initialOpenPolicy, policies, onConsumeInitialOpen]);
 
+  const filtered = useMemo(() => policies.filter((p: APPolicyResource) =>
+    pills.every(pill => {
+      if (pill.field === 'name') return p.metadata.name.toLowerCase().includes(pill.value.toLowerCase());
+      if (pill.field === 'enforcement') {
+        const mode = (p.spec?.policy as { 'enforcement-mode'?: string; enforcementMode?: string } | undefined)?.['enforcement-mode']
+          ?? (p.spec?.policy as { enforcementMode?: string } | undefined)?.enforcementMode
+          ?? '';
+        return mode === pill.value;
+      }
+      if (pill.field === 'state') return (p.status?.bundle?.state ?? '') === pill.value;
+      return true;
+    })
+  ), [policies, pills]);
+
+  return (
+    <div className="space-y-3">
+      <TabToolbar
+        filterDef={[
+          { field: 'name',        label: 'Name' },
+          { field: 'enforcement', label: 'Enforcement Mode', options: ['blocking', 'transparent'] },
+          { field: 'state',       label: 'Bundle State', options: ['ready', 'processing', 'invalid'] },
+        ]}
+        pills={pills}
+        onAddPill={(p) => setPills(prev => [...prev, p])}
+        onRemovePill={(i) => setPills(prev => prev.filter((_, idx) => idx !== i))}
+        onRefresh={refetch} isLoading={isLoading}
+        docsUrl="https://docs.nginx.com/nginx-app-protect-waf/configuration-guide/configuration/"
+        onDelete={() => { /* TODO: bulk delete */ }}
+        deleteCount={selected.size}
+        onCreate={() => setShowWizard(!showWizard)}
+        createLabel={showWizard ? 'Cancel' : 'Create Policy'}
+      />
+
+      {/* Create Policy — opens APPolicyForm directly in a wide side sheet */}
       {showWizard && (
-        <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-border' : 'border-border')}>
-          <APPolicyForm clusterId={clusterId} namespace={namespace} onClose={() => setShowWizard(false)} />
-        </div>
+        <Sheet open={showWizard} onOpenChange={(open) => !open && setShowWizard(false)}>
+          <SheetContent className="w-full sm:max-w-[75vw] p-0 flex flex-col h-full overflow-hidden">
+            <SheetHeader className="px-6 pt-5 pb-3 border-b border-border shrink-0">
+              <SheetTitle className="flex items-center gap-2">
+                <Shield className="h-4 w-4" /> Create WAF Policy
+              </SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 min-h-0">
+              <APPolicyForm
+                clusterId={clusterId}
+                namespace={namespace}
+                onClose={() => setShowWizard(false)}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
 
       {isLoading && <SkeletonTable rows={4} columns={5} />}
@@ -310,25 +556,43 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" />
               <TableHead>Name</TableHead>
-              <TableHead>Namespace</TableHead>
+              <TableHead>Enforcement Mode</TableHead>
               <TableHead>Bundle State</TableHead>
-              <TableHead>Compiler Version</TableHead>
+              <TableHead>Namespace</TableHead>
               <TableHead>Age</TableHead>
-              <TableHead className="w-20" />
+              <TableHead className="w-28" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {policies.map((p) => (
-              <TableRow key={`${p.metadata.namespace}/${p.metadata.name}`} className="cursor-pointer" onClick={() => setSelectedPolicy(p)}>
+            {filtered.map((p: APPolicyResource) => {
+              const key = `${p.metadata.namespace}/${p.metadata.name}`;
+              const enfMode = (p.spec?.policy as { 'enforcement-mode'?: string; enforcementMode?: string } | undefined)?.['enforcement-mode']
+                ?? (p.spec?.policy as { enforcementMode?: string } | undefined)?.enforcementMode
+                ?? '—';
+              return (
+              <TableRow key={key} className="cursor-pointer" onClick={() => setSelectedPolicy(p)}>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => setSelected(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
+                    {selected.has(key) ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
+                  </button>
+                </TableCell>
                 <TableCell className="font-medium">{p.metadata.name}</TableCell>
-                <TableCell>{p.metadata.namespace}</TableCell>
+                <TableCell>
+                  {enfMode !== '—' ? (
+                    <Badge variant="outline" className={cn('text-[10px]',
+                      enfMode === 'blocking' ? 'bg-destructive/10 text-destructive border-destructive/30'
+                      : 'bg-warning/10 text-warning border-warning/30'
+                    )}>{enfMode}</Badge>
+                  ) : <span className="text-xs text-muted-foreground">—</span>}
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={cn('text-[10px]', getBundleStateBadgeClass(p.status?.bundle?.state))}>
                     {p.status?.bundle?.state ?? 'unknown'}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-xs">{p.status?.bundle?.compilerVersion ?? '—'}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{p.metadata.namespace}</TableCell>
                 <TableCell className="text-xs">{formatAge(p.metadata.creationTimestamp)}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
@@ -352,22 +616,23 @@ function PoliciesTab({ clusterId, namespace, isDark }: { clusterId: number; name
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+            ); })}
           </TableBody>
         </Table>
       )}
+      {!isLoading && policies.length > 0 && <TableCount count={filtered.length} label="policy" />}
 
       {/* Detail sheet (read-only) */}
       <Sheet open={!!selectedPolicy} onOpenChange={(open) => !open && setSelectedPolicy(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader><SheetTitle>{selectedPolicy?.metadata.name}</SheetTitle></SheetHeader>
-          {selectedPolicy && <div className="mt-4"><WafPolicyDetail resource={selectedPolicy} isDark={isDark} clusterId={clusterId} /></div>}
+        <SheetContent className="w-full sm:max-w-[75vw] overflow-y-auto p-0">
+          <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>{selectedPolicy?.metadata.name}</SheetTitle></SheetHeader>
+          {selectedPolicy && <WafPolicyDetail resource={selectedPolicy} isDark={isDark} clusterId={clusterId} />}
         </SheetContent>
       </Sheet>
 
       {/* Edit sheet */}
       <Sheet open={!!editingPolicy} onOpenChange={(open) => !open && setEditingPolicy(null)}>
-        <SheetContent className="w-full sm:max-w-4xl overflow-y-auto p-0">
+        <SheetContent className="w-full sm:max-w-[75vw] overflow-y-auto p-0">
           <SheetHeader className="px-4 pt-4 pb-0"><SheetTitle>Edit Policy — {editingPolicy?.metadata.name}</SheetTitle></SheetHeader>
           {editingPolicy && (
             <APPolicyForm
@@ -557,21 +822,33 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
   const [viewingItem, setViewingItem]   = useState<APUserSigResource | null>(null);
   const [editingItem, setEditingItem]   = useState<APUserSigResource | null>(null);
   const [deletingItem, setDeletingItem] = useState<APUserSigResource | null>(null);
+  const [pills, setPills] = useState<{ field: string; value: string }[]>([]);
 
-  const { data, isLoading } = useWafUserSigs(clusterId, namespace, { enabled: !!clusterId });
+  const { data, isLoading, refetch } = useWafUserSigs(clusterId, namespace, { enabled: !!clusterId });
   const userSigs = useMemo(() => data?.user_sigs ?? [], [data]);
   const deleteSig = useDeleteWafUserSig(clusterId);
+  const filtered = useMemo(() => userSigs.filter((us: APUserSigResource) =>
+    pills.every(p => {
+      if (p.field === 'name') return us.metadata.name.toLowerCase().includes(p.value.toLowerCase());
+      if (p.field === 'tag') return (us.spec?.tag ?? '').toLowerCase().includes(p.value.toLowerCase());
+      return true;
+    })
+  ), [userSigs, pills]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className={cn('text-xs', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
-          APUserSig CRs define custom attack signatures embedded into compiled policies via <code>signature-requirements[].tag</code>. Click a row to inspect.
-        </p>
-        <Button size="sm" className="gap-1.5" onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4" /> {showCreate ? 'Cancel' : 'Create User Signature'}
-        </Button>
-      </div>
+    <div className="space-y-3">
+      <TabToolbar
+        filterDef={[
+          { field: 'name', label: 'Name' },
+          { field: 'tag',  label: 'Tag' },
+        ]}
+        pills={pills}
+        onAddPill={(p) => setPills(prev => [...prev, p])}
+        onRemovePill={(i) => setPills(prev => prev.filter((_, idx) => idx !== i))}
+        onRefresh={refetch} isLoading={isLoading}
+        onCreate={() => setShowCreate(!showCreate)}
+        createLabel={showCreate ? 'Cancel' : 'Create User Signature'}
+      />
 
       {showCreate && (
         <div className={cn('rounded-lg border', isDark ? 'border-border bg-card/50' : 'border-border bg-white')}>
@@ -579,7 +856,7 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
         </div>
       )}
 
-      {isLoading && <SkeletonTable rows={3} columns={4} />}
+      {isLoading && <SkeletonTable rows={3} columns={5} />}
       {!isLoading && userSigs.length === 0 && (
         <EmptyState icon={PenLine} title="No user signatures yet" description="Create a custom attack signature that your WAF policies can reference." />
       )}
@@ -590,13 +867,13 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
               <TableHead>Name</TableHead>
               <TableHead>Tag</TableHead>
               <TableHead>Signatures</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Install State</TableHead>
               <TableHead>Age</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {userSigs.map((us: APUserSigResource) => (
+            {filtered.map((us: APUserSigResource) => (
               <TableRow key={`${us.metadata.namespace}/${us.metadata.name}`} className="cursor-pointer" onClick={() => setViewingItem(us)}>
                 <TableCell className="font-medium">{us.metadata.name}</TableCell>
                 <TableCell className="text-xs font-mono">{us.spec?.tag ?? '—'}</TableCell>
@@ -631,6 +908,7 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
           </TableBody>
         </Table>
       )}
+      {!isLoading && userSigs.length > 0 && <TableCount count={filtered.length} label="user signature" />}
 
       {/* Detail (view) sheet */}
       <Sheet open={!!viewingItem} onOpenChange={(open) => !open && setViewingItem(null)}>
@@ -677,10 +955,10 @@ function UserSigsTab({ clusterId, namespace, isDark }: { clusterId: number; name
 // ============================================================================
 
 const TABS: { key: PageTab; label: string; icon: typeof Shield; description: string }[] = [
-  { key: 'log-profiles', label: 'Log Profiles',       icon: FileText, description: 'APLogConf — define WAF security event log format (create before policies)' },
   { key: 'policies',     label: 'Policies',            icon: Shield,   description: 'APPolicy — compile and enforce WAF rules against traffic' },
-  { key: 'signatures',   label: 'Signature Settings',  icon: Key,      description: 'APSignatures — set attack/bot/threat signature revision (namespace-wide)' },
-  { key: 'user-sigs',    label: 'User Signatures',     icon: PenLine,  description: 'APUserSig — custom attack signatures embedded by policies' },
+  { key: 'log-profiles', label: 'Log Profiles',        icon: FileText, description: 'APLogConf — define WAF security event log format and filter' },
+  { key: 'signatures',   label: 'Attack Signatures',   icon: Key,      description: 'APSignatures — set attack/bot/threat campaign signature revision (namespace-wide)' },
+  { key: 'user-sigs',    label: 'User Signatures',     icon: PenLine,  description: 'APUserSig — custom attack signatures embedded by policies via tag reference' },
 ];
 
 export default function WafPolicies() {
@@ -689,21 +967,29 @@ export default function WafPolicies() {
   const clusters = clustersData?.clusters ?? [];
 
   const [selectedCluster, setSelectedCluster] = useState<number | null>(null);
-  const [activeTab, setActiveTab]             = useState<PageTab>('log-profiles');
+  const [activeTab, setActiveTab]             = useState<PageTab>('policies');
   const [namespace, setNamespace]             = useState('default');
+  const [searchParams, setSearchParams]       = useSearchParams();
+  const deepLinkPolicy = searchParams.get('policy');
+
+  // Deep link from WAF Dashboard — ?policy=name jumps to the Policies tab and opens it
+  useEffect(() => {
+    if (deepLinkPolicy) setActiveTab('policies');
+  }, [deepLinkPolicy]);
 
   const clusterId = selectedCluster ?? clusters[0]?.id ?? null;
 
   return (
     <div className="p-6 overflow-y-auto">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
+      <div className="max-w-6xl mx-auto space-y-5">
+        {/* Breadcrumb + header — matches NIM pattern */}
         <div>
-          <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
-            <Shield className="h-5 w-5" /> WAF Policies
+          <p className="text-xs text-muted-foreground mb-1">WAF</p>
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Shield className="h-5 w-5" /> Security Policies
           </h2>
-          <p className={cn('text-sm', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
-            Manage all 4 App Protect WAF CRDs. Requires the nap-policy-operator PLM chart installed on the target cluster.
+          <p className={cn('text-sm mt-0.5', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
+            Manage App Protect WAF CRDs: Policies, Log Profiles, Attack Signatures, and User Signatures.
           </p>
         </div>
 
@@ -727,29 +1013,31 @@ export default function WafPolicies() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className={cn('flex gap-1 p-1 rounded-lg border flex-wrap', isDark ? 'bg-card/50 border-border' : 'bg-muted border-border/50')}>
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.key}
-                className={cn(
-                  'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-                  activeTab === t.key
-                    ? isDark ? 'bg-card text-white shadow-sm' : 'bg-white text-foreground shadow-sm'
-                    : isDark ? 'text-muted-foreground hover:text-foreground/90' : 'text-muted-foreground hover:text-foreground/80'
-                )}
-                onClick={() => setActiveTab(t.key)}
-              >
-                <Icon className="h-4 w-4" /> {t.label}
-              </button>
-            );
-          })}
+        {/* Tabs — border-bottom style matching NIM */}
+        <div className="border-b border-border">
+          <div className="flex gap-0">
+            {TABS.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.key}
+                  className={cn(
+                    'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+                    activeTab === t.key
+                      ? 'border-primary text-foreground'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                  )}
+                  onClick={() => setActiveTab(t.key)}
+                >
+                  <Icon className="h-3.5 w-3.5" /> {t.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Active tab description */}
-        <p className={cn('text-xs -mt-2', isDark ? 'text-muted-foreground' : 'text-muted-foreground')}>
+        {/* Tab description line */}
+        <p className="text-xs text-muted-foreground -mt-1">
           {TABS.find((t) => t.key === activeTab)?.description}
         </p>
 
@@ -757,7 +1045,13 @@ export default function WafPolicies() {
         {clusterId ? (
           <>
             {activeTab === 'log-profiles' && <LogProfilesTab clusterId={clusterId} namespace={namespace} isDark={isDark} />}
-            {activeTab === 'policies'     && <PoliciesTab    clusterId={clusterId} namespace={namespace} isDark={isDark} />}
+            {activeTab === 'policies'     && (
+              <PoliciesTab
+                clusterId={clusterId} namespace={namespace} isDark={isDark}
+                initialOpenPolicy={deepLinkPolicy}
+                onConsumeInitialOpen={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('policy'); return n; }, { replace: true })}
+              />
+            )}
             {activeTab === 'signatures'   && <SignatureSettingsTab clusterId={clusterId} namespace={namespace} isDark={isDark} />}
             {activeTab === 'user-sigs'    && <UserSigsTab    clusterId={clusterId} namespace={namespace} isDark={isDark} />}
           </>

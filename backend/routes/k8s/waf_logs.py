@@ -266,6 +266,93 @@ def _resolve_endpoints_for_policy(
     return list(dict.fromkeys(endpoints))  # deduplicate preserving order
 
 
+def _read_logs_from_clickhouse(
+    ch,
+    cluster_id: int,
+    cr_kind: str,
+    cr_name: str,
+    limit: int,
+    outcome_filter: str | None,
+    attack_type_filter: str | None,
+    vs_name_filter: str | None,
+    ip_filter: str | None = None,
+    uri_filter: str | None = None,
+) -> tuple[list[dict], str | None]:
+    """Query ClickHouse for security logs and return entries in NAP-compatible shape.
+
+    Returns raw_message verbatim so the UI shows the original log format the user
+    configured — whether NAP, custom, or OTEL-normalised.
+    """
+    conditions = ["cluster_id = {cid:UInt32}"]
+    params: dict = {"cid": cluster_id, "limit": limit}
+
+    if cr_kind == "appolicy":
+        conditions.append("policy_name = {policy:String}")
+        params["policy"] = cr_name
+    if outcome_filter:
+        conditions.append("outcome = {outcome:String}")
+        params["outcome"] = outcome_filter.upper()
+    if attack_type_filter:
+        conditions.append("positionCaseInsensitive(attack_type, {atf:String}) > 0")
+        params["atf"] = attack_type_filter
+    if vs_name_filter:
+        conditions.append("positionCaseInsensitive(vs_name, {vsf:String}) > 0")
+        params["vsf"] = vs_name_filter
+    if ip_filter:
+        conditions.append("ip_client = {ipf:String}")
+        params["ipf"] = ip_filter
+    if uri_filter:
+        conditions.append("positionCaseInsensitive(uri, {urif:String}) > 0")
+        params["urif"] = uri_filter
+
+    where = " AND ".join(conditions)
+    sql = f"""
+        SELECT ts, outcome, attack_type, ip_client, method, uri,
+               policy_name, vs_name, violation_rating, support_id,
+               sig_ids, sig_names, raw_message, ingest_source
+        FROM {_CLICKHOUSE_DB}.waf_events
+        WHERE {where}
+        ORDER BY ts DESC
+        LIMIT {{limit:UInt32}}
+    """
+
+    try:
+        rows = ch.query(sql, params)
+        entries = []
+        for r in rows:
+            # raw_message = original syslog line as the WAF emitted it
+            # If empty (legacy celery event), synthesise from parsed fields
+            raw = r.get("raw_message") or ""
+            if not raw:
+                raw = (
+                    f'attack_type="{r.get("attack_type","")}",'
+                    f'date_time="{r.get("ts","")}",ip_client="{r.get("ip_client","")}",method="{r.get("method","")}",policy_name="{r.get("policy_name","")}",outcome="{r.get("outcome","")}",'
+                    f'support_id="{r.get("support_id","")}"'
+                )
+            entry = {
+                "raw":              raw,
+                "date_time":        str(r.get("ts", "")),
+                "outcome":          r.get("outcome", ""),
+                "attack_type":      r.get("attack_type", ""),
+                "ip_client":        r.get("ip_client", ""),
+                "method":           r.get("method", ""),
+                "uri":              r.get("uri", ""),
+                "policy_name":      r.get("policy_name", ""),
+                "vs_name":          r.get("vs_name", ""),
+                "violation_rating": str(r.get("violation_rating", "")),
+                "support_id":       r.get("support_id", ""),
+                "sig_ids":          r.get("sig_ids", ""),
+                "sig_names":        r.get("sig_names", ""),
+                "request_status":   r.get("outcome", "").lower(),
+                "ingest_source":    r.get("ingest_source", ""),
+            }
+            entries.append(entry)
+        return entries, None
+    except Exception as exc:
+        logger.error("ClickHouse security-logs query failed: %s", exc)
+        return [], str(exc)
+
+
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/security-logs",
     dependencies=[Depends(require_viewer)],
@@ -274,12 +361,14 @@ def _resolve_endpoints_for_policy(
 def get_waf_security_logs(
     cluster_id: int,
     namespace: str,
-    cr_kind: Annotated[str, Query(description="'appolicy' or 'f5virtualserver'")],
-    cr_name: str,
+    cr_kind: Annotated[str | None, Query(description="'appolicy' or 'f5virtualserver'; omit to query all policies")] = None,
+    cr_name: str | None = None,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = 200,
     outcome_filter: str | None = None,
     attack_type_filter: str | None = None,
     vs_name_filter: str | None = None,
+    ip_filter: str | None = None,
+    uri_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -289,6 +378,27 @@ def get_waf_security_logs(
       APPolicy  → SecPolicy (items[].kind=F5BigWebSecurityProfile) → F5BigLogProfile → F5BigHslPub
       F5VirtualServer → SecPolicy (targetRef) → F5BigLogProfile → F5BigHslPub
     """
+    # When ClickHouse is available, query it directly — no syslog endpoint resolution needed.
+    # raw_message column preserves the original log line in the user's chosen format.
+    from services.clickhouse import get_clickhouse, CLICKHOUSE_DB as _CLICKHOUSE_DB
+    ch = get_clickhouse()
+    if ch.available:
+        entries, error = _read_logs_from_clickhouse(
+            ch, cluster_id, cr_kind, cr_name,
+            limit, outcome_filter, attack_type_filter, vs_name_filter,
+            ip_filter, uri_filter,
+        )
+        return {
+            "entries": entries,
+            "total": len(entries),
+            "source_endpoint": "clickhouse",
+            "cr_kind": cr_kind,
+            "cr_name": cr_name,
+            "error": error,
+            "source": "clickhouse",
+        }
+
+    # Fallback path: resolve syslog endpoint and read from pod/TCP
     k8s = KubernetesService(db)
     endpoints: list[str] = []
 
@@ -340,12 +450,11 @@ def get_waf_security_logs(
             "warning": f"Could not parse syslog endpoint address: {host_port!r}",
         }
 
-    # Try pod exec first (reads persisted log file); fall back to live TCP stream
+    # (ClickHouse already handled above — this is the pure syslog fallback path)
     entries, error = _read_logs_from_pod(k8s, cluster_id, namespace, limit)
     if not entries:
         entries, error = _read_syslog_tcp(host, port, limit)
 
-    # Filter by cr_name using the NAP policy_name / vs_name fields
     if cr_kind == "appolicy":
         entries = [e for e in entries if not e.get("policy_name") or cr_name in e.get("policy_name", "")]
     if vs_name_filter:
@@ -354,6 +463,10 @@ def get_waf_security_logs(
         entries = [e for e in entries if e.get("outcome", "").upper() == outcome_filter.upper()]
     if attack_type_filter:
         entries = [e for e in entries if attack_type_filter.lower() in e.get("attack_type", "").lower()]
+    if ip_filter:
+        entries = [e for e in entries if e.get("ip_client", "") == ip_filter]
+    if uri_filter:
+        entries = [e for e in entries if uri_filter.lower() in e.get("uri", "").lower()]
 
     return {
         "entries": entries,
@@ -363,4 +476,5 @@ def get_waf_security_logs(
         "cr_kind": cr_kind,
         "cr_name": cr_name,
         "error": error,
+        "source": "syslog",
     }

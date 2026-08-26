@@ -11,8 +11,13 @@ import type { NapLogEntry, WafLogsParams } from '@/lib/api/waf-logs';
 interface SecurityLogsTabProps {
   clusterId: number;
   namespace: string;
-  crKind: 'appolicy' | 'f5virtualserver';
-  crName: string;
+  crKind?: 'appolicy' | 'f5virtualserver';
+  crName?: string;
+  /** Pre-seed filters when navigating here from a dashboard "apply as filter" click. */
+  initialOutcomeFilter?: string;
+  initialAttackFilter?: string;
+  initialIpFilter?: string;
+  initialUriFilter?: string;
 }
 
 const OUTCOME_COLORS: Record<string, string> = {
@@ -34,6 +39,9 @@ function outcomeLabel(entry: NapLogEntry): string {
   return (entry.outcome ?? entry.request_status ?? '—').toUpperCase();
 }
 
+// Shared column template: chevron | outcome | request | attack-type | rating | time
+const ROW_COLS = 'grid-cols-[16px_auto_1fr_1fr_40px_auto]';
+
 function LogEntryRow({ entry }: { entry: NapLogEntry }) {
   const [expanded, setExpanded] = useState(false);
   const outcome = outcomeLabel(entry);
@@ -44,29 +52,28 @@ function LogEntryRow({ entry }: { entry: NapLogEntry }) {
     <div className="border-b border-border last:border-0">
       <button
         onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+        className={cn('w-full grid gap-x-3 px-3 py-2 text-left hover:bg-muted/40 transition-colors items-center text-xs', ROW_COLS)}
       >
-        <span className="mt-0.5 shrink-0 text-muted-foreground">
+        {/* Chevron */}
+        <span className="text-muted-foreground flex items-center justify-center">
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </span>
-        <div className="flex-1 min-w-0 grid grid-cols-[auto_1fr_1fr_auto] gap-x-3 items-start text-xs">
-          {/* Outcome badge */}
-          <Badge variant="outline" className={cn('text-[9px] px-1.5 py-0 h-4 shrink-0', OUTCOME_COLORS[outcome] ?? 'bg-muted text-muted-foreground border-border')}>
-            {outcome}
-          </Badge>
-          {/* URI / request */}
-          <span className="truncate text-foreground font-mono" title={entry.request ?? entry.uri ?? entry.raw}>
-            {entry.method ? `${entry.method} ` : ''}{entry.uri ?? entry.request ?? entry.raw.slice(0, 60)}
-          </span>
-          {/* Attack type */}
-          <span className="truncate text-muted-foreground">{entry.attack_type ?? '—'}</span>
-          {/* Rating */}
-          <span className={cn('shrink-0', ratingColor)}>
-            {entry.violation_rating ? `⚠ ${entry.violation_rating}` : ''}
-          </span>
-        </div>
+        {/* Outcome badge */}
+        <Badge variant="outline" className={cn('text-[9px] px-1.5 py-0 h-4 shrink-0 justify-self-start', OUTCOME_COLORS[outcome] ?? 'bg-muted text-muted-foreground border-border')}>
+          {outcome}
+        </Badge>
+        {/* URI / request */}
+        <span className="truncate text-foreground font-mono" title={entry.request ?? entry.uri ?? entry.raw}>
+          {entry.method ? `${entry.method} ` : ''}{entry.uri ?? entry.request ?? entry.raw.slice(0, 60)}
+        </span>
+        {/* Attack type */}
+        <span className="truncate text-muted-foreground">{entry.attack_type ?? '—'}</span>
+        {/* Rating */}
+        <span className={cn('shrink-0 justify-self-end', ratingColor)}>
+          {entry.violation_rating ? `⚠ ${entry.violation_rating}` : ''}
+        </span>
         {/* Timestamp */}
-        <span className="shrink-0 text-[10px] text-muted-foreground whitespace-nowrap ml-1">{entry.date_time ?? ''}</span>
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap justify-self-end">{entry.date_time ?? ''}</span>
       </button>
 
       {expanded && (
@@ -90,21 +97,28 @@ function LogEntryRow({ entry }: { entry: NapLogEntry }) {
   );
 }
 
-export function SecurityLogsTab({ clusterId, namespace, crKind, crName }: SecurityLogsTabProps) {
-  const [outcomeFilter, setOutcomeFilter] = useState<string>('all');
-  const [attackFilter, setAttackFilter]   = useState('');
+export function SecurityLogsTab({
+  clusterId, namespace, crKind, crName,
+  initialOutcomeFilter, initialAttackFilter, initialIpFilter, initialUriFilter,
+}: SecurityLogsTabProps) {
+  const [outcomeFilter, setOutcomeFilter] = useState<string>(initialOutcomeFilter ?? 'all');
+  const [attackFilter, setAttackFilter]   = useState(initialAttackFilter ?? '');
   const [vsFilter, setVsFilter]           = useState('');
+  const [ipFilter, setIpFilter]           = useState(initialIpFilter ?? '');
+  const [uriFilter, setUriFilter]         = useState(initialUriFilter ?? '');
   const [limit, setLimit]                 = useState(200);
 
   const params: WafLogsParams = useMemo(() => ({
     namespace,
-    cr_kind: crKind,
-    cr_name: crName,
+    ...(crKind ? { cr_kind: crKind } : {}),
+    ...(crName ? { cr_name: crName } : {}),
     limit,
     outcome_filter:     outcomeFilter !== 'all' ? outcomeFilter : undefined,
     attack_type_filter: attackFilter  || undefined,
     vs_name_filter:     vsFilter      || undefined,
-  }), [namespace, crKind, crName, limit, outcomeFilter, attackFilter, vsFilter]);
+    ip_filter:          ipFilter      || undefined,
+    uri_filter:         uriFilter     || undefined,
+  }), [namespace, crKind, crName, limit, outcomeFilter, attackFilter, vsFilter, ipFilter, uriFilter]);
 
   const { data, isFetching, refetch, dataUpdatedAt } = useWafLogs(clusterId, params);
 
@@ -174,15 +188,29 @@ export function SecurityLogsTab({ clusterId, namespace, crKind, crName }: Securi
         </Select>
 
         <Input
-          className="h-7 text-xs w-40"
+          className="h-7 text-xs w-36"
           placeholder="Attack type…"
           value={attackFilter}
           onChange={e => setAttackFilter(e.target.value)}
         />
 
+        <Input
+          className="h-7 text-xs w-32 font-mono"
+          placeholder="IP address…"
+          value={ipFilter}
+          onChange={e => setIpFilter(e.target.value)}
+        />
+
+        <Input
+          className="h-7 text-xs w-36 font-mono"
+          placeholder="URI…"
+          value={uriFilter}
+          onChange={e => setUriFilter(e.target.value)}
+        />
+
         {crKind === 'f5virtualserver' && (
           <Input
-            className="h-7 text-xs w-40"
+            className="h-7 text-xs w-36"
             placeholder="vs_name…"
             value={vsFilter}
             onChange={e => setVsFilter(e.target.value)}
@@ -206,23 +234,32 @@ export function SecurityLogsTab({ clusterId, namespace, crKind, crName }: Securi
           </SelectContent>
         </Select>
 
-        <span className="text-xs text-muted-foreground ml-auto">
-          {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-        </span>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={exportCsv} disabled={!entries.length}>
-          <Download className="h-3 w-3" /> CSV
-        </Button>
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-xs text-muted-foreground">
+            {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+          </span>
+          {(attackFilter || ipFilter || uriFilter || vsFilter || outcomeFilter !== 'all') && (
+            <Button variant="ghost" size="sm" className="h-7 text-xs"
+              onClick={() => { setOutcomeFilter('all'); setAttackFilter(''); setVsFilter(''); setIpFilter(''); setUriFilter(''); }}>
+              Clear filters
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={exportCsv} disabled={!entries.length}>
+            <Download className="h-3 w-3" /> CSV
+          </Button>
+        </div>
       </div>
 
       {/* Table header */}
       {entries.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden">
-          <div className="grid grid-cols-[auto_1fr_1fr_auto_auto] gap-x-3 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground border-b border-border">
+          <div className={cn('grid gap-x-3 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground border-b border-border items-center', ROW_COLS)}>
+            <span />{/* chevron placeholder */}
             <span>Outcome</span>
             <span>Request</span>
             <span>Attack Type</span>
-            <span>Rating</span>
-            <span>Time</span>
+            <span className="text-right">Rating</span>
+            <span className="text-right">Time</span>
           </div>
           <div className="divide-y divide-border max-h-[420px] overflow-y-auto">
             {entries.map((entry, i) => (

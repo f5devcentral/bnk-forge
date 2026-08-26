@@ -23,6 +23,7 @@ const UserManagement = lazy(() => import('@/pages/UserManagement'));
 const Benchmarks = lazy(() => import('@/pages/Benchmarks'));
 const MCP = lazy(() => import('@/pages/MCP'));
 const WafPolicies = lazy(() => import('@/pages/WafPolicies'));
+const WafDashboard = lazy(() => import('@/pages/WafDashboard'));
 const Infrastructure = lazy(() => import('@/pages/Infrastructure'));
 const LlmDashboard = lazy(() => import('@/pages/observability/LlmDashboard'));
 const LlmLogs = lazy(() => import('@/pages/observability/LlmLogs'));
@@ -153,6 +154,10 @@ export const router = createBrowserRouter([
       {
         path: 'waf-policies',
         element: <WafPolicies />,
+      },
+      {
+        path: 'waf-dashboard',
+        element: <WafDashboard />,
       },
       {
         path: 'observability/ai-gateway',

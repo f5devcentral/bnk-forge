@@ -146,6 +146,7 @@ celery_app.conf.update(
             'task': 'tasks.notification_retention_task.purge_old_notifications',
             'schedule': 24 * 60 * 60,  # Every 24 hours
         },
+        # waf-event-ingest removed — OTEL Collector now handles WAF syslog ingest directly into ClickHouse
     },
 )
 

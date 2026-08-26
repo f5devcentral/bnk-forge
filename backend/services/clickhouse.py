@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 # ClickHouse HTTP endpoint — overridable via env var.
 # Default assumes ClickHouse runs on the same host (network_mode: host or localhost).
 _CLICKHOUSE_URL = os.getenv("CLICKHOUSE_URL", "")
-_CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "bnkforge")
-_CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "bnkforge_ch_pass")
+_CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
+_CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 _CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "bnkforge")
+
+# Exposed for use in route modules so the DB name stays env-configurable
+CLICKHOUSE_DB = _CLICKHOUSE_DB
 
 # DDL executed once to set up the database and table
 _DDL_STATEMENTS = [

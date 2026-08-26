@@ -95,6 +95,7 @@ const navigationSections: {
       { name: 'Kubernetes', href: '/kubernetes', icon: Box, showCount: 'clusters' },
       { name: 'F5 BNK', href: '/bnk', icon: Shield },
       { name: 'WAF Policies', href: '/waf-policies', icon: ShieldCheck },
+      { name: 'WAF Dashboard', href: '/waf-dashboard', icon: BarChart3 },
       { name: 'CNF Resources', href: '/cnf', icon: Layers },
       { name: 'Benchmarks', href: '/benchmarks', icon: BarChart3 },
       { name: 'MCP Server', href: '/mcp-server', icon: Bot },
