@@ -498,6 +498,13 @@ def _query_cluster_health(
     by the separate /api/k8s/clusters/connectivity endpoint — Fleet fetches
     that in parallel on the frontend for tooltip details.
     """
+    base_metadata = {
+        "cloud_provider": getattr(cluster, "cloud_provider", None),
+        "region": getattr(cluster, "region", None),
+        "account_id": getattr(cluster, "account_id", None),
+        "discovery_status": getattr(cluster, "discovery_status", None),
+    }
+
     # Fast TCP pre-check: if port is blocked, skip the expensive K8s fetch.
     # Skip for:
     #   - SSH-tunneled clusters (api_server only reachable via the tunnel)
@@ -518,7 +525,7 @@ def _query_cluster_health(
                     f"Fleet: cluster {cluster.name} (id={cluster.id}) TCP port {port} "
                     f"unreachable — marking offline (skipped K8s fetch)"
                 )
-                return {**_OFFLINE_RESULT}
+                return {**_OFFLINE_RESULT, **base_metadata}
 
     try:
         k8s_service = KubernetesService(db)
@@ -527,7 +534,7 @@ def _query_cluster_health(
             k8s_service.test_connection(cluster.id)
         except Exception as e:
             logger.warning(f"Fleet: cluster {cluster.name} (id={cluster.id}) K8s API unreachable: {e}")
-            return {**_OFFLINE_RESULT}
+            return {**_OFFLINE_RESULT, **base_metadata}
 
         # Cheap short-circuits: one discovery call (cached) answers both
         # "does this cluster have BNK?" and "does it have DPF?". Skip the
@@ -542,7 +549,7 @@ def _query_cluster_health(
         )
 
         if not has_bnk:
-            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
+            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary, **base_metadata}
 
         try:
             data = fetch_all_bnk_data(k8s_service, cluster.id)
@@ -553,7 +560,7 @@ def _query_cluster_health(
             # Cluster is reachable but BNK data fetch failed unexpectedly.
             # (The no-BNK-installed case is now handled by the short-circuit above.)
             logger.info(f"Fleet: cluster {cluster.name} (id={cluster.id}) BNK fetch failed: {e}")
-            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
+            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary, **base_metadata}
 
         return {
             "status": status,
@@ -562,10 +569,11 @@ def _query_cluster_health(
             "reachable": True,
             **metrics,
             **dpf_summary,
+            **base_metadata,
         }
     except Exception as e:
         logger.warning(f"Fleet health query failed for cluster {cluster.name} (id={cluster.id}): {e}")
-        return {**_OFFLINE_RESULT}
+        return {**_OFFLINE_RESULT, **base_metadata}
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +741,10 @@ def get_fleet_health(db: Session = Depends(get_db)):
             "dpf_status": result.get("dpf_status"),
             "dpu_count": result.get("dpu_count", 0),
             "dpu_cluster_count": result.get("dpu_cluster_count", 0),
+            "cloud_provider": getattr(cluster, "cloud_provider", None),
+            "region": getattr(cluster, "region", None),
+            "account_id": getattr(cluster, "account_id", None),
+            "discovery_status": getattr(cluster, "discovery_status", None),
             "detected_platform_profile": platform_context.detected_platform_profile,
             "detected_platform_provider": platform_context.detected_platform_provider,
         })
