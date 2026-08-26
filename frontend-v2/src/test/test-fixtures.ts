@@ -917,6 +917,10 @@ export const mockFleetHealth = {
       node_count: 3,
       operator_version: null,
       connectivity_mode: 'kubeconfig',
+      cloud_provider: 'aws',
+      region: 'us-east-1',
+      account_id: '123456789012',
+      discovery_status: 'discovered',
     },
     {
       operator_id: 2,
@@ -935,6 +939,10 @@ export const mockFleetHealth = {
       node_count: 2,
       operator_version: null,
       connectivity_mode: 'kubeconfig',
+      cloud_provider: null,
+      region: null,
+      account_id: null,
+      discovery_status: null,
     },
   ],
 };

@@ -52,6 +52,10 @@ const mockFleetHealth = {
       connectivity_mode: 'kubeconfig',
       detected_platform_profile: 'eks',
       detected_platform_provider: 'aws',
+      cloud_provider: 'aws',
+      region: 'us-east-1',
+      account_id: '123456789012',
+      discovery_status: 'discovered',
     },
     {
       operator_id: 2,
@@ -72,6 +76,10 @@ const mockFleetHealth = {
       connectivity_mode: 'kubeconfig',
       detected_platform_profile: 'generic_onprem',
       detected_platform_provider: 'baremetal',
+      cloud_provider: null,
+      region: null,
+      account_id: null,
+      discovery_status: null,
     },
   ],
   platform_context: {

@@ -55,6 +55,10 @@ export interface FleetOperatorHealth {
   dpu_cluster_count?: number;
   detected_platform_profile?: import('./platform').PlatformProfile;
   detected_platform_provider?: import('./platform').PlatformProvider | null;
+  cloud_provider?: string | null;
+  region?: string | null;
+  account_id?: string | null;
+  discovery_status?: string | null;
 }
 
 export interface FleetComparePlatformContext {
