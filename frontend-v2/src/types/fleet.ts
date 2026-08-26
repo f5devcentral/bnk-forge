@@ -188,6 +188,8 @@ export interface FleetMember {
   /** Derived unified lifecycle state (provisioning|active|draining|decommissioned|unknown). */
   lifecycle_state: FleetLifecycleState;
   last_reconciled_at: string | null;
+  /** Status of the asset discovery process (discovered|pending|failed). */
+  discovery_status?: string | null;
 }
 
 export interface FleetMembersResponse {

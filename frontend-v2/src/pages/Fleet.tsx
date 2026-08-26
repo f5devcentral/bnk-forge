@@ -1018,6 +1018,25 @@ function MemberTypeBadge({ memberType }: { memberType: string }) {
 }
 
 /** Lifecycle state badge — derived unified state per fleet member (D-022 P4). */
+
+function DiscoveryBadge({ status }: { status?: string | null }) {
+  if (!status) return null;
+
+  const variant = status === 'discovered'
+    ? 'success'
+    : status === 'pending'
+      ? 'warning'
+      : status === 'failed'
+        ? 'destructive'
+        : 'muted';
+
+  return (
+    <Badge variant={variant as "success" | "warning" | "destructive" | "muted"} className="capitalize">
+      Discovery: {status}
+    </Badge>
+  );
+}
+
 function LifecycleBadge({ state }: { state: FleetLifecycleState }) {
   if (!state) return null;
   // status-color-as-badge: pill with a status dot, never a full-card tint.
@@ -1097,7 +1116,8 @@ function MemberRow({ member, selected, onToggleSelect, sshCredentialId }: Member
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-foreground truncate">{member.name}</span>
           <MemberTypeBadge memberType={member.member_type} />
-          <LifecycleBadge state={member.lifecycle_state} />
+                    <LifecycleBadge state={member.lifecycle_state} />
+          <DiscoveryBadge status={member.discovery_status} />
           {/* SSH jumphost reachability — self-hides when no credential is associated */}
           <SSHConnectivityBadge variant="compact" credentialId={sshCredentialId} />
           {member.health_status && (
