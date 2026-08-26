@@ -84,3 +84,31 @@ Build forge fleet management as **a thin label + Fleet layer over the existing p
 - Internal grounding (this session): `models/kubernetes.py`, `models/bare_metal.py`, `models/dpu.py`, `models/ssh_credential.py`, `models/project.py` (Project/Environment), `routes/operators/fleet.py` (`/api/operators/fleet-health`, `/fleet/compare`), `frontend-v2/src/pages/Fleet.tsx`, `src/hooks/useFleet.ts`, `src/types/fleet.ts`
 - Principle: D-019 (dynamic-by-default); discovery pattern: D-018; engine/actuator seam: D-010 (EngineRegistry)
 - External research: [GKE fleet concepts](https://docs.cloud.google.com/kubernetes-engine/fleet-management/docs/fleet-concepts) · [GKE team management](https://docs.cloud.google.com/kubernetes-engine/fleet-management/docs/team-management) · [OCM Placement](https://open-cluster-management.io/docs/concepts/content-placement/placement/) · [Red Hat ACM Governance](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.11/html/governance/governance) · [Rancher Fleet targets](https://fleet.rancher.io/how-tos-for-users/gitrepo-targets) · [MAAS machine groups](https://canonical.com/maas/docs/about-machine-groups) · [MAAS machine lifecycle](https://canonical.com/maas/docs/about-the-machine-life-cycle) · [Metal3 BareMetalHost](https://github.com/metal3-io/baremetal-operator) · [AWS SSM Compliance/Patch](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-compliance.html) · [osquery/Fleet live queries](https://fleetdm.com/guides/get-current-telemetry-from-your-devices-with-live-queries) · [Argo Rollouts canary](https://argo-rollouts.readthedocs.io/en/stable/features/canary/) · [Redfish](https://en.wikipedia.org/wiki/Redfish_(specification)) · [Ansible inventory](https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html)
+
+## Cluster Discovery
+
+Cluster discovery enriches cluster records with provider-specific metadata after the
+cluster has been registered or synchronized. Discovery runs asynchronously so that
+cluster lifecycle operations are not blocked while provider metadata is resolved.
+
+The discovery flow automatically populates the following fields when they can be
+resolved from the provider:
+
+- `cloud_provider`
+- `region`
+- `account_id`
+
+The current synchronization state is tracked using the `discovery_status` field.
+This allows callers and operators to distinguish clusters that are pending discovery,
+actively being discovered, successfully discovered, or failed, depending on the
+supported status values in the implementation.
+
+The discovery sequence is:
+
+```text
+Provider Adapter -> Operator Orchestration -> Database
+```
+
+1. The Provider Adapter reads provider-specific metadata for the cluster.
+2. The Operator Orchestration Module coordinates the asynchronous discovery workflow.
+3. The discovered metadata and updated `discovery_status` are persisted to the database.
