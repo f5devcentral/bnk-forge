@@ -86,6 +86,7 @@ from routes.k8s import (
     waf_dashboard_router,
     waf_panels_router,
     waf_dashboard_tabs_router,
+    waf_gateway_router,
     waf_logs_router,
     waf_policies_router,
 )
@@ -366,6 +367,7 @@ app.include_router(waf_logs_router)       # WAF Security Logs — syslog endpoin
 app.include_router(waf_dashboard_router)  # WAF Dashboard — ClickHouse analytics
 app.include_router(waf_panels_router)     # WAF Panel Builder — CRUD + data queries
 app.include_router(waf_dashboard_tabs_router)  # WAF Dashboard — custom tab CRUD
+app.include_router(waf_gateway_router)    # WAF Gateway API — Gateway/HTTPRoute/WSP CRUD
 app.include_router(bare_metal_hosts_router)               # Bare-metal DPU hosts — CRUD + discovery
 app.include_router(f5_devices_router)                     # F5 BIG-IP devices — CRUD + read-only probe (D-023 P1)
 app.include_router(f5_credentials_router)                 # F5 BIG-IP credentials — CRUD + test (D-023 P1)
