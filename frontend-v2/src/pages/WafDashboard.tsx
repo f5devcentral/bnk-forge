@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, LayoutDashboard, List, Hash, Bot, SlidersHorizontal, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Plus, LayoutDashboard, List, Hash, Bot, SlidersHorizontal, Pencil, Trash2, Check, X, Filter } from 'lucide-react';
 import { WafPanelRenderer } from '@/components/k8s/waf/WafPanelRenderer';
 import { WafPanelBuilderModal } from '@/components/k8s/waf/WafPanelBuilderModal';
 import { SecurityLogsTab } from '@/components/k8s/waf/SecurityLogsTab';
@@ -81,6 +81,7 @@ import type {
   DashboardSeverity,
   DashboardTopSignatures,
   DashboardTopInstances,
+  DashboardGlobalFilter,
 } from '@/lib/api/waf-dashboard';
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP } from '@/components/observability/chart-theme';
 
@@ -283,9 +284,11 @@ function MiniStatTable({ rows, valueLabel = 'Count' }: {
 }
 
 // NIM-style donut chart + legend (used for Request Methods, Severity)
-function MiniPieChart({ rows, valueLabel = 'Count' }: {
+function MiniPieChart({ rows, valueLabel = 'Count', filterLabel, onFilter }: {
   rows: { label: string; value: number; color: string }[];
   valueLabel?: string;
+  filterLabel?: string; // e.g. "Severity" or "Method"
+  onFilter?: (value: string) => void;
 }) {
   const total = rows.reduce((s, r) => s + r.value, 0);
   return rows.length === 0 ? (
@@ -305,10 +308,19 @@ function MiniPieChart({ rows, valueLabel = 'Count' }: {
       <ul className="flex-1 min-w-0 space-y-1.5 text-xs">
         {rows.map((r) => (
           <li key={r.label} className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: r.color }} />
-            <span className="font-medium truncate">{r.label}</span>
-            <span className="ml-auto tabular-nums text-muted-foreground">{fmtNumber(r.value)}</span>
-            <span className="tabular-nums text-muted-foreground/70 w-9 text-right">{total > 0 ? `${Math.round(r.value / total * 100)}%` : '—'}</span>
+            <span className="h-3 w-3 rounded shrink-0" style={{ background: r.color }} />
+            <span className="font-medium text-foreground truncate">{r.label}</span>
+            <span className="ml-auto tabular-nums text-muted-foreground">{r.value > 0 ? fmtNumber(r.value) : '—'}</span>
+            <span className="tabular-nums text-muted-foreground/60 w-8 text-right">{total > 0 ? `${Math.round(r.value / total * 100)}%` : ''}</span>
+            {onFilter && (
+              <button
+                onClick={() => onFilter(r.label)}
+                title={`Filter by ${filterLabel ?? valueLabel}: ${r.label}`}
+                className="text-muted-foreground/40 hover:text-primary transition-colors shrink-0"
+              >
+                <Filter className="h-3 w-3" />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -367,7 +379,7 @@ function KpiCard({ label, value, sub, icon, accent = 'default', loading, help }:
 }
 
 // ── Section card wrapper ──────────────────────────────────────────────────────
-function Panel({ title, help, children, className, actions, footer }: { title: string; help?: string; children: React.ReactNode; className?: string; actions?: React.ReactNode; footer?: { label: string; onClick: () => void } }) {
+function Panel({ title, help, children, className, actions, footer, note }: { title: string; help?: string; children: React.ReactNode; className?: string; actions?: React.ReactNode; footer?: { label: string; onClick: () => void }; note?: string }) {
   return (
     <div className={cn('rounded-lg border border-border bg-card flex flex-col', className)}>
       <div className="px-4 py-3 border-b border-border flex items-center gap-1.5">
@@ -376,14 +388,16 @@ function Panel({ title, help, children, className, actions, footer }: { title: s
         {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
       </div>
       <div className="p-4 flex-1">{children}</div>
-      {footer && (
-        <button
-          onClick={footer.onClick}
-          className="flex items-center gap-1 px-4 py-2 border-t border-border text-xs font-medium text-primary hover:underline"
-        >
-          {footer.label}
-          <ArrowRight className="h-3 w-3" />
-        </button>
+      {(note || footer) && (
+        <div className={cn('px-4 py-2 border-t border-border flex items-center', note && footer ? 'justify-between' : note ? 'justify-end' : '')}>
+          {note && <span className="text-[10px] text-muted-foreground/60">{note}</span>}
+          {footer && (
+            <button onClick={footer.onClick} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+              {footer.label}
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -491,6 +505,9 @@ export default function WafDashboard() {
   const [selectedCluster, setSelectedCluster] = useState<number | null>(null);
   const [timeRange, setTimeRange]       = useState<TimeRange>('7d');
   const [intervalMs, setIntervalMs]     = useState<RefreshIntervalMs>(60_000);
+  // Global dashboard filter — applied to all panel queries simultaneously
+  const [globalFilter, setGlobalFilter] = useState<DashboardGlobalFilter>({});
+  const [filterBarOpen, setFilterBarOpen] = useState(false);
   const [countdown, setCountdown]       = useState(0);
   const [editMode, setEditMode]         = useState(false);
   const [builderOpen, setBuilderOpen]   = useState(false);
@@ -529,11 +546,11 @@ export default function WafDashboard() {
   const clusterId = selectedCluster ?? clusters[0]?.id ?? null;
 
   const { data: statusData,  isLoading: statusLoading,  refetch: refetchStatus  } = useWafDashboardStatus(clusterId, intervalMs);
-  const { data: summaryData, isLoading: summaryLoading, isFetching: summaryFetching, refetch: refetchSummary } = useWafDashboardSummary(clusterId, timeRange, intervalMs);
-  const { data: trendData,   isLoading: trendLoading,                                refetch: refetchTrend   } = useWafDashboardTrend(clusterId, timeRange, intervalMs);
-  const { data: attacksData, isLoading: attacksLoading,                              refetch: refetchAttacks } = useWafDashboardTopAttacks(clusterId, timeRange, intervalMs);
-  const { data: ipsData,     isLoading: ipsLoading,                                  refetch: refetchIps     } = useWafDashboardTopIps(clusterId, timeRange, intervalMs);
-  const { data: urisData,    isLoading: urisLoading,                                 refetch: refetchUris    } = useWafDashboardTopUris(clusterId, timeRange, intervalMs);
+  const { data: summaryData, isLoading: summaryLoading, isFetching: summaryFetching, refetch: refetchSummary } = useWafDashboardSummary(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: trendData,   isLoading: trendLoading,                                refetch: refetchTrend   } = useWafDashboardTrend(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: attacksData, isLoading: attacksLoading,                              refetch: refetchAttacks } = useWafDashboardTopAttacks(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: ipsData,     isLoading: ipsLoading,                                  refetch: refetchIps     } = useWafDashboardTopIps(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: urisData,    isLoading: urisLoading,                                 refetch: refetchUris    } = useWafDashboardTopUris(clusterId, timeRange, intervalMs, globalFilter);
 
   const { data: customPanels = [] } = useWafPanels(clusterId, activeCustomTabId);
   const deletePanel = useDeleteWafPanel(clusterId ?? 0);
@@ -584,11 +601,11 @@ export default function WafDashboard() {
   }
 
   // New NIM-equivalent panels
-  const { data: topPoliciesData, isLoading: topPoliciesLoading } = useWafDashboardTopPolicies(clusterId, timeRange, intervalMs);
-  const { data: methodsData,     isLoading: methodsLoading     } = useWafDashboardRequestMethods(clusterId, timeRange, intervalMs);
-  const { data: severityData,    isLoading: severityLoading     } = useWafDashboardSeverity(clusterId, timeRange, intervalMs);
-  const { data: signaturesData,  isLoading: signaturesLoading   } = useWafDashboardTopSignatures(clusterId, timeRange, intervalMs);
-  const { data: instancesData,   isLoading: instancesLoading    } = useWafDashboardTopInstances(clusterId, timeRange, intervalMs);
+  const { data: topPoliciesData, isLoading: topPoliciesLoading } = useWafDashboardTopPolicies(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: methodsData,     isLoading: methodsLoading     } = useWafDashboardRequestMethods(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: severityData,    isLoading: severityLoading     } = useWafDashboardSeverity(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: signaturesData,  isLoading: signaturesLoading   } = useWafDashboardTopSignatures(clusterId, timeRange, intervalMs, globalFilter);
+  const { data: instancesData,   isLoading: instancesLoading    } = useWafDashboardTopInstances(clusterId, timeRange, intervalMs, globalFilter);
 
   function openCreate() { setEditingPanel(null); setBuilderOpen(true); }
   function openEdit(p: WafPanel) { setEditingPanel(p); setBuilderOpen(true); }
@@ -627,9 +644,10 @@ export default function WafDashboard() {
   const queryWindow = {
     start: new Date(Date.now() - RANGE_MS[timeRange]),
     end: new Date(),
-    filters: eventLogsFilter
-      ? Object.entries(eventLogsFilter).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(', ')
-      : 'None',
+    filters: (() => {
+      const gfParts = Object.entries(globalFilter).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`);
+      return gfParts.length > 0 ? gfParts.join(', ') : 'None';
+    })(),
   };
 
   return (
@@ -683,6 +701,23 @@ export default function WafDashboard() {
               )}
             </div>
 
+            {/* Filter toggle — active glow when filter is set */}
+            <Button
+              variant={Object.values(globalFilter).some(Boolean) ? 'default' : 'outline'}
+              size="sm"
+              className="h-9 gap-1.5"
+              onClick={() => setFilterBarOpen(v => !v)}
+              title="Toggle global filter bar"
+            >
+              <Filter className="h-4 w-4" />
+              Filter
+              {Object.values(globalFilter).filter(Boolean).length > 0 && (
+                <span className="ml-1 rounded-full bg-primary-foreground text-primary text-[10px] font-bold w-4 h-4 flex items-center justify-center">
+                  {Object.values(globalFilter).filter(Boolean).length}
+                </span>
+              )}
+            </Button>
+
             {/* Refresh */}
             <Button
               variant="outline"
@@ -697,6 +732,131 @@ export default function WafDashboard() {
           </div>
         }
       />
+
+      {/* Global filter bar — NIM-style, collapses when no filter active */}
+      {filterBarOpen && clusterId && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0 flex items-center gap-1.5">
+            <Filter className="h-3.5 w-3.5" /> Dashboard Filter
+          </span>
+
+          {/* Outcome — fixed enum */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Outcome</label>
+            <Select
+              value={globalFilter.outcome ?? 'all'}
+              onValueChange={v => setGlobalFilter(prev => ({ ...prev, outcome: v === 'all' ? undefined : v }))}
+            >
+              <SelectTrigger className="h-7 text-xs w-36"><SelectValue placeholder="All outcomes" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All outcomes</SelectItem>
+                <SelectItem value="REJECTED">REJECTED</SelectItem>
+                <SelectItem value="ALERTED">ALERTED</SelectItem>
+                <SelectItem value="PASSED">PASSED</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Attack Type — derived from top-attacks data already fetched */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Attack Type</label>
+            <Select
+              value={globalFilter.attack_type ?? 'all'}
+              onValueChange={v => setGlobalFilter(prev => ({ ...prev, attack_type: v === 'all' ? undefined : v }))}
+            >
+              <SelectTrigger className="h-7 text-xs w-44"><SelectValue placeholder="All attack types" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All attack types</SelectItem>
+                {(attacksData && 'items' in attacksData ? attacksData.items : []).map(a => (
+                  <SelectItem key={a.attack_type} value={a.attack_type}>{a.attack_type}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Policy — derived from top-policies data */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Policy</label>
+            <Select
+              value={globalFilter.policy_name ?? 'all'}
+              onValueChange={v => setGlobalFilter(prev => ({ ...prev, policy_name: v === 'all' ? undefined : v }))}
+            >
+              <SelectTrigger className="h-7 text-xs w-44"><SelectValue placeholder="All policies" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All policies</SelectItem>
+                {(topPoliciesData && 'items' in topPoliciesData ? topPoliciesData.items : []).map(p => (
+                  <SelectItem key={p.policy_name} value={p.policy_name}>{p.policy_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Virtual Server — derived from top-instances data */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Virtual Server</label>
+            <Select
+              value={globalFilter.vs_name ?? 'all'}
+              onValueChange={v => setGlobalFilter(prev => ({ ...prev, vs_name: v === 'all' ? undefined : v }))}
+            >
+              <SelectTrigger className="h-7 text-xs w-52"><SelectValue placeholder="All VS" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All virtual servers</SelectItem>
+                {(instancesData && 'items' in instancesData ? instancesData.items : []).map(i => (
+                  <SelectItem key={i.vs_name} value={i.vs_name}>{i.vs_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* HTTP Method — fixed enum */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">HTTP Method</label>
+            <Select
+              value={globalFilter.method ?? 'all'}
+              onValueChange={v => setGlobalFilter(prev => ({ ...prev, method: v === 'all' ? undefined : v }))}
+            >
+              <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All methods" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All methods</SelectItem>
+                {['GET','POST','PUT','DELETE','PATCH','TRACE','OPTIONS'].map(m => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Client IP — free text (too many distinct values for a dropdown) */}
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Client IP</label>
+            <div className="relative">
+              <Input
+                value={globalFilter.ip_client ?? ''}
+                onChange={e => setGlobalFilter(prev => ({ ...prev, ip_client: e.target.value || undefined }))}
+                placeholder="1.2.3.4"
+                className="h-7 text-xs w-36 font-mono pr-6"
+              />
+              {globalFilter.ip_client && (
+                <button
+                  onClick={() => setGlobalFilter(prev => ({ ...prev, ip_client: undefined }))}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs self-end"
+            onClick={() => setGlobalFilter({})}
+            disabled={!Object.values(globalFilter).some(Boolean)}
+          >
+            Clear all
+          </Button>
+        </div>
+      )}
 
       {/* No cluster */}
       {!clusterId && (
@@ -1027,12 +1187,14 @@ export default function WafDashboard() {
           {/* ── Top WAF Policies + Top Attack IP Addresses ──────────────────── */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
-            {/* Top WAF Policies */}
-            <Panel title="Top WAF Policies" help={HELP.topWafPolicies}>
+            <Panel title="Top WAF Policies" help={HELP.topWafPolicies}
+              note={topPoliciesData?.available && (topPoliciesData as DashboardTopPolicies).items.length > 0
+                ? `Showing ${(topPoliciesData as DashboardTopPolicies).items.length} of ${(topPoliciesData as DashboardTopPolicies).items.length} ${(topPoliciesData as DashboardTopPolicies).items.length === 1 ? 'policy' : 'policies'}`
+                : undefined}
+            >
               {topPoliciesLoading ? <Skeleton className="h-32 w-full" /> : (
                 (topPoliciesData?.available && (topPoliciesData as DashboardTopPolicies).items.length > 0) ? (
-                  <>
-                    <table className="w-full text-xs">
+                  <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-border text-muted-foreground">
                           <th className="text-left pb-1.5 font-medium">Policy</th>
@@ -1058,20 +1220,17 @@ export default function WafDashboard() {
                         ))}
                       </tbody>
                     </table>
-                    <p className="mt-2 text-right text-[10px] text-muted-foreground/60">
-                      Showing {(topPoliciesData as DashboardTopPolicies).items.length} of {(topPoliciesData as DashboardTopPolicies).items.length} {(topPoliciesData as DashboardTopPolicies).items.length === 1 ? 'policy' : 'policies'}
-                    </p>
-                  </>
                 ) : <p className="text-xs text-muted-foreground py-2">No policy data.</p>
               )}
             </Panel>
 
-            <Panel title="Top Attack IP Addresses" help={HELP.topAttackIps}>
+            <Panel title="Top Attack IP Addresses" help={HELP.topAttackIps}
+              note={!ipsPending && ips?.items.length ? `Showing ${ips.items.length} of ${ips.items.length} IP${ips.items.length !== 1 ? 's' : ''}` : undefined}
+            >
               {ipsPending ? <Skeleton className="h-32 w-full" /> : !ips?.items.length ? (
                 <p className="text-xs text-muted-foreground py-2">No IP data.</p>
               ) : (
-                <>
-                  <table className="w-full text-xs">
+                <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-border text-muted-foreground">
                         <th className="text-left pb-1.5 font-medium">IP Address</th>
@@ -1097,23 +1256,20 @@ export default function WafDashboard() {
                       ))}
                     </tbody>
                   </table>
-                  <p className="mt-2 text-right text-[10px] text-muted-foreground/60">
-                    Showing {ips.items.length} of {ips.items.length} IP{ips.items.length !== 1 ? 's' : ''}
-                  </p>
-                </>
               )}
             </Panel>
           </div>
 
           {/* ── Top URIs table ───────────────────────────────────────────── */}
-          <Panel title="Top Attack URIs" help={HELP.topAttackUris}>
+          <Panel title="Top Attack URIs" help={HELP.topAttackUris}
+            note={!urisPending && uris?.items.length ? `Showing ${uris.items.length} of ${uris.items.length} URI${uris.items.length !== 1 ? 's' : ''}` : undefined}
+          >
             {urisPending ? (
               <Skeleton className="h-40 w-full" />
             ) : !uris?.items.length ? (
               <div className="flex items-center justify-center h-24 text-xs text-muted-foreground">No URI data.</div>
             ) : (
-              <>
-                <div className="overflow-x-auto">
+              <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-border text-muted-foreground">
@@ -1153,10 +1309,6 @@ export default function WafDashboard() {
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-2 text-right text-[10px] text-muted-foreground/60">
-                  Showing {uris.items.length} of {uris.items.length} URI{uris.items.length !== 1 ? 's' : ''}
-                </p>
-              </>
             )}
           </Panel>
 
@@ -1179,20 +1331,40 @@ export default function WafDashboard() {
                       label: m.method, value: m.count, color: ATTACK_PALETTE[i % ATTACK_PALETTE.length],
                     })) : []}
                     valueLabel="Requests"
+                    filterLabel="Method"
+                    onFilter={(v) => { setGlobalFilter(prev => ({ ...prev, method: v })); setFilterBarOpen(true); }}
                   />
                 )}
               </Panel>
               <Panel title="Severity" help={HELP.severity}>
-                {severityLoading ? <Skeleton className="h-20 w-full" /> : (
-                  <MiniPieChart
-                    rows={severityData?.available ? (severityData as DashboardSeverity).items.map(s => ({
-                      label: s.label,
-                      value: s.count,
-                      color: s.rating >= 5 ? REJECTED_COLOR : s.rating >= 4 ? ALERTED_COLOR : s.rating >= 2 ? '#eab308' : '#94a3b8',
-                    })) : []}
-                    valueLabel="Events"
-                  />
-                )}
+                {severityLoading ? <Skeleton className="h-20 w-full" /> : (() => {
+                  // Always show all 4 tiers; merge real counts into fixed-order tiers
+                  const SEVERITY_TIERS = [
+                    { label: 'Critical', minRating: 5, color: REJECTED_COLOR },
+                    { label: 'Error',    minRating: 4, color: ALERTED_COLOR  },
+                    { label: 'Warning',  minRating: 2, color: '#eab308'      },
+                    { label: 'Info',     minRating: 0, color: '#94a3b8'      },
+                  ];
+                  const dataItems = severityData?.available ? (severityData as DashboardSeverity).items : [];
+                  const rows = SEVERITY_TIERS.map(tier => ({
+                    label: tier.label,
+                    color: tier.color,
+                    value: dataItems.filter(s =>
+                      tier.label === 'Critical' ? s.rating >= 5 :
+                      tier.label === 'Error'    ? s.rating >= 4 && s.rating < 5 :
+                      tier.label === 'Warning'  ? s.rating >= 2 && s.rating < 4 :
+                      s.rating < 2
+                    ).reduce((sum, s) => sum + s.count, 0),
+                  }));
+                  return (
+                    <MiniPieChart
+                      rows={rows}
+                      valueLabel="Events"
+                      filterLabel="Severity"
+                      onFilter={(v) => { setGlobalFilter(prev => ({ ...prev, attack_type: v })); setFilterBarOpen(true); }}
+                    />
+                  );
+                })()}
               </Panel>
             </div>
 
@@ -1205,13 +1377,16 @@ export default function WafDashboard() {
           </div>
 
           {/* ── Top Signatures ──────────────────────────────────────────── */}
-          <Panel title="Top Signatures" help={HELP.topSignatures}>
+          <Panel title="Top Signatures" help={HELP.topSignatures}
+            note={!signaturesLoading && (signaturesData?.available) && (signaturesData as DashboardTopSignatures).items.length > 0
+              ? `Showing ${(signaturesData as DashboardTopSignatures).items.length} of ${(signaturesData as DashboardTopSignatures).items.length} ${(signaturesData as DashboardTopSignatures).items.length === 1 ? 'signature' : 'signatures'}`
+              : undefined}
+          >
             {signaturesLoading ? <Skeleton className="h-32 w-full" /> : (
               !(signaturesData?.available) || !(signaturesData as DashboardTopSignatures).items.length ? (
                 <p className="text-xs text-muted-foreground py-2">No signature data available. Ensure signature packages are installed.</p>
               ) : (
-                <>
-                  <div className="overflow-x-auto">
+                <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-border text-muted-foreground">
@@ -1239,10 +1414,6 @@ export default function WafDashboard() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="mt-2 text-right text-[10px] text-muted-foreground/60">
-                    Showing {(signaturesData as DashboardTopSignatures).items.length} of {(signaturesData as DashboardTopSignatures).items.length} {(signaturesData as DashboardTopSignatures).items.length === 1 ? 'signature' : 'signatures'}
-                  </p>
-                </>
               )
             )}
           </Panel>

@@ -125,8 +125,11 @@ export function SecurityLogsTab({
   const entries = data?.entries ?? [];
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : null;
 
-  // Derive unique vs_names from current entries for the filter hint
-  const vsNames = useMemo(() => [...new Set(entries.map(e => e.vs_name).filter(Boolean))], [entries]);
+  // Derive distinct values from current entries for filter dropdowns / datalists
+  const vsNames     = useMemo(() => [...new Set(entries.map(e => e.vs_name).filter((v): v is string => !!v))], [entries]);
+  const attackTypes = useMemo(() => [...new Set(entries.map(e => e.attack_type).filter((v): v is string => !!v && v !== 'N/A'))].sort(), [entries]);
+  const topIps      = useMemo(() => [...new Set(entries.map(e => e.ip_client).filter((v): v is string => !!v))].slice(0, 30), [entries]);
+  const topUris     = useMemo(() => [...new Set(entries.map(e => e.uri).filter((v): v is string => !!v))].slice(0, 30), [entries]);
 
   function exportCsv() {
     if (!entries.length) return;
@@ -175,52 +178,67 @@ export function SecurityLogsTab({
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-2 items-center">
+        {/* Outcome — fixed enum */}
         <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
           <SelectTrigger className="h-7 text-xs w-32">
-            <SelectValue placeholder="Outcome" />
+            <SelectValue placeholder="All outcomes" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All outcomes</SelectItem>
             <SelectItem value="REJECTED">REJECTED</SelectItem>
-            <SelectItem value="PASSED">PASSED</SelectItem>
             <SelectItem value="ALERTED">ALERTED</SelectItem>
+            <SelectItem value="PASSED">PASSED</SelectItem>
           </SelectContent>
         </Select>
 
-        <Input
-          className="h-7 text-xs w-36"
-          placeholder="Attack type…"
-          value={attackFilter}
-          onChange={e => setAttackFilter(e.target.value)}
-        />
+        {/* Attack Type — dropdown from distinct values in current entries */}
+        <Select value={attackFilter || 'all'} onValueChange={v => setAttackFilter(v === 'all' ? '' : v)}>
+          <SelectTrigger className="h-7 text-xs w-44">
+            <SelectValue placeholder="All attack types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All attack types</SelectItem>
+            {attackTypes.map(a => (
+              <SelectItem key={a} value={a}>{a}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
+        {/* IP — free text with autocomplete from top IPs seen */}
         <Input
           className="h-7 text-xs w-32 font-mono"
           placeholder="IP address…"
           value={ipFilter}
           onChange={e => setIpFilter(e.target.value)}
+          list="log-ips-datalist"
         />
+        <datalist id="log-ips-datalist">
+          {topIps.map(ip => <option key={ip} value={ip} />)}
+        </datalist>
 
+        {/* URI — free text with autocomplete from top URIs seen */}
         <Input
           className="h-7 text-xs w-36 font-mono"
           placeholder="URI…"
           value={uriFilter}
           onChange={e => setUriFilter(e.target.value)}
+          list="log-uris-datalist"
         />
+        <datalist id="log-uris-datalist">
+          {topUris.map(u => <option key={u} value={u} />)}
+        </datalist>
 
+        {/* Virtual Server — dropdown from distinct VS names in entries */}
         {crKind === 'f5virtualserver' && (
-          <Input
-            className="h-7 text-xs w-36"
-            placeholder="vs_name…"
-            value={vsFilter}
-            onChange={e => setVsFilter(e.target.value)}
-            list="vs-names-datalist"
-          />
-        )}
-        {vsNames.length > 0 && (
-          <datalist id="vs-names-datalist">
-            {vsNames.map(n => <option key={n} value={n} />)}
-          </datalist>
+          <Select value={vsFilter || 'all'} onValueChange={v => setVsFilter(v === 'all' ? '' : v)}>
+            <SelectTrigger className="h-7 text-xs w-44">
+              <SelectValue placeholder="All VS" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All virtual servers</SelectItem>
+              {vsNames.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+            </SelectContent>
+          </Select>
         )}
 
         <Select value={String(limit)} onValueChange={v => setLimit(Number(v))}>
