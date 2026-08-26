@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_viewer
+from services.clickhouse import CLICKHOUSE_DB as _CLICKHOUSE_DB, get_clickhouse
 from services.kubernetes import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -380,7 +381,6 @@ def get_waf_security_logs(
     """
     # When ClickHouse is available, query it directly — no syslog endpoint resolution needed.
     # raw_message column preserves the original log line in the user's chosen format.
-    from services.clickhouse import get_clickhouse, CLICKHOUSE_DB as _CLICKHOUSE_DB
     ch = get_clickhouse()
     if ch.available:
         entries, error = _read_logs_from_clickhouse(
