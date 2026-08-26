@@ -457,7 +457,7 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
           )}
           <StatRow label="Namespaces" value={cluster_info?.namespaces ?? 0} />
           {cluster_info?.cloud_provider && (
-            <StatRow label="Cloud" value={`${cluster_info.cloud_provider}${cluster_info.region ? ` (${cluster_info.region})` : ''}`} />
+            <StatRow label="Cloud" value={`${cluster_info.cloud_provider}${cluster_info.region ? ` (${cluster_info.region})` : ''}${cluster_info.account_id ? ` [${cluster_info.account_id}]` : ''}`} />
           )}
           {cluster_info?.hp_node_details?.length > 0 && (
             <div className={cn('pt-2 border-t', 'border-border')}>

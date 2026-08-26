@@ -824,7 +824,7 @@ export default function Dashboard() {
                           <span className="font-medium text-sm truncate block text-foreground">{cluster.name}</span>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">
-                              {cluster.detected_platform_profile?.toUpperCase() || cluster.cloud_provider?.toUpperCase() || 'On-Prem'} {cluster.region ? `· ${cluster.region}` : ''}
+                              {cluster.detected_platform_profile?.toUpperCase() || cluster.cloud_provider?.toUpperCase() || 'On-Prem'}{cluster.region ? ` · ${cluster.region}` : ''}{cluster.account_id ? ` · ${cluster.account_id}` : ''}
                             </span>
                             {fleetInfo?.bnk_version && (
                               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-info/10 text-info">

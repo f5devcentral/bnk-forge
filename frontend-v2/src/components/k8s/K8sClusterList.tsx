@@ -341,7 +341,7 @@ export function K8sClusterList({
                     <h4 className="font-semibold">{cluster.name}</h4>
                     {cluster.cloud_provider && (
                       <p className="text-xs text-muted-foreground capitalize">
-                        {cluster.cloud_provider}
+                        {cluster.cloud_provider}{cluster.region ? ` · ${cluster.region}` : ""}{cluster.account_id ? ` · ${cluster.account_id}` : ""}
                       </p>
                     )}
                     <p className="text-xs text-muted-foreground">
