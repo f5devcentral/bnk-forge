@@ -22,6 +22,14 @@ def _make_cluster(db, **overrides):
     )
     if "project_id" in overrides:
         cluster.project_id = overrides["project_id"]
+    if "cloud_provider" in overrides:
+        cluster.cloud_provider = overrides["cloud_provider"]
+    if "region" in overrides:
+        cluster.region = overrides["region"]
+    if "account_id" in overrides:
+        cluster.account_id = overrides["account_id"]
+    if "discovery_status" in overrides:
+        cluster.discovery_status = overrides["discovery_status"]
     db.add(cluster)
     db.commit()
     db.refresh(cluster)
@@ -37,7 +45,15 @@ class TestFleetHealth:
         client, viewer_headers, all_test_users, db,
     ):
         """Viewer can retrieve fleet health summary."""
-        cluster = _make_cluster(db, name="prod-cluster", version="v1.28.0")
+        cluster = _make_cluster(
+            db,
+            name="prod-cluster",
+            version="v1.28.0",
+            cloud_provider="aws",
+            region="us-east-1",
+            account_id="123456789012",
+            discovery_status="discovered",
+        )
 
         mock_query_health.return_value = {
             "status": "healthy",
@@ -68,6 +84,10 @@ class TestFleetHealth:
         assert data["operators"][0]["detected_platform_profile"] in {
             "generic_onprem", "eks", "aks", "gke", "ocp", "unknown",
         }
+        assert data["operators"][0]["cloud_provider"] == "aws"
+        assert data["operators"][0]["region"] == "us-east-1"
+        assert data["operators"][0]["account_id"] == "123456789012"
+        assert data["operators"][0]["discovery_status"] == "discovered"
         assert "platform_context" in data
         assert "mixed_platform_profiles" in data["platform_context"]
 
@@ -91,7 +111,14 @@ class TestFleetHealth:
         db,
     ):
         """Reachable clusters with unknown BNK severity stay connected, not offline."""
-        _make_cluster(db, name="reachable-no-bnk")
+        _make_cluster(
+            db,
+            name="reachable-no-bnk",
+            cloud_provider="gcp",
+            region="us-central1",
+            account_id="test-project-1",
+            discovery_status="imported",
+        )
         mock_query_health.return_value = {
             "status": "unknown",
             "bnk_severity": "unknown",
@@ -113,6 +140,10 @@ class TestFleetHealth:
         assert data["offline"] == 0
         assert data["unknown"] == 1
         assert data["operators"][0]["effective_connectivity_status"] == "connected"
+        assert data["operators"][0]["cloud_provider"] == "gcp"
+        assert data["operators"][0]["region"] == "us-central1"
+        assert data["operators"][0]["account_id"] == "test-project-1"
+        assert data["operators"][0]["discovery_status"] == "imported"
 
     @patch("routes.operators.fleet.KubernetesService")
     @patch("routes.operators.fleet._probe_tcp")
