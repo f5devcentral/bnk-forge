@@ -176,3 +176,62 @@ export interface UpgradeVerification {
   checks: Record<string, { status: string; error?: string; note?: string; [key: string]: unknown }>;
   timestamp: string;
 }
+
+// ============================================================================
+// BNK Resource Consumption Dashboard
+// ============================================================================
+
+export interface BnkPlaneConsumption {
+  count: number;
+  cpu_millicores: number;
+  memory_bytes: number;
+}
+
+export interface BnkTopPod {
+  name: string;
+  namespace: string;
+  role: string;
+  cpu_millicores: number;
+  memory_bytes: number;
+}
+
+export interface BnkClusterDpfSummary {
+  detected: boolean;
+  dpu_count: number;
+}
+
+export interface BnkClusterConsumption {
+  cluster_id: number;
+  cluster_name: string;
+  reachable: boolean;
+  bnk_installed: boolean;
+  bnk_version: string | null;
+  status: string;
+  node_count: number | null;
+  control_plane: BnkPlaneConsumption;
+  data_plane: BnkPlaneConsumption;
+  total: BnkPlaneConsumption;
+  metrics_available: boolean;
+  metrics_error: string | null;
+  dpf: BnkClusterDpfSummary;
+  top_pods: BnkTopPod[];
+}
+
+export interface BnkFleetSummary {
+  total_clusters: number;
+  reachable_clusters: number;
+  bnk_installed_clusters: number;
+  total_bnk_pods: number;
+  control_plane_pods: number;
+  data_plane_pods: number;
+  total_cpu_millicores: number;
+  total_memory_bytes: number;
+  dpf_detected_clusters: number;
+  dpu_count: number;
+}
+
+export interface BnkConsumptionResponse {
+  timestamp: string;
+  fleet_summary: BnkFleetSummary;
+  clusters: BnkClusterConsumption[];
+}

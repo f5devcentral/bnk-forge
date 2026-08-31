@@ -16,6 +16,7 @@ import SystemUpgrade from '@/components/settings/SystemUpgrade';
 import AuditLog from '@/components/settings/AuditLog';
 import { AlertChannels } from '@/components/settings/AlertChannels';
 import { BackupPanel } from '@/components/settings/BackupPanel';
+import { BnkResourcesPanel } from '@/components/system/BnkResourcesPanel';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import { Label } from '@/components/ui/label';
@@ -33,10 +34,12 @@ import {
   ScrollText,
   Bell,
   HardDrive,
+  Gauge,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
+import { useBnkConsumption } from '@/hooks/useSystem';
 
 // Old /system?tab=... URLs that now live under /catalog.
 const URL_TAB_REDIRECTS: Record<string, string> = {
@@ -46,11 +49,12 @@ const URL_TAB_REDIRECTS: Record<string, string> = {
   'helm-repos': '/catalog?tab=helm-repos',
 };
 
-const VALID_TABS = ['monitor', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
+const VALID_TABS = ['monitor', 'bnk', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
 
 export default function System() {
   const { theme, setTheme } = useUIStore();
   const { refresh, isRefreshing } = usePageRefresh();
+  const { data: bnkConsumption, isLoading: bnkLoading, error: bnkError } = useBnkConsumption();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get('tab');
   const initialTab = urlTab && (VALID_TABS as readonly string[]).includes(urlTab) ? urlTab : 'monitor';
@@ -90,6 +94,7 @@ export default function System() {
           onChange={handleTabChange}
           tabs={[
             { key: 'monitor', label: 'System Monitor', icon: Monitor },
+            { key: 'bnk', label: 'BNK Resources', icon: Gauge },
             { key: 'audit', label: 'Audit Log', icon: ScrollText },
             { key: 'alerts', label: 'Alerts', icon: Bell },
             { key: 'defaults', label: 'Defaults', icon: Settings2 },
@@ -103,6 +108,10 @@ export default function System() {
           <PerformanceMonitor />
           <DatabaseManagement />
           <ContainerManagement />
+        </TabsContent>
+
+        <TabsContent value="bnk" className="mt-6">
+          <BnkResourcesPanel data={bnkConsumption} isLoading={bnkLoading} error={bnkError} />
         </TabsContent>
 
         <TabsContent value="audit" className="mt-6">

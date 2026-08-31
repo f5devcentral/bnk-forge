@@ -12,7 +12,7 @@ import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { QUERY_STALE_TIME, POLL_INTERVALS } from '@/lib/constants';
-import type { CleanupType, VersionInfo, UpgradeResponse } from '@/types/system';
+import type { CleanupType, VersionInfo, UpgradeResponse, BnkConsumptionResponse } from '@/types/system';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
 /**
@@ -180,6 +180,23 @@ export function useRestartContainers() {
       queryClient.invalidateQueries({ queryKey: queryKeys.system.containerStatus() });
       queryClient.invalidateQueries({ queryKey: queryKeys.system.health() });
     },
+  });
+}
+
+/**
+ * Fetch fleet-wide BNK resource consumption.
+ *
+ * PERFORMANCE: 60s polling, disabled when tab hidden, 2 min stale time.
+ * The backend aggregates multi-cluster data and caches for 20 seconds.
+ */
+export function useBnkConsumption() {
+  const isVisible = useDocumentVisibility();
+
+  return useQuery<BnkConsumptionResponse>({
+    queryKey: queryKeys.system.bnkConsumption(),
+    queryFn: () => api.getBnkConsumption(),
+    refetchInterval: isVisible ? POLL_INTERVALS.VERY_SLOW : false,
+    staleTime: QUERY_STALE_TIME.SYSTEM,
   });
 }
 

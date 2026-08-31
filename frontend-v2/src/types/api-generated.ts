@@ -6101,6 +6101,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/bnk-consumption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Bnk Consumption
+         * @description Get fleet-wide BNK resource consumption (admin only).
+         */
+        get: operations["get_bnk_consumption_api_system_bnk_consumption_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/queue-metrics": {
         parameters: {
             query?: never;
@@ -14389,6 +14409,46 @@ export interface components {
              */
             dpu_ids?: number[];
         };
+        /**
+         * BnkClusterConsumption
+         * @description Per-cluster BNK resource consumption breakdown.
+         */
+        BnkClusterConsumption: {
+            /** Cluster Id */
+            cluster_id: number;
+            /** Cluster Name */
+            cluster_name: string;
+            /** Reachable */
+            reachable: boolean;
+            /** Bnk Installed */
+            bnk_installed: boolean;
+            /** Bnk Version */
+            bnk_version?: string | null;
+            /** Status */
+            status: string;
+            /** Node Count */
+            node_count?: number | null;
+            control_plane: components["schemas"]["BnkPlaneConsumption"];
+            data_plane: components["schemas"]["BnkPlaneConsumption"];
+            total: components["schemas"]["BnkPlaneConsumption"];
+            /** Metrics Available */
+            metrics_available: boolean;
+            /** Metrics Error */
+            metrics_error?: string | null;
+            dpf: components["schemas"]["BnkClusterDpfSummary"];
+            /** Top Pods */
+            top_pods?: components["schemas"]["BnkTopPod"][];
+        };
+        /**
+         * BnkClusterDpfSummary
+         * @description Lightweight DPF/DPU summary for a single cluster.
+         */
+        BnkClusterDpfSummary: {
+            /** Detected */
+            detected: boolean;
+            /** Dpu Count */
+            dpu_count: number;
+        };
         /** BnkClusterMemberAssignRequest */
         BnkClusterMemberAssignRequest: {
             /**
@@ -14425,6 +14485,17 @@ export interface components {
                 [key: string]: unknown;
             }[];
             bnk_config: components["schemas"]["BnkClusterConfigSummary"];
+        };
+        /**
+         * BnkConsumptionResponse
+         * @description Response for GET /api/system/bnk-consumption.
+         */
+        BnkConsumptionResponse: {
+            /** Timestamp */
+            timestamp: string;
+            fleet_summary: components["schemas"]["BnkFleetSummary"];
+            /** Clusters */
+            clusters: components["schemas"]["BnkClusterConsumption"][];
         };
         /**
          * BnkDataResponse
@@ -14473,6 +14544,32 @@ export interface components {
             namespace?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * BnkFleetSummary
+         * @description Fleet-wide BNK consumption rollup.
+         */
+        BnkFleetSummary: {
+            /** Total Clusters */
+            total_clusters: number;
+            /** Reachable Clusters */
+            reachable_clusters: number;
+            /** Bnk Installed Clusters */
+            bnk_installed_clusters: number;
+            /** Total Bnk Pods */
+            total_bnk_pods: number;
+            /** Control Plane Pods */
+            control_plane_pods: number;
+            /** Data Plane Pods */
+            data_plane_pods: number;
+            /** Total Cpu Millicores */
+            total_cpu_millicores: number;
+            /** Total Memory Bytes */
+            total_memory_bytes: number;
+            /** Dpf Detected Clusters */
+            dpf_detected_clusters: number;
+            /** Dpu Count */
+            dpu_count: number;
         };
         /** BnkHealthAISection */
         BnkHealthAISection: {
@@ -14606,6 +14703,27 @@ export interface components {
             portLists: number;
             irules: components["schemas"]["HealthIRulesComponent"];
         };
+        /**
+         * BnkPlaneConsumption
+         * @description CPU/memory/pod count for a single BNK plane (control-plane or data-plane).
+         */
+        BnkPlaneConsumption: {
+            /**
+             * Count
+             * @description Number of BNK pods in this plane
+             */
+            count: number;
+            /**
+             * Cpu Millicores
+             * @description Aggregated CPU usage in millicores
+             */
+            cpu_millicores: number;
+            /**
+             * Memory Bytes
+             * @description Aggregated memory usage in bytes
+             */
+            memory_bytes: number;
+        };
         /** BnkReleaseListResponse */
         BnkReleaseListResponse: {
             /** Releases */
@@ -14623,6 +14741,22 @@ export interface components {
             unmatched: number;
             /** Upserted */
             upserted: number;
+        };
+        /**
+         * BnkTopPod
+         * @description A single BNK pod ranked by resource consumption.
+         */
+        BnkTopPod: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Role */
+            role: string;
+            /** Cpu Millicores */
+            cpu_millicores: number;
+            /** Memory Bytes */
+            memory_bytes: number;
         };
         /** Body_create_file_secret_api_projects__project_id__secrets_file_post */
         Body_create_file_secret_api_projects__project_id__secrets_file_post: {
@@ -33579,6 +33713,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProcessMetricsResponse"];
+                };
+            };
+        };
+    };
+    get_bnk_consumption_api_system_bnk_consumption_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BnkConsumptionResponse"];
                 };
             };
         };

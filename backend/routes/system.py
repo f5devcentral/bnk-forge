@@ -25,7 +25,7 @@ from core.maintenance import get_maintenance_status
 from database import get_db
 from routes.auth import require_admin
 from schemas.backup import BackupCreateRequest, BackupStatusResponse, MaintenanceStatusResponse, RestoreResponse
-from schemas.system import SystemHealthResponse
+from schemas.system import BnkConsumptionResponse, SystemHealthResponse
 from services.backup_service import BackupService
 from services.system_service import SystemService
 
@@ -154,6 +154,13 @@ def get_process_metrics() -> ProcessMetricsResponse:
 # ============================================================
 # Task Queue Metrics
 # ============================================================
+
+@router.get("/bnk-consumption", response_model=BnkConsumptionResponse)
+@handle_route_errors("BNK consumption")
+def get_bnk_consumption(db: Session = Depends(get_db)):
+    """Get fleet-wide BNK resource consumption (admin only)."""
+    return SystemService(db).get_bnk_consumption()
+
 
 @router.get("/queue-metrics")
 @handle_route_errors("queue metrics")
