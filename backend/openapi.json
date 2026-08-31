@@ -37457,6 +37457,12 @@
             "title": "Installmethod",
             "default": "Unknown"
           },
+          "connectivity": {
+            "$ref": "#/components/schemas/HealthConnectivityStatus"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/HealthIntegrationStatus"
+          },
           "platform": {
             "$ref": "#/components/schemas/BnkHealthPlatformSection"
           },
@@ -37484,6 +37490,8 @@
         "type": "object",
         "required": [
           "overall",
+          "connectivity",
+          "integration",
           "platform",
           "dataPlane",
           "networking",
@@ -37598,6 +37606,12 @@
             "title": "Installmethod",
             "default": "Unknown"
           },
+          "connectivity": {
+            "$ref": "#/components/schemas/HealthConnectivityStatus"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/HealthIntegrationStatus"
+          },
           "platform": {
             "$ref": "#/components/schemas/BnkHealthPlatformSection"
           },
@@ -37621,6 +37635,8 @@
         "type": "object",
         "required": [
           "overall",
+          "connectivity",
+          "integration",
           "platform",
           "dataPlane",
           "networking",
@@ -47145,6 +47161,36 @@
         ],
         "title": "HealthCneInstance"
       },
+      "HealthConnectivityStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "reachable",
+              "partial",
+              "unreachable",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "checkedAt": {
+            "type": "string",
+            "title": "Checkedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "checkedAt"
+        ],
+        "title": "HealthConnectivityStatus"
+      },
       "HealthCounts": {
         "properties": {
           "gateways": {
@@ -47335,6 +47381,67 @@
           "details"
         ],
         "title": "HealthIRulesComponent"
+      },
+      "HealthIntegrationStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "operatorConnected": {
+            "type": "boolean",
+            "title": "Operatorconnected"
+          },
+          "operatorMode": {
+            "type": "string",
+            "enum": [
+              "direct_ws",
+              "polling",
+              "kubeconfig"
+            ],
+            "title": "Operatormode"
+          },
+          "operatorVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operatorversion"
+          },
+          "lastSeen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseen"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "operatorConnected",
+          "operatorMode",
+          "message"
+        ],
+        "title": "HealthIntegrationStatus"
       },
       "HealthPlatformComponent": {
         "properties": {

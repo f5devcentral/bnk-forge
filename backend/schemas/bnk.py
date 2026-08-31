@@ -11,6 +11,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 HealthSeverityV1 = Literal["healthy", "warning", "critical", "unknown"]
+ConnectivityStatusV1 = Literal["connected", "reachable", "partial", "unreachable", "unknown"]
+OperatorModeV1 = Literal["direct_ws", "polling", "kubeconfig"]
 
 
 class HealthRemediationAction(BaseModel):
@@ -126,6 +128,21 @@ class HealthCounts(BaseModel):
     tmm_containers: str
 
 
+class HealthConnectivityStatus(BaseModel):
+    status: ConnectivityStatusV1
+    message: str
+    checkedAt: str
+
+
+class HealthIntegrationStatus(BaseModel):
+    status: HealthSeverityV1
+    operatorConnected: bool
+    operatorMode: OperatorModeV1
+    operatorVersion: str | None = None
+    lastSeen: str | None = None
+    message: str
+
+
 class BnkHealthPlatformSection(BaseModel):
     severity: HealthSeverityV1
     flo: HealthPlatformComponent
@@ -170,6 +187,8 @@ class BnkHealthResponse(BaseModel):
     overall: HealthSeverityV1
     installShape: str = "unknown"
     installMethod: str = "Unknown"
+    connectivity: HealthConnectivityStatus
+    integration: HealthIntegrationStatus
     platform: BnkHealthPlatformSection
     dataPlane: BnkHealthDataPlaneSection
     networking: BnkHealthNetworkingSection

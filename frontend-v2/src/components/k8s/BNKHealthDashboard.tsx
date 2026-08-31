@@ -36,12 +36,16 @@ import {
   XCircle,
   Loader2,
   GitCompareArrows,
+  Wifi,
+  Link2,
 } from 'lucide-react';
 import type {
   HealthSeverity,
   HealthPodDetail,
   HealthRemediationAction,
   ClusterDriftStatus,
+  HealthConnectivityStatus,
+  HealthIntegrationStatus,
 } from '@/types';
 import { SEVERITY_CONFIG, getSeverityConfig, compareSeverity } from '@/lib/health-severity';
 import { ErrorState } from '@/components/ui/error-state';
@@ -101,6 +105,54 @@ function FeatureBadge({ label, enabled }: { label: string; enabled: boolean }) {
       className="text-xs gap-1"
     >
       {enabled ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+      {label}
+    </Badge>
+  );
+}
+
+// ---- Connectivity / integration badges ----
+
+function ConnectivityBadge({ connectivity }: { connectivity: HealthConnectivityStatus }) {
+  const statusConfig: Record<string, { variant: 'success' | 'warning' | 'destructive' | 'muted'; icon: typeof Wifi; label: string }> = {
+    connected: { variant: 'success', icon: CheckCircle2, label: 'Connected' },
+    reachable: { variant: 'warning', icon: Wifi, label: 'Reachable' },
+    partial: { variant: 'warning', icon: AlertTriangle, label: 'Partial' },
+    unreachable: { variant: 'destructive', icon: XCircle, label: 'Unreachable' },
+    unknown: { variant: 'muted', icon: Wifi, label: 'Unknown' },
+  };
+  const cfg = statusConfig[connectivity.status] || statusConfig.unknown;
+  const Icon = cfg.icon;
+  return (
+    <Badge
+      variant={cfg.variant}
+      className="text-xs gap-1 font-normal"
+      title={connectivity.message}
+    >
+      <Icon className="h-3 w-3" />
+      {cfg.label}
+    </Badge>
+  );
+}
+
+function IntegrationBadge({ integration }: { integration: HealthIntegrationStatus }) {
+  const severityConfigMap: Record<string, { variant: 'success' | 'warning' | 'destructive' | 'muted'; icon: typeof Link2; label: string }> = {
+    healthy: { variant: 'success', icon: CheckCircle2, label: 'Operator Connected' },
+    warning: { variant: 'warning', icon: AlertTriangle, label: 'Operator Disconnected' },
+    critical: { variant: 'destructive', icon: XCircle, label: 'Integration Failed' },
+    unknown: { variant: 'muted', icon: Link2, label: 'Integration Unknown' },
+  };
+  const cfg = severityConfigMap[integration.status] || severityConfigMap.unknown;
+  const Icon = cfg.icon;
+  const label = integration.operatorMode === 'kubeconfig'
+    ? 'Kubeconfig'
+    : cfg.label;
+  return (
+    <Badge
+      variant={cfg.variant}
+      className="text-xs gap-1 font-normal"
+      title={integration.message}
+    >
+      <Icon className="h-3 w-3" />
       {label}
     </Badge>
   );
@@ -417,6 +469,12 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
                 <Badge variant="outline" className="text-xs font-normal">
                   {health.installMethod}
                 </Badge>
+              )}
+              {health.connectivity && (
+                <ConnectivityBadge connectivity={health.connectivity} />
+              )}
+              {health.integration && (
+                <IntegrationBadge integration={health.integration} />
               )}
             </h2>
             <p className="text-sm text-muted-foreground">

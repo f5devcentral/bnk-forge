@@ -221,6 +221,23 @@ export interface BnkHealthResponse {
     tmm_running: number;
     tmm_containers: string;
   };
+  connectivity: HealthConnectivityStatus;
+  integration: HealthIntegrationStatus;
+}
+
+export interface HealthConnectivityStatus {
+  status: 'connected' | 'reachable' | 'partial' | 'unreachable' | 'unknown';
+  message: string;
+  checkedAt: string | null;
+}
+
+export interface HealthIntegrationStatus {
+  status: HealthSeverity;
+  operatorConnected: boolean;
+  operatorMode: 'direct_ws' | 'polling' | 'kubeconfig';
+  operatorVersion: string | null;
+  lastSeen: string | null;
+  message: string;
 }
 
 // BNK Upgrade Types

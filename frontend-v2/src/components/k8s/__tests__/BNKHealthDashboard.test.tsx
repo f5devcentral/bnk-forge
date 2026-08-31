@@ -190,6 +190,19 @@ const mockBnkData = {
       tmm_running: 2,
       tmm_containers: '4/4',
     },
+    connectivity: {
+      status: 'connected',
+      message: 'Kubernetes API is accessible',
+      checkedAt: '2026-01-01T00:00:00Z',
+    },
+    integration: {
+      status: 'healthy',
+      operatorConnected: true,
+      operatorMode: 'direct_ws',
+      operatorVersion: '1.2.3',
+      lastSeen: '2026-01-01T00:00:00Z',
+      message: 'Operator op-1 is connected',
+    },
   },
   // Minimal topology/policy data that the unified endpoint includes
   topology: [],
@@ -814,6 +827,81 @@ describe('BNKHealthDashboard', () => {
 
       expect(screen.getAllByText('us-east-1a').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText('m5.large').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ─── Connectivity / Integration Indicators ─────────────────────────
+
+  describe('connectivity and integration indicators', () => {
+    it('shows Connected badge when connectivity status is connected', async () => {
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Connected')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Operator Connected badge for healthy direct_ws integration', async () => {
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Operator Connected')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Kubeconfig badge when integration mode is kubeconfig', async () => {
+      const kubeconfigData = {
+        ...mockBnkData,
+        health: {
+          ...mockBnkData.health,
+          integration: {
+            status: 'healthy',
+            operatorConnected: false,
+            operatorMode: 'kubeconfig',
+            operatorVersion: null,
+            lastSeen: null,
+            message: 'Cluster managed via kubeconfig',
+          },
+        },
+      };
+
+      server.use(
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+          return HttpResponse.json(kubeconfigData);
+        }),
+      );
+
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Kubeconfig')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Unreachable badge when connectivity status is unreachable', async () => {
+      const unreachableData = {
+        ...mockBnkData,
+        health: {
+          ...mockBnkData.health,
+          connectivity: {
+            status: 'unreachable',
+            message: 'Kubernetes API is unreachable',
+            checkedAt: '2026-01-01T00:00:00Z',
+          },
+        },
+      };
+
+      server.use(
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+          return HttpResponse.json(unreachableData);
+        }),
+      );
+
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Unreachable')).toBeInTheDocument();
+      });
     });
   });
 

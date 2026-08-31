@@ -10,6 +10,8 @@ import pytest
 from services.bnk.health import (
     COMPONENT_EXPLANATIONS,
     _build_component_health,
+    _build_connectivity_status,
+    _build_integration_status,
     _crd_installer_severity,
     _extract_cne_features,
     _feature_enabled,
@@ -623,3 +625,66 @@ class TestCrdInstallerSeverity:
         sev, include = _crd_installer_severity([], job)
         assert sev == "unknown"
         assert include is False
+
+
+# ---------------------------------------------------------------------------
+# Connectivity / integration status
+# ---------------------------------------------------------------------------
+
+
+class TestConnectivityStatus:
+    def test_default_is_connected_when_no_injection(self):
+        result = _build_connectivity_status({})
+        assert result["status"] == "connected"
+        assert "Kubernetes API is accessible" in result["message"]
+        assert result["checkedAt"]
+
+    def test_injected_status_is_used(self):
+        result = _build_connectivity_status({
+            "connectivity": {"status": "partial", "message": "ICMP only", "checkedAt": "2026-01-01T00:00:00Z"},
+        })
+        assert result["status"] == "partial"
+        assert result["message"] == "ICMP only"
+        assert result["checkedAt"] == "2026-01-01T00:00:00Z"
+
+
+class TestIntegrationStatus:
+    def test_default_is_kubeconfig_healthy(self):
+        result = _build_integration_status({})
+        assert result["status"] == "healthy"
+        assert result["operatorMode"] == "kubeconfig"
+        assert result["operatorConnected"] is False
+        assert "kubeconfig" in result["message"].lower()
+
+    def test_injected_operator_status_is_used(self):
+        result = _build_integration_status({
+            "integration": {
+                "status": "warning",
+                "operatorConnected": False,
+                "operatorMode": "direct_ws",
+                "operatorVersion": "1.2.3",
+                "lastSeen": "2026-01-01T00:00:00Z",
+                "message": "Operator op-1 is disconnected",
+            },
+        })
+        assert result["status"] == "warning"
+        assert result["operatorMode"] == "direct_ws"
+        assert result["operatorVersion"] == "1.2.3"
+        assert result["lastSeen"] == "2026-01-01T00:00:00Z"
+
+
+class TestAnalyzeHealthConnectivityIntegration:
+    def test_analyze_health_includes_connectivity_and_integration(self):
+        result = analyze_health(_make_data())
+        assert "connectivity" in result
+        assert "integration" in result
+        assert result["connectivity"]["status"] == "connected"
+        assert result["integration"]["status"] == "healthy"
+
+    def test_analyze_health_uses_injected_context(self):
+        data = _make_data()
+        data["connectivity"] = {"status": "unreachable", "message": "API down", "checkedAt": "2026-01-01T00:00:00Z"}
+        data["integration"] = {"status": "critical", "operatorConnected": False, "operatorMode": "polling", "message": "Lost"}
+        result = analyze_health(data)
+        assert result["connectivity"]["status"] == "unreachable"
+        assert result["integration"]["status"] == "critical"
