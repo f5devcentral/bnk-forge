@@ -17444,6 +17444,14 @@ export interface components {
             detected_platform_profile: string;
             /** Detected Platform Provider */
             detected_platform_provider?: string | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
         };
         /**
          * GitSourceValidation

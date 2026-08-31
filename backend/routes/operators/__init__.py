@@ -119,6 +119,11 @@ class FleetOperatorHealth(BaseModel):
     dpu_cluster_count: int = 0
     detected_platform_profile: str = "unknown"
     detected_platform_provider: str | None = None
+    # Cloud context (KubernetesCluster metadata)
+    cloud_provider: str | None = None
+    region: str | None = None
+    account_id: str | None = None
+    discovery_status: str | None = None
 
 
 class FleetHealthResponse(BaseModel):

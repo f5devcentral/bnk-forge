@@ -15,7 +15,7 @@ from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
 from services.credential_template_service import CredentialTemplateService
-from utils.validators import validate_aws_region
+from utils.validators import validate_aws_region, validate_azure_region, validate_gcp_region, validate_ibm_region
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,14 @@ class CredentialTemplateBase(BaseModel):
         if self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
             validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
-        if self.provider == "ibm" and not self.ibmcloud_api_key:
-            raise ValueError("IBM Cloud API key is required for IBM credential templates")
+        if self.provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+            if not self.ibmcloud_api_key:
+                raise ValueError("IBM Cloud API key is required for IBM credential templates")
+        if self.provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 
@@ -113,6 +119,12 @@ class CredentialTemplateUpdate(BaseModel):
         validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
         if self.region and self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
+        if self.region and self.provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+        if self.region and self.provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.region and self.provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 
