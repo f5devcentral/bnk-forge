@@ -116,6 +116,15 @@ export const kubernetesApi = {
       errors: Array<{ module_id: number; error: string }>;
     }>(`/api/projects/${projectId}/k8s/clusters/detect-eks`).then((res) => res.data),
 
+  detectClustersFromCredentials: (projectId: number) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      registered: Array<{ id: number; name: string; provider: string; status: string }>;
+      skipped: Array<{ name: string; provider: string; reason: string }>;
+      errors: Array<{ provider: string; name: string | null; error: string }>;
+    }>(`/api/projects/${projectId}/k8s/clusters/detect-credentials`).then((res) => res.data),
+
   getClusterResources: (clusterId: number, resourceType: string, params?: { namespace?: string; label_selector?: string }) =>
     apiClient.get<K8sResourceListResponse>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}`, { params }).then((res) => res.data),
 

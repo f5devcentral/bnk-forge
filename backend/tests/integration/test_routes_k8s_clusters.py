@@ -226,3 +226,38 @@ class TestClusterTestConnection:
         cluster = make_k8s_cluster(project=sample_project)
         response = client.post(f"/api/k8s/clusters/{cluster.id}/test", headers=viewer_headers)
         assert response.status_code == 403
+
+
+class TestDetectClustersFromCredentials:
+    """POST /api/projects/{pid}/k8s/clusters/detect-credentials."""
+
+    @patch("routes.k8s.clusters.ClusterDiscoveryService")
+    def test_detect_credentials_owner_allowed(self, mock_svc_cls, client, admin_headers, sample_user, sample_project):
+        """Project owner/admin can trigger credential-driven discovery."""
+        mock_svc = MagicMock()
+        mock_svc.detect_clusters_from_credentials.return_value = {
+            "success": True,
+            "message": "Discovered 1 cluster(s)",
+            "registered": [{"id": 1, "name": "eks-prod", "provider": "aws", "status": "registered"}],
+            "skipped": [],
+            "errors": [],
+        }
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert len(data["registered"]) == 1
+        mock_svc.detect_clusters_from_credentials.assert_called_once_with(sample_project.id)
+
+    def test_detect_credentials_viewer_forbidden(self, client, viewer_headers, all_test_users, sample_project):
+        """Viewer cannot trigger credential-driven discovery — returns 403."""
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=viewer_headers,
+        )
+        assert response.status_code == 403

@@ -1026,6 +1026,47 @@
         }
       }
     },
+    "/api/projects/{project_id}/k8s/clusters/detect-credentials": {
+      "post": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Detect And Register Clusters From Credentials",
+        "description": "Discover Kubernetes clusters via the project's cloud credential templates.",
+        "operationId": "detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/k8s/clusters": {
       "post": {
         "tags": [
