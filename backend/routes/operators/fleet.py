@@ -26,8 +26,8 @@ from services.connectivity_probe_service import _parse_api_server, _probe_tcp
 from services.dpf.fetch import detect_dpf
 from services.kubernetes_service import KubernetesService
 from services.operator_registry import (
+    is_operator_live_connected,
     list_operators,
-    operator_connections,
 )
 from services.platform_context_service import PlatformContextService
 
@@ -672,12 +672,7 @@ def get_fleet_health(db: Session = Depends(get_db)):
         # Enrich with operator metadata if linked
         linked_op = op_by_cluster.get(cluster.id)
         if linked_op:
-            is_connected_ws = operator_connections.is_connected(linked_op.operator_id)
-            is_connected_polling = False
-            if linked_op.connectivity_mode == "polling" and linked_op.last_heartbeat_at:
-                heartbeat_age = (datetime.now(UTC) - linked_op.last_heartbeat_at).total_seconds()
-                is_connected_polling = heartbeat_age < 60
-            _is_connected = is_connected_ws or is_connected_polling
+            _is_connected = is_operator_live_connected(linked_op)
 
             operator_version = linked_op.operator_version
             connectivity_mode = linked_op.connectivity_mode or "direct_ws"

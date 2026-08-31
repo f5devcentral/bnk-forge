@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Save, Globe, FolderGit2 } from 'lucide-react';
 import { useSystemDefaults } from '@/hooks/useSettings';
-import { AWS_REGIONS } from '@/lib/aws-regions';
+import { CloudRegionSelector } from '@/components/cloud/CloudRegionSelector';
 
 // Azure Regions (commonly used)
 const AZURE_REGIONS = [
@@ -205,101 +205,61 @@ export default function SystemDefaults() {
         </p>
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            {/* AWS Region */}
-            <div className="space-y-2">
-              <Label htmlFor="system-default-aws-region">
+            <CloudRegionSelector
+              id="system-default-aws-region"
+              provider="aws"
+              value={formValues['cloud.aws.default_region'] || ''}
+              onValueChange={(value) => handleChange('cloud.aws.default_region', value)}
+              placeholder="e.g. us-east-1"
+              label={
                 <span className="flex items-center gap-2">
                   <Globe className="h-4 w-4" />
                   AWS Region
                 </span>
-              </Label>
-              <Input
-                id="system-default-aws-region"
-                list="system-default-aws-region-suggestions"
-                value={formValues['cloud.aws.default_region'] || ''}
-                onChange={(e) => handleChange('cloud.aws.default_region', e.target.value)}
-                placeholder="e.g. us-east-1"
-              />
-              <datalist id="system-default-aws-region-suggestions">
-                {AWS_REGIONS.map((region) => (
-                  <option key={region.value} value={region.value}>
-                    {region.label}
-                  </option>
-                ))}
-              </datalist>
-            </div>
-
-            {/* Azure Region */}
-            <div className="space-y-2">
-              <Label htmlFor="system-default-azure-region">
+              }
+            />
+            <CloudRegionSelector
+              id="system-default-azure-region"
+              provider="azure"
+              value={formValues['cloud.azure.default_region'] || ''}
+              onValueChange={(value) => handleChange('cloud.azure.default_region', value)}
+              placeholder="e.g. westeurope"
+              options={AZURE_REGIONS}
+              label={
                 <span className="flex items-center gap-2">
                   <Globe className="h-4 w-4" />
                   Azure Default Region
                 </span>
-              </Label>
-              <Input
-                id="system-default-azure-region"
-                list="system-default-azure-region-suggestions"
-                value={formValues['cloud.azure.default_region'] || ''}
-                onChange={(e) => handleChange('cloud.azure.default_region', e.target.value)}
-                placeholder="e.g. westeurope"
-              />
-              <datalist id="system-default-azure-region-suggestions">
-                {AZURE_REGIONS.map((region) => (
-                  <option key={region.value} value={region.value}>
-                    {region.label}
-                  </option>
-                ))}
-              </datalist>
-            </div>
-
-            {/* GCP Region */}
-            <div className="space-y-2">
-              <Label htmlFor="system-default-gcp-region">
+              }
+            />
+            <CloudRegionSelector
+              id="system-default-gcp-region"
+              provider="gcp"
+              value={formValues['cloud.gcp.default_region'] || ''}
+              onValueChange={(value) => handleChange('cloud.gcp.default_region', value)}
+              placeholder="e.g. us-central1"
+              options={GCP_REGIONS}
+              label={
                 <span className="flex items-center gap-2">
                   <Globe className="h-4 w-4" />
                   GCP Default Region
                 </span>
-              </Label>
-              <Input
-                id="system-default-gcp-region"
-                list="system-default-gcp-region-suggestions"
-                value={formValues['cloud.gcp.default_region'] || ''}
-                onChange={(e) => handleChange('cloud.gcp.default_region', e.target.value)}
-                placeholder="e.g. us-central1"
-              />
-              <datalist id="system-default-gcp-region-suggestions">
-                {GCP_REGIONS.map((region) => (
-                  <option key={region.value} value={region.value}>
-                    {region.label}
-                  </option>
-                ))}
-              </datalist>
-            </div>
-
-            {/* IBM Region */}
-            <div className="space-y-2">
-              <Label htmlFor="system-default-ibm-region">
+              }
+            />
+            <CloudRegionSelector
+              id="system-default-ibm-region"
+              provider="ibm"
+              value={formValues['cloud.ibm.default_region'] || ''}
+              onValueChange={(value) => handleChange('cloud.ibm.default_region', value)}
+              placeholder="e.g. eu-de"
+              options={IBM_REGIONS}
+              label={
                 <span className="flex items-center gap-2">
                   <Globe className="h-4 w-4" />
                   IBM Default Region
                 </span>
-              </Label>
-              <Input
-                id="system-default-ibm-region"
-                list="system-default-ibm-region-suggestions"
-                value={formValues['cloud.ibm.default_region'] || ''}
-                onChange={(e) => handleChange('cloud.ibm.default_region', e.target.value)}
-                placeholder="e.g. eu-de"
-              />
-              <datalist id="system-default-ibm-region-suggestions">
-                {IBM_REGIONS.map((region) => (
-                  <option key={region.value} value={region.value}>
-                    {region.label}
-                  </option>
-                ))}
-              </datalist>
-            </div>
+              }
+            />
           </div>
         </div>
       </SectionCard>

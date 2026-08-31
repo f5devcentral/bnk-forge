@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RegionSelector } from '@/components/aws/RegionSelector';
@@ -15,6 +16,7 @@ interface CloudRegionSelectorProps {
   placeholder?: string;
   options?: CloudRegionOption[];
   id?: string;
+  label?: ReactNode;
 }
 
 export function CloudRegionSelector({
@@ -25,16 +27,22 @@ export function CloudRegionSelector({
   placeholder = 'Enter region',
   options = [],
   id = 'cloud-region-input',
+  label,
 }: CloudRegionSelectorProps) {
   if (provider === 'aws') {
     return (
-      <RegionSelector
-        value={value}
-        onValueChange={onValueChange}
-        disabled={disabled}
-        placeholder={placeholder}
-        id={id}
-      />
+      <div className="space-y-2">
+        {label ? (
+          <Label htmlFor={id}>{label}</Label>
+        ) : null}
+        <RegionSelector
+          value={value}
+          onValueChange={onValueChange}
+          disabled={disabled}
+          placeholder={placeholder}
+          id={id}
+        />
+      </div>
     );
   }
 
@@ -42,9 +50,13 @@ export function CloudRegionSelector({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={id} className="sr-only">
-        Region
-      </Label>
+      {label ? (
+        <Label htmlFor={id}>{label}</Label>
+      ) : (
+        <Label htmlFor={id} className="sr-only">
+          Region
+        </Label>
+      )}
       <Input
         id={id}
         list={options.length > 0 ? listId : undefined}

@@ -13,12 +13,12 @@ Note: Registration token and install-command endpoints were removed in D3-CLEANU
 The kubeconfig-first fleet architecture (Decision D3) made them obsolete.
 """
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from services.operator_registry import operator_connections
+from services.operator_registry import is_operator_live_connected, operator_connections
 
 logger = logging.getLogger(__name__)
 
@@ -240,15 +240,7 @@ def _dt_to_str(dt: datetime | None) -> str | None:
 
 
 def _operator_to_response(op) -> dict:
-    # For polling-mode operators, check heartbeat recency instead of WS state
-    is_connected_ws = operator_connections.is_connected(op.operator_id)
-    is_connected_polling = False
-    if op.connectivity_mode == "polling" and op.last_heartbeat_at:
-        from datetime import timedelta
-        heartbeat_age = (datetime.now(UTC) - op.last_heartbeat_at).total_seconds()
-        is_connected_polling = heartbeat_age < 60  # Polling operator is "connected" if heartbeat within 60s
-
-    is_connected = is_connected_ws or is_connected_polling
+    is_connected = is_operator_live_connected(op)
 
     return {
         "id": op.id,
