@@ -669,7 +669,7 @@ describe('ImportedBlueprintDeployDialog', () => {
 
     await waitFor(() => {
       expect(screen.getByDisplayValue('default')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('us-south')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Enter region')).toHaveValue('us-south');
       expect(screen.getByText(/Inherited from the selected IBM Cloud Credential Template/i)).toBeInTheDocument();
     });
   });

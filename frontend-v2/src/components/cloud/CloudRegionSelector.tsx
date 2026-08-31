@@ -1,6 +1,5 @@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RegionSelector } from '@/components/aws/RegionSelector';
 
 export interface CloudRegionOption {
@@ -15,6 +14,7 @@ interface CloudRegionSelectorProps {
   disabled?: boolean;
   placeholder?: string;
   options?: CloudRegionOption[];
+  id?: string;
 }
 
 export function CloudRegionSelector({
@@ -22,55 +22,46 @@ export function CloudRegionSelector({
   value,
   onValueChange,
   disabled,
-  placeholder = 'Select region',
+  placeholder = 'Enter region',
   options = [],
+  id = 'cloud-region-input',
 }: CloudRegionSelectorProps) {
   if (provider === 'aws') {
-    return <RegionSelector value={value} onValueChange={onValueChange} disabled={disabled} />;
-  }
-
-  if (provider === 'ibm') {
-    if (options.length > 0) {
-      return (
-        <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-          <SelectTrigger>
-            <SelectValue placeholder={placeholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    }
-
     return (
-      <div className="space-y-2">
-        <Input
-          value={value}
-          onChange={(e) => onValueChange(e.target.value)}
-          placeholder="e.g., us-south"
-          disabled={disabled}
-        />
-        <p className="text-xs text-muted-foreground">
-          No IBM regions loaded yet. Enter a region manually or load them from IBM Cloud.
-        </p>
-      </div>
+      <RegionSelector
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
+        placeholder={placeholder}
+        id={id}
+      />
     );
   }
 
+  const listId = `${id}-${provider}-suggestions`;
+
   return (
     <div className="space-y-2">
-      <Label className="sr-only">Region</Label>
+      <Label htmlFor={id} className="sr-only">
+        Region
+      </Label>
       <Input
+        id={id}
+        list={options.length > 0 ? listId : undefined}
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
-        placeholder="Enter region"
+        placeholder={placeholder}
         disabled={disabled}
       />
+      {options.length > 0 && (
+        <datalist id={listId}>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </datalist>
+      )}
     </div>
   );
 }

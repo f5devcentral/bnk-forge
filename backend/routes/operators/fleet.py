@@ -735,6 +735,10 @@ def get_fleet_health(db: Session = Depends(get_db)):
             "dpu_cluster_count": result.get("dpu_cluster_count", 0),
             "detected_platform_profile": platform_context.detected_platform_profile,
             "detected_platform_provider": platform_context.detected_platform_provider,
+            "cloud_provider": cluster.cloud_provider,
+            "region": cluster.region,
+            "account_id": cluster.account_id,
+            "discovery_status": cluster.discovery_status,
         })
 
     response = {
