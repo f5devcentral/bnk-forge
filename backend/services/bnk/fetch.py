@@ -18,49 +18,27 @@ from services.bnk_pod_discovery import (
 )
 from services.kubernetes._resources import resolve_resource_type
 from services.kubernetes_service import KubernetesService
+from services.scanner.nodes import parse_node
 
 _CRD_INSTALLER_NAMESPACE = "f5-utils"
 _CRD_INSTALLER_LABEL = "app=crd-installer"
 
-# Node labels that provide placement context for BNK pods. Mirrors the
-# fallback logic in services.scanner.nodes.parse_node().
-_NODE_LABEL_KEYS = {
-    "zone": [
-        "topology.kubernetes.io/zone",
-        "failure-domain.beta.kubernetes.io/zone",
-    ],
-    "instance_type": [
-        "node.kubernetes.io/instance-type",
-        "beta.kubernetes.io/instance-type",
-    ],
-}
-
 
 def _node_enrichment(node) -> dict[str, Any] | None:
-    """Extract placement-relevant labels from a V1Node.
+    """Extract placement-relevant fields from a V1Node.
 
-    Returns a small dict keyed by node name, or None if metadata is missing.
-    Gracefully degrades when a label is absent (value is None).
+    Reuses ``services.scanner.nodes.parse_node`` so the label fallback logic
+    for zone and instance-type stays in one place.
     """
     meta = getattr(node, "metadata", None)
-    if not meta:
+    if not meta or not getattr(meta, "name", None):
         return None
-    name = getattr(meta, "name", None)
-    if not name:
-        return None
-    labels = dict(getattr(meta, "labels", {}) or {})
-
-    def _first_label(keys: list[str]) -> str | None:
-        for key in keys:
-            if key in labels:
-                return labels[key]
-        return None
-
+    parsed = parse_node(node)
     return {
-        "name": name,
-        "zone": _first_label(_NODE_LABEL_KEYS["zone"]),
-        "instance_type": _first_label(_NODE_LABEL_KEYS["instance_type"]),
-        "labels": labels,
+        "name": parsed["name"],
+        "zone": parsed.get("zone"),
+        "instance_type": parsed.get("instance_type"),
+        "labels": parsed.get("labels", {}),
     }
 
 
