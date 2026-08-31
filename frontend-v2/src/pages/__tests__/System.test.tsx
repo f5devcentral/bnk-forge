@@ -56,6 +56,7 @@ describe('System', () => {
   it('renders all tab labels', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByText('System Monitor')).toBeInTheDocument();
+    expect(screen.getByText('BNK Resources')).toBeInTheDocument();
     expect(screen.getByText('Audit Log')).toBeInTheDocument();
     expect(screen.getByText('Alerts')).toBeInTheDocument();
     expect(screen.getByText('Defaults')).toBeInTheDocument();
@@ -79,6 +80,17 @@ describe('System', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByTestId('perf-monitor')).toBeInTheDocument();
     expect(screen.getByTestId('sys-upgrade')).toBeInTheDocument();
+  });
+
+  it('switches to BNK Resources tab and renders the dashboard', async () => {
+    const user = userEvent.setup();
+    render(<System />, { initialRoute: '/system' });
+    await user.click(screen.getByText('BNK Resources'));
+    await waitFor(() => {
+      expect(screen.getByTestId('bnk-resources-panel')).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('dev-cluster').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('prod-cluster')).toBeInTheDocument();
   });
 
 });

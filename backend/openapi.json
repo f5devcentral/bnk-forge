@@ -15309,6 +15309,28 @@
         }
       }
     },
+    "/api/system/bnk-consumption": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get Bnk Consumption",
+        "description": "Get fleet-wide BNK resource consumption (admin only).",
+        "operationId": "get_bnk_consumption_api_system_bnk_consumption_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BnkConsumptionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/system/queue-metrics": {
       "get": {
         "tags": [
@@ -37226,6 +37248,120 @@
         ],
         "title": "BnkClusterConfigSummary"
       },
+      "BnkClusterConsumption": {
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "type": "string",
+            "title": "Cluster Name"
+          },
+          "reachable": {
+            "type": "boolean",
+            "title": "Reachable"
+          },
+          "bnk_installed": {
+            "type": "boolean",
+            "title": "Bnk Installed"
+          },
+          "bnk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bnk Version"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "control_plane": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "data_plane": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "total": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "metrics_available": {
+            "type": "boolean",
+            "title": "Metrics Available"
+          },
+          "metrics_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics Error"
+          },
+          "dpf": {
+            "$ref": "#/components/schemas/BnkClusterDpfSummary"
+          },
+          "top_pods": {
+            "items": {
+              "$ref": "#/components/schemas/BnkTopPod"
+            },
+            "type": "array",
+            "title": "Top Pods"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "cluster_name",
+          "reachable",
+          "bnk_installed",
+          "status",
+          "control_plane",
+          "data_plane",
+          "total",
+          "metrics_available",
+          "dpf"
+        ],
+        "title": "BnkClusterConsumption",
+        "description": "Per-cluster BNK resource consumption breakdown."
+      },
+      "BnkClusterDpfSummary": {
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "title": "Detected"
+          },
+          "dpu_count": {
+            "type": "integer",
+            "title": "Dpu Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detected",
+          "dpu_count"
+        ],
+        "title": "BnkClusterDpfSummary",
+        "description": "Lightweight DPF/DPU summary for a single cluster."
+      },
       "BnkClusterMemberAssignRequest": {
         "properties": {
           "control_plane_host_id": {
@@ -37306,6 +37442,32 @@
           "bnk_config"
         ],
         "title": "BnkClusterMemberAssignResponse"
+      },
+      "BnkConsumptionResponse": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "fleet_summary": {
+            "$ref": "#/components/schemas/BnkFleetSummary"
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/BnkClusterConsumption"
+            },
+            "type": "array",
+            "title": "Clusters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "fleet_summary",
+          "clusters"
+        ],
+        "title": "BnkConsumptionResponse",
+        "description": "Response for GET /api/system/bnk-consumption."
       },
       "BnkDataResponse": {
         "properties": {
@@ -37407,6 +37569,65 @@
         ],
         "title": "BnkDataResponse",
         "description": "Wrapper for the unified /f5bnk/data endpoint.\n\nOnly the ``health`` key is strongly typed here; the remaining keys are\nkept as loose dicts because their schemas are large and already typed\nmanually in the frontend. This lets OpenAPI capture the enriched health\nshape without coupling the whole topology/palette response to Pydantic."
+      },
+      "BnkFleetSummary": {
+        "properties": {
+          "total_clusters": {
+            "type": "integer",
+            "title": "Total Clusters"
+          },
+          "reachable_clusters": {
+            "type": "integer",
+            "title": "Reachable Clusters"
+          },
+          "bnk_installed_clusters": {
+            "type": "integer",
+            "title": "Bnk Installed Clusters"
+          },
+          "total_bnk_pods": {
+            "type": "integer",
+            "title": "Total Bnk Pods"
+          },
+          "control_plane_pods": {
+            "type": "integer",
+            "title": "Control Plane Pods"
+          },
+          "data_plane_pods": {
+            "type": "integer",
+            "title": "Data Plane Pods"
+          },
+          "total_cpu_millicores": {
+            "type": "integer",
+            "title": "Total Cpu Millicores"
+          },
+          "total_memory_bytes": {
+            "type": "integer",
+            "title": "Total Memory Bytes"
+          },
+          "dpf_detected_clusters": {
+            "type": "integer",
+            "title": "Dpf Detected Clusters"
+          },
+          "dpu_count": {
+            "type": "integer",
+            "title": "Dpu Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_clusters",
+          "reachable_clusters",
+          "bnk_installed_clusters",
+          "total_bnk_pods",
+          "control_plane_pods",
+          "data_plane_pods",
+          "total_cpu_millicores",
+          "total_memory_bytes",
+          "dpf_detected_clusters",
+          "dpu_count"
+        ],
+        "title": "BnkFleetSummary",
+        "description": "Fleet-wide BNK consumption rollup."
       },
       "BnkHealthAISection": {
         "properties": {
@@ -37735,6 +37956,33 @@
         ],
         "title": "BnkHealthSecuritySection"
       },
+      "BnkPlaneConsumption": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Number of BNK pods in this plane"
+          },
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores",
+            "description": "Aggregated CPU usage in millicores"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes",
+            "description": "Aggregated memory usage in bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "cpu_millicores",
+          "memory_bytes"
+        ],
+        "title": "BnkPlaneConsumption",
+        "description": "CPU/memory/pod count for a single BNK plane (control-plane or data-plane)."
+      },
       "BnkReleaseListResponse": {
         "properties": {
           "releases": {
@@ -37783,6 +38031,40 @@
           "upserted"
         ],
         "title": "BnkReleaseSyncResponse"
+      },
+      "BnkTopPod": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "role",
+          "cpu_millicores",
+          "memory_bytes"
+        ],
+        "title": "BnkTopPod",
+        "description": "A single BNK pod ranked by resource consumption."
       },
       "Body_create_file_secret_api_projects__project_id__secrets_file_post": {
         "properties": {

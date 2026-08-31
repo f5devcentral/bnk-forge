@@ -272,6 +272,7 @@ export const queryKeys = {
     defaultsStatus: () => ['defaults-status'] as const,
     backupStatus: () => [...queryKeys.system.all, 'backup', 'status'] as const,
     maintenanceStatus: () => [...queryKeys.system.all, 'maintenance'] as const,
+    bnkConsumption: () => [...queryKeys.system.all, 'bnk-consumption'] as const,
   },
 
   // Registry hierarchy

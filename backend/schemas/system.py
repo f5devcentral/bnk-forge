@@ -174,3 +174,74 @@ class ConfigImportRequest(BaseModel):
     config: dict[str, Any] = Field(
         ..., description="BNK configuration to import (from export YAML/JSON)"
     )
+
+
+# =============================================================================
+# BNK Resource Consumption Dashboard
+# =============================================================================
+
+class BnkPlaneConsumption(BaseModel):
+    """CPU/memory/pod count for a single BNK plane (control-plane or data-plane)."""
+
+    count: int = Field(..., description="Number of BNK pods in this plane")
+    cpu_millicores: int = Field(..., description="Aggregated CPU usage in millicores")
+    memory_bytes: int = Field(..., description="Aggregated memory usage in bytes")
+
+
+class BnkTopPod(BaseModel):
+    """A single BNK pod ranked by resource consumption."""
+
+    name: str
+    namespace: str
+    role: str
+    cpu_millicores: int
+    memory_bytes: int
+
+
+class BnkClusterDpfSummary(BaseModel):
+    """Lightweight DPF/DPU summary for a single cluster."""
+
+    detected: bool
+    dpu_count: int
+
+
+class BnkClusterConsumption(BaseModel):
+    """Per-cluster BNK resource consumption breakdown."""
+
+    cluster_id: int
+    cluster_name: str
+    reachable: bool
+    bnk_installed: bool
+    bnk_version: str | None = None
+    status: str
+    node_count: int | None = None
+    control_plane: BnkPlaneConsumption
+    data_plane: BnkPlaneConsumption
+    total: BnkPlaneConsumption
+    metrics_available: bool
+    metrics_error: str | None = None
+    dpf: BnkClusterDpfSummary
+    top_pods: list[BnkTopPod] = Field(default_factory=list)
+
+
+class BnkFleetSummary(BaseModel):
+    """Fleet-wide BNK consumption rollup."""
+
+    total_clusters: int
+    reachable_clusters: int
+    bnk_installed_clusters: int
+    total_bnk_pods: int
+    control_plane_pods: int
+    data_plane_pods: int
+    total_cpu_millicores: int
+    total_memory_bytes: int
+    dpf_detected_clusters: int
+    dpu_count: int
+
+
+class BnkConsumptionResponse(BaseModel):
+    """Response for GET /api/system/bnk-consumption."""
+
+    timestamp: str
+    fleet_summary: BnkFleetSummary
+    clusters: list[BnkClusterConsumption]
