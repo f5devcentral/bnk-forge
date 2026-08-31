@@ -7,8 +7,13 @@ listeners), security (firewall policies, iRules), and AI/intelligent LB.
 
 Pure data transformation: takes the dict from ``fetch_all_bnk_data``
 and returns a structured health dashboard dict.
+
+Connectivity and integration context can be injected by the caller via the
+``connectivity`` and ``integration`` keys in the input dict.  When absent,
+defaults are derived from the fact that fetch_all_bnk_data succeeded.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
 # Components whose absence (zero pods) is not a failure — they're optional or
@@ -455,6 +460,65 @@ def _build_ai_health(
 
 
 # ---------------------------------------------------------------------------
+# Connectivity / integration status
+# ---------------------------------------------------------------------------
+
+
+def _utc_now_iso() -> str:
+    """Return current UTC time as an ISO-8601 string."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _build_connectivity_status(data: dict[str, Any]) -> dict[str, Any]:
+    """Build cluster connectivity status.
+
+    Callers that already performed a reachability probe should pass the
+    result in ``data["connectivity"]``.  Otherwise we infer "connected"
+    from the fact that ``fetch_all_bnk_data`` succeeded and produced data.
+    """
+    injected = data.get("connectivity")
+    if isinstance(injected, dict):
+        return {
+            "status": injected.get("status", "connected"),
+            "message": injected.get("message", "Kubernetes API is accessible"),
+            "checkedAt": injected.get("checkedAt") or _utc_now_iso(),
+        }
+    return {
+        "status": "connected",
+        "message": "Kubernetes API is accessible",
+        "checkedAt": _utc_now_iso(),
+    }
+
+
+def _build_integration_status(data: dict[str, Any]) -> dict[str, Any]:
+    """Build BNK integration status (operator / CWC / license context).
+
+    Callers should pass a pre-computed ``data["integration"]`` dict built
+    from the linked ``ConnectedOperator`` record.  When absent we return a
+    kubeconfig-mode default (healthy, because the dashboard is reachable via
+    kubeconfig and that is a supported operational mode).
+    """
+    injected = data.get("integration")
+    if isinstance(injected, dict):
+        return {
+            "status": injected.get("status", "unknown"),
+            "operatorConnected": injected.get("operatorConnected", False),
+            "operatorMode": injected.get("operatorMode", "kubeconfig"),
+            "operatorVersion": injected.get("operatorVersion"),
+            "lastSeen": injected.get("lastSeen"),
+            "message": injected.get("message", ""),
+        }
+    return {
+        "status": "healthy",
+        "operatorConnected": False,
+        "operatorMode": "kubeconfig",
+        "operatorVersion": None,
+        "lastSeen": None,
+        "message": "Cluster managed via kubeconfig",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------------
 
@@ -512,6 +576,9 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
         for g in gateways
     )
 
+    connectivity = _build_connectivity_status(data)
+    integration = _build_integration_status(data)
+
     return {
         "overall": overall,
         "installShape": install_shape,
@@ -520,6 +587,8 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
             "helm": "Helm / manual",
             "unknown": "Unknown",
         }[install_shape],
+        "connectivity": connectivity,
+        "integration": integration,
         "platform": platform,
         "dataPlane": data_plane,
         "networking": networking,

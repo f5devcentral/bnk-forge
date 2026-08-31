@@ -10,6 +10,8 @@ re-fetch from the cluster.
 """
 
 import logging
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from kubernetes import client as k8s_client
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
+from models import ConnectedOperator, KubernetesCluster
 from routes.auth import require_operator, require_viewer
 from schemas.bnk import BnkDataResponse, BnkHealthEndpointResponse
 from schemas.k8s import (
@@ -45,6 +48,7 @@ from services.bnk_data_service import (
     fetch_all_bnk_data,
 )
 from services.kubernetes_service import KubernetesService
+from services.operator_registry import is_operator_live_connected
 from services.proxy_discovery_service import (
     _safe_list_all_custom,
     _safe_list_all_ingresses,
@@ -54,6 +58,84 @@ from services.proxy_translate_service import translate_to_bnk
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["k8s-f5bnk"])
+
+
+# ============================================================================
+# Connectivity / integration context helpers
+# ============================================================================
+
+
+def _dt_to_str(dt: datetime | None) -> str | None:
+    """Format a datetime as ISO-8601, returning None if absent."""
+    if not dt:
+        return None
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _build_bnk_context(cluster: KubernetesCluster, db: Session) -> dict[str, Any]:
+    """Build connectivity and integration metadata for the BNK health response.
+
+    Connectivity reuses the cluster's persisted ``status`` field, which is the
+    same value surfaced by the cluster list/detail endpoints.  The live probe
+    details remain available on ``/api/k8s/clusters/{id}/connectivity``.
+
+    Integration reflects whether a BNK operator is linked to this cluster and
+    is currently live-connected (via the shared helper used by fleet health
+    and the operator list).  Kubeconfig-only management is a supported mode
+    and reports as healthy.
+    """
+    status_map = {
+        "active": "connected",
+        "connecting": "unknown",
+        "inactive": "unreachable",
+        "error": "unreachable",
+    }
+    cluster_status = (cluster.status or "").lower()
+    connectivity_status = status_map.get(cluster_status, "unknown")
+    connectivity_message = {
+        "connected": "Kubernetes API is accessible",
+        "unknown": "Connectivity status is unknown",
+        "unreachable": "Kubernetes API is unreachable",
+    }.get(connectivity_status, "Connectivity status is unknown")
+
+    connectivity = {
+        "status": connectivity_status,
+        "message": connectivity_message,
+        "checkedAt": _dt_to_str(cluster.last_synced_at),
+    }
+
+    linked_op = (
+        db.query(ConnectedOperator)
+        .filter(ConnectedOperator.cluster_id == cluster.id)
+        .first()
+    )
+    if linked_op:
+        operator_connected = is_operator_live_connected(linked_op)
+        operator_mode = linked_op.connectivity_mode or "direct_ws"
+        last_seen = _dt_to_str(linked_op.last_heartbeat_at or linked_op.last_connected_at)
+        integration = {
+            "status": "healthy" if operator_connected else "warning",
+            "operatorConnected": operator_connected,
+            "operatorMode": operator_mode,
+            "operatorVersion": linked_op.operator_version,
+            "lastSeen": last_seen,
+            "message": (
+                f"Operator {linked_op.operator_id} is connected"
+                if operator_connected
+                else f"Operator {linked_op.operator_id} is disconnected"
+            ),
+        }
+    else:
+        integration = {
+            "status": "healthy",
+            "operatorConnected": False,
+            "operatorMode": "kubeconfig",
+            "operatorVersion": None,
+            "lastSeen": _dt_to_str(cluster.last_synced_at),
+            "message": "Cluster managed via kubeconfig",
+        }
+
+    return {"connectivity": connectivity, "integration": integration}
 
 
 # ============================================================================
@@ -79,7 +161,9 @@ def get_bnk_data(
     so switching between Health, Topology, and Policy Map tabs is instant.
     """
     k8s_service = KubernetesService(db)
+    cluster = k8s_service.get_cluster(cluster_id)
     data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
+    data.update(_build_bnk_context(cluster, db))
 
     health = analyze_health(data)
     topo = analyze_topology(data)
@@ -120,7 +204,9 @@ def get_bnk_health(
 ):
     """BNK health dashboard — delegates to shared data service."""
     k8s_service = KubernetesService(db)
+    cluster = k8s_service.get_cluster(cluster_id)
     data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
+    data.update(_build_bnk_context(cluster, db))
     result = analyze_health(data)
     result["cluster_id"] = cluster_id
     return result

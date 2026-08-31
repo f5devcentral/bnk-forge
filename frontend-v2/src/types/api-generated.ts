@@ -14496,6 +14496,8 @@ export interface components {
              * @default Unknown
              */
             installMethod: string;
+            connectivity: components["schemas"]["HealthConnectivityStatus"];
+            integration: components["schemas"]["HealthIntegrationStatus"];
             platform: components["schemas"]["BnkHealthPlatformSection"];
             dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
             networking: components["schemas"]["BnkHealthNetworkingSection"];
@@ -14554,6 +14556,8 @@ export interface components {
              * @default Unknown
              */
             installMethod: string;
+            connectivity: components["schemas"]["HealthConnectivityStatus"];
+            integration: components["schemas"]["HealthIntegrationStatus"];
             platform: components["schemas"]["BnkHealthPlatformSection"];
             dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
             networking: components["schemas"]["BnkHealthNetworkingSection"];
@@ -17663,6 +17667,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** HealthConnectivityStatus */
+        HealthConnectivityStatus: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "reachable" | "partial" | "unreachable" | "unknown";
+            /** Message */
+            message: string;
+            /** Checkedat */
+            checkedAt: string;
+        };
         /** HealthCounts */
         HealthCounts: {
             /** Gateways */
@@ -17734,6 +17750,27 @@ export interface components {
             explanation: string;
             /** Details */
             details: components["schemas"]["HealthIRuleDetail"][];
+        };
+        /** HealthIntegrationStatus */
+        HealthIntegrationStatus: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "warning" | "critical" | "unknown";
+            /** Operatorconnected */
+            operatorConnected: boolean;
+            /**
+             * Operatormode
+             * @enum {string}
+             */
+            operatorMode: "direct_ws" | "polling" | "kubeconfig";
+            /** Operatorversion */
+            operatorVersion?: string | null;
+            /** Lastseen */
+            lastSeen?: string | null;
+            /** Message */
+            message: string;
         };
         /** HealthPlatformComponent */
         HealthPlatformComponent: {
