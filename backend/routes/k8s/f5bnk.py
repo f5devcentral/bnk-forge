@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
+from schemas.bnk import BnkDataResponse, BnkHealthEndpointResponse
 from schemas.k8s import (
     AbortMigrationRequest,
     CisTranslateRequest,
@@ -59,7 +60,11 @@ router = APIRouter(prefix="/api", tags=["k8s-f5bnk"])
 # Unified BNK Data Endpoint
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/data", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/data",
+    response_model=BnkDataResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("fetch BNK data")
 def get_bnk_data(
     cluster_id: int,
@@ -74,7 +79,7 @@ def get_bnk_data(
     so switching between Health, Topology, and Policy Map tabs is instant.
     """
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
 
     health = analyze_health(data)
     topo = analyze_topology(data)
@@ -102,7 +107,11 @@ def get_bnk_data(
 # These now delegate to the shared data service.
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/health", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/health",
+    response_model=BnkHealthEndpointResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get BNK health")
 def get_bnk_health(
     cluster_id: int,
@@ -111,7 +120,7 @@ def get_bnk_health(
 ):
     """BNK health dashboard — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     result = analyze_health(data)
     result["cluster_id"] = cluster_id
     return result

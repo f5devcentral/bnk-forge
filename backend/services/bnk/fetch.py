@@ -22,11 +22,69 @@ from services.kubernetes_service import KubernetesService
 _CRD_INSTALLER_NAMESPACE = "f5-utils"
 _CRD_INSTALLER_LABEL = "app=crd-installer"
 
+# Node labels that provide placement context for BNK pods. Mirrors the
+# fallback logic in services.scanner.nodes.parse_node().
+_NODE_LABEL_KEYS = {
+    "zone": [
+        "topology.kubernetes.io/zone",
+        "failure-domain.beta.kubernetes.io/zone",
+    ],
+    "instance_type": [
+        "node.kubernetes.io/instance-type",
+        "beta.kubernetes.io/instance-type",
+    ],
+}
+
+
+def _node_enrichment(node) -> dict[str, Any] | None:
+    """Extract placement-relevant labels from a V1Node.
+
+    Returns a small dict keyed by node name, or None if metadata is missing.
+    Gracefully degrades when a label is absent (value is None).
+    """
+    meta = getattr(node, "metadata", None)
+    if not meta:
+        return None
+    name = getattr(meta, "name", None)
+    if not name:
+        return None
+    labels = dict(getattr(meta, "labels", {}) or {})
+
+    def _first_label(keys: list[str]) -> str | None:
+        for key in keys:
+            if key in labels:
+                return labels[key]
+        return None
+
+    return {
+        "name": name,
+        "zone": _first_label(_NODE_LABEL_KEYS["zone"]),
+        "instance_type": _first_label(_NODE_LABEL_KEYS["instance_type"]),
+        "labels": labels,
+    }
+
+
+def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
+    """Fetch cluster nodes and return a name-indexed enrichment map."""
+    try:
+        v1 = k8s_client.CoreV1Api(api_client)
+        nodes = v1.list_node(_request_timeout=10).items or []
+        result: dict[str, dict[str, Any]] = {}
+        for node in nodes:
+            enriched = _node_enrichment(node)
+            if enriched:
+                result[enriched["name"]] = enriched
+        return result
+    except Exception:
+        return {}
+
 
 def fetch_all_bnk_data(
     k8s_service: KubernetesService,
     cluster_id: int,
     namespace: str | None = None,
+    *,
+    include_nodes: bool = False,
 ) -> dict[str, Any]:
     """
     Fetch all BNK CRD resources + pods in one parallel burst.
@@ -35,6 +93,7 @@ def fetch_all_bnk_data(
       - resources: {resource_type_key: [items...]} for all CRD types
       - pods: {tenant: [...], utils: [...]}
       - classified_pods: {tmm: [...], flo: [...], controller: [...], ...}
+      - nodes: {nodeName: {zone, instance_type, labels}} (only if include_nodes=True)
       - cluster_id, namespace
     """
     cluster = k8s_service.get_cluster(cluster_id)
@@ -82,15 +141,17 @@ def fetch_all_bnk_data(
         except Exception:
             return None
 
-    # Fire all CRD fetches + pod discovery + job status in parallel
+    # Fire all CRD fetches + pod discovery + job status + nodes in parallel
     with ThreadPoolExecutor(max_workers=20) as executor:
         crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
         pods_future = executor.submit(discover_f5_pods, api_client)
         job_future = executor.submit(fetch_crd_installer_job)
+        nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 
         resources = {rt: fut.result() for rt, fut in crd_futures.items()}
         tenant_pods, utils_pods = pods_future.result()
         crd_installer_job = job_future.result()
+        nodes = nodes_future.result() if nodes_future is not None else {}
 
     classified = classify_f5_pods(tenant_pods, utils_pods)
 
@@ -99,6 +160,7 @@ def fetch_all_bnk_data(
         "pods": {"tenant": tenant_pods, "utils": utils_pods},
         "classified_pods": classified,
         "crd_installer_job": crd_installer_job,
+        "nodes": nodes,
         "cluster_id": cluster_id,
         "namespace": namespace,
     }
