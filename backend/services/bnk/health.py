@@ -81,15 +81,22 @@ def _pod_issue_summary(pod: dict) -> str:
     return ""
 
 
-def _pod_details(pod: dict) -> dict[str, Any]:
+def _pod_details(
+    pod: dict,
+    nodes_by_name: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Extract display-friendly details from a pod dict."""
     containers = pod.get("containers", [])
     total_restarts = sum(c.get("restartCount", 0) for c in containers)
     ready_count = sum(1 for c in containers if c.get("ready"))
+    node_name = pod.get("nodeName")
+    node_info = nodes_by_name.get(node_name) if nodes_by_name and node_name else None
     return {
         "podName": pod.get("name", ""),
         "namespace": pod.get("namespace", ""),
-        "nodeName": pod.get("nodeName"),
+        "nodeName": node_name,
+        "nodeZone": node_info.get("zone") if node_info else None,
+        "nodeInstanceType": node_info.get("instance_type") if node_info else None,
         "hostIP": pod.get("hostIP"),
         "phase": pod.get("phase", "Unknown"),
         "restartCount": total_restarts,
@@ -103,10 +110,11 @@ def _build_component_health(
     pods: list[dict],
     healthy_pods: list[dict],
     severity: str,
+    nodes_by_name: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build enriched component health with explanation, pod details, and actions."""
     explanation = COMPONENT_EXPLANATIONS.get(component_key, "")
-    pod_detail_list = [_pod_details(p) for p in pods]
+    pod_detail_list = [_pod_details(p, nodes_by_name) for p in pods]
 
     # Use set of ids for O(1) membership test instead of O(n) list scan
     healthy_ids = {id(p) for p in healthy_pods}
@@ -123,10 +131,27 @@ def _build_component_health(
             actions.append({"label": "Restart Pod", "action": "restart_pod", "target": pod_name, "namespace": pod_ns})
         actions.append({"label": "Describe", "action": "describe", "target": pod_name, "namespace": pod_ns})
 
+    # Placement context: namespaces, nodes, and availability zones the
+    # component's pods run in. Empty when RBAC hides nodes or pods lack
+    # node assignment — the UI degrades gracefully.
+    namespaces = sorted({p.get("namespace") for p in pods if p.get("namespace")})
+    nodes = sorted({p.get("nodeName") for p in pods if p.get("nodeName")})
+    zones = sorted(
+        {
+            (nodes_by_name or {}).get(p.get("nodeName"), {}).get("zone")
+            for p in pods
+            if p.get("nodeName")
+        }
+        - {None}
+    )
+
     return {
         "explanation": explanation,
         "podDetails": pod_detail_list,
         "remediationActions": actions,
+        "namespaces": namespaces,
+        "nodes": nodes,
+        "zones": zones,
     }
 
 
@@ -214,6 +239,7 @@ def _build_platform_health(
     classified: dict[str, list],
     crd_installer_job: dict | None = None,
     install_shape: str = "unknown",
+    nodes_by_name: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the platform health section (FLO, controller, CRD installer, analyzer)."""
     sections = {
@@ -235,7 +261,7 @@ def _build_platform_health(
                 "total": len(pods),
                 count_key: len(healthy),
                 "severity": sev,
-                **_build_component_health(key, pods, healthy, sev),
+                **_build_component_health(key, pods, healthy, sev, nodes_by_name),
             }
             if include_in_rollup:
                 rollup_inputs.append(sev)
@@ -246,7 +272,7 @@ def _build_platform_health(
             "total": len(pods),
             count_key: len(healthy),
             "severity": sev,
-            **_build_component_health(key, pods, healthy, sev),
+            **_build_component_health(key, pods, healthy, sev, nodes_by_name),
         }
 
         # Analyzer is optional; its absence shouldn't degrade rollup.
@@ -266,6 +292,7 @@ def _build_platform_health(
 def _build_data_plane_health(
     classified: dict[str, list],
     cneinstances: list[dict],
+    nodes_by_name: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the data plane health section (TMM pods, CNE features)."""
     tmm_pods = classified["tmm"]
@@ -290,7 +317,7 @@ def _build_data_plane_health(
             "containersReady": tmm_containers_ready,
             "totalRestarts": tmm_restarts,
             "severity": tmm_sev,
-            **_build_component_health("tmm", tmm_pods, tmm_running, tmm_sev),
+            **_build_component_health("tmm", tmm_pods, tmm_running, tmm_sev, nodes_by_name),
         },
         "cneInstance": _extract_cne_features(cneinstances),
     }
@@ -438,10 +465,11 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
     classified = data["classified_pods"]
     cneinstances = resources.get("cneinstance", [])
     crd_installer_job: dict | None = data.get("crd_installer_job")
+    nodes_by_name: dict[str, dict[str, Any]] = data.get("nodes") or {}
     install_shape = detect_install_shape(classified)
 
-    platform = _build_platform_health(classified, crd_installer_job, install_shape)
-    data_plane = _build_data_plane_health(classified, cneinstances)
+    platform = _build_platform_health(classified, crd_installer_job, install_shape, nodes_by_name)
+    data_plane = _build_data_plane_health(classified, cneinstances, nodes_by_name)
     networking = _build_networking_health(resources)
     security = _build_security_health(resources)
     cne_features = data_plane["cneInstance"]

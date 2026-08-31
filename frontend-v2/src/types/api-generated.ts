@@ -14406,6 +14406,182 @@ export interface components {
             }[];
             bnk_config: components["schemas"]["BnkClusterConfigSummary"];
         };
+        /**
+         * BnkDataResponse
+         * @description Wrapper for the unified /f5bnk/data endpoint.
+         *
+         *     Only the ``health`` key is strongly typed here; the remaining keys are
+         *     kept as loose dicts because their schemas are large and already typed
+         *     manually in the frontend. This lets OpenAPI capture the enriched health
+         *     shape without coupling the whole topology/palette response to Pydantic.
+         */
+        BnkDataResponse: {
+            health: components["schemas"]["BnkHealthResponse"];
+            /** Topology */
+            topology: {
+                [key: string]: unknown;
+            }[];
+            /** Dataplane */
+            dataPlane: {
+                [key: string]: unknown;
+            };
+            /** Referencegrants */
+            referenceGrants: {
+                [key: string]: unknown;
+            }[];
+            /** Topologycounts */
+            topologyCounts: {
+                [key: string]: unknown;
+            };
+            /** Policyassociations */
+            policyAssociations: {
+                [key: string]: unknown;
+            }[];
+            /** Policycount */
+            policyCount: number;
+            /** Backends */
+            backends?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Palette */
+            palette?: {
+                [key: string]: unknown;
+            } | null;
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkHealthAISection */
+        BnkHealthAISection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Analyzers */
+            analyzers: number;
+            /** Analyzerdetails */
+            analyzerDetails: components["schemas"]["HealthAnalyzerDetail"][];
+        };
+        /** BnkHealthDataPlaneSection */
+        BnkHealthDataPlaneSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            tmm: components["schemas"]["HealthTmmComponent"];
+            /** Cneinstance */
+            cneInstance: components["schemas"]["HealthCneInstance"] | {
+                [key: string]: unknown;
+            };
+        };
+        /** BnkHealthEndpointResponse */
+        BnkHealthEndpointResponse: {
+            /**
+             * Overall
+             * @enum {string}
+             */
+            overall: "healthy" | "warning" | "critical" | "unknown";
+            /**
+             * Installshape
+             * @default unknown
+             */
+            installShape: string;
+            /**
+             * Installmethod
+             * @default Unknown
+             */
+            installMethod: string;
+            platform: components["schemas"]["BnkHealthPlatformSection"];
+            dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
+            networking: components["schemas"]["BnkHealthNetworkingSection"];
+            security: components["schemas"]["BnkHealthSecuritySection"];
+            ai: components["schemas"]["BnkHealthAISection"];
+            counts: components["schemas"]["HealthCounts"];
+            /** Cluster Id */
+            cluster_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkHealthNetworkingSection */
+        BnkHealthNetworkingSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            gateways: components["schemas"]["HealthGatewayComponent"];
+            vlans: components["schemas"]["HealthVlanComponent"];
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Staticroutes */
+            staticRoutes: number;
+            /** Snatpools */
+            snatPools: number;
+        };
+        /** BnkHealthPlatformSection */
+        BnkHealthPlatformSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            flo: components["schemas"]["HealthPlatformComponent"];
+            controller: components["schemas"]["HealthPlatformComponent"];
+            crdInstaller: components["schemas"]["HealthPlatformComponent"];
+            analyzer: components["schemas"]["HealthPlatformComponent"];
+        };
+        /** BnkHealthResponse */
+        BnkHealthResponse: {
+            /**
+             * Overall
+             * @enum {string}
+             */
+            overall: "healthy" | "warning" | "critical" | "unknown";
+            /**
+             * Installshape
+             * @default unknown
+             */
+            installShape: string;
+            /**
+             * Installmethod
+             * @default Unknown
+             */
+            installMethod: string;
+            platform: components["schemas"]["BnkHealthPlatformSection"];
+            dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
+            networking: components["schemas"]["BnkHealthNetworkingSection"];
+            security: components["schemas"]["BnkHealthSecuritySection"];
+            ai: components["schemas"]["BnkHealthAISection"];
+            counts: components["schemas"]["HealthCounts"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkHealthSecuritySection */
+        BnkHealthSecuritySection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Securitypolicies */
+            securityPolicies: number;
+            /** Networkpolicies */
+            networkPolicies: number;
+            /** Addresslists */
+            addressLists: number;
+            /** Portlists */
+            portLists: number;
+            irules: components["schemas"]["HealthIRulesComponent"];
+        };
         /** BnkReleaseListResponse */
         BnkReleaseListResponse: {
             /** Releases */
@@ -17471,6 +17647,157 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthAnalyzerDetail */
+        HealthAnalyzerDetail: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Schedule */
+            schedule: string;
+        };
+        /** HealthCneInstance */
+        HealthCneInstance: {
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** HealthCounts */
+        HealthCounts: {
+            /** Gateways */
+            gateways: number;
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Vlans */
+            vlans: number;
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Irules */
+            irules: number;
+            /** Analyzers */
+            analyzers: number;
+            /** Cneinstances */
+            cneInstances: number;
+            /** Tmm Pods */
+            tmm_pods: number;
+            /** Tmm Running */
+            tmm_running: number;
+            /** Tmm Containers */
+            tmm_containers: string;
+        };
+        /** HealthGatewayComponent */
+        HealthGatewayComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /** Accepted */
+            accepted: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Addresses */
+            addresses: string[];
+        };
+        /** HealthIRuleDetail */
+        HealthIRuleDetail: {
+            /** Name */
+            name: string;
+            /** Accepted */
+            accepted: boolean;
+            /** Programmed */
+            programmed: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /** HealthIRulesComponent */
+        HealthIRulesComponent: {
+            /** Total */
+            total: number;
+            /** Accepted */
+            accepted: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthIRuleDetail"][];
+        };
+        /** HealthPlatformComponent */
+        HealthPlatformComponent: {
+            /** Explanation */
+            explanation: string;
+            /** Poddetails */
+            podDetails: components["schemas"]["HealthPodDetail"][];
+            /** Remediationactions */
+            remediationActions: components["schemas"]["HealthRemediationAction"][];
+            /** Namespaces */
+            namespaces?: string[];
+            /** Zones */
+            zones?: string[];
+            /** Nodes */
+            nodes?: string[];
+            /** Total */
+            total: number;
+            /** Running */
+            running?: number | null;
+            /** Completed */
+            completed?: number | null;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+        };
+        /** HealthPodDetail */
+        HealthPodDetail: {
+            /** Podname */
+            podName: string;
+            /** Namespace */
+            namespace: string;
+            /** Nodename */
+            nodeName?: string | null;
+            /** Nodezone */
+            nodeZone?: string | null;
+            /** Nodeinstancetype */
+            nodeInstanceType?: string | null;
+            /** Hostip */
+            hostIP?: string | null;
+            /** Phase */
+            phase: string;
+            /** Restartcount */
+            restartCount: number;
+            /** Containersready */
+            containersReady: string;
+            /** Issue */
+            issue: string;
+        };
+        /** HealthRemediationAction */
+        HealthRemediationAction: {
+            /** Label */
+            label: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "view_logs" | "restart_pod" | "describe" | "diagnostics";
+            /** Target */
+            target: string;
+            /** Namespace */
+            namespace: string;
+        };
         /** HealthSubmission */
         HealthSubmission: {
             /** Cluster */
@@ -17481,6 +17808,65 @@ export interface components {
             bnk?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** HealthTmmComponent */
+        HealthTmmComponent: {
+            /** Explanation */
+            explanation: string;
+            /** Poddetails */
+            podDetails: components["schemas"]["HealthPodDetail"][];
+            /** Remediationactions */
+            remediationActions: components["schemas"]["HealthRemediationAction"][];
+            /** Namespaces */
+            namespaces?: string[];
+            /** Zones */
+            zones?: string[];
+            /** Nodes */
+            nodes?: string[];
+            /** Pods */
+            pods: number;
+            /** Running */
+            running: number;
+            /** Containerstotal */
+            containersTotal: number;
+            /** Containersready */
+            containersReady: number;
+            /** Totalrestarts */
+            totalRestarts: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+        };
+        /** HealthVlanComponent */
+        HealthVlanComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthVlanDetail"][];
+        };
+        /** HealthVlanDetail */
+        HealthVlanDetail: {
+            /** Name */
+            name: string;
+            /** Programmed */
+            programmed: boolean;
+            /** Interfaces */
+            interfaces: string[];
+            /** Selfips */
+            selfIPs: string[];
+            /** Mtu */
+            mtu?: number | null;
         };
         /** HeartbeatSubmission */
         HeartbeatSubmission: {
@@ -25455,7 +25841,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BnkDataResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25488,7 +25874,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BnkHealthEndpointResponse"];
                 };
             };
             /** @description Validation Error */

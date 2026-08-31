@@ -3771,7 +3771,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BnkDataResponse"
+                }
               }
             }
           },
@@ -3828,7 +3830,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BnkHealthEndpointResponse"
+                }
               }
             }
           },
@@ -37262,6 +37266,418 @@
         ],
         "title": "BnkClusterMemberAssignResponse"
       },
+      "BnkDataResponse": {
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/BnkHealthResponse"
+          },
+          "topology": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Topology"
+          },
+          "dataPlane": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Dataplane"
+          },
+          "referenceGrants": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Referencegrants"
+          },
+          "topologyCounts": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Topologycounts"
+          },
+          "policyAssociations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Policyassociations"
+          },
+          "policyCount": {
+            "type": "integer",
+            "title": "Policycount"
+          },
+          "backends": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backends"
+          },
+          "palette": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Palette"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "health",
+          "topology",
+          "dataPlane",
+          "referenceGrants",
+          "topologyCounts",
+          "policyAssociations",
+          "policyCount",
+          "cluster_id"
+        ],
+        "title": "BnkDataResponse",
+        "description": "Wrapper for the unified /f5bnk/data endpoint.\n\nOnly the ``health`` key is strongly typed here; the remaining keys are\nkept as loose dicts because their schemas are large and already typed\nmanually in the frontend. This lets OpenAPI capture the enriched health\nshape without coupling the whole topology/palette response to Pydantic."
+      },
+      "BnkHealthAISection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "analyzerDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthAnalyzerDetail"
+            },
+            "type": "array",
+            "title": "Analyzerdetails"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "analyzers",
+          "analyzerDetails"
+        ],
+        "title": "BnkHealthAISection"
+      },
+      "BnkHealthDataPlaneSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "tmm": {
+            "$ref": "#/components/schemas/HealthTmmComponent"
+          },
+          "cneInstance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthCneInstance"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Cneinstance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "tmm",
+          "cneInstance"
+        ],
+        "title": "BnkHealthDataPlaneSection"
+      },
+      "BnkHealthEndpointResponse": {
+        "properties": {
+          "overall": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Overall"
+          },
+          "installShape": {
+            "type": "string",
+            "title": "Installshape",
+            "default": "unknown"
+          },
+          "installMethod": {
+            "type": "string",
+            "title": "Installmethod",
+            "default": "Unknown"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BnkHealthPlatformSection"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/BnkHealthDataPlaneSection"
+          },
+          "networking": {
+            "$ref": "#/components/schemas/BnkHealthNetworkingSection"
+          },
+          "security": {
+            "$ref": "#/components/schemas/BnkHealthSecuritySection"
+          },
+          "ai": {
+            "$ref": "#/components/schemas/BnkHealthAISection"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/HealthCounts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "overall",
+          "platform",
+          "dataPlane",
+          "networking",
+          "security",
+          "ai",
+          "counts",
+          "cluster_id"
+        ],
+        "title": "BnkHealthEndpointResponse"
+      },
+      "BnkHealthNetworkingSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "gateways": {
+            "$ref": "#/components/schemas/HealthGatewayComponent"
+          },
+          "vlans": {
+            "$ref": "#/components/schemas/HealthVlanComponent"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "staticRoutes": {
+            "type": "integer",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "type": "integer",
+            "title": "Snatpools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "gateways",
+          "vlans",
+          "listeners",
+          "httpRoutes",
+          "staticRoutes",
+          "snatPools"
+        ],
+        "title": "BnkHealthNetworkingSection"
+      },
+      "BnkHealthPlatformSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "flo": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "controller": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "crdInstaller": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "analyzer": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "flo",
+          "controller",
+          "crdInstaller",
+          "analyzer"
+        ],
+        "title": "BnkHealthPlatformSection"
+      },
+      "BnkHealthResponse": {
+        "properties": {
+          "overall": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Overall"
+          },
+          "installShape": {
+            "type": "string",
+            "title": "Installshape",
+            "default": "unknown"
+          },
+          "installMethod": {
+            "type": "string",
+            "title": "Installmethod",
+            "default": "Unknown"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BnkHealthPlatformSection"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/BnkHealthDataPlaneSection"
+          },
+          "networking": {
+            "$ref": "#/components/schemas/BnkHealthNetworkingSection"
+          },
+          "security": {
+            "$ref": "#/components/schemas/BnkHealthSecuritySection"
+          },
+          "ai": {
+            "$ref": "#/components/schemas/BnkHealthAISection"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/HealthCounts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "overall",
+          "platform",
+          "dataPlane",
+          "networking",
+          "security",
+          "ai",
+          "counts"
+        ],
+        "title": "BnkHealthResponse"
+      },
+      "BnkHealthSecuritySection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "securityPolicies": {
+            "type": "integer",
+            "title": "Securitypolicies"
+          },
+          "networkPolicies": {
+            "type": "integer",
+            "title": "Networkpolicies"
+          },
+          "addressLists": {
+            "type": "integer",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "type": "integer",
+            "title": "Portlists"
+          },
+          "irules": {
+            "$ref": "#/components/schemas/HealthIRulesComponent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "firewallPolicies",
+          "securityPolicies",
+          "networkPolicies",
+          "addressLists",
+          "portLists",
+          "irules"
+        ],
+        "title": "BnkHealthSecuritySection"
+      },
       "BnkReleaseListResponse": {
         "properties": {
           "releases": {
@@ -46692,6 +47108,438 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HealthAnalyzerDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "schedule"
+        ],
+        "title": "HealthAnalyzerDetail"
+      },
+      "HealthCneInstance": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "HealthCneInstance"
+      },
+      "HealthCounts": {
+        "properties": {
+          "gateways": {
+            "type": "integer",
+            "title": "Gateways"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "vlans": {
+            "type": "integer",
+            "title": "Vlans"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "irules": {
+            "type": "integer",
+            "title": "Irules"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "cneInstances": {
+            "type": "integer",
+            "title": "Cneinstances"
+          },
+          "tmm_pods": {
+            "type": "integer",
+            "title": "Tmm Pods"
+          },
+          "tmm_running": {
+            "type": "integer",
+            "title": "Tmm Running"
+          },
+          "tmm_containers": {
+            "type": "string",
+            "title": "Tmm Containers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gateways",
+          "listeners",
+          "httpRoutes",
+          "vlans",
+          "firewallPolicies",
+          "irules",
+          "analyzers",
+          "cneInstances",
+          "tmm_pods",
+          "tmm_running",
+          "tmm_containers"
+        ],
+        "title": "HealthCounts"
+      },
+      "HealthGatewayComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "accepted": {
+            "type": "integer",
+            "title": "Accepted"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "accepted",
+          "severity",
+          "explanation",
+          "addresses"
+        ],
+        "title": "HealthGatewayComponent"
+      },
+      "HealthIRuleDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "accepted",
+          "programmed"
+        ],
+        "title": "HealthIRuleDetail"
+      },
+      "HealthIRulesComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "accepted": {
+            "type": "integer",
+            "title": "Accepted"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthIRuleDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "accepted",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthIRulesComponent"
+      },
+      "HealthPlatformComponent": {
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "podDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPodDetail"
+            },
+            "type": "array",
+            "title": "Poddetails"
+          },
+          "remediationActions": {
+            "items": {
+              "$ref": "#/components/schemas/HealthRemediationAction"
+            },
+            "type": "array",
+            "title": "Remediationactions"
+          },
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Namespaces"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running"
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "explanation",
+          "podDetails",
+          "remediationActions",
+          "total",
+          "severity"
+        ],
+        "title": "HealthPlatformComponent"
+      },
+      "HealthPodDetail": {
+        "properties": {
+          "podName": {
+            "type": "string",
+            "title": "Podname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "nodeName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodename"
+          },
+          "nodeZone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodezone"
+          },
+          "nodeInstanceType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeinstancetype"
+          },
+          "hostIP": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostip"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "restartCount": {
+            "type": "integer",
+            "title": "Restartcount"
+          },
+          "containersReady": {
+            "type": "string",
+            "title": "Containersready"
+          },
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "podName",
+          "namespace",
+          "phase",
+          "restartCount",
+          "containersReady",
+          "issue"
+        ],
+        "title": "HealthPodDetail"
+      },
+      "HealthRemediationAction": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "view_logs",
+              "restart_pod",
+              "describe",
+              "diagnostics"
+            ],
+            "title": "Action"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "action",
+          "target",
+          "namespace"
+        ],
+        "title": "HealthRemediationAction"
+      },
       "HealthSubmission": {
         "properties": {
           "cluster": {
@@ -46721,6 +47569,179 @@
         },
         "type": "object",
         "title": "HealthSubmission"
+      },
+      "HealthTmmComponent": {
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "podDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPodDetail"
+            },
+            "type": "array",
+            "title": "Poddetails"
+          },
+          "remediationActions": {
+            "items": {
+              "$ref": "#/components/schemas/HealthRemediationAction"
+            },
+            "type": "array",
+            "title": "Remediationactions"
+          },
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Namespaces"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "pods": {
+            "type": "integer",
+            "title": "Pods"
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "containersTotal": {
+            "type": "integer",
+            "title": "Containerstotal"
+          },
+          "containersReady": {
+            "type": "integer",
+            "title": "Containersready"
+          },
+          "totalRestarts": {
+            "type": "integer",
+            "title": "Totalrestarts"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "explanation",
+          "podDetails",
+          "remediationActions",
+          "pods",
+          "running",
+          "containersTotal",
+          "containersReady",
+          "totalRestarts",
+          "severity"
+        ],
+        "title": "HealthTmmComponent"
+      },
+      "HealthVlanComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthVlanDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthVlanComponent"
+      },
+      "HealthVlanDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "interfaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Interfaces"
+          },
+          "selfIPs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selfips"
+          },
+          "mtu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtu"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "programmed",
+          "interfaces",
+          "selfIPs"
+        ],
+        "title": "HealthVlanDetail"
       },
       "HeartbeatSubmission": {
         "properties": {

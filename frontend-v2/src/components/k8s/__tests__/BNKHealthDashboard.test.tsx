@@ -45,6 +45,9 @@ const mockBnkData = {
         explanation: 'FLO operator is running normally',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: ['us-east-1a'],
+        nodes: ['worker-1'],
       },
       controller: {
         total: 1,
@@ -53,6 +56,9 @@ const mockBnkData = {
         explanation: 'CNE Controller is running',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: [],
+        nodes: [],
       },
       crdInstaller: {
         total: 1,
@@ -61,6 +67,9 @@ const mockBnkData = {
         explanation: 'CRD Installer completed',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-utils'],
+        zones: [],
+        nodes: [],
       },
       analyzer: {
         total: 0,
@@ -69,6 +78,9 @@ const mockBnkData = {
         explanation: '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
       },
     },
     dataPlane: {
@@ -81,8 +93,34 @@ const mockBnkData = {
         totalRestarts: 0,
         severity: 'healthy' as const,
         explanation: 'All TMM pods are running',
-        podDetails: [],
+        podDetails: [
+          {
+            podName: 'f5-tmm-abc12',
+            namespace: 'f5-bnk',
+            nodeName: 'worker-1',
+            nodeZone: 'us-east-1a',
+            nodeInstanceType: 'm5.large',
+            phase: 'Running',
+            restartCount: 0,
+            containersReady: '2/2',
+            issue: '',
+          },
+          {
+            podName: 'f5-tmm-def34',
+            namespace: 'f5-bnk',
+            nodeName: 'worker-2',
+            nodeZone: 'us-east-1b',
+            nodeInstanceType: 'm5.large',
+            phase: 'Running',
+            restartCount: 0,
+            containersReady: '2/2',
+            issue: '',
+          },
+        ],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: ['us-east-1a', 'us-east-1b'],
+        nodes: ['worker-1', 'worker-2'],
       },
       cneInstance: {
         name: 'bnk-instance',
@@ -189,6 +227,9 @@ beforeEach(() => {
     }),
     http.get(/\/api\/clusters\/\d+\/drift\/status/, () => {
       return HttpResponse.json(mockDriftStatus);
+    }),
+    http.get(/\/api\/licensing\/\d+\/cwc-status/, () => {
+      return HttpResponse.json({ status: 'unknown', expiry: null });
     }),
   );
 });
@@ -399,6 +440,9 @@ describe('BNKHealthDashboard', () => {
               explanation: 'Analyzer is running',
               podDetails: [],
               remediationActions: [],
+              namespaces: ['f5-bnk'],
+              zones: [],
+              nodes: [],
             },
           },
         },
@@ -722,6 +766,54 @@ describe('BNKHealthDashboard', () => {
       await waitFor(() => {
         expect(screen.getByText(/Updated/)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ─── Placement Enrichment ──────────────────────────────────────────
+
+  describe('placement enrichment', () => {
+    it('shows namespace, zone, and node chips when expanded', async () => {
+      const user = _userEvent.setup();
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('TMM (Data Plane)')).toBeInTheDocument();
+      });
+
+      // Expand the TMM card
+      const tmmHeader = screen.getByLabelText(/TMM.*health.*Healthy/i);
+      await user.click(tmmHeader);
+
+      // Namespace chips
+      expect(screen.getByText('Namespaces')).toBeInTheDocument();
+      expect(screen.getByText('f5-bnk')).toBeInTheDocument();
+      // Zone chips
+      expect(screen.getByText('Availability Zones')).toBeInTheDocument();
+      expect(screen.getAllByText('us-east-1a').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('us-east-1b').length).toBeGreaterThanOrEqual(1);
+      // Node chips
+      expect(screen.getByText('Nodes')).toBeInTheDocument();
+      expect(screen.getAllByText('worker-1').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('worker-2').length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shows node zone and instance type in pod details table', async () => {
+      const user = _userEvent.setup();
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('TMM (Data Plane)')).toBeInTheDocument();
+      });
+
+      const tmmHeader = screen.getByLabelText(/TMM.*health.*Healthy/i);
+      await user.click(tmmHeader);
+
+      await waitFor(() => {
+        expect(screen.getByText('Pod Details')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText('us-east-1a').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('m5.large').length).toBeGreaterThanOrEqual(1);
     });
   });
 

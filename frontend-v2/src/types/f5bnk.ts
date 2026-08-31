@@ -85,6 +85,8 @@ export interface HealthPodDetail {
   podName: string;
   namespace: string;
   nodeName?: string | null;
+  nodeZone?: string | null;
+  nodeInstanceType?: string | null;
   hostIP?: string | null;
   phase: string;
   restartCount: number;
@@ -96,6 +98,9 @@ export interface HealthComponentEnrichment {
   explanation: string;
   podDetails: HealthPodDetail[];
   remediationActions: HealthRemediationAction[];
+  namespaces: string[];
+  zones: string[];
+  nodes: string[];
 }
 
 export interface HealthPlatformComponent extends HealthComponentEnrichment {

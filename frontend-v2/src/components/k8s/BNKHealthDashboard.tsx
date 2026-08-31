@@ -115,6 +115,9 @@ interface ComponentCardData {
   explanation: string;
   podDetails: HealthPodDetail[];
   remediationActions: HealthRemediationAction[];
+  namespaces: string[];
+  zones: string[];
+  nodes: string[];
   children?: React.ReactNode;
 }
 
@@ -213,6 +216,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (comp.explanation as string) || '',
         podDetails: (comp.podDetails as HealthPodDetail[]) || [],
         remediationActions: (comp.remediationActions as HealthRemediationAction[]) || [],
+        namespaces: (comp.namespaces as string[]) || [],
+        zones: (comp.zones as string[]) || [],
+        nodes: (comp.nodes as string[]) || [],
       });
     }
 
@@ -228,6 +234,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (tmm.explanation as string) || '',
         podDetails: (tmm.podDetails as HealthPodDetail[]) || [],
         remediationActions: (tmm.remediationActions as HealthRemediationAction[]) || [],
+        namespaces: (tmm.namespaces as string[]) || [],
+        zones: (tmm.zones as string[]) || [],
+        nodes: (tmm.nodes as string[]) || [],
         children: hasCne ? (
           <div className="pt-2 border-t border-border">
             <p className="text-xs mb-2 text-muted-foreground">
@@ -256,6 +265,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (gateways.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             <StatRow label="Listeners" value={health.networking?.listeners ?? 0} />
@@ -275,6 +287,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (vlans.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             {(vlans.details as Array<{ name: string; interfaces: string[]; selfIPs: string[] }>)?.map((vlan) => (
@@ -299,6 +314,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (irules.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: errorIrules.length > 0 ? (
           <>
             {errorIrules.map((ir) => (
@@ -327,6 +345,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: 'Security policies protect your network functions with firewall rules, network segmentation, and access control.',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             <StatRow label="Firewall Policies" value={health.security?.firewallPolicies ?? 0} />
@@ -443,6 +464,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
             explanation={card.explanation}
             podDetails={card.podDetails}
             remediationActions={card.remediationActions}
+            namespaces={card.namespaces}
+            zones={card.zones}
+            nodes={card.nodes}
             clusterId={clusterId}
             onViewLogs={handleViewLogs}
             onDescribe={handleDescribe}
