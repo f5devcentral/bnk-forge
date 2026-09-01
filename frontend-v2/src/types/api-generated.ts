@@ -6110,7 +6110,7 @@ export interface paths {
         };
         /**
          * Get Bnk Consumption
-         * @description Get fleet-wide BNK resource consumption (admin only).
+         * @description Get fleet-wide BNK resource consumption.
          */
         get: operations["get_bnk_consumption_api_system_bnk_consumption_get"];
         put?: never;

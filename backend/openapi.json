@@ -15315,7 +15315,7 @@
           "system"
         ],
         "summary": "Get Bnk Consumption",
-        "description": "Get fleet-wide BNK resource consumption (admin only).",
+        "description": "Get fleet-wide BNK resource consumption.",
         "operationId": "get_bnk_consumption_api_system_bnk_consumption_get",
         "responses": {
           "200": {
