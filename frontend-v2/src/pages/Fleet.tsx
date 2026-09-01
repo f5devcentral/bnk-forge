@@ -47,6 +47,7 @@ import {
   AlertCircle,
   Play,
   Square,
+  Gauge,
 } from 'lucide-react';
 import {
   useFleetHealth,
@@ -90,6 +91,8 @@ import {
 import { AddClusterFlowDialog } from '@/components/k8s/AddClusterFlowDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
+import { useBnkConsumption } from '@/hooks/useSystem';
+import { BnkResourcesPanel } from '@/components/system/BnkResourcesPanel';
 import { queryKeys } from '@/lib/queryKeys';
 
 // DPFInfrastructurePanel is now rendered under /infrastructure (D-022 P6 IA).
@@ -3305,7 +3308,7 @@ function FleetsView() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // D-022 P6 IA: 'dpf' removed — DPU Infrastructure relocated to /infrastructure.
-type FleetView = 'overview' | 'inventory' | 'bulkops' | 'compliance' | 'fleets';
+type FleetView = 'overview' | 'inventory' | 'bulkops' | 'compliance' | 'fleets' | 'bnk';
 
 export default function Fleet() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -3316,7 +3319,7 @@ export default function Fleet() {
 
   // backward compat with ?view=overview etc. (dpf deep-links now redirect to /infrastructure)
   const urlView = searchParams.get('view') ?? searchParams.get('tab');
-  const validViews: FleetView[] = ['fleets', 'inventory', 'bulkops', 'compliance', 'overview'];
+  const validViews: FleetView[] = ['fleets', 'bnk', 'inventory', 'bulkops', 'compliance', 'overview'];
   const initialView: FleetView =
     urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'fleets';
   const [activeView, setActiveView] = useState<FleetView>(initialView);
@@ -3343,6 +3346,11 @@ export default function Fleet() {
   );
 
   const { refresh, isRefreshing } = usePageRefresh();
+  const {
+    data: bnkConsumption,
+    isLoading: bnkLoading,
+    error: bnkError,
+  } = useBnkConsumption();
 
   const subtitle = 'Group clusters into fleets and operate them at scale — health, policy, compliance, and staged operations.';
 
@@ -3362,7 +3370,7 @@ export default function Fleet() {
       ) : (
         <Tabs value={activeView} onValueChange={handleSelectView}>
           {/* D-022 P6 IA: 'DPU Infrastructure' tab removed — relocated to /infrastructure.
-              Fleets is the only top-level tab; all per-fleet views live in FleetDetailShell. */}
+              Top-level tabs: Fleets list + fleet-wide BNK Resources. */}
           <ResourceViewTabs
             variant="inline"
             aria-label="Fleet views"
@@ -3370,11 +3378,16 @@ export default function Fleet() {
             onChange={(key) => handleSelectView(key)}
             tabs={[
               { key: 'fleets', label: 'Fleets', icon: Flag },
+              { key: 'bnk', label: 'BNK Resources', icon: Gauge },
             ]}
           />
 
           <TabsContent value="fleets" className="mt-6">
             <FleetsView />
+          </TabsContent>
+
+          <TabsContent value="bnk" className="mt-6">
+            <BnkResourcesPanel data={bnkConsumption} isLoading={bnkLoading} error={bnkError} />
           </TabsContent>
 
           {/* Legacy deep-links: ?view=inventory|bulkops|compliance|overview are forwarded to

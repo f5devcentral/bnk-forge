@@ -23,7 +23,7 @@ from starlette.background import BackgroundTask
 from core.errors import BadRequestError, InternalError, handle_route_errors
 from core.maintenance import get_maintenance_status
 from database import get_db
-from routes.auth import require_admin
+from routes.auth import require_admin, require_viewer
 from schemas.backup import BackupCreateRequest, BackupStatusResponse, MaintenanceStatusResponse, RestoreResponse
 from schemas.system import BnkConsumptionResponse, SystemHealthResponse
 from services.backup_service import BackupService
@@ -155,10 +155,10 @@ def get_process_metrics() -> ProcessMetricsResponse:
 # Task Queue Metrics
 # ============================================================
 
-@router.get("/bnk-consumption", response_model=BnkConsumptionResponse)
+@public_router.get("/bnk-consumption", response_model=BnkConsumptionResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("BNK consumption")
 def get_bnk_consumption(db: Session = Depends(get_db)):
-    """Get fleet-wide BNK resource consumption (admin only)."""
+    """Get fleet-wide BNK resource consumption."""
     return SystemService(db).get_bnk_consumption()
 
 
