@@ -49,13 +49,20 @@ def resource_key(resource: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def has_condition(resource: dict, cond_type: str, expected: str = "True") -> bool:
-    """Check if a K8s resource has a condition of given type with expected status."""
+def has_condition(resource: dict, cond_type: str, expected: str | bool = "True") -> bool:
+    """Check if a K8s resource (or status/conditions container) has a condition of given type with expected status."""
     if not isinstance(resource, dict):
         return False
-    conditions = safe_get(resource, "status", "conditions", default=[]) or []
+    conditions = resource.get("conditions")
+    if conditions is None:
+        conditions = safe_get(resource, "status", "conditions", default=[])
+    if not isinstance(conditions, list):
+        return False
+    exp_str = str(expected).lower()
     return any(
-        isinstance(c, dict) and c.get("type") == cond_type and c.get("status") == expected
+        isinstance(c, dict)
+        and str(c.get("type", "")).lower() == cond_type.lower()
+        and str(c.get("status", "")).lower() == exp_str
         for c in conditions
     )
 
@@ -64,12 +71,99 @@ def get_condition_message(resource: dict, cond_type: str) -> str:
     """Get the message string from a K8s resource condition."""
     if not isinstance(resource, dict):
         return ""
-    conditions = safe_get(resource, "status", "conditions", default=[]) or []
+    conditions = resource.get("conditions")
+    if conditions is None:
+        conditions = safe_get(resource, "status", "conditions", default=[])
+    if not isinstance(conditions, list):
+        return ""
+    type_lower = cond_type.lower()
     for c in conditions:
-        if isinstance(c, dict) and c.get("type") == cond_type:
-            msg: str = c.get("message", "")
+        if isinstance(c, dict) and str(c.get("type", "")).lower() == type_lower:
+            msg: str = c.get("message", "") or c.get("reason", "")
             return msg
     return ""
+
+
+def get_policy_operational_status(resource: dict) -> dict[str, Any]:
+    """Derive resolved/programmed operational state from a BNK policy resource (BNKSecPolicy, BNKNetPolicy)."""
+    if not isinstance(resource, dict):
+        return {"resolved": False, "programmed": False, "messages": {"resolved": "", "programmed": ""}}
+
+    status = resource.get("status", {}) or {}
+    ancestors = status.get("ancestors")
+    descendants = status.get("descendants")
+
+    if isinstance(ancestors, list) or isinstance(descendants, list):
+        ancestors_list = ancestors if isinstance(ancestors, list) else []
+        descendants_list = descendants if isinstance(descendants, list) else []
+
+        ancestor_errors: list[str] = []
+        descendant_errors: list[str] = []
+
+        for a in ancestors_list:
+            if not isinstance(a, dict):
+                continue
+            a_conds = a.get("conditions", [])
+            is_ok = any(
+                isinstance(c, dict)
+                and str(c.get("status", "")).lower() == "true"
+                and c.get("reason") != "RefNotFound"
+                for c in a_conds
+            )
+            if not is_ok:
+                for c in a_conds:
+                    if isinstance(c, dict) and c.get("message"):
+                        ancestor_errors.append(str(c.get("message")))
+                        break
+
+        for d in descendants_list:
+            if not isinstance(d, dict):
+                continue
+            d_conds = d.get("conditions", [])
+            is_ok = any(
+                isinstance(c, dict)
+                and str(c.get("status", "")).lower() == "true"
+                and c.get("reason") != "RefNotFound"
+                for c in d_conds
+            )
+            if not is_ok:
+                for c in d_conds:
+                    if isinstance(c, dict) and c.get("message"):
+                        descendant_errors.append(str(c.get("message")))
+                        break
+
+        all_ok = len(ancestor_errors) == 0 and len(descendant_errors) == 0
+        resolved_msg = "; ".join(ancestor_errors) if ancestor_errors else ""
+        programmed_msg = "; ".join(descendant_errors) if descendant_errors else ""
+
+        return {
+            "resolved": all_ok or (len(ancestor_errors) == 0 and len(ancestors_list) > 0),
+            "programmed": all_ok,
+            "messages": {
+                "resolved": resolved_msg,
+                "programmed": programmed_msg,
+            },
+        }
+
+    resolved = (
+        has_condition(resource, "Resolved")
+        or has_condition(resource, "ResolvedRefs")
+        or has_condition(resource, "Accepted")
+        or has_condition(resource, "Ready")
+    )
+    programmed = (
+        has_condition(resource, "Programmed")
+        or has_condition(resource, "Ready")
+        or (resolved and not get_condition_message(resource, "Programmed"))
+    )
+    return {
+        "resolved": resolved,
+        "programmed": programmed,
+        "messages": {
+            "resolved": get_condition_message(resource, "Resolved") or get_condition_message(resource, "ResolvedRefs") or get_condition_message(resource, "Accepted"),
+            "programmed": get_condition_message(resource, "Programmed"),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
