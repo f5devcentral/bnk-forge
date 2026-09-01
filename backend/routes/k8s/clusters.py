@@ -113,6 +113,27 @@ def update_cluster(cluster_id: int, cluster_data: ClusterUpdateRequest, user: Us
     return result
 
 
+@router.post("/k8s/clusters/{cluster_id}/resync", response_model=ClusterOperationResponse)
+@handle_route_errors("resync cluster")
+def resync_cluster(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+    """Force a fresh inventory sync for a cluster (owner or admin only).
+
+    Issue #194: an explicit, documented rescan trigger. Operators previously
+    relied on a no-op ``PUT`` to force a refresh; this endpoint makes that
+    intent first-class and reliable. It enqueues a background scan (the same
+    task registration/PUT use) and returns immediately — the scan stamps
+    ``last_synced_at`` on completion. An unknown cluster 404s via the
+    ``require_cluster_owner`` dependency before this body runs, so there is no
+    silently-swallowed background no-op.
+    """
+    enqueue_cluster_scan(cluster_id)
+    return {
+        "success": True,
+        "message": "Inventory sync enqueued",
+        "cluster_id": cluster_id,
+    }
+
+
 @router.delete("/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
 @handle_route_errors("delete cluster")
 def delete_cluster(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):

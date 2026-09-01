@@ -1299,6 +1299,49 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/resync": {
+      "post": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Resync Cluster",
+        "description": "Force a fresh inventory sync for a cluster (owner or admin only).\n\nIssue #194: an explicit, documented rescan trigger. Operators previously\nrelied on a no-op ``PUT`` to force a refresh; this endpoint makes that\nintent first-class and reliable. It enqueues a background scan (the same\ntask registration/PUT use) and returns immediately \u2014 the scan stamps\n``last_synced_at`` on completion. An unknown cluster 404s via the\n``require_cluster_owner`` dependency before this body runs, so there is no\nsilently-swallowed background no-op.",
+        "operationId": "resync_cluster_api_k8s_clusters__cluster_id__resync_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/refresh-kubeconfig": {
       "post": {
         "tags": [
