@@ -240,6 +240,14 @@ async def get_license_status_endpoint(
     db: Session = Depends(get_db),
 ):
     """Get CWC license and telemetry status for a cluster."""
+    from core.cache import cache
+
+    cache_key = f"license:status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     # Try operator path
     result = await _try_operator_dispatch(
         db, cluster_id, "cwc_license_status",
@@ -250,7 +258,9 @@ async def get_license_status_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to get license status"),
             )
-        return {**result, "operator_dispatch": True}
+        response = {**result, "operator_dispatch": True}
+        cache.set(cache_key, response, ttl_seconds=30)
+        return response
 
     # Legacy fallback
     try:
@@ -279,6 +289,14 @@ async def get_license_report_endpoint(
     The report is only available when CWC telemetry state is
     "Config Report Ready to Download".
     """
+    from core.cache import cache
+
+    cache_key = f"license:report:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     # Try operator path
     result = await _try_operator_dispatch(
         db, cluster_id, "cwc_license_report", timeout=30.0,
@@ -289,7 +307,9 @@ async def get_license_report_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to get license report"),
             )
-        return {**result, "operator_dispatch": True}
+        response = {**result, "operator_dispatch": True}
+        cache.set(cache_key, response, ttl_seconds=60)
+        return response
 
     # Legacy fallback
     try:
@@ -319,6 +339,8 @@ async def activate_license_endpoint(
     Use this to activate an evaluation license, switch from eval to paid,
     or update an existing license.
     """
+    from core.cache import cache
+
     # Try operator path
     result = await _try_operator_dispatch(
         db, cluster_id, "cwc_license_activate",
@@ -330,6 +352,8 @@ async def activate_license_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to activate license"),
             )
+        cache.delete(f"license:status:{cluster_id}")
+        cache.delete(f"license:report:{cluster_id}")
         return {**result, "operator_dispatch": True}
 
     # Legacy fallback
@@ -346,6 +370,8 @@ async def activate_license_endpoint(
             status_code=502,
             detail=result.get("error_message", "License activation failed"),
         )
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"license:report:{cluster_id}")
     return result
 
 
@@ -378,6 +404,8 @@ async def renew_license_endpoint(
     where no previous license state exists, use POST /activate instead.
     """
     # Try operator path
+    from core.cache import cache
+
     action = "cwc_license_force_renew" if request.force else "cwc_license_renew"
     timeout = 180.0 if request.force else 60.0
     result = await _try_operator_dispatch(
@@ -391,6 +419,8 @@ async def renew_license_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to renew license"),
             )
+        cache.delete(f"license:status:{cluster_id}")
+        cache.delete(f"license:report:{cluster_id}")
         return {**result, "operator_dispatch": True}
 
     # Legacy fallback
@@ -409,6 +439,8 @@ async def renew_license_endpoint(
             status_code=502,
             detail=result.get("error_message", "License renewal failed"),
         )
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"license:report:{cluster_id}")
     return result
 
 
@@ -429,6 +461,8 @@ async def post_license_receipt_endpoint(
     the F5 licensing server, and receiving a signed manifest back,
     use this endpoint to deliver the manifest to CWC.
     """
+    from core.cache import cache
+
     # Try operator path
     result = await _try_operator_dispatch(
         db, cluster_id, "cwc_license_receipt",
@@ -440,6 +474,7 @@ async def post_license_receipt_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to post license receipt"),
             )
+        cache.delete(f"license:report:{cluster_id}")
         return {**result, "operator_dispatch": True}
 
     # Legacy fallback
@@ -458,6 +493,7 @@ async def post_license_receipt_endpoint(
             status_code=502,
             detail=result.get("error_message", "License receipt failed"),
         )
+    cache.delete(f"license:report:{cluster_id}")
     return result
 
 
