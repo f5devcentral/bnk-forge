@@ -27,6 +27,7 @@ from kubernetes import client as k8s_client
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream as k8s_stream
 
+from core.cache import cache
 from services.bnk_pod_discovery import classify_f5_pods, discover_f5_pods
 
 logger = logging.getLogger(__name__)
@@ -37,11 +38,21 @@ logger = logging.getLogger(__name__)
 
 DEBUG_CONTAINER_NAME = "debug"
 
+# Short-term cache for TMM pod listing (read-only diagnostics; pods don't
+# change second-to-second). Avoids re-discovering F5 pods on every diagnostic
+# panel render / command run.
+_TMM_POD_LIST_CACHE_TTL = 15
+
 # Default timeout for one-shot debug commands (seconds)
 DEFAULT_EXEC_TIMEOUT = 30
 
 # bdt_cli default socket address (TMM instance 0)
 BDT_CLI_DEFAULT_SOCKET = "tmm0:8850"
+
+# Cache TTL for read-only TMM debug command output. Diagnostic commands like
+# tmctl and configview are expensive (~1-3s each via kubectl exec) but their
+# output changes slowly; caching them makes the diagnostics panel responsive.
+_TMM_EXEC_CACHE_TTL = 10
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +60,14 @@ BDT_CLI_DEFAULT_SOCKET = "tmm0:8850"
 # ---------------------------------------------------------------------------
 
 
-def list_tmm_debug_pods(api_client: k8s_client.ApiClient) -> list[dict[str, Any]]:
+def _tmm_pod_list_cache_key(cluster_id: int) -> str:
+    return f"tmm:debug:pods:{cluster_id}"
+
+
+def list_tmm_debug_pods(
+    api_client: k8s_client.ApiClient,
+    cluster_id: int,
+) -> list[dict[str, Any]]:
     """
     List TMM pods that have a debug sidecar container.
 
@@ -57,8 +75,15 @@ def list_tmm_debug_pods(api_client: k8s_client.ApiClient) -> list[dict[str, Any]
         [{ name, namespace, has_debug, containers: [str, ...] }]
 
     Uses bnk_pod_discovery to find TMM pods, then checks each pod's
-    container list for the "debug" container.
+    container list for the "debug" container.     Results are cached for a
+    few seconds because this is hit repeatedly while the diagnostics panel
+    renders and runs commands.
     """
+    cache_key = _tmm_pod_list_cache_key(cluster_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     tenant_pods, utils_pods = discover_f5_pods(api_client)
     classified = classify_f5_pods(tenant_pods, utils_pods)
     tmm_pods = classified.get("tmm", [])
@@ -74,6 +99,7 @@ def list_tmm_debug_pods(api_client: k8s_client.ApiClient) -> list[dict[str, Any]
             "phase": pod.get("phase", "Unknown"),
         })
 
+    cache.set(cache_key, results, ttl_seconds=_TMM_POD_LIST_CACHE_TTL)
     return results
 
 
@@ -208,6 +234,36 @@ def exec_debug_command(
     }
 
 
+def _tmm_exec_cache_key(
+    cluster_id: int,
+    pod_name: str,
+    namespace: str,
+    command: list[str],
+) -> str:
+    """Cache key for read-only TMM debug command output."""
+    command_hash = "_".join(command).replace(" ", "_")
+    return f"tmm:exec:{cluster_id}:{namespace}:{pod_name}:{command_hash}"
+
+
+def _cached_exec_debug_command(
+    cluster_id: int,
+    api_client: k8s_client.ApiClient,
+    pod_name: str,
+    namespace: str,
+    command: list[str],
+    timeout: int = DEFAULT_EXEC_TIMEOUT,
+) -> dict[str, Any]:
+    """Execute a read-only debug command with short-term caching."""
+    cache_key = _tmm_exec_cache_key(cluster_id, pod_name, namespace, command)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = exec_debug_command(api_client, pod_name, namespace, command, timeout)
+    cache.set(cache_key, result, ttl_seconds=_TMM_EXEC_CACHE_TTL)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # tmctl — structured table queries
 # ---------------------------------------------------------------------------
@@ -222,6 +278,7 @@ def exec_tmctl(
     width: int = 200,
     directory: str = "blade",
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    cluster_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Execute a tmctl command and parse the tabular output.
@@ -240,7 +297,9 @@ def exec_tmctl(
 
     cmd.extend(["-w", str(width)])
 
-    result = exec_debug_command(api_client, pod_name, namespace, cmd, timeout)
+    result = _cached_exec_debug_command(
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+    )
 
     # Parse tabular output if the command succeeded
     parsed = parse_tmctl_output(result["stdout"]) if result["exit_code"] == 0 else None
@@ -343,6 +402,7 @@ def exec_configview(
     namespace: str,
     uuid: str,
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    cluster_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Execute 'configview uuid <uuid>' to inspect a specific CR config.
@@ -355,7 +415,9 @@ def exec_configview(
         raise ValueError(f"Invalid UUID format: {uuid}")
 
     cmd = ["configview", "uuid", uuid]
-    return exec_debug_command(api_client, pod_name, namespace, cmd, timeout)
+    return _cached_exec_debug_command(
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+    )
 
 
 def discover_configview_uuids(
@@ -363,6 +425,7 @@ def discover_configview_uuids(
     pod_name: str,
     namespace: str,
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    cluster_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Run 'configview list' to discover available configuration UUIDs.
@@ -371,7 +434,9 @@ def discover_configview_uuids(
         { uuids: [str, ...], raw: str, exit_code, duration_ms, command }
     """
     cmd = ["configview", "list"]
-    result = exec_debug_command(api_client, pod_name, namespace, cmd, timeout)
+    result = _cached_exec_debug_command(
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+    )
 
     # Parse UUIDs from the output
     uuids = []
@@ -407,6 +472,7 @@ def exec_bdt_cli(
     subcommand: str,
     socket: str = BDT_CLI_DEFAULT_SOCKET,
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    cluster_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Execute 'bdt_cli -u -s <socket> <subcommand>' for networking diagnostics.
@@ -421,4 +487,6 @@ def exec_bdt_cli(
         raise ValueError(f"Invalid bdt_cli subcommand: {subcommand}")
 
     cmd = ["bdt_cli", "-u", "-s", socket] + subcommand.split()
-    return exec_debug_command(api_client, pod_name, namespace, cmd, timeout)
+    return _cached_exec_debug_command(
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+    )

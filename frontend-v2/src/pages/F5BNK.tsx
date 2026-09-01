@@ -29,6 +29,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
+import { useBnkData } from '@/hooks/k8s/useBnk';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -798,6 +799,16 @@ export default function F5BNK() {
 
   const resolvedNamespace = selectedNamespace === 'all' ? undefined : selectedNamespace;
 
+  // Prefetch the unified BNK data bundle in the background while the user is
+  // on any BNK tab. This warms the cache for Traffic Flow / Topology / Policy
+  // so tab switching feels instant; the lightweight /f5bnk/health endpoint
+  // still drives the Health Dashboard landing view.
+  useBnkData(
+    selectedCluster ?? 0,
+    { namespace: resolvedNamespace },
+    { enabled: !!selectedCluster, pollingEnabled: false }
+  );
+
   return (
     <ResourceExplorerLayout>
       {/* Header */}
@@ -806,7 +817,10 @@ export default function F5BNK() {
         subtitle="BIG-IP Next for Kubernetes — gateways, policies, and traffic flow"
         projects={projects || []}
         selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
+        onProjectChange={(id) => {
+          setSelectedProject(id);
+          setSelectedCluster(null);
+        }}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}

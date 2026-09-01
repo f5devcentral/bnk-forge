@@ -18,6 +18,7 @@ from services.bnk_pod_discovery import (
     classify_f5_pods,
     discover_f5_pods,
 )
+from services.kubernetes._metrics import parse_cpu_to_millicores, parse_memory_to_bytes
 from services.kubernetes._resources import resolve_resource_type
 from services.kubernetes_service import KubernetesService
 from services.scanner.nodes import parse_node
@@ -27,12 +28,14 @@ from services.scanner.nodes import parse_node
 # across clusters. A 30-second TTL prevents redundant expensive K8s API bursts
 # when the user navigates/polls, while keeping staleness acceptable for views.
 _BNK_DATA_CACHE_TTL = 30
+_BNK_POD_DISCOVERY_CACHE_TTL = 15
 
 # Shared executor for BNK CRD/pod fetches. A per-request executor with
 # max_workers=20 explodes the process thread count when multiple BNK pages
-# are open (100+ threads observed on a laptop). Capping the shared pool
-# keeps latency stable under concurrent load.
-_BNK_FETCH_WORKERS = min(8, (os.cpu_count() or 4) + 2)
+# are open (100+ threads observed on a laptop). Because this pool is shared
+# across all requests, we can keep more workers available without thread
+# explosion; the limit is network/batch parallelism to the K8s API.
+_BNK_FETCH_WORKERS = min(16, (os.cpu_count() or 4) + 4)
 _bnk_fetch_executor: ThreadPoolExecutor | None = None
 
 
@@ -53,17 +56,25 @@ def _node_enrichment(node) -> dict[str, Any] | None:
     """Extract placement-relevant fields from a V1Node.
 
     Reuses ``services.scanner.nodes.parse_node`` so the label fallback logic
-    for zone and instance-type stays in one place.
+    for zone and instance-type stays in one place. Also includes allocatable
+    and capacity CPU/memory so fleet BNK resources can fall back to node
+    capacity when cluster metrics-server is not installed.
     """
     meta = getattr(node, "metadata", None)
     if not meta or not getattr(meta, "name", None):
         return None
     parsed = parse_node(node)
+    allocatable = parsed.get("allocatable", {})
+    capacity = parsed.get("capacity", {})
     return {
         "name": parsed["name"],
         "zone": parsed.get("zone"),
         "instance_type": parsed.get("instance_type"),
         "labels": parsed.get("labels", {}),
+        "allocatable_cpu": parse_cpu_to_millicores(allocatable.get("cpu")),
+        "allocatable_memory": parse_memory_to_bytes(allocatable.get("memory")),
+        "capacity_cpu": parse_cpu_to_millicores(capacity.get("cpu")),
+        "capacity_memory": parse_memory_to_bytes(capacity.get("memory")),
     }
 
 
@@ -84,6 +95,29 @@ def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
 
 def _bnk_data_cache_key(cluster_id: int, namespace: str | None, include_nodes: bool) -> str:
     return f"bnk:data:{cluster_id}:{namespace or 'all'}:{include_nodes}"
+
+
+def _cached_discover_f5_pods(
+    cluster_id: int,
+    api_client,
+    extra_namespaces: list[str],
+) -> tuple[list[dict], list[dict]]:
+    """Discover F5 pods with a short-lived per-cluster cache.
+
+    Pod discovery is I/O-heavy (parallel namespace queries + optional cluster-
+    wide sweep). Caching the result for a few seconds removes the duplicate work
+    when the BNK page loads multiple insight endpoints in quick succession.
+    """
+    from core.cache import cache
+
+    cache_key = f"bnk:pods:{cluster_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = discover_f5_pods(api_client, extra_namespaces=extra_namespaces)
+    cache.set(cache_key, result, ttl_seconds=_BNK_POD_DISCOVERY_CACHE_TTL)
+    return result
 
 
 def fetch_all_bnk_data(
@@ -116,6 +150,14 @@ def fetch_all_bnk_data(
 
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
+
+    # Seed BNK pod discovery with namespaces the scanner has previously
+    # observed F5 components in. This lets the fast-path phase find pods
+    # in non-standard namespaces without relying on the expensive cluster-
+    # wide sweep on every BNK page load.
+    persisted_namespaces: list[str] = list(
+        getattr(cluster, "discovered_namespaces", None) or []
+    )
 
     def safe_fetch(resource_type_key: str) -> list[dict]:
         try:
@@ -164,7 +206,9 @@ def fetch_all_bnk_data(
     # each spawn 20 threads and overwhelm the backend process.
     executor = _get_bnk_fetch_executor()
     crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
-    pods_future = executor.submit(discover_f5_pods, api_client)
+    pods_future = executor.submit(
+        _cached_discover_f5_pods, cluster_id, api_client, persisted_namespaces
+    )
     job_future = executor.submit(fetch_crd_installer_job)
     nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 

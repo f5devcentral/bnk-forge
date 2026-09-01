@@ -167,11 +167,13 @@ def fetch_tmm_traffic_stats(
             api_client, pod_name, namespace,
             _VIRTUAL_SERVER_STAT_TABLE, _VIRTUAL_SERVER_COLUMNS,
             directory=_TMCTL_DIRECTORY, timeout=timeout,
+            cluster_id=cluster_id,
         )
         fw_result = exec_tmctl(
             api_client, pod_name, namespace,
             _FW_RULE_STAT_TABLE, _FW_RULE_COLUMNS,
             directory=_TMCTL_DIRECTORY, timeout=timeout,
+            cluster_id=cluster_id,
         )
         result["virtualServerStat"] = vs_result
         result["fwRuleStat"] = fw_result
@@ -295,7 +297,9 @@ def _fetch_configview_mappings(
 
     mappings: list[dict[str, Any]] = []
     try:
-        uuids_result = discover_configview_uuids(api_client, pod_name, namespace, timeout)
+        uuids_result = discover_configview_uuids(
+            api_client, pod_name, namespace, timeout, cluster_id=cluster_id
+        )
         if uuids_result.get("exit_code") != 0:
             return mappings
         uuids = uuids_result.get("uuids", []) or []
@@ -304,7 +308,9 @@ def _fetch_configview_mappings(
 
         def _probe_uuid(uuid: str) -> dict[str, Any] | None:
             try:
-                cv_result = exec_configview(api_client, pod_name, namespace, uuid, timeout)
+                cv_result = exec_configview(
+                    api_client, pod_name, namespace, uuid, timeout, cluster_id=cluster_id
+                )
                 if cv_result.get("exit_code") == 0:
                     hints = _parse_configview_uuid_output(cv_result.get("stdout", ""))
                     if hints:

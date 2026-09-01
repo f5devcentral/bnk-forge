@@ -423,7 +423,10 @@ export default function CNF() {
         subtitle="Discovery-driven CRD browser — read-only metadata, conditions, and YAML"
         projects={projects || []}
         selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
+        onProjectChange={(id) => {
+          setSelectedProject(id);
+          setSelectedCluster(null);
+        }}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}

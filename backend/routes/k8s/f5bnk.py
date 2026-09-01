@@ -249,7 +249,9 @@ def get_gateway_topology(
 ):
     """Gateway topology graph — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with /f5bnk/data and /f5bnk/health
+    # so switching tabs reuses the same fetched BNK state.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     result = analyze_topology(data)
     result["cluster_id"] = cluster_id
     result["namespace"] = namespace
@@ -269,7 +271,9 @@ def get_policy_gateway_associations(
 ):
     """Policy-gateway associations — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with /f5bnk/data and /f5bnk/health
+    # so switching tabs reuses the same fetched BNK state.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     result = analyze_policy_associations(data)
     result["cluster_id"] = cluster_id
     result["namespace"] = namespace
@@ -352,7 +356,8 @@ def get_a2a_agents(
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster) if probe else None
 
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with the other BNK insight endpoints.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     topo = analyze_topology(data)
 
     agents = discover_a2a_agents(
