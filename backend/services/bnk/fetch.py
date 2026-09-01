@@ -6,11 +6,13 @@ modules (health, topology, etc.) consume the dict returned by
 ``fetch_all_bnk_data`` and are pure data transformations.
 """
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from kubernetes import client as k8s_client
 
+from core.cache import cache
 from services.bnk.helpers import BNK_RESOURCE_TYPES
 from services.bnk_pod_discovery import (
     classify_f5_pods,
@@ -19,6 +21,29 @@ from services.bnk_pod_discovery import (
 from services.kubernetes._resources import resolve_resource_type
 from services.kubernetes_service import KubernetesService
 from services.scanner.nodes import parse_node
+
+# Short-term cache for BNK data fetch. The dashboard polls /f5bnk/data and
+# /f5bnk/gateway-topology, and fleet BNK consumption aggregates the same data
+# across clusters. A 30-second TTL prevents redundant expensive K8s API bursts
+# when the user navigates/polls, while keeping staleness acceptable for views.
+_BNK_DATA_CACHE_TTL = 30
+
+# Shared executor for BNK CRD/pod fetches. A per-request executor with
+# max_workers=20 explodes the process thread count when multiple BNK pages
+# are open (100+ threads observed on a laptop). Capping the shared pool
+# keeps latency stable under concurrent load.
+_BNK_FETCH_WORKERS = min(8, (os.cpu_count() or 4) + 2)
+_bnk_fetch_executor: ThreadPoolExecutor | None = None
+
+
+def _get_bnk_fetch_executor() -> ThreadPoolExecutor:
+    global _bnk_fetch_executor
+    if _bnk_fetch_executor is None:
+        _bnk_fetch_executor = ThreadPoolExecutor(
+            max_workers=_BNK_FETCH_WORKERS,
+            thread_name_prefix="bnk-fetch-",
+        )
+    return _bnk_fetch_executor
 
 _CRD_INSTALLER_NAMESPACE = "f5-utils"
 _CRD_INSTALLER_LABEL = "app=crd-installer"
@@ -57,15 +82,24 @@ def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
         return {}
 
 
+def _bnk_data_cache_key(cluster_id: int, namespace: str | None, include_nodes: bool) -> str:
+    return f"bnk:data:{cluster_id}:{namespace or 'all'}:{include_nodes}"
+
+
 def fetch_all_bnk_data(
     k8s_service: KubernetesService,
     cluster_id: int,
     namespace: str | None = None,
     *,
     include_nodes: bool = False,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Fetch all BNK CRD resources + pods in one parallel burst.
+
+    Results are cached for 15 seconds by (cluster_id, namespace, include_nodes).
+    Pass ``force=True`` to bypass the cache (used by explicit "Rescan"/refresh
+    actions and by operations that need the freshest state).
 
     Returns a dict with:
       - resources: {resource_type_key: [items...]} for all CRD types
@@ -74,6 +108,12 @@ def fetch_all_bnk_data(
       - nodes: {nodeName: {zone, instance_type, labels}} (only if include_nodes=True)
       - cluster_id, namespace
     """
+    cache_key = _bnk_data_cache_key(cluster_id, namespace, include_nodes)
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
 
@@ -119,21 +159,23 @@ def fetch_all_bnk_data(
         except Exception:
             return None
 
-    # Fire all CRD fetches + pod discovery + job status + nodes in parallel
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
-        pods_future = executor.submit(discover_f5_pods, api_client)
-        job_future = executor.submit(fetch_crd_installer_job)
-        nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
+    # Fire all CRD fetches + pod discovery + job status + nodes in parallel.
+    # Use the module-level shared executor so concurrent BNK page loads do not
+    # each spawn 20 threads and overwhelm the backend process.
+    executor = _get_bnk_fetch_executor()
+    crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
+    pods_future = executor.submit(discover_f5_pods, api_client)
+    job_future = executor.submit(fetch_crd_installer_job)
+    nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 
-        resources = {rt: fut.result() for rt, fut in crd_futures.items()}
-        tenant_pods, utils_pods = pods_future.result()
-        crd_installer_job = job_future.result()
-        nodes = nodes_future.result() if nodes_future is not None else {}
+    resources = {rt: fut.result() for rt, fut in crd_futures.items()}
+    tenant_pods, utils_pods = pods_future.result()
+    crd_installer_job = job_future.result()
+    nodes = nodes_future.result() if nodes_future is not None else {}
 
     classified = classify_f5_pods(tenant_pods, utils_pods)
 
-    return {
+    result = {
         "resources": resources,
         "pods": {"tenant": tenant_pods, "utils": utils_pods},
         "classified_pods": classified,
@@ -142,3 +184,5 @@ def fetch_all_bnk_data(
         "cluster_id": cluster_id,
         "namespace": namespace,
     }
+    cache.set(cache_key, result, ttl_seconds=_BNK_DATA_CACHE_TTL)
+    return result

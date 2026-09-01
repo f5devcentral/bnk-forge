@@ -37,6 +37,7 @@ from typing import Any
 from kubernetes import client as k8s_client
 from kubernetes.stream import stream as k8s_stream
 
+from core.cache import cache
 from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -1622,7 +1623,7 @@ def _format_switch_failure_message(
 
 
 def get_license_status(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Get CWC license and telemetry status for a cluster.
@@ -1631,27 +1632,49 @@ def get_license_status(
     Returns normalized license state, entitlement type, expiry, telemetry
     status, etc.  The raw CWC response is included as ``raw_cwc_response``
     for debugging.
+
+    Results are cached for 30 seconds per cluster; pass ``force=True`` to
+    bypass the cache.
     """
+    cache_key = f"license:status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     result = _cwc_request(api_client, "GET", "/status")
     normalized = _normalize_cwc_status(result if isinstance(result, dict) else {})
-    return {"success": True, **normalized}
+    response = {"success": True, **normalized}
+    cache.set(cache_key, response, ttl_seconds=30)
+    return response
 
 
 def get_license_report(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Get CWC telemetry report for a cluster.
 
     CWC endpoint: GET /report
     Only available when CWC telemetry state is "Config Report Ready to Download".
+
+    Results are cached for 60 seconds per cluster; pass ``force=True`` to
+    bypass the cache.
     """
+    cache_key = f"license:report:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     result = _cwc_request(api_client, "GET", "/report")
-    return {"success": True, **result}
+    response = {"success": True, **result}
+    cache.set(cache_key, response, ttl_seconds=60)
+    return response
 
 
 def activate_license(
@@ -1750,6 +1773,11 @@ def activate_license(
         response["jwks_validation"] = jwks_status
     elif jwks_validation:
         response["jwks_validation"] = jwks_validation
+
+    # Activation changed license state; invalidate cached status/report so the
+    # next read reflects the new state instead of a stale cached value.
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"license:report:{cluster_id}")
     return response
 
 

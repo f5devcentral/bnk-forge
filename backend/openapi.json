@@ -1205,6 +1205,49 @@
         }
       }
     },
+    "/api/projects/{project_id}/connectivity": {
+      "get": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Project Batch Connectivity Check",
+        "description": "Probe connectivity for all clusters in a project in parallel.",
+        "operationId": "project_batch_connectivity_check_api_projects__project_id__connectivity_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchConnectivityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}": {
       "get": {
         "tags": [
@@ -3778,7 +3821,7 @@
           "k8s-f5bnk"
         ],
         "summary": "Get Bnk Data",
-        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.",
+        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.\n\nQuery parameters:\n  - force: bypass the 15-second BNK data / TMM traffic-stats cache.",
         "operationId": "get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get",
         "parameters": [
           {
@@ -3804,6 +3847,16 @@
                 }
               ],
               "title": "Namespace"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
             }
           }
         ],
@@ -25106,6 +25159,16 @@
               "type": "integer",
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -25148,6 +25211,16 @@
             "schema": {
               "type": "integer",
               "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
             }
           }
         ],
@@ -39873,6 +39946,79 @@
             ],
             "title": "Meta Data"
           },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Status"
+          },
+          "connectivity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectivity Status"
+          },
+          "integration_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Status"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "access_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Method"
+          },
           "deployable_release_id": {
             "anyOf": [
               {
@@ -40452,6 +40598,68 @@
               }
             ],
             "title": "Node Count"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Status"
+          },
+          "connectivity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectivity Status"
+          },
+          "integration_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Status"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "access_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Method"
           },
           "deployable_release_id": {
             "anyOf": [

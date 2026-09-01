@@ -235,7 +235,9 @@ async def _try_operator_dispatch(
     dependencies=[Depends(require_viewer)],
 )
 async def get_license_status_endpoint(
-    cluster_id: int, db: Session = Depends(get_db),
+    cluster_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
 ):
     """Get CWC license and telemetry status for a cluster."""
     # Try operator path
@@ -253,7 +255,7 @@ async def get_license_status_endpoint(
     # Legacy fallback
     try:
         k8s_service = KubernetesService(db)
-        return legacy_get_license_status(k8s_service, cluster_id)
+        return legacy_get_license_status(k8s_service, cluster_id, force=force)
     except QKViewError as e:
         raise HTTPException(
             status_code=e.status_code or 502,
@@ -267,7 +269,9 @@ async def get_license_status_endpoint(
     dependencies=[Depends(require_viewer)],
 )
 async def get_license_report_endpoint(
-    cluster_id: int, db: Session = Depends(get_db),
+    cluster_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
 ):
     """
     Get CWC telemetry report for a cluster.
@@ -290,7 +294,7 @@ async def get_license_report_endpoint(
     # Legacy fallback
     try:
         k8s_service = KubernetesService(db)
-        return legacy_get_license_report(k8s_service, cluster_id)
+        return legacy_get_license_report(k8s_service, cluster_id, force=force)
     except QKViewError as e:
         raise HTTPException(
             status_code=e.status_code or 502,

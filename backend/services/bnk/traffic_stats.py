@@ -23,12 +23,15 @@ Graceful degradation:
 
 import json
 import logging
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
 from kubernetes import client as k8s_client
 
+from core.cache import cache
 from services.bnk.helpers import resource_name, resource_ns
 from services.tmm_debug_service import (
     DEFAULT_EXEC_TIMEOUT,
@@ -36,6 +39,36 @@ from services.tmm_debug_service import (
     exec_configview,
     exec_tmctl,
 )
+
+# Shared executor for configview uuid probes. Each probe is a kubectl exec
+# (~2s) and the old sequential loop could take 100s on busy clusters. A small
+# shared pool keeps latency bounded without spawning threads per request.
+_TMM_CONFIGVIEW_WORKERS = min(4, (os.cpu_count() or 2) + 1)
+_tmm_configview_executor: ThreadPoolExecutor | None = None
+
+# Short-term cache for TMM traffic stats. The expensive part is configview uuid
+# kubectl exec probes; cache the whole envelope so dashboard polling and tab
+# switching don't re-probe every few seconds.
+_TMM_TRAFFIC_STATS_CACHE_TTL = 30
+
+# Configview uuid-to-resource mappings are stable for a given TMM pod (they
+# reflect configured virtual servers/gateways). Cache them separately for 5
+# minutes so the per-request stats fetch only does the fast tmctl calls.
+_TMM_CONFIGVIEW_MAP_CACHE_TTL = 300
+
+
+def _get_tmm_configview_executor() -> ThreadPoolExecutor:
+    global _tmm_configview_executor
+    if _tmm_configview_executor is None:
+        _tmm_configview_executor = ThreadPoolExecutor(
+            max_workers=_TMM_CONFIGVIEW_WORKERS,
+            thread_name_prefix="tmm-cv-",
+        )
+    return _tmm_configview_executor
+
+
+def _tmm_traffic_stats_cache_key(cluster_id: int) -> str:
+    return f"bnk:tmm_stats:{cluster_id}"
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +110,8 @@ def fetch_tmm_traffic_stats(
     api_client: k8s_client.ApiClient,
     classified_pods: dict[str, list[dict]],
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    cluster_id: int | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Fetch raw traffic statistics from a TMM debug sidecar.
@@ -85,6 +120,8 @@ def fetch_tmm_traffic_stats(
         api_client: Authenticated K8s API client.
         classified_pods: Output of ``classify_f5_pods``; used to find TMM pods.
         timeout: Max seconds to wait for each ``tmctl``/``configview`` exec.
+        cluster_id: When provided, results are cached for 15 seconds per cluster.
+        force: Bypass the cache (used for explicit refresh actions).
 
     Returns:
         Dict with keys:
@@ -96,6 +133,12 @@ def fetch_tmm_traffic_stats(
           - error: None or a short error string
           - durationMs: total fetch time
     """
+    cache_key = _tmm_traffic_stats_cache_key(cluster_id) if cluster_id is not None else None
+    if not force and cache_key is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     start = datetime.now(UTC)
     result: dict[str, Any] = {
         "source": "tmctl",
@@ -137,13 +180,17 @@ def fetch_tmm_traffic_stats(
         # to map. Skipping the uuid probes when vs_rows is empty avoids ~50
         # sequential kubectl exec calls (each ~2s) on clusters with no traffic.
         if vs_result.get("exit_code") == 0 and _tmctl_rows_as_dicts(vs_result):
-            mappings = _fetch_configview_mappings(api_client, pod_name, namespace, timeout)
+            mappings = _fetch_configview_mappings(
+                api_client, pod_name, namespace, timeout, cluster_id=cluster_id
+            )
             result["configviewMappings"] = mappings
     except Exception as exc:  # pragma: no cover - defensive catch-all
         logger.exception("Failed to fetch TMM traffic stats")
         result["error"] = f"TMM exec failed: {exc}"
 
     result["durationMs"] = _elapsed_ms(start)
+    if cache_key is not None:
+        cache.set(cache_key, result, ttl_seconds=_TMM_TRAFFIC_STATS_CACHE_TTL)
     return result
 
 
@@ -237,8 +284,15 @@ def _fetch_configview_mappings(
     pod_name: str,
     namespace: str,
     timeout: int,
+    cluster_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Run configview list + uuid for each UUID and return parsed metadata."""
+    cache_key = f"bnk:configview_mappings:{cluster_id}:{pod_name}:{namespace}" if cluster_id is not None else None
+    if cluster_id is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     mappings: list[dict[str, Any]] = []
     try:
         uuids_result = discover_configview_uuids(api_client, pod_name, namespace, timeout)
@@ -246,17 +300,30 @@ def _fetch_configview_mappings(
             return mappings
         uuids = uuids_result.get("uuids", []) or []
         # Cap probing to avoid long exec bursts on busy clusters.
-        for uuid in uuids[:50]:
+        uuids = uuids[:20]
+
+        def _probe_uuid(uuid: str) -> dict[str, Any] | None:
             try:
                 cv_result = exec_configview(api_client, pod_name, namespace, uuid, timeout)
                 if cv_result.get("exit_code") == 0:
                     hints = _parse_configview_uuid_output(cv_result.get("stdout", ""))
                     if hints:
-                        mappings.append({"uuid": uuid, **hints})
+                        return {"uuid": uuid, **hints}
             except Exception:
                 logger.debug("configview uuid %s probe failed", uuid, exc_info=True)
+            return None
+
+        executor = _get_tmm_configview_executor()
+        futures = [executor.submit(_probe_uuid, uuid) for uuid in uuids]
+        for future in futures:
+            result = future.result()
+            if result:
+                mappings.append(result)
     except Exception:
         logger.debug("configview list probe failed", exc_info=True)
+
+    if cache_key is not None:
+        cache.set(cache_key, mappings, ttl_seconds=_TMM_CONFIGVIEW_MAP_CACHE_TTL)
     return mappings
 
 

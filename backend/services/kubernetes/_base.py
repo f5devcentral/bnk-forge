@@ -13,12 +13,18 @@ from kubernetes import config as k8s_config
 from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
+from core.cache import cache
 from core.encryption import decrypt_value
 from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
 from services.reachability import with_breaker
+
+# EKS/GCP bearer tokens are valid for ~15 minutes. Generating them on every
+# kubeconfig load is expensive (boto3/google-auth crypto + STS calls) and shows
+# up prominently under concurrent BNK page loads. Cache per cluster for 10 min.
+_TOKEN_TTL_SECONDS = 600
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +226,14 @@ class KubernetesServiceBase:
         """
         import base64
 
+        region = cluster.region or aws_env.get("AWS_REGION") or aws_env.get("AWS_DEFAULT_REGION") or "us-east-1"
+        access_key = aws_env.get("AWS_ACCESS_KEY_ID") or "default"
+        cache_key = f"eks_token:{cluster.id}:{region}:{access_key}"
+        cached = cache.get(cache_key)
+        if cached:
+            logger.debug("Using cached EKS token for cluster %s", cluster.name)
+            return cached
+
         try:
             import boto3
             from botocore.auth import SigV4QueryAuth
@@ -298,6 +312,7 @@ class KubernetesServiceBase:
         # Encode as k8s-aws-v1 token
         token = "k8s-aws-v1." + base64.urlsafe_b64encode(signed_url.encode("utf-8")).rstrip(b"=").decode("utf-8")
 
+        cache.set(cache_key, token, ttl_seconds=_TOKEN_TTL_SECONDS)
         logger.info("Generated EKS bearer token for cluster %s (region=%s)", cluster_name, region)
         return token
 
