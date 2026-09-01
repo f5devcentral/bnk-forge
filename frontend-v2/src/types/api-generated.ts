@@ -566,6 +566,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/connectivity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Batch Connectivity Check
+         * @description Probe connectivity for all clusters in a project in parallel.
+         */
+        get: operations["project_batch_connectivity_check_api_projects__project_id__connectivity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}": {
         parameters: {
             query?: never;
@@ -1466,6 +1486,9 @@ export interface paths {
          *     Returns health analysis, topology graph, and policy associations
          *     in a single response. The frontend caches this under one query key
          *     so switching between Health, Topology, and Policy Map tabs is instant.
+         *
+         *     Query parameters:
+         *       - force: bypass the 15-second BNK data / TMM traffic-stats cache.
          */
         get: operations["get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get"];
         put?: never;
@@ -15449,6 +15472,20 @@ export interface components {
             meta_data?: {
                 [key: string]: unknown;
             } | null;
+            /** Node Count */
+            node_count?: number | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
+            /** Connectivity Status */
+            connectivity_status?: string | null;
+            /** Integration Status */
+            integration_status?: string | null;
+            /** Zones */
+            zones?: string[];
+            /** Access Method */
+            access_method?: string | null;
             /** Deployable Release Id */
             deployable_release_id?: number | null;
             /** Running Release Id */
@@ -15642,6 +15679,18 @@ export interface components {
             bnk_config?: components["schemas"]["BnkClusterConfigSummary"] | null;
             /** Node Count */
             node_count?: number | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
+            /** Connectivity Status */
+            connectivity_status?: string | null;
+            /** Integration Status */
+            integration_status?: string | null;
+            /** Zones */
+            zones?: string[];
+            /** Access Method */
+            access_method?: string | null;
             /** Deployable Release Id */
             deployable_release_id?: number | null;
             /** Running Release Id */
@@ -25257,6 +25306,37 @@ export interface operations {
             };
         };
     };
+    project_batch_connectivity_check_api_projects__project_id__connectivity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchConnectivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_cluster_details_api_k8s_clusters__cluster_id__get: {
         parameters: {
             query?: never;
@@ -26716,6 +26796,7 @@ export interface operations {
         parameters: {
             query?: {
                 namespace?: string | null;
+                force?: boolean;
             };
             header?: never;
             path: {
@@ -40958,7 +41039,9 @@ export interface operations {
     };
     get_license_status_endpoint_api_licensing__cluster_id__status_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;
@@ -40989,7 +41072,9 @@ export interface operations {
     };
     get_license_report_endpoint_api_licensing__cluster_id__report_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;

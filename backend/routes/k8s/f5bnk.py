@@ -154,6 +154,7 @@ def _build_bnk_context(cluster: KubernetesCluster, db: Session) -> dict[str, Any
 def get_bnk_data(
     cluster_id: int,
     namespace: str | None = None,
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
     """
@@ -162,10 +163,15 @@ def get_bnk_data(
     Returns health analysis, topology graph, and policy associations
     in a single response. The frontend caches this under one query key
     so switching between Health, Topology, and Policy Map tabs is instant.
+
+    Query parameters:
+      - force: bypass the 15-second BNK data / TMM traffic-stats cache.
     """
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
+    data = fetch_all_bnk_data(
+        k8s_service, cluster_id, namespace, include_nodes=True, force=force
+    )
     data.update(_build_bnk_context(cluster, db))
 
     # Traffic stats require the TMM debug sidecar.  Fetching them here keeps
@@ -174,7 +180,9 @@ def get_bnk_data(
     # the whole /f5bnk/data request.
     try:
         api_client = k8s_service.load_kubeconfig(cluster)
-        raw_stats = fetch_tmm_traffic_stats(api_client, data.get("classified_pods", {}))
+        raw_stats = fetch_tmm_traffic_stats(
+            api_client, data.get("classified_pods", {}), cluster_id=cluster_id, force=force
+        )
         traffic_stats = analyze_traffic_stats(data, raw_stats)
     except Exception:
         logger.exception("Failed to collect TMM traffic stats for cluster %d", cluster_id)
