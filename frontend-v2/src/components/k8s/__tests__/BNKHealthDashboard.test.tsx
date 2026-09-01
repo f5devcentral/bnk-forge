@@ -235,8 +235,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   server.use(
-    http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-      return HttpResponse.json(mockBnkData);
+    http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
+      return HttpResponse.json(mockBnkData.health);
     }),
     http.get(/\/api\/clusters\/\d+\/drift\/status/, () => {
       return HttpResponse.json(mockDriftStatus);
@@ -257,9 +257,9 @@ describe('BNKHealthDashboard', () => {
   describe('loading state', () => {
     it('shows loading spinner while fetching health data', () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, async () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, async () => {
           await new Promise((r) => setTimeout(r, 10000));
-          return HttpResponse.json(mockBnkData);
+          return HttpResponse.json(mockBnkData.health);
         }),
       );
 
@@ -273,7 +273,7 @@ describe('BNKHealthDashboard', () => {
   describe('error state', () => {
     it('shows error message when API fails', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json({ error: 'Connection refused' }, { status: 500 });
         }),
       );
@@ -287,7 +287,7 @@ describe('BNKHealthDashboard', () => {
 
     it('shows Retry button on error', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json({ error: 'Timeout' }, { status: 500 });
         }),
       );
@@ -345,11 +345,8 @@ describe('BNKHealthDashboard', () => {
 
     it('shows "BNK Platform Critical" for critical overall status', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json({
-            ...mockBnkData,
-            health: { ...mockBnkData.health, overall: 'critical' },
-          });
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
+          return HttpResponse.json({ ...mockBnkData.health, overall: 'critical' });
         }),
       );
 
@@ -441,28 +438,25 @@ describe('BNKHealthDashboard', () => {
 
     it('renders Analyzer card when analyzer count > 0', async () => {
       const dataWithAnalyzer = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          platform: {
-            ...mockBnkData.health.platform,
-            analyzer: {
-              total: 1,
-              running: 1,
-              severity: 'healthy' as const,
-              explanation: 'Analyzer is running',
-              podDetails: [],
-              remediationActions: [],
-              namespaces: ['f5-bnk'],
-              zones: [],
-              nodes: [],
-            },
+        ...mockBnkData.health,
+        platform: {
+          ...mockBnkData.health.platform,
+          analyzer: {
+            total: 1,
+            running: 1,
+            severity: 'healthy' as const,
+            explanation: 'Analyzer is running',
+            podDetails: [],
+            remediationActions: [],
+            namespaces: ['f5-bnk'],
+            zones: [],
+            nodes: [],
           },
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(dataWithAnalyzer);
         }),
       );
@@ -487,13 +481,10 @@ describe('BNKHealthDashboard', () => {
     });
 
     it('hides FLO Operator card when installShape is absent', async () => {
-      const noShapeData = {
-        ...mockBnkData,
-        health: { ...mockBnkData.health, installShape: undefined },
-      };
+      const noShapeData = { ...mockBnkData.health, installShape: undefined };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(noShapeData);
         }),
       );
@@ -507,13 +498,10 @@ describe('BNKHealthDashboard', () => {
     });
 
     it('hides FLO Operator card when installShape is "unknown" (e.g. transient cluster-connectivity issue)', async () => {
-      const unknownShapeData = {
-        ...mockBnkData,
-        health: { ...mockBnkData.health, installShape: 'unknown' },
-      };
+      const unknownShapeData = { ...mockBnkData.health, installShape: 'unknown' };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(unknownShapeData);
         }),
       );
@@ -528,16 +516,13 @@ describe('BNKHealthDashboard', () => {
 
     it('hides FLO Operator card when installShape is "helm"', async () => {
       const helmData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          installShape: 'helm',
-          installMethod: 'Helm / manual',
-        },
+        ...mockBnkData.health,
+        installShape: 'helm',
+        installMethod: 'Helm / manual',
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(helmData);
         }),
       );
@@ -552,16 +537,13 @@ describe('BNKHealthDashboard', () => {
 
     it('shows the install method badge when installMethod is present', async () => {
       const helmData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          installShape: 'helm',
-          installMethod: 'Helm / manual',
-        },
+        ...mockBnkData.health,
+        installShape: 'helm',
+        installMethod: 'Helm / manual',
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(helmData);
         }),
       );
@@ -614,23 +596,20 @@ describe('BNKHealthDashboard', () => {
   describe('severity sorting', () => {
     it('sorts critical cards before healthy cards', async () => {
       const dataWithCritical = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          overall: 'critical' as const,
-          platform: {
-            ...mockBnkData.health.platform,
-            flo: {
-              ...mockBnkData.health.platform.flo,
-              severity: 'critical' as const,
-              explanation: 'FLO pod is crash-looping',
-            },
+        ...mockBnkData.health,
+        overall: 'critical' as const,
+        platform: {
+          ...mockBnkData.health.platform,
+          flo: {
+            ...mockBnkData.health.platform.flo,
+            severity: 'critical' as const,
+            explanation: 'FLO pod is crash-looping',
           },
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(dataWithCritical);
         }),
       );
@@ -851,22 +830,19 @@ describe('BNKHealthDashboard', () => {
 
     it('shows Kubeconfig badge when integration mode is kubeconfig', async () => {
       const kubeconfigData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          integration: {
-            status: 'healthy',
-            operatorConnected: false,
-            operatorMode: 'kubeconfig',
-            operatorVersion: null,
-            lastSeen: null,
-            message: 'Cluster managed via kubeconfig',
-          },
+        ...mockBnkData.health,
+        integration: {
+          status: 'healthy',
+          operatorConnected: false,
+          operatorMode: 'kubeconfig',
+          operatorVersion: null,
+          lastSeen: null,
+          message: 'Cluster managed via kubeconfig',
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(kubeconfigData);
         }),
       );
@@ -880,19 +856,16 @@ describe('BNKHealthDashboard', () => {
 
     it('shows Unreachable badge when connectivity status is unreachable', async () => {
       const unreachableData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          connectivity: {
-            status: 'unreachable',
-            message: 'Kubernetes API is unreachable',
-            checkedAt: '2026-01-01T00:00:00Z',
-          },
+        ...mockBnkData.health,
+        connectivity: {
+          status: 'unreachable',
+          message: 'Kubernetes API is unreachable',
+          checkedAt: '2026-01-01T00:00:00Z',
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/health/, () => {
           return HttpResponse.json(unreachableData);
         }),
       );

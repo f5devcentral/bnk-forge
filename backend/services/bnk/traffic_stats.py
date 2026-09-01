@@ -133,8 +133,10 @@ def fetch_tmm_traffic_stats(
         result["virtualServerStat"] = vs_result
         result["fwRuleStat"] = fw_result
 
-        # Only probe configview if tmctl succeeded — configview is optional metadata.
-        if vs_result.get("exit_code") == 0:
+        # Only probe configview if tmctl succeeded and there are virtual servers
+        # to map. Skipping the uuid probes when vs_rows is empty avoids ~50
+        # sequential kubectl exec calls (each ~2s) on clusters with no traffic.
+        if vs_result.get("exit_code") == 0 and _tmctl_rows_as_dicts(vs_result):
             mappings = _fetch_configview_mappings(api_client, pod_name, namespace, timeout)
             result["configviewMappings"] = mappings
     except Exception as exc:  # pragma: no cover - defensive catch-all
