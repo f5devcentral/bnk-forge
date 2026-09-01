@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from services.bnk.helpers import (
-    get_condition_message,
+    get_policy_operational_status,
     has_condition,
     make_resource_map,
     resolve_list_refs,
@@ -82,14 +82,7 @@ def _first_condition_message(conditions: list) -> str:
 
 def _policy_status(resource: dict) -> dict[str, Any]:
     """Derive resolved/programmed operational state from a BNK policy resource."""
-    return {
-        "resolved": has_condition(resource, "Resolved") or has_condition(resource, "Accepted"),
-        "programmed": has_condition(resource, "Programmed"),
-        "messages": {
-            "resolved": get_condition_message(resource, "Resolved") or get_condition_message(resource, "Accepted"),
-            "programmed": get_condition_message(resource, "Programmed"),
-        },
-    }
+    return get_policy_operational_status(resource)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +269,13 @@ def _match_routes_to_listener(
             route_name = route_meta.get("name", "")
             parent_status = _route_parent_status(route, gw_name, gw_ns, listener_name)
             parent_conditions = parent_status.get("conditions", []) if parent_status else []
-            accepted = has_condition(parent_status, "Accepted") if parent_status else False
+            accepted = (
+                has_condition(parent_status, "Accepted")
+                or has_condition(parent_status, "Programmed")
+                or has_condition(parent_status, "Ready")
+                or has_condition(route, "Accepted")
+                or has_condition(route, "Programmed")
+            ) if parent_status else (has_condition(route, "Accepted") or has_condition(route, "Programmed"))
 
             routes_data.append({
                 "name": route_name,
@@ -551,14 +550,24 @@ def _build_cne_instance(cne: dict) -> dict[str, Any]:
         for key, val in c_spec.items()
         if isinstance(val, dict) and "enabled" in val
     }
+    c_status = cne.get("status", {}) or {}
+    phase = c_status.get("phase", "")
+    ready = (
+        has_condition(cne, "Programmed")
+        or has_condition(cne, "Ready")
+        or has_condition(cne, "Available")
+        or has_condition(cne, "Reconciled")
+    )
+    if not phase and ready:
+        phase = "Ready" if (has_condition(cne, "Ready") or has_condition(cne, "Available")) else "Active"
     return {
         "name": resource_name(cne),
         "namespace": resource_ns(cne),
         "features": features,
         "networkAttachments": c_spec.get("networkAttachments", []),
         "containerPlatform": c_spec.get("containerPlatform", ""),
-        "phase": cne.get("status", {}).get("phase", ""),
-        "ready": has_condition(cne, "Programmed") or has_condition(cne, "Ready"),
+        "phase": phase,
+        "ready": ready,
     }
 
 
