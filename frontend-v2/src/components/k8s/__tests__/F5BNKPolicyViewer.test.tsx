@@ -255,6 +255,70 @@ describe('F5BNKPolicyViewer', () => {
     });
   });
 
+  it('shows hit count column for firewall rules when traffic stats available', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+        return HttpResponse.json({
+          ...emptyBnkData,
+          policyAssociations: [
+            {
+              namespace: 'bnk-demo',
+              gateway_name: 'my-gw',
+              listener_name: 'http',
+              gateway_ip: '10.1.1.100',
+              port: 80,
+              protocol: 'HTTP',
+              bnk_policy_name: 'sec-policy-1',
+              firewall_policy_name: 'fw-policy-1',
+              rules_count: 1,
+              rules: [
+                {
+                  name: 'allow-http',
+                  action: 'accept',
+                  ipProtocol: 'tcp',
+                  source: { addresses: [], ports: [], addressLists: [], portLists: [] },
+                  destination: { addresses: [], ports: [], addressLists: [], portLists: [] },
+                  logging: false,
+                },
+              ],
+            },
+          ],
+          policyCount: 1,
+          trafficStats: {
+            source: 'tmctl',
+            podName: 'f5-tmm-abc',
+            sampledAt: '2026-09-01T00:00:00Z',
+            available: true,
+            error: null,
+            listeners: [],
+            egresses: [],
+            firewallRules: [{
+              policyName: 'fw-policy-1',
+              namespace: 'bnk-demo',
+              ruleName: 'allow-http',
+              action: 'accept',
+              ipProtocol: 'tcp',
+              hitCount: 42,
+            }],
+          },
+        });
+      })
+    );
+
+    render(<F5BNKPolicyViewer clusterId={1} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('my-gw / http')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Show Firewall Rules'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hits')).toBeInTheDocument();
+    });
+    expect(screen.getByText('42')).toBeInTheDocument();
+  });
+
   it('shows error state on API failure', async () => {
     server.use(
       http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {

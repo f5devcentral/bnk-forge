@@ -26,6 +26,7 @@ import type {
   TopologyCounts,
   TopologyEgress,
   BnkBackendEntry,
+  BnkTrafficStatsResponse,
 } from '@/types/f5bnk';
 import {
   Globe,
@@ -265,11 +266,14 @@ const INITIAL_BACKEND_LIMIT = 4;
 function GatewayFlowRow({
   flow,
   onSelectResource,
+  gatewayStatsMap,
 }: {
   flow: GatewayFlowData;
   onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  gatewayStatsMap: Map<string, { totalConns: number; curConns: number }>;
 }) {
   const { gateway } = flow;
+  const gatewayStats = gatewayStatsMap.get(`${gateway.namespace}/${gateway.name}`);
   const [expandedListeners, setExpandedListeners] = useState<Set<string>>(() =>
     new Set(gateway.listeners.slice(0, 3).map(l => l.name)),
   );
@@ -337,6 +341,13 @@ function GatewayFlowRow({
             ) : null}
           </div>
         </div>
+        {gatewayStats && gatewayStats.totalConns > 0 && (
+          <Badge variant="info" className="text-xs gap-1">
+            <Activity className="h-3 w-3" />
+            {gatewayStats.totalConns} conn{gatewayStats.totalConns !== 1 ? 's' : ''}
+            {gatewayStats.curConns > 0 && <span className="opacity-70">({gatewayStats.curConns} active)</span>}
+          </Badge>
+        )}
       </div>
 
       {/* Flow pipeline */}
@@ -823,8 +834,22 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
   const dataPlane = data?.dataPlane as TopologyDataPlane | undefined;
   const counts = data?.topologyCounts as TopologyCounts | undefined;
   const backends = data?.backends as BnkBackendEntry[] | undefined;
+  const trafficStats = data?.trafficStats as BnkTrafficStatsResponse | undefined;
 
   const flowRows = useMemo(() => buildGatewayFlowData(topology), [topology]);
+
+  const gatewayStatsMap = useMemo(() => {
+    const map = new Map<string, { totalConns: number; curConns: number }>();
+    if (!trafficStats?.available) return map;
+    for (const listener of trafficStats.listeners || []) {
+      const key = `${listener.gatewayNamespace}/${listener.gatewayName}`;
+      const existing = map.get(key) || { totalConns: 0, curConns: 0 };
+      existing.totalConns += listener.clientsideTotConns || 0;
+      existing.curConns += listener.clientsideCurConns || 0;
+      map.set(key, existing);
+    }
+    return map;
+  }, [trafficStats]);
 
   // Loading
   if (isLoading) {
@@ -862,6 +887,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
   const totalBackends = flowRows.reduce((n, r) => n + r.backendNames.size, 0);
   const totalListeners = counts?.listeners ?? flowRows.reduce((n, r) => n + r.listenerCount, 0);
   const totalPolicies = (counts?.firewallPolicies ?? 0) + (counts?.securityPolicies ?? 0) + (counts?.networkPolicies ?? 0);
+  const totalConnections = Array.from(gatewayStatsMap.values()).reduce((n, s) => n + s.totalConns, 0);
 
   // Empty state — no gateways and no meaningful infrastructure
   const hasInfra = dataPlane && (
@@ -905,6 +931,9 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
           <StatChip icon={Layers} value={totalListeners} label={totalListeners !== 1 ? 'listeners' : 'listener'} variant="muted" />
           <StatChip icon={Route} value={totalRoutes} label={totalRoutes !== 1 ? 'routes' : 'route'} variant="secondary" />
           <StatChip icon={Server} value={totalBackends} label={totalBackends !== 1 ? 'backends' : 'backend'} variant="success" />
+          {totalConnections > 0 && (
+            <StatChip icon={Activity} value={totalConnections} label={totalConnections !== 1 ? 'connections' : 'connection'} variant="info" />
+          )}
           {totalPolicies > 0 && (
             <StatChip icon={Shield} value={totalPolicies} label={totalPolicies !== 1 ? 'policies' : 'policy'} variant="warning" />
           )}
@@ -921,6 +950,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
           key={`${flow.gateway.namespace}/${flow.gateway.name}`}
           flow={flow}
           onSelectResource={onSelectResource}
+          gatewayStatsMap={gatewayStatsMap}
         />
       ))}
 

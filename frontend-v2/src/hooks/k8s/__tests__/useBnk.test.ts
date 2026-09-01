@@ -50,6 +50,16 @@ const mockBnkData = {
   topologyCounts: { gateways: 1, routes: 1 },
   policyAssociations: [{ policy: 'p-1', gateways: ['gw-1'] }],
   policyCount: 1,
+  trafficStats: {
+    source: 'tmctl',
+    podName: 'f5-tmm-abc',
+    sampledAt: '2026-09-01T00:00:00Z',
+    available: true,
+    error: null,
+    listeners: [],
+    egresses: [],
+    firewallRules: [],
+  },
 };
 
 // Register BNK data handler
@@ -176,6 +186,7 @@ describe('useF5GatewayTopology', () => {
       topology: expect.any(Array),
       dataPlane: expect.any(Array),
       counts: { gateways: 1, routes: 1 },
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });
@@ -191,6 +202,7 @@ describe('useF5PolicyGatewayAssociations', () => {
     expect(result.current.data).toMatchObject({
       associations: expect.any(Array),
       count: 1,
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });

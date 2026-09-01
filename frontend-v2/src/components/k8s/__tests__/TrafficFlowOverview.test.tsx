@@ -252,6 +252,45 @@ describe('TrafficFlowOverview', () => {
       const ruleMatches = screen.getAllByText(/1 rule/);
       expect(ruleMatches.length).toBeGreaterThanOrEqual(1);
     });
+
+    it('shows traffic stats summary chips when trafficStats available', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json({
+            ...populatedBnkData,
+            trafficStats: {
+              source: 'tmctl',
+              podName: 'f5-tmm-abc',
+              sampledAt: '2026-09-01T00:00:00Z',
+              available: true,
+              error: null,
+              listeners: [{
+                gatewayName: 'prod-gateway',
+                gatewayNamespace: 'bnk-demo',
+                listenerName: 'http',
+                clientsideBytesIn: 1024,
+                clientsideBytesOut: 2048,
+                clientsideCurConns: 5,
+                clientsideTotConns: 100,
+                serversideBytesIn: 0,
+                serversideBytesOut: 0,
+                serversideCurConns: 0,
+                serversideTotConns: 0,
+              }],
+              egresses: [],
+              firewallRules: [],
+            },
+          });
+        })
+      );
+
+      render(<TrafficFlowOverview clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('connections')).toBeInTheDocument();
+      });
+      expect(screen.getByText('100')).toBeInTheDocument();
+    });
   });
 
   describe('Egress (outbound) lane', () => {

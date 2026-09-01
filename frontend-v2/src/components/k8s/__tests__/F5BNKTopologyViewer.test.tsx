@@ -91,4 +91,89 @@ describe('F5BNKTopologyViewer', () => {
       expect(screen.getByText('Failed to load topology')).toBeInTheDocument();
     });
   });
+
+  it('shows traffic stat badges on listeners and egresses', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+        return HttpResponse.json({
+          ...emptyBnkData,
+          topology: [{
+            name: 'bnk-gateway',
+            namespace: 'bnk-demo',
+            gatewayClassName: 'f5-bnk',
+            addresses: ['10.1.1.100'],
+            listeners: [{
+              name: 'http',
+              protocol: 'HTTP',
+              port: 80,
+              routes: [],
+              networkPolicies: [],
+            }],
+            securityPolicies: [],
+          }],
+          topologyCounts: {
+            ...emptyBnkData.topologyCounts,
+            gateways: 1,
+            listeners: 1,
+            egresses: 1,
+          },
+          dataPlane: {
+            ...emptyBnkData.dataPlane,
+            egresses: [{
+              name: 'default-egress',
+              namespace: 'bnk-demo',
+              snatType: 'SRC_TRANS_AUTOMAP',
+              egressSnatpool: null,
+              firewallEnforcedPolicy: null,
+              logProfile: null,
+              capturedNamespaces: [],
+              vxlan: null,
+              ready: true,
+            }],
+          },
+          trafficStats: {
+            source: 'tmctl',
+            podName: 'f5-tmm-abc',
+            sampledAt: '2026-09-01T00:00:00Z',
+            available: true,
+            error: null,
+            listeners: [{
+              gatewayName: 'bnk-gateway',
+              gatewayNamespace: 'bnk-demo',
+              listenerName: 'http',
+              clientsideBytesIn: 1024,
+              clientsideBytesOut: 2048,
+              clientsideCurConns: 5,
+              clientsideTotConns: 100,
+              serversideBytesIn: 0,
+              serversideBytesOut: 0,
+              serversideCurConns: 0,
+              serversideTotConns: 0,
+            }],
+            egresses: [{
+              egressName: 'default-egress',
+              namespace: 'bnk-demo',
+              clientsideBytesIn: 512,
+              clientsideBytesOut: 256,
+              clientsideCurConns: 2,
+              clientsideTotConns: 42,
+              serversideBytesIn: 0,
+              serversideBytesOut: 0,
+              serversideCurConns: 0,
+              serversideTotConns: 0,
+            }],
+            firewallRules: [],
+          },
+        });
+      })
+    );
+
+    render(<F5BNKTopologyViewer clusterId={1} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('bnk-gateway')).toBeInTheDocument();
+    });
+    expect(screen.getByText('5 conns')).toBeInTheDocument();
+    expect(screen.getByText('100 total')).toBeInTheDocument();
+  });
 });
