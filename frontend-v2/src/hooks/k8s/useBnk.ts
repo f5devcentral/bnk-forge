@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
-  BnkHealthResponse,
+  BnkHealthEndpointResponse,
   GatewayTopologyResponse,
   F5PolicyGatewayAssociationsResponse,
   BnkTrafficStatsResponse,
@@ -39,11 +39,17 @@ export function useF5BNKHealth(
   params?: { namespace?: string },
   options?: { pollingEnabled?: boolean; enabled?: boolean }
 ) {
-  const query = useBnkData(clusterId, params, options);
-  return {
-    ...query,
-    data: query.data?.health as BnkHealthResponse | undefined,
-  };
+  // Health dashboard uses the lightweight /f5bnk/health endpoint directly.
+  // The unified /f5bnk/data endpoint includes optional TMM traffic stats that
+  // can take 30s+ on clusters with many configview UUIDs; health data should
+  // not be blocked by that.
+  return useQuery({
+    queryKey: queryKeys.k8s.clusters.bnkHealth(clusterId, params),
+    queryFn: () => api.getF5BNKHealth(clusterId, params),
+    enabled: options?.enabled !== false && !!clusterId,
+    refetchInterval: options?.pollingEnabled !== false ? POLL_INTERVALS.SLOW : false,
+    placeholderData: (previousData) => previousData,
+  });
 }
 
 export function useF5GatewayTopology(
