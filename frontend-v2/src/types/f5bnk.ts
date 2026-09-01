@@ -612,6 +612,55 @@ export interface BnkBackendEntry {
   createdAt?: string | null;
 }
 
+// ─── Traffic Statistics Types ────────────────────────────────────────
+
+export interface BnkListenerTrafficStats {
+  gatewayName: string;
+  gatewayNamespace: string;
+  listenerName: string;
+  clientsideBytesIn: number;
+  clientsideBytesOut: number;
+  clientsideCurConns: number;
+  clientsideTotConns: number;
+  serversideBytesIn: number;
+  serversideBytesOut: number;
+  serversideCurConns: number;
+  serversideTotConns: number;
+}
+
+export interface BnkEgressTrafficStats {
+  egressName: string;
+  namespace: string;
+  clientsideBytesIn: number;
+  clientsideBytesOut: number;
+  clientsideCurConns: number;
+  clientsideTotConns: number;
+  serversideBytesIn: number;
+  serversideBytesOut: number;
+  serversideCurConns: number;
+  serversideTotConns: number;
+}
+
+export interface BnkFirewallRuleTrafficStats {
+  policyName: string;
+  namespace: string;
+  ruleName: string;
+  action: string;
+  ipProtocol: string;
+  hitCount: number;
+}
+
+export interface BnkTrafficStatsResponse {
+  source: string | null;
+  podName: string | null;
+  sampledAt: string | null;
+  available: boolean;
+  error: string | null;
+  listeners: BnkListenerTrafficStats[];
+  egresses: BnkEgressTrafficStats[];
+  firewallRules: BnkFirewallRuleTrafficStats[];
+}
+
 // BNK unified data response (getBnkData)
 export interface BnkDataResponse {
   health: BnkHealthResponse;
@@ -623,6 +672,7 @@ export interface BnkDataResponse {
   policyCount: number;
   backends?: BnkBackendEntry[];
   palette?: BnkPaletteData;
+  trafficStats?: BnkTrafficStatsResponse;
   cluster_id: number;
   namespace: string | null;
 }

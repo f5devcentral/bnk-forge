@@ -36,7 +36,7 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 // ─── Types (matching backend response) ─────────────────────────────────
 
@@ -235,6 +235,22 @@ interface TopologyResponse {
   topology: TopologyGateway[];
   dataPlane: DataPlane;
   counts: TopologyCounts;
+  trafficStats?: {
+    available?: boolean;
+    listeners?: Array<{
+      gatewayName: string;
+      gatewayNamespace: string;
+      listenerName: string;
+      clientsideCurConns: number;
+      clientsideTotConns: number;
+    }>;
+    egresses?: Array<{
+      egressName: string;
+      namespace: string;
+      clientsideCurConns: number;
+      clientsideTotConns: number;
+    }>;
+  };
   cluster_id: number;
   namespace: string | null;
 }
@@ -271,7 +287,7 @@ function CollapsibleSection({
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
+  badge?: string | React.ReactNode;
   badgeVariant?: 'default' | 'secondary' | 'destructive' | 'outline';
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -313,9 +329,13 @@ function CollapsibleSection({
           </button>
         )}
         {badge && (
-          <Badge variant={badgeVariant} className="ml-auto text-xs">
-            {badge}
-          </Badge>
+          <span className="ml-auto flex items-center gap-1.5">
+            {typeof badge === 'string' ? (
+              <Badge variant={badgeVariant} className="text-xs">
+                {badge}
+              </Badge>
+            ) : badge}
+          </span>
         )}
       </div>
       {isOpen && <div className="ml-4 mt-1">{children}</div>}
@@ -429,6 +449,27 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
   const topology = (data as TopologyResponse)?.topology || [];
   const dataPlane = (data as TopologyResponse)?.dataPlane;
   const counts = (data as TopologyResponse)?.counts;
+  const trafficStats = (data as TopologyResponse)?.trafficStats;
+
+  const listenerStatsMap = useMemo(() => {
+    const map = new Map<string, { curConns: number; totConns: number }>();
+    if (!trafficStats?.available) return map;
+    for (const s of trafficStats.listeners || []) {
+      const key = `${s.gatewayNamespace}/${s.gatewayName}/${s.listenerName}`;
+      map.set(key, { curConns: s.clientsideCurConns || 0, totConns: s.clientsideTotConns || 0 });
+    }
+    return map;
+  }, [trafficStats]);
+
+  const egressStatsMap = useMemo(() => {
+    const map = new Map<string, { curConns: number; totConns: number }>();
+    if (!trafficStats?.available) return map;
+    for (const s of trafficStats.egresses || []) {
+      const key = `${s.namespace}/${s.egressName}`;
+      map.set(key, { curConns: s.clientsideCurConns || 0, totConns: s.clientsideTotConns || 0 });
+    }
+    return map;
+  }, [trafficStats]);
 
   // ── Loading State ──
   if (isLoading) {
@@ -561,13 +602,33 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
           {/* Topology Tree */}
           <div className="p-3 space-y-0.5">
             {/* ── Listeners ── */}
-            {gw.listeners.map((listener) => (
-              <CollapsibleSection
-                key={listener.name}
-                title={listener.name}
-                icon={Radio}
-                badge={`${listener.protocol} :${listener.port}`}
-              >
+            {gw.listeners.map((listener) => {
+              const listenerKey = `${gw.namespace}/${gw.name}/${listener.name}`;
+              const stats = listenerStatsMap.get(listenerKey);
+              const listenerBadges = (
+                <>
+                  <Badge variant="secondary" className="text-xs">
+                    {listener.protocol}:{listener.port}
+                  </Badge>
+                  {stats && (
+                    <>
+                      <Badge variant="info" className="text-xs">
+                        {stats.curConns} conn{stats.curConns !== 1 ? 's' : ''}
+                      </Badge>
+                      <Badge variant="muted" className="text-xs">
+                        {stats.totConns} total
+                      </Badge>
+                    </>
+                  )}
+                </>
+              );
+              return (
+                <CollapsibleSection
+                  key={listener.name}
+                  title={listener.name}
+                  icon={Radio}
+                  badge={listenerBadges}
+                >
                 {/* ── Routes (HTTP, GRPC, TCP, UDP, TLS, L4) ── */}
                 {listener.routes.map((route) => (
                   <CollapsibleSection
@@ -730,7 +791,8 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                   </CollapsibleSection>
                 ))}
               </CollapsibleSection>
-            ))}
+            );
+          })}
 
             {/* ── Security Policies (gateway-level) ── */}
             {gw.securityPolicies.length > 0 && (
@@ -1050,14 +1112,28 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                   badge={`${dataPlane!.egresses.length}`}
                   defaultOpen={false}
                 >
-                  {dataPlane!.egresses.map((eg) => (
-                    <CollapsibleSection
-                      key={`${eg.namespace}/${eg.name}`}
-                      title={`${eg.name}${eg.namespace ? ` (${eg.namespace})` : ''}`}
-                      icon={ArrowRightLeft}
-                      indent={1}
-                      defaultOpen={false}
-                    >
+                  {dataPlane!.egresses.map((eg) => {
+                    const egressKey = `${eg.namespace}/${eg.name}`;
+                    const egressStats = egressStatsMap.get(egressKey);
+                    const egressBadges = egressStats ? (
+                      <>
+                        <Badge variant="info" className="text-xs">
+                          {egressStats.curConns} conn{egressStats.curConns !== 1 ? 's' : ''}
+                        </Badge>
+                        <Badge variant="muted" className="text-xs">
+                          {egressStats.totConns} total
+                        </Badge>
+                      </>
+                    ) : undefined;
+                    return (
+                      <CollapsibleSection
+                        key={egressKey}
+                        title={`${eg.name}${eg.namespace ? ` (${eg.namespace})` : ''}`}
+                        icon={ArrowRightLeft}
+                        badge={egressBadges}
+                        indent={1}
+                        defaultOpen={false}
+                      >
                       <TreeLeaf
                         icon={ArrowRightLeft}
                         label="SNAT Type"
@@ -1101,11 +1177,13 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                           indent={2}
                         />
                       )}
-                    </CollapsibleSection>
-                  ))}
+                      </CollapsibleSection>
+                    );
+                  })}
                 </CollapsibleSection>
               </div>
             )}
+
 
             {/* ── Logging ── */}
             {(dataPlane!.logging.hslPublishers.length > 0 || dataPlane!.logging.logProfiles.length > 0) && (

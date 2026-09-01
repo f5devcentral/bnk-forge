@@ -44,8 +44,10 @@ from services.bnk_data_service import (
     analyze_health,
     analyze_policy_associations,
     analyze_topology,
+    analyze_traffic_stats,
     extract_palette_data,
     fetch_all_bnk_data,
+    fetch_tmm_traffic_stats,
 )
 from services.kubernetes_service import KubernetesService
 from services.operator_registry import is_operator_live_connected
@@ -165,6 +167,18 @@ def get_bnk_data(
     data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     data.update(_build_bnk_context(cluster, db))
 
+    # Traffic stats require the TMM debug sidecar.  Fetching them here keeps
+    # the unified response shape so all insight tabs share the same cache key.
+    # Errors are captured inside the trafficStats envelope; they never fail
+    # the whole /f5bnk/data request.
+    try:
+        api_client = k8s_service.load_kubeconfig(cluster)
+        raw_stats = fetch_tmm_traffic_stats(api_client, data.get("classified_pods", {}))
+        traffic_stats = analyze_traffic_stats(data, raw_stats)
+    except Exception:
+        logger.exception("Failed to collect TMM traffic stats for cluster %d", cluster_id)
+        traffic_stats = analyze_traffic_stats(data, None)
+
     health = analyze_health(data)
     topo = analyze_topology(data)
     policy = analyze_policy_associations(data)
@@ -181,6 +195,7 @@ def get_bnk_data(
         "policyCount": policy["count"],
         "backends": backends,
         "palette": palette,
+        "trafficStats": traffic_stats,
         "cluster_id": cluster_id,
         "namespace": namespace,
     }

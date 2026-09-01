@@ -204,13 +204,62 @@ class BnkHealthEndpointResponse(BnkHealthResponse):
     cluster_id: int
 
 
+class BnkListenerTrafficStats(BaseModel):
+    gatewayName: str
+    gatewayNamespace: str
+    listenerName: str
+    clientsideBytesIn: int = 0
+    clientsideBytesOut: int = 0
+    clientsideCurConns: int = 0
+    clientsideTotConns: int = 0
+    serversideBytesIn: int = 0
+    serversideBytesOut: int = 0
+    serversideCurConns: int = 0
+    serversideTotConns: int = 0
+
+
+class BnkEgressTrafficStats(BaseModel):
+    egressName: str
+    namespace: str
+    clientsideBytesIn: int = 0
+    clientsideBytesOut: int = 0
+    clientsideCurConns: int = 0
+    clientsideTotConns: int = 0
+    serversideBytesIn: int = 0
+    serversideBytesOut: int = 0
+    serversideCurConns: int = 0
+    serversideTotConns: int = 0
+
+
+class BnkFirewallRuleTrafficStats(BaseModel):
+    policyName: str
+    namespace: str
+    ruleName: str
+    action: str = ""
+    ipProtocol: str = ""
+    hitCount: int = 0
+
+
+class BnkTrafficStatsResponse(BaseModel):
+    """Traffic statistics mapped from TMM dataplane counters."""
+
+    source: str | None = None
+    podName: str | None = None
+    sampledAt: str | None = None
+    available: bool = False
+    error: str | None = None
+    listeners: list[BnkListenerTrafficStats] = Field(default_factory=list)
+    egresses: list[BnkEgressTrafficStats] = Field(default_factory=list)
+    firewallRules: list[BnkFirewallRuleTrafficStats] = Field(default_factory=list)
+
+
 class BnkDataResponse(BaseModel):
     """Wrapper for the unified /f5bnk/data endpoint.
 
-    Only the ``health`` key is strongly typed here; the remaining keys are
-    kept as loose dicts because their schemas are large and already typed
-    manually in the frontend. This lets OpenAPI capture the enriched health
-    shape without coupling the whole topology/palette response to Pydantic.
+    The ``health`` and ``trafficStats`` keys are strongly typed; the remaining
+    keys are kept as loose dicts because their schemas are large and already
+    typed manually in the frontend. This lets OpenAPI capture new fields
+    without coupling the whole topology/palette response to Pydantic.
     """
 
     health: BnkHealthResponse
@@ -222,6 +271,7 @@ class BnkDataResponse(BaseModel):
     policyCount: int
     backends: list[dict[str, Any]] | None = None
     palette: dict[str, Any] | None = None
+    trafficStats: BnkTrafficStatsResponse | None = None
     cluster_id: int
     namespace: str | None = None
 

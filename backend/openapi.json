@@ -37539,6 +37539,16 @@
             ],
             "title": "Palette"
           },
+          "trafficStats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BnkTrafficStatsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cluster_id": {
             "type": "integer",
             "title": "Cluster Id"
@@ -37568,7 +37578,103 @@
           "cluster_id"
         ],
         "title": "BnkDataResponse",
-        "description": "Wrapper for the unified /f5bnk/data endpoint.\n\nOnly the ``health`` key is strongly typed here; the remaining keys are\nkept as loose dicts because their schemas are large and already typed\nmanually in the frontend. This lets OpenAPI capture the enriched health\nshape without coupling the whole topology/palette response to Pydantic."
+        "description": "Wrapper for the unified /f5bnk/data endpoint.\n\nThe ``health`` and ``trafficStats`` keys are strongly typed; the remaining\nkeys are kept as loose dicts because their schemas are large and already\ntyped manually in the frontend. This lets OpenAPI capture new fields\nwithout coupling the whole topology/palette response to Pydantic."
+      },
+      "BnkEgressTrafficStats": {
+        "properties": {
+          "egressName": {
+            "type": "string",
+            "title": "Egressname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "clientsideBytesIn": {
+            "type": "integer",
+            "title": "Clientsidebytesin",
+            "default": 0
+          },
+          "clientsideBytesOut": {
+            "type": "integer",
+            "title": "Clientsidebytesout",
+            "default": 0
+          },
+          "clientsideCurConns": {
+            "type": "integer",
+            "title": "Clientsidecurconns",
+            "default": 0
+          },
+          "clientsideTotConns": {
+            "type": "integer",
+            "title": "Clientsidetotconns",
+            "default": 0
+          },
+          "serversideBytesIn": {
+            "type": "integer",
+            "title": "Serversidebytesin",
+            "default": 0
+          },
+          "serversideBytesOut": {
+            "type": "integer",
+            "title": "Serversidebytesout",
+            "default": 0
+          },
+          "serversideCurConns": {
+            "type": "integer",
+            "title": "Serversidecurconns",
+            "default": 0
+          },
+          "serversideTotConns": {
+            "type": "integer",
+            "title": "Serversidetotconns",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "egressName",
+          "namespace"
+        ],
+        "title": "BnkEgressTrafficStats"
+      },
+      "BnkFirewallRuleTrafficStats": {
+        "properties": {
+          "policyName": {
+            "type": "string",
+            "title": "Policyname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ruleName": {
+            "type": "string",
+            "title": "Rulename"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "default": ""
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol",
+            "default": ""
+          },
+          "hitCount": {
+            "type": "integer",
+            "title": "Hitcount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "policyName",
+          "namespace",
+          "ruleName"
+        ],
+        "title": "BnkFirewallRuleTrafficStats"
       },
       "BnkFleetSummary": {
         "properties": {
@@ -37956,6 +38062,69 @@
         ],
         "title": "BnkHealthSecuritySection"
       },
+      "BnkListenerTrafficStats": {
+        "properties": {
+          "gatewayName": {
+            "type": "string",
+            "title": "Gatewayname"
+          },
+          "gatewayNamespace": {
+            "type": "string",
+            "title": "Gatewaynamespace"
+          },
+          "listenerName": {
+            "type": "string",
+            "title": "Listenername"
+          },
+          "clientsideBytesIn": {
+            "type": "integer",
+            "title": "Clientsidebytesin",
+            "default": 0
+          },
+          "clientsideBytesOut": {
+            "type": "integer",
+            "title": "Clientsidebytesout",
+            "default": 0
+          },
+          "clientsideCurConns": {
+            "type": "integer",
+            "title": "Clientsidecurconns",
+            "default": 0
+          },
+          "clientsideTotConns": {
+            "type": "integer",
+            "title": "Clientsidetotconns",
+            "default": 0
+          },
+          "serversideBytesIn": {
+            "type": "integer",
+            "title": "Serversidebytesin",
+            "default": 0
+          },
+          "serversideBytesOut": {
+            "type": "integer",
+            "title": "Serversidebytesout",
+            "default": 0
+          },
+          "serversideCurConns": {
+            "type": "integer",
+            "title": "Serversidecurconns",
+            "default": 0
+          },
+          "serversideTotConns": {
+            "type": "integer",
+            "title": "Serversidetotconns",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "gatewayName",
+          "gatewayNamespace",
+          "listenerName"
+        ],
+        "title": "BnkListenerTrafficStats"
+      },
       "BnkPlaneConsumption": {
         "properties": {
           "count": {
@@ -38065,6 +38234,83 @@
         ],
         "title": "BnkTopPod",
         "description": "A single BNK pod ranked by resource consumption."
+      },
+      "BnkTrafficStatsResponse": {
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "podName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Podname"
+          },
+          "sampledAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampledat"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/BnkListenerTrafficStats"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "egresses": {
+            "items": {
+              "$ref": "#/components/schemas/BnkEgressTrafficStats"
+            },
+            "type": "array",
+            "title": "Egresses"
+          },
+          "firewallRules": {
+            "items": {
+              "$ref": "#/components/schemas/BnkFirewallRuleTrafficStats"
+            },
+            "type": "array",
+            "title": "Firewallrules"
+          }
+        },
+        "type": "object",
+        "title": "BnkTrafficStatsResponse",
+        "description": "Traffic statistics mapped from TMM dataplane counters."
       },
       "Body_create_file_secret_api_projects__project_id__secrets_file_post": {
         "properties": {

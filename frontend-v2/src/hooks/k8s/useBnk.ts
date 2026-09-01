@@ -4,6 +4,7 @@ import type {
   BnkHealthResponse,
   GatewayTopologyResponse,
   F5PolicyGatewayAssociationsResponse,
+  BnkTrafficStatsResponse,
 } from '@/types';
 import { POLL_INTERVALS } from '@/lib/constants';
 import { notify } from '@/lib/notify';
@@ -58,9 +59,10 @@ export function useF5GatewayTopology(
       dataPlane: query.data.dataPlane,
       referenceGrants: query.data.referenceGrants ?? [],
       counts: query.data.topologyCounts,
+      trafficStats: query.data.trafficStats,
       cluster_id: clusterId,
       namespace: params?.namespace ?? null,
-    } satisfies GatewayTopologyResponse : undefined,
+    } satisfies GatewayTopologyResponse & { trafficStats?: BnkTrafficStatsResponse } : undefined,
   };
 }
 
@@ -77,7 +79,8 @@ export function useF5PolicyGatewayAssociations(
       count: query.data.policyCount,
       cluster_id: clusterId,
       namespace: params?.namespace,
-    } as F5PolicyGatewayAssociationsResponse : undefined,
+      trafficStats: query.data.trafficStats,
+    } as F5PolicyGatewayAssociationsResponse & { trafficStats?: BnkTrafficStatsResponse } : undefined,
   };
 }
 

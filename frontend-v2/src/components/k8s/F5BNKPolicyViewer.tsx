@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Network, AlertCircle, ChevronDown, ChevronRight, Lock, Unlock, ArrowRightLeft } from 'lucide-react';
 import { useF5PolicyGatewayAssociations } from '@/hooks/useK8s';
@@ -136,6 +136,22 @@ export function F5BNKPolicyViewer({ clusterId, namespace, onSelectResource }: F5
     namespace ? { namespace } : undefined,
     { pollingEnabled: true, enabled: !!clusterId }
   );
+
+  const ruleHitMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const stats = data?.trafficStats;
+    if (!stats?.available) return map;
+    for (const rule of stats.firewallRules || []) {
+      const key = `${rule.namespace}/${rule.policyName}/${rule.ruleName}`;
+      map.set(key, rule.hitCount || 0);
+    }
+    return map;
+  }, [data?.trafficStats]);
+
+  const getRuleHits = (policyName: string, ruleName: string, associationNs: string) => {
+    const key = `${associationNs}/${policyName}/${ruleName}`;
+    return ruleHitMap.get(key);
+  };
 
   const toggleRuleExpansion = (associationKey: string) => {
     const newExpanded = new Set(expandedRules);
@@ -388,47 +404,60 @@ export function F5BNKPolicyViewer({ clusterId, namespace, onSelectResource }: F5
                                   <TableHead>Source</TableHead>
                                   <TableHead>Destination</TableHead>
                                   <TableHead>Logging</TableHead>
+                                  <TableHead>Hits</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {association.rules.map((rule: F5FirewallRule, ruleIndex: number) => (
-                                  <TableRow key={ruleIndex}>
-                                    <TableCell className="font-mono text-sm">
-                                      {rule.name}
-                                    </TableCell>
-                                    <TableCell>
-                                      {getActionBadge(rule.action)}
-                                    </TableCell>
-                                    <TableCell>
-                                      <Badge variant="outline">{rule.ipProtocol}</Badge>
-                                    </TableCell>
-                                    <TableCell className="text-sm">
-                                      <RuleEndpointCell
-                                        addresses={rule.source.addresses}
-                                        ports={rule.source.ports}
-                                        addressLists={rule.source.addressLists}
-                                        portLists={rule.source.portLists}
-                                        namespace={association.namespace}
-                                        onSelectResource={onSelectResource}
-                                      />
-                                    </TableCell>
-                                    <TableCell className="text-sm">
-                                      <RuleEndpointCell
-                                        addresses={rule.destination.addresses}
-                                        ports={rule.destination.ports}
-                                        addressLists={rule.destination.addressLists}
-                                        portLists={rule.destination.portLists}
-                                        namespace={association.namespace}
-                                        onSelectResource={onSelectResource}
-                                      />
-                                    </TableCell>
-                                    <TableCell>
-                                      <Badge variant={rule.logging ? 'default' : 'outline'}>
-                                        {rule.logging ? 'Enabled' : 'Disabled'}
-                                      </Badge>
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
+                                {association.rules.map((rule: F5FirewallRule, ruleIndex: number) => {
+                                  const hits = getRuleHits(association.firewall_policy_name, rule.name, association.namespace);
+                                  return (
+                                    <TableRow key={ruleIndex}>
+                                      <TableCell className="font-mono text-sm">
+                                        {rule.name}
+                                      </TableCell>
+                                      <TableCell>
+                                        {getActionBadge(rule.action)}
+                                      </TableCell>
+                                      <TableCell>
+                                        <Badge variant="outline">{rule.ipProtocol}</Badge>
+                                      </TableCell>
+                                      <TableCell className="text-sm">
+                                        <RuleEndpointCell
+                                          addresses={rule.source.addresses}
+                                          ports={rule.source.ports}
+                                          addressLists={rule.source.addressLists}
+                                          portLists={rule.source.portLists}
+                                          namespace={association.namespace}
+                                          onSelectResource={onSelectResource}
+                                        />
+                                      </TableCell>
+                                      <TableCell className="text-sm">
+                                        <RuleEndpointCell
+                                          addresses={rule.destination.addresses}
+                                          ports={rule.destination.ports}
+                                          addressLists={rule.destination.addressLists}
+                                          portLists={rule.destination.portLists}
+                                          namespace={association.namespace}
+                                          onSelectResource={onSelectResource}
+                                        />
+                                      </TableCell>
+                                      <TableCell>
+                                        <Badge variant={rule.logging ? 'default' : 'outline'}>
+                                          {rule.logging ? 'Enabled' : 'Disabled'}
+                                        </Badge>
+                                      </TableCell>
+                                      <TableCell>
+                                        {hits !== undefined ? (
+                                          <Badge variant={hits > 0 ? 'info' : 'secondary'} className="text-xs">
+                                            {hits}
+                                          </Badge>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground">-</span>
+                                        )}
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
                               </TableBody>
                             </Table>
                           </div>

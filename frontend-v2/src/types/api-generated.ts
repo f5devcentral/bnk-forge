@@ -14501,10 +14501,10 @@ export interface components {
          * BnkDataResponse
          * @description Wrapper for the unified /f5bnk/data endpoint.
          *
-         *     Only the ``health`` key is strongly typed here; the remaining keys are
-         *     kept as loose dicts because their schemas are large and already typed
-         *     manually in the frontend. This lets OpenAPI capture the enriched health
-         *     shape without coupling the whole topology/palette response to Pydantic.
+         *     The ``health`` and ``trafficStats`` keys are strongly typed; the remaining
+         *     keys are kept as loose dicts because their schemas are large and already
+         *     typed manually in the frontend. This lets OpenAPI capture new fields
+         *     without coupling the whole topology/palette response to Pydantic.
          */
         BnkDataResponse: {
             health: components["schemas"]["BnkHealthResponse"];
@@ -14538,12 +14538,84 @@ export interface components {
             palette?: {
                 [key: string]: unknown;
             } | null;
+            trafficStats?: components["schemas"]["BnkTrafficStatsResponse"] | null;
             /** Cluster Id */
             cluster_id: number;
             /** Namespace */
             namespace?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** BnkEgressTrafficStats */
+        BnkEgressTrafficStats: {
+            /** Egressname */
+            egressName: string;
+            /** Namespace */
+            namespace: string;
+            /**
+             * Clientsidebytesin
+             * @default 0
+             */
+            clientsideBytesIn: number;
+            /**
+             * Clientsidebytesout
+             * @default 0
+             */
+            clientsideBytesOut: number;
+            /**
+             * Clientsidecurconns
+             * @default 0
+             */
+            clientsideCurConns: number;
+            /**
+             * Clientsidetotconns
+             * @default 0
+             */
+            clientsideTotConns: number;
+            /**
+             * Serversidebytesin
+             * @default 0
+             */
+            serversideBytesIn: number;
+            /**
+             * Serversidebytesout
+             * @default 0
+             */
+            serversideBytesOut: number;
+            /**
+             * Serversidecurconns
+             * @default 0
+             */
+            serversideCurConns: number;
+            /**
+             * Serversidetotconns
+             * @default 0
+             */
+            serversideTotConns: number;
+        };
+        /** BnkFirewallRuleTrafficStats */
+        BnkFirewallRuleTrafficStats: {
+            /** Policyname */
+            policyName: string;
+            /** Namespace */
+            namespace: string;
+            /** Rulename */
+            ruleName: string;
+            /**
+             * Action
+             * @default
+             */
+            action: string;
+            /**
+             * Ipprotocol
+             * @default
+             */
+            ipProtocol: string;
+            /**
+             * Hitcount
+             * @default 0
+             */
+            hitCount: number;
         };
         /**
          * BnkFleetSummary
@@ -14703,6 +14775,55 @@ export interface components {
             portLists: number;
             irules: components["schemas"]["HealthIRulesComponent"];
         };
+        /** BnkListenerTrafficStats */
+        BnkListenerTrafficStats: {
+            /** Gatewayname */
+            gatewayName: string;
+            /** Gatewaynamespace */
+            gatewayNamespace: string;
+            /** Listenername */
+            listenerName: string;
+            /**
+             * Clientsidebytesin
+             * @default 0
+             */
+            clientsideBytesIn: number;
+            /**
+             * Clientsidebytesout
+             * @default 0
+             */
+            clientsideBytesOut: number;
+            /**
+             * Clientsidecurconns
+             * @default 0
+             */
+            clientsideCurConns: number;
+            /**
+             * Clientsidetotconns
+             * @default 0
+             */
+            clientsideTotConns: number;
+            /**
+             * Serversidebytesin
+             * @default 0
+             */
+            serversideBytesIn: number;
+            /**
+             * Serversidebytesout
+             * @default 0
+             */
+            serversideBytesOut: number;
+            /**
+             * Serversidecurconns
+             * @default 0
+             */
+            serversideCurConns: number;
+            /**
+             * Serversidetotconns
+             * @default 0
+             */
+            serversideTotConns: number;
+        };
         /**
          * BnkPlaneConsumption
          * @description CPU/memory/pod count for a single BNK plane (control-plane or data-plane).
@@ -14757,6 +14878,31 @@ export interface components {
             cpu_millicores: number;
             /** Memory Bytes */
             memory_bytes: number;
+        };
+        /**
+         * BnkTrafficStatsResponse
+         * @description Traffic statistics mapped from TMM dataplane counters.
+         */
+        BnkTrafficStatsResponse: {
+            /** Source */
+            source?: string | null;
+            /** Podname */
+            podName?: string | null;
+            /** Sampledat */
+            sampledAt?: string | null;
+            /**
+             * Available
+             * @default false
+             */
+            available: boolean;
+            /** Error */
+            error?: string | null;
+            /** Listeners */
+            listeners?: components["schemas"]["BnkListenerTrafficStats"][];
+            /** Egresses */
+            egresses?: components["schemas"]["BnkEgressTrafficStats"][];
+            /** Firewallrules */
+            firewallRules?: components["schemas"]["BnkFirewallRuleTrafficStats"][];
         };
         /** Body_create_file_secret_api_projects__project_id__secrets_file_post */
         Body_create_file_secret_api_projects__project_id__secrets_file_post: {
