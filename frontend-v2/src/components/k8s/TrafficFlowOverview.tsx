@@ -318,10 +318,12 @@ function GatewayFlowRow({
   flow,
   onSelectResource,
   gatewayStatsMap,
+  listenerStatsMap,
 }: {
   flow: GatewayFlowData;
   onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
   gatewayStatsMap: Map<string, { totalConns: number; curConns: number }>;
+  listenerStatsMap: Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>;
 }) {
   const { gateway } = flow;
   const gatewayStats = gatewayStatsMap.get(`${gateway.namespace}/${gateway.name}`);
@@ -408,7 +410,10 @@ function GatewayFlowRow({
         <div className="w-[25%] min-w-0">
           <StageHeader title="Listeners" icon={Layers} color="info" />
           <div className="space-y-1">
-            {gateway.listeners.map(listener => (
+            {gateway.listeners.map(listener => {
+              const listenerKey = `${gateway.namespace}/${gateway.name}/${listener.name}`;
+              const stats = listenerStatsMap.get(listenerKey);
+              return (
               <div key={listener.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <button
                   type="button"
@@ -420,9 +425,22 @@ function GatewayFlowRow({
                     : <ChevronRight className="h-3 w-3 shrink-0" />
                   }
                   <span className="font-medium truncate">{listener.name}</span>
-                  <Badge variant="outline" className="text-[9px] py-0 ml-auto shrink-0">
-                    {listener.protocol}:{listener.port}
-                  </Badge>
+                  <div className="flex items-center gap-1 ml-auto shrink-0">
+                    <Badge variant="outline" className="text-[9px] py-0">
+                      {listener.protocol}:{listener.port}
+                    </Badge>
+                    {stats && stats.curConns > 0 && (
+                      <Badge variant="info" className="text-[9px] py-0 gap-0.5">
+                        <Activity className="h-2.5 w-2.5" />
+                        {stats.curConns}
+                      </Badge>
+                    )}
+                    {stats && stats.totConns > 0 && (
+                      <Badge variant="muted" className="text-[9px] py-0">
+                        {stats.totConns} total
+                      </Badge>
+                    )}
+                  </div>
                 </button>
                 {expandedListeners.has(listener.name) && (
                   <div className="mt-1 pl-5 space-y-0.5 text-[11px] text-muted-foreground">
@@ -435,7 +453,7 @@ function GatewayFlowRow({
                   </div>
                 )}
               </div>
-            ))}
+            )})}
             {gateway.listeners.length === 0 && (
               <div className="text-xs px-2 py-1 text-muted-foreground">
                 no listeners
@@ -947,6 +965,21 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
     return map;
   }, [trafficStats]);
 
+  const listenerStatsMap = useMemo(() => {
+    const map = new Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>();
+    if (!trafficStats?.available) return map;
+    for (const listener of trafficStats.listeners || []) {
+      const key = `${listener.gatewayNamespace}/${listener.gatewayName}/${listener.listenerName}`;
+      map.set(key, {
+        curConns: listener.clientsideCurConns || 0,
+        totConns: listener.clientsideTotConns || 0,
+        bytesIn: listener.clientsideBytesIn || 0,
+        bytesOut: listener.clientsideBytesOut || 0,
+      });
+    }
+    return map;
+  }, [trafficStats]);
+
   // Loading
   if (isLoading) {
     return (
@@ -1047,6 +1080,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
           flow={flow}
           onSelectResource={onSelectResource}
           gatewayStatsMap={gatewayStatsMap}
+          listenerStatsMap={listenerStatsMap}
         />
       ))}
 
