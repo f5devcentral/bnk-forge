@@ -360,6 +360,60 @@ class ConnectivityProbeService(BaseService):
 
         return {"results": results, "summary": summary}
 
+    def probe_project_clusters(self, project_id: int) -> dict[str, Any]:
+        """
+        Run connectivity probes against all clusters in a project in parallel.
+        Returns the same shape as probe_all_clusters.
+        """
+        clusters = (
+            self.db.query(KubernetesCluster)
+            .filter(KubernetesCluster.project_id == project_id)
+            .all()
+        )
+        if not clusters:
+            return {"results": [], "summary": {"total": 0, "connected": 0, "reachable": 0, "partial": 0, "unreachable": 0, "unknown": 0}}
+
+        results = []
+        with ThreadPoolExecutor(max_workers=min(len(clusters), 10)) as pool:
+            futures = {pool.submit(self._probe_cluster_obj, c): c for c in clusters}
+            for future in as_completed(futures):
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    cluster = futures[future]
+                    logger.error(f"Probe failed for cluster {cluster.name}: {e}")
+                    results.append({
+                        "cluster_id": cluster.id,
+                        "cluster_name": cluster.name,
+                        "api_server": cluster.api_server,
+                        "status": ConnectivityStatus.UNKNOWN,
+                        "message": f"Probe error: {e}",
+                        "suggestion": "An unexpected error occurred during the connectivity probe.",
+                        "icmp": {"reachable": False, "latency_ms": None},
+                        "tcp": {"open": False, "connect_ms": None, "port": None},
+                        "k8s_api": {"accessible": False, "version": None, "status_code": None},
+                        "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    })
+
+        results.sort(key=lambda r: r["cluster_id"])
+
+        summary: dict[str, int] = {
+            "total": len(results),
+            "connected": 0,
+            "reachable": 0,
+            "partial": 0,
+            "unreachable": 0,
+            "unknown": 0,
+        }
+        for r in results:
+            status = str(r.get("status", ConnectivityStatus.UNKNOWN))
+            if status in summary:
+                summary[status] += 1
+            else:
+                summary["unknown"] += 1
+
+        return {"results": results, "summary": summary}
+
     def _probe_cluster_obj(self, cluster: KubernetesCluster) -> dict[str, Any]:
         """Run the actual probe against a cluster object."""
         host, port = _parse_api_server(cluster.api_server)

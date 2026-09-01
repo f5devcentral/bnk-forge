@@ -204,6 +204,10 @@ class ClusterScanner:
         )
         self.db.flush()
 
+        # Persist cluster metadata discovered by the scan so list/detail views
+        # can surface it without re-querying the cluster.
+        self._persist_cluster_metadata(cluster, cluster_info, data["nodes"])
+
         from services.scanner.recommendations import resolve_enabled_prereqs
 
         enabled_prereq_set = resolve_enabled_prereqs(cluster.enabled_prerequisites)
@@ -255,6 +259,50 @@ class ClusterScanner:
             },
             "platform_context": platform_context.to_dict(),
         }
+
+    def _persist_cluster_metadata(
+        self,
+        cluster,
+        cluster_info: dict[str, Any],
+        nodes: list[dict[str, Any]],
+    ) -> None:
+        """Write scan-derived metadata back to the cluster record.
+
+        Updates version, node_count, zones, last_synced_at, connectivity,
+        integration, and access_method so fleet/list/detail views can read
+        them without extra cloud/operator lookups.
+        """
+        from services.operator_registry import is_operator_live_connected
+
+        now = datetime.now(UTC)
+
+        cluster.version = cluster_info.get("version") or cluster.version
+        cluster.node_count = cluster_info.get("node_count") or len(nodes) or cluster.node_count
+        cluster.zones = sorted({
+            n.get("zone") for n in nodes if n.get("zone")
+        }) or cluster.zones
+        cluster.last_synced_at = now
+        cluster.connectivity_status = "connected"
+        cluster.access_method = "ssh_tunnel" if cluster.ssh_tunnel_enabled else "kubeconfig"
+
+        try:
+            from models import ConnectedOperator
+            linked_op = (
+                self.db.query(ConnectedOperator)
+                .filter(ConnectedOperator.cluster_id == cluster.id)
+                .first()
+            )
+            if linked_op:
+                cluster.integration_status = (
+                    "agent_connected" if is_operator_live_connected(linked_op) else "agent_disconnected"
+                )
+            else:
+                cluster.integration_status = "direct"
+        except Exception as exc:
+            logger.warning("Failed to determine cluster integration status (non-fatal): %s", exc)
+            cluster.integration_status = cluster.integration_status or "direct"
+
+        self.db.flush()
 
 
 __all__ = [

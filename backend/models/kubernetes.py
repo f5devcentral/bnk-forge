@@ -43,6 +43,11 @@ class KubernetesCluster(Base):
     region = Column(String(100))  # Cloud region
     account_id = Column(String(100), nullable=True)  # Cloud account / subscription ID
     discovery_status = Column(String(50), nullable=True)  # pending/probing/completed/failed
+    node_count = Column(Integer, nullable=True)
+    connectivity_status = Column(String(50), nullable=True)  # connected/reachable/partial/unreachable/unknown
+    integration_status = Column(String(50), nullable=True)  # agent_connected/agent_disconnected/direct
+    zones = Column(JSON, nullable=True)  # List of availability zones from nodes
+    access_method = Column(String(50), nullable=True)  # kubeconfig/ssh_tunnel/operator
     default_namespace = Column(String(255), default="default")
 
     # PLATFORM-CONTEXT-002: detected cluster platform context (additive)
