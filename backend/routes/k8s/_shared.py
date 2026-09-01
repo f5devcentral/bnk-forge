@@ -66,6 +66,11 @@ def serialize_cluster(
         "default_namespace": cluster.default_namespace,
         "status": cluster.status,
         "version": cluster.version,
+        "node_count": cluster.node_count,
+        "connectivity_status": cluster.connectivity_status,
+        "integration_status": cluster.integration_status,
+        "zones": list(cluster.zones or []),
+        "access_method": cluster.access_method,
         "last_synced_at": cluster.last_synced_at.isoformat() if cluster.last_synced_at else None,
         "created_at": cluster.created_at.isoformat() if cluster.created_at else None,
         # SSH tunnel per-cluster config

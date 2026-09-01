@@ -101,6 +101,14 @@ def batch_connectivity_check(db: Session = Depends(get_db)):
     return ConnectivityProbeService(db).probe_all_clusters()
 
 
+@router.get("/projects/{project_id}/connectivity", response_model=BatchConnectivityResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("project batch connectivity check")
+def project_batch_connectivity_check(project_id: int, db: Session = Depends(get_db)):
+    """Probe connectivity for all clusters in a project in parallel."""
+    from services.connectivity_probe_service import ConnectivityProbeService
+    return ConnectivityProbeService(db).probe_project_clusters(project_id)
+
+
 @router.get("/projects/{project_id}/k8s/clusters", response_model=ClusterListResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("list project clusters")
 def list_project_clusters(project_id: int, db: Session = Depends(get_db)):

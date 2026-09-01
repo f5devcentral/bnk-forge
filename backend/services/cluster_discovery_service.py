@@ -53,6 +53,8 @@ def register_discovered_cluster(
     kubeconfig_yaml: str,
     context_name: str | None = None,
     version: str | None = None,
+    account_id: str | None = None,
+    access_method: str = "kubeconfig",
     meta_data: dict[str, Any] | None = None,
 ) -> KubernetesCluster:
     """Register a cloud-discovered cluster, reusing existing normalization.
@@ -87,6 +89,9 @@ def register_discovered_cluster(
         kubeconfig_encrypted=kubeconfig_encrypted,
         cloud_provider=cloud_provider,
         region=region,
+        account_id=account_id,
+        discovery_status="completed",
+        access_method=access_method,
         default_namespace="default",
         meta_data={
             "auto_registered": True,
@@ -253,9 +258,11 @@ class ClusterDiscoveryService(BaseService):
                     kubeconfig_yaml=kubeconfig_yaml,
                     context_name=name,
                     version=cluster["version"],
+                    account_id=cluster.get("account_id"),
+                    access_method="kubeconfig",
                     meta_data={
                         "cluster_arn": cluster["arn"],
-                        "account_id": cluster["account_id"],
+                        "account_id": cluster.get("account_id"),
                     },
                 )
                 registered.append({
@@ -338,6 +345,7 @@ class ClusterDiscoveryService(BaseService):
                     region=cluster.get("region") or template.region,
                     kubeconfig_yaml=kubeconfig_yaml,
                     context_name=name,
+                    access_method="kubeconfig",
                     meta_data={
                         "cluster_id": cluster.get("id"),
                         "resource_group": cluster.get("resource_group"),
@@ -407,9 +415,11 @@ class ClusterDiscoveryService(BaseService):
                     kubeconfig_yaml=kubeconfig_yaml,
                     context_name=name,
                     version=cluster.get("version"),
+                    account_id=cluster.get("subscription_id"),
+                    access_method="kubeconfig",
                     meta_data={
-                        "subscription_id": cluster["subscription_id"],
-                        "tenant_id": cluster["tenant_id"],
+                        "subscription_id": cluster.get("subscription_id"),
+                        "tenant_id": cluster.get("tenant_id"),
                     },
                 )
                 registered.append({
@@ -476,9 +486,11 @@ class ClusterDiscoveryService(BaseService):
                     kubeconfig_yaml=kubeconfig_yaml,
                     context_name=name,
                     version=cluster.get("version"),
+                    account_id=cluster.get("project_id"),
+                    access_method="kubeconfig",
                     meta_data={
-                        "project_id": cluster["project_id"],
-                        "full_name": cluster["full_name"],
+                        "project_id": cluster.get("project_id"),
+                        "full_name": cluster.get("full_name"),
                     },
                 )
                 registered.append({
