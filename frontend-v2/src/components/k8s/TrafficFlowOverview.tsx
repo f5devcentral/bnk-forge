@@ -19,14 +19,17 @@ import { cn } from '@/lib/utils';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useBnkData } from '@/hooks/k8s/useBnk';
+import { getSeverityConfig } from '@/lib/health-severity';
 
 import type {
   TopologyGateway,
   TopologyDataPlane,
   TopologyCounts,
   TopologyEgress,
+  TopologyReferenceGrant,
   BnkBackendEntry,
   BnkTrafficStatsResponse,
+  TopologyCondition,
 } from '@/types/f5bnk';
 import {
   Globe,
@@ -46,6 +49,7 @@ import {
   Layers,
   ArrowRightLeft,
   Boxes,
+  ShieldCheck,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -125,6 +129,41 @@ function buildGatewayFlowData(topology: TopologyGateway[]): GatewayFlowData[] {
 }
 
 // ---------------------------------------------------------------------------
+// Operational-state helpers
+// ---------------------------------------------------------------------------
+
+function severityFromConditions(
+  conditions: TopologyCondition[] | undefined,
+): 'healthy' | 'unhealthy' | 'degraded' | 'unknown' {
+  if (!conditions || conditions.length === 0) return 'unknown';
+  const relevant = conditions.filter(
+    (c) => c.type === 'Ready' || c.type === 'Programmed' || c.type === 'Accepted'
+  );
+  if (relevant.length === 0) return 'unknown';
+  const order = { unhealthy: 0, critical: 0, degraded: 1, warning: 1, unknown: 2, healthy: 3 };
+  let worst: 'healthy' | 'unhealthy' | 'degraded' = 'healthy';
+  for (const c of relevant) {
+    const sev: 'healthy' | 'unhealthy' | 'degraded' =
+      c.status === 'True' ? 'healthy' : c.status === 'False' ? 'unhealthy' : 'degraded';
+    if (order[sev] < order[worst]) worst = sev;
+  }
+  return worst;
+}
+
+function StatusBadge({ conditions, label }: { conditions: TopologyCondition[] | undefined; label?: string }) {
+  const severity = severityFromConditions(conditions);
+  const config = getSeverityConfig(severity);
+  return (
+    <Badge
+      variant={severity === 'healthy' ? 'success' : severity === 'unhealthy' ? 'destructive' : severity === 'degraded' ? 'warning' : 'muted'}
+      className="text-[10px]"
+    >
+      {label ?? config.label}
+    </Badge>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
@@ -151,18 +190,30 @@ function StatChip({
   );
 }
 
-/** Section header for a flow stage — token-pure, distinguished by icon + label, not color */
+type StageColor = 'info' | 'secondary' | 'success' | 'warning' | 'muted';
+
+/** Section header for a flow stage — color-coded by stage role */
 function StageHeader({
   title,
   icon: Icon,
+  color = 'muted',
 }: {
   title: string;
   icon: typeof Globe;
+  color?: StageColor;
 }) {
+  const colorClass = {
+    info: 'bg-info/10 text-info border-info/20',
+    secondary: 'bg-secondary/50 text-secondary-foreground border-secondary/20',
+    success: 'bg-success/10 text-success border-success/20',
+    warning: 'bg-warning/10 text-warning border-warning/20',
+    muted: 'bg-muted/50 text-muted-foreground border-border',
+  }[color];
+
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md mb-2 bg-muted/50">
-      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className={cn('flex items-center gap-1.5 px-2 py-1 rounded-md mb-2 border', colorClass)}>
+      <Icon className="h-3.5 w-3.5 opacity-80" />
+      <span className="text-[11px] font-semibold uppercase tracking-wider">
         {title}
       </span>
     </div>
@@ -326,6 +377,7 @@ function GatewayFlowRow({
                 {gateway.addresses.join(', ')}
               </Badge>
             )}
+            <StatusBadge conditions={gateway.conditions} />
           </div>
           <div className="text-[11px] mt-0.5 text-muted-foreground">
             {gateway.namespace}
@@ -354,7 +406,7 @@ function GatewayFlowRow({
       <div className="flex items-stretch p-4 gap-0 min-h-[120px]">
         {/* Listeners */}
         <div className="w-[25%] min-w-0">
-          <StageHeader title="Listeners" icon={Layers} />
+          <StageHeader title="Listeners" icon={Layers} color="info" />
           <div className="space-y-1">
             {gateway.listeners.map(listener => (
               <div key={listener.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
@@ -396,10 +448,10 @@ function GatewayFlowRow({
 
         {/* Routes */}
         <div className="w-[35%] min-w-0">
-          <StageHeader title="Routes" icon={Route} />
+          <StageHeader title="Routes" icon={Route} color="secondary" />
           <div className="space-y-1">
             {visibleRoutes.map(route => (
-              <div key={`${route.namespace}/${route.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
+                <div key={`${route.namespace}/${route.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Badge variant="outline" className="text-[9px] py-0 shrink-0">
                     {route.kind.replace('Route', '')}
@@ -410,6 +462,12 @@ function GatewayFlowRow({
                     namespace={route.namespace}
                     onSelect={onSelectResource}
                   />
+                  <Badge
+                    variant={route.accepted ? 'success' : 'warning'}
+                    className="text-[9px] py-0 ml-auto shrink-0"
+                  >
+                    {route.accepted ? 'Accepted' : 'Pending'}
+                  </Badge>
                 </div>
                 {route.hostnames.length > 0 && (
                   <div className="text-[10px] mt-0.5 pl-0.5 truncate text-muted-foreground">
@@ -441,7 +499,7 @@ function GatewayFlowRow({
 
         {/* Backends */}
         <div className="w-[25%] min-w-0">
-          <StageHeader title="Backends" icon={Server} />
+          <StageHeader title="Backends" icon={Server} color="success" />
           <div className="space-y-1">
             {visibleBackends.map(name => {
               const parts = name.split('/');
@@ -479,7 +537,7 @@ function GatewayFlowRow({
 
         {/* Security summary — compact sidebar */}
         <div className="w-[15%] ml-3 pl-3 border-l shrink-0 border-border">
-          <StageHeader title="Security" icon={Shield} />
+          <StageHeader title="Security" icon={Shield} color="warning" />
           <div className="space-y-1.5">
             {flow.securityPolicyCount > 0
               ? <AttachmentBadge label={`fw polic${flow.securityPolicyCount !== 1 ? 'ies' : 'y'}`} count={flow.securityPolicyCount} icon={Shield} />
@@ -639,6 +697,43 @@ function EgressSection({
           onSelectResource={onSelectResource}
         />
       ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ReferenceGrantsCard — lightweight cross-namespace grant visibility
+// ---------------------------------------------------------------------------
+
+function ReferenceGrantsCard({ grants }: { grants: TopologyReferenceGrant[] }) {
+  if (grants.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border bg-card border-border">
+      <div className="px-4 py-3 flex items-center gap-2">
+        <ShieldCheck className="h-4 w-4 text-info" />
+        <span className="text-sm font-medium text-foreground/80">
+          Reference Grants
+        </span>
+        <span className="text-xs text-muted-foreground">
+          ({grants.length} grant{grants.length !== 1 ? 's' : ''})
+        </span>
+      </div>
+      <div className="px-4 pb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {grants.map((rg) => (
+            <div key={`${rg.namespace}/${rg.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
+              <div className="font-medium truncate">{rg.name}</div>
+              <div className="text-[10px] text-muted-foreground truncate">
+                from: {rg.from.map((f) => `${f.kind}@${f.namespace}`).join(', ')}
+              </div>
+              <div className="text-[10px] text-muted-foreground truncate">
+                to: {rg.to.map((t) => t.kind).join(', ')}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -835,6 +930,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
   const counts = data?.topologyCounts as TopologyCounts | undefined;
   const backends = data?.backends as BnkBackendEntry[] | undefined;
   const trafficStats = data?.trafficStats as BnkTrafficStatsResponse | undefined;
+  const referenceGrants = (data?.referenceGrants as TopologyReferenceGrant[] | undefined) ?? [];
 
   const flowRows = useMemo(() => buildGatewayFlowData(topology), [topology]);
 
@@ -974,6 +1070,9 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
         dataPlane={dataPlane}
         onSelectResource={onSelectResource}
       />
+
+      {/* Reference Grants — cross-namespace policy visibility */}
+      <ReferenceGrantsCard grants={referenceGrants} />
     </div>
   );
 }

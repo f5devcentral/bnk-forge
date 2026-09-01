@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Network, AlertCircle, ChevronDown, ChevronRight, Lock, Unlock, ArrowRightLeft } from 'lucide-react';
+import { Shield, Network, AlertCircle, ChevronDown, ChevronRight, Lock, Unlock, ArrowRightLeft, CheckCircle2, XCircle } from 'lucide-react';
 import { useF5PolicyGatewayAssociations } from '@/hooks/useK8s';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,21 @@ interface F5BNKPolicyViewerProps {
 }
 
 type ResourceSelector = (sel: { kind: string; name: string; namespace: string }) => void;
+
+function PolicyStatusBadge({ status }: { status?: { resolved: boolean; programmed: boolean } }) {
+  if (!status) return null;
+  const ready = status.resolved && status.programmed;
+  const pending = !status.resolved && !status.programmed;
+  return (
+    <Badge
+      variant={ready ? 'success' : pending ? 'warning' : 'secondary'}
+      className="text-[10px] gap-1"
+    >
+      {ready ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+      {ready ? 'Ready' : status.programmed ? 'Programmed' : status.resolved ? 'Resolved' : 'Pending'}
+    </Badge>
+  );
+}
 
 function ClickableName({
   name,
@@ -291,10 +306,15 @@ export function F5BNKPolicyViewer({ clusterId, namespace, onSelectResource }: F5
                         ) : (
                           <Network className="h-5 w-5 text-info" />
                         )}
-                        <CardTitle className="text-lg">
+                        <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
                           {isEgress
                             ? `Egress: ${association.egress_name}`
                             : `${association.gateway_name} / ${association.listener_name}`}
+                          {isEgress ? (
+                            <PolicyStatusBadge status={association.egress_status} />
+                          ) : (
+                            <PolicyStatusBadge status={association.bnk_policy_status} />
+                          )}
                         </CardTitle>
                       </div>
                       <div className="text-muted-foreground text-sm flex flex-wrap gap-2 mt-2">

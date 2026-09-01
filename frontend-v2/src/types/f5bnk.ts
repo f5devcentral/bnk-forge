@@ -33,6 +33,7 @@ export interface F5GatewayPolicyAssociation {
   protocol?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  bnk_policy_status?: PolicyStatus;
   egress_name?: string;
   captured_namespaces?: string[];
   snat_type?: string;
@@ -47,6 +48,7 @@ export interface F5EgressPolicyAssociation {
   snat_type?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  egress_status?: PolicyStatus;
   bnk_policy_name?: string;
   gateway_name?: string;
   listener_name?: string;
@@ -389,6 +391,20 @@ export interface BnkUpgradeRollbackResponse {
 
 // ─── BNK Gateway Topology Types ──────────────────────────────────────
 
+export interface TopologyCondition {
+  type: string;
+  status: string;
+  reason?: string | null;
+  message?: string | null;
+  lastTransitionTime?: string | null;
+}
+
+export interface PolicyStatus {
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
+}
+
 export interface TopologyRouteBackend {
   name: string;
   namespace?: string | null;
@@ -413,6 +429,9 @@ export interface TopologyRoute {
   hostnames: string[];
   backends: TopologyRouteBackend[];
   analyzers: TopologyAnalyzer[];
+  accepted: boolean;
+  conditions: TopologyCondition[];
+  conditionMessage?: string | null;
 }
 
 export interface TopologyNetworkPolicyExtension {
@@ -429,6 +448,9 @@ export interface TopologyNetworkPolicy {
   extensions: TopologyNetworkPolicyExtension[];
   resolvedCount: number;
   totalExtensions: number;
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 export interface TopologyFirewallPolicy {
@@ -454,12 +476,17 @@ export interface TopologySecurityPolicy {
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFirewallPolicy[];
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 export interface TopologyListener {
   name: string;
   protocol: string;
   port: number | null;
+  attachedRouteCount: number;
+  conditions: TopologyCondition[];
   routes: TopologyRoute[];
   networkPolicies: TopologyNetworkPolicy[];
 }
@@ -469,6 +496,9 @@ export interface TopologyGateway {
   namespace: string;
   gatewayClassName: string;
   addresses: string[];
+  accepted: boolean;
+  programmed: boolean;
+  conditions: TopologyCondition[];
   listeners: TopologyListener[];
   securityPolicies: TopologySecurityPolicy[];
 }
@@ -492,6 +522,7 @@ export interface TopologyCneInstance {
   networkAttachments: unknown[];
   containerPlatform: string;
   phase: string;
+  ready: boolean;
 }
 
 export interface TopologyStaticRoute {

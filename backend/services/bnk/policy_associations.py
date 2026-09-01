@@ -14,7 +14,26 @@ Pure data transformation: consumes the resources dict from
 
 from typing import Any
 
-from services.bnk.helpers import make_resource_map, resolve_list_refs, resource_name, resource_ns
+from services.bnk.helpers import (
+    get_condition_message,
+    has_condition,
+    make_resource_map,
+    resolve_list_refs,
+    resource_name,
+    resource_ns,
+)
+
+
+def _policy_status(resource: dict) -> dict[str, Any]:
+    """Derive resolved/programmed operational state from a BNK resource."""
+    return {
+        "resolved": has_condition(resource, "Resolved") or has_condition(resource, "Accepted"),
+        "programmed": has_condition(resource, "Programmed"),
+        "messages": {
+            "resolved": get_condition_message(resource, "Resolved") or get_condition_message(resource, "Accepted"),
+            "programmed": get_condition_message(resource, "Programmed"),
+        },
+    }
 
 
 def analyze_policy_associations(data: dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +138,8 @@ def _build_association(
             policy, addr_map or {}, port_map or {}, bnk_ns,
         )
 
+    association["bnk_policy_status"] = _policy_status(bnk)
+
     return association
 
 
@@ -208,5 +229,7 @@ def _build_egress_association(
         association["rules_count"], association["rules"] = _extract_fw_rules(
             policy, addr_map or {}, port_map or {}, egress_ns,
         )
+
+    association["egress_status"] = _policy_status(egress)
 
     return association

@@ -15,10 +15,12 @@ const emptyBnkData = {
     egresses: [],
     logging: { hslPublishers: [], logProfiles: [] },
   },
+  referenceGrants: [],
   topologyCounts: {
-    gateways: 0, listeners: 0, httpRoutes: 0, securityPolicies: 0,
-    networkPolicies: 0, firewallPolicies: 0, iRules: 0, analyzers: 0,
-    vlans: 0, cneInstances: 0, staticRoutes: 0, snatPools: 0,
+    gateways: 0, listeners: 0, httpRoutes: 0, grpcRoutes: 0, tcpRoutes: 0,
+    udpRoutes: 0, tlsRoutes: 0, l4Routes: 0, totalRoutes: 0, referenceGrants: 0,
+    securityPolicies: 0, networkPolicies: 0, firewallPolicies: 0, iRules: 0,
+    analyzers: 0, vlans: 0, cneInstances: 0, staticRoutes: 0, snatPools: 0,
     egresses: 0, hslPublishers: 0, logProfiles: 0,
   },
   policyAssociations: [],
@@ -59,6 +61,7 @@ describe('F5BNKPolicyViewer', () => {
               firewall_policy_name: 'fw-policy-1',
               rules_count: 2,
               rules: [],
+              bnk_policy_status: { resolved: true, programmed: true, messages: {} },
             },
           ],
           policyCount: 1,
@@ -90,6 +93,7 @@ describe('F5BNKPolicyViewer', () => {
               firewall_policy_name: 'egress-demo-fw',
               rules_count: 1,
               rules: [],
+              egress_status: { resolved: true, programmed: false, messages: { programmed: 'pending' } },
             },
           ],
           policyCount: 1,
@@ -317,6 +321,50 @@ describe('F5BNKPolicyViewer', () => {
       expect(screen.getByText('Hits')).toBeInTheDocument();
     });
     expect(screen.getByText('42')).toBeInTheDocument();
+  });
+
+  it('shows policy status badge next to policy name', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+        return HttpResponse.json({
+          ...emptyBnkData,
+          policyAssociations: [
+            {
+              namespace: 'bnk-demo',
+              gateway_name: 'my-gw',
+              listener_name: 'http',
+              gateway_ip: '10.1.1.100',
+              port: 80,
+              protocol: 'HTTP',
+              bnk_policy_name: 'sec-policy-1',
+              firewall_policy_name: 'fw-policy-1',
+              rules_count: 0,
+              rules: [],
+              bnk_policy_status: { resolved: true, programmed: true, messages: {} },
+            },
+            {
+              kind: 'egress',
+              namespace: 'f5-cne-system',
+              egress_name: 'bnk-egress-demo',
+              snat_type: 'SRC_TRANS_AUTOMAP',
+              captured_namespaces: ['bnk-egress-demo'],
+              firewall_policy_name: 'egress-demo-fw',
+              rules_count: 0,
+              rules: [],
+              egress_status: { resolved: true, programmed: true, messages: {} },
+            },
+          ],
+          policyCount: 2,
+        });
+      })
+    );
+
+    render(<F5BNKPolicyViewer clusterId={1} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('my-gw / http')).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('Ready').length).toBeGreaterThanOrEqual(2);
   });
 
   it('shows error state on API failure', async () => {
