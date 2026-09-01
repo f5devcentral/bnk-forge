@@ -5,6 +5,41 @@ echo "================================================"
 echo "BNK-Forge Backend Startup"
 echo "================================================"
 
+# Install user-supplied TLS CA certificates (e.g. corporate SSL inspection proxy).
+# Corporate proxies re-sign outbound TLS (GitHub, Docker Hub, cloud APIs) with an
+# internal CA that is not shipped in the public ca-certificates package. Mounting
+# those CA files into /app/certs lets Forge trust them without baking them into
+# the image or disabling certificate verification.
+#
+# The entrypoint runs as the non-root bnkforge user, so we cannot update the
+# system-wide store. Instead we build a per-user bundle and export the standard
+# environment variables that git, Python requests/urllib3, curl, Go binaries
+# (Helm, OpenTofu), and the AWS CLI honor.
+CUSTOM_CERT_DIR="/app/certs"
+CUSTOM_BUNDLE="/home/bnkforge/.bnk-forge-ca-bundle.crt"
+if [ -d "$CUSTOM_CERT_DIR" ]; then
+    installed_count=0
+    for cert in "$CUSTOM_CERT_DIR"/*.crt "$CUSTOM_CERT_DIR"/*.pem "$CUSTOM_CERT_DIR"/*.cer "$CUSTOM_CERT_DIR"/*.der; do
+        [ -e "$cert" ] || continue
+        installed_count=$((installed_count + 1))
+    done
+    if [ "$installed_count" -gt 0 ]; then
+        echo "Installing $installed_count custom CA certificate(s) from $CUSTOM_CERT_DIR"
+        # Start from the current system bundle, then append custom certs.
+        cp /etc/ssl/certs/ca-certificates.crt "$CUSTOM_BUNDLE"
+        for cert in "$CUSTOM_CERT_DIR"/*.crt "$CUSTOM_CERT_DIR"/*.pem "$CUSTOM_CERT_DIR"/*.cer "$CUSTOM_CERT_DIR"/*.der; do
+            [ -e "$cert" ] || continue
+            cat "$cert" >> "$CUSTOM_BUNDLE"
+        done
+        # Make the bundle available to common TLS consumers.
+        export SSL_CERT_FILE="$CUSTOM_BUNDLE"
+        export GIT_SSL_CAINFO="$CUSTOM_BUNDLE"
+        # curl and Node/Go tooling may also honor these.
+        export CURL_CA_BUNDLE="$CUSTOM_BUNDLE"
+        export REQUESTS_CA_BUNDLE="$CUSTOM_BUNDLE"
+    fi
+fi
+
 # Fix volume permissions on first run
 # Docker volumes are created as root, but we run as bnkforge (uid 1000)
 # The Makefile install target handles permissions, but we also check here
