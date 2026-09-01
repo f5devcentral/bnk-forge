@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from services.bnk.helpers import (
+    get_condition_message,
     has_condition,
     make_resource_map,
     resolve_list_refs,
@@ -32,6 +33,63 @@ _ROUTE_KINDS: list[tuple[str, str]] = [
     ("tlsroute", "TLSRoute"),
     ("l4route", "L4Route"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Operational-state helpers
+# ---------------------------------------------------------------------------
+
+
+def _listener_status(gw_status: dict, listener_name: str) -> dict:
+    """Find the Gateway status entry for a listener by name."""
+    for entry in gw_status.get("listeners", []) or []:
+        if isinstance(entry, dict) and entry.get("name") == listener_name:
+            return entry
+    return {}
+
+
+def _route_parent_status(route: dict, gw_name: str, gw_ns: str, listener_name: str) -> dict | None:
+    """Find the route's parent status entry matching a gateway/listener."""
+    status = route.get("status", {}) or {}
+    parents = status.get("parents") or status.get("parentRefs") or []
+    for parent in parents:
+        if not isinstance(parent, dict):
+            continue
+        ref = parent.get("parentRef", parent)
+        if not isinstance(ref, dict):
+            continue
+        parent_ns = ref.get("namespace", route.get("metadata", {}).get("namespace", ""))
+        if ref.get("name") == gw_name and parent_ns == gw_ns:
+            section = ref.get("sectionName")
+            if section and section != listener_name:
+                continue
+            return parent
+    # Fallback: legacy controllers may put conditions directly on status
+    if status.get("conditions"):
+        return status
+    return None
+
+
+def _first_condition_message(conditions: list) -> str:
+    """Return the first non-empty condition message, or an empty string."""
+    for cond in conditions:
+        if isinstance(cond, dict):
+            msg = cond.get("message")
+            if msg:
+                return str(msg)
+    return ""
+
+
+def _policy_status(resource: dict) -> dict[str, Any]:
+    """Derive resolved/programmed operational state from a BNK policy resource."""
+    return {
+        "resolved": has_condition(resource, "Resolved") or has_condition(resource, "Accepted"),
+        "programmed": has_condition(resource, "Programmed"),
+        "messages": {
+            "resolved": get_condition_message(resource, "Resolved") or get_condition_message(resource, "Accepted"),
+            "programmed": get_condition_message(resource, "Programmed"),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +178,7 @@ def _build_gateway_node(
     listeners_data = [
         _build_listener_node(
             listener, all_routes, analyzers, bnknetpolicies, irule_map,
-            gw_name, gw_ns,
+            gw_name, gw_ns, gw_status,
         )
         for listener in gw_spec.get("listeners", [])
     ]
@@ -134,6 +192,9 @@ def _build_gateway_node(
         "namespace": gw_ns,
         "gatewayClassName": gw_spec.get("gatewayClassName", ""),
         "addresses": [a.get("value", "") for a in gw_status.get("addresses", [])],
+        "accepted": has_condition(gw, "Accepted"),
+        "programmed": has_condition(gw, "Programmed"),
+        "conditions": gw_status.get("conditions", []) or [],
         "listeners": listeners_data,
         "securityPolicies": sec_policies_data,
     }
@@ -152,13 +213,17 @@ def _build_listener_node(
     irule_map: dict[str, dict],
     gw_name: str,
     gw_ns: str,
+    gw_status: dict,
 ) -> dict[str, Any]:
     """Build a single listener node with routes and network policies."""
     listener_name = listener.get("name", "")
+    status = _listener_status(gw_status, listener_name)
     return {
         "name": listener_name,
         "protocol": listener.get("protocol", ""),
         "port": listener.get("port"),
+        "attachedRouteCount": status.get("attachedRoutes", 0) or 0,
+        "conditions": status.get("conditions", []) or [],
         "routes": _match_routes_to_listener(
             all_routes, analyzers, gw_name, gw_ns, listener_name,
         ),
@@ -209,6 +274,10 @@ def _match_routes_to_listener(
             ]
 
             route_name = route_meta.get("name", "")
+            parent_status = _route_parent_status(route, gw_name, gw_ns, listener_name)
+            parent_conditions = parent_status.get("conditions", []) if parent_status else []
+            accepted = has_condition(parent_status, "Accepted") if parent_status else False
+
             routes_data.append({
                 "name": route_name,
                 "namespace": route_ns,
@@ -218,6 +287,9 @@ def _match_routes_to_listener(
                 "analyzers": _match_analyzers(
                     analyzers, route_name, route_kind, route_ns, gw_ns,
                 ),
+                "accepted": accepted,
+                "conditions": parent_conditions,
+                "conditionMessage": _first_condition_message(parent_conditions) if not accepted else "",
             })
 
     return routes_data
@@ -280,12 +352,16 @@ def _match_net_policies(
                 if any(c.get("status") == "True" for c in d.get("conditions", []))
             )
 
+            status = _policy_status(np_item)
             result.append({
                 "name": resource_name(np_item),
                 "namespace": np_ns,
                 "extensions": extensions,
                 "resolvedCount": resolved_count,
                 "totalExtensions": len(extensions),
+                "resolved": status["resolved"],
+                "programmed": status["programmed"],
+                "messages": status["messages"],
             })
 
     return result
@@ -334,11 +410,15 @@ def _match_sec_policies(
             fw_refs = _build_firewall_refs(
                 sp_spec.get("extensionRefs", []), fw_map, addr_map, port_map, sp_ns,
             )
+            status = _policy_status(sp)
             result.append({
                 "name": resource_name(sp),
                 "namespace": sp_ns,
                 "targetListener": target.get("sectionName", ""),
                 "firewallPolicies": fw_refs,
+                "resolved": status["resolved"],
+                "programmed": status["programmed"],
+                "messages": status["messages"],
             })
 
     return result
@@ -478,6 +558,7 @@ def _build_cne_instance(cne: dict) -> dict[str, Any]:
         "networkAttachments": c_spec.get("networkAttachments", []),
         "containerPlatform": c_spec.get("containerPlatform", ""),
         "phase": cne.get("status", {}).get("phase", ""),
+        "ready": has_condition(cne, "Programmed") or has_condition(cne, "Ready"),
     }
 
 

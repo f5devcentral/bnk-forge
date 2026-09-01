@@ -22,6 +22,7 @@ from database import get_db
 from models import ConnectedOperator, KubernetesCluster
 from routes.auth import require_operator, require_viewer
 from schemas.bnk import BnkDataResponse, BnkHealthEndpointResponse
+from schemas.f5bnk import F5PolicyGatewayAssociationsResponse, GatewayTopologyResponse
 from schemas.k8s import (
     AbortMigrationRequest,
     CisTranslateRequest,
@@ -227,7 +228,11 @@ def get_bnk_health(
     return result
 
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/gateway-topology", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/gateway-topology",
+    response_model=GatewayTopologyResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get gateway topology")
 def get_gateway_topology(
     cluster_id: int,
@@ -243,7 +248,11 @@ def get_gateway_topology(
     return result
 
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/policy-gateway-associations", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/policy-gateway-associations",
+    response_model=F5PolicyGatewayAssociationsResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get policy-gateway associations")
 def get_policy_gateway_associations(
     cluster_id: int,

@@ -3930,7 +3930,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayTopologyResponse"
+                }
               }
             }
           },
@@ -3987,7 +3989,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/F5PolicyGatewayAssociationsResponse"
+                }
               }
             }
           },
@@ -46792,6 +46796,303 @@
         "type": "object",
         "title": "F5DeviceUpdate"
       },
+      "F5EgressPolicyAssociation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "egress",
+            "title": "Kind",
+            "default": "egress"
+          },
+          "egress_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "captured_namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Captured Namespaces"
+          },
+          "snat_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snat Type"
+          },
+          "firewall_policy_name": {
+            "type": "string",
+            "title": "Firewall Policy Name"
+          },
+          "rules_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Count"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/F5FirewallRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "egress_status": {
+            "$ref": "#/components/schemas/PolicyStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "namespace",
+          "firewall_policy_name"
+        ],
+        "title": "F5EgressPolicyAssociation"
+      },
+      "F5FirewallRule": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol"
+          },
+          "source": {
+            "$ref": "#/components/schemas/F5FirewallRuleEndpoint"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/F5FirewallRuleEndpoint"
+          },
+          "logging": {
+            "type": "boolean",
+            "title": "Logging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "action",
+          "ipProtocol",
+          "source",
+          "destination",
+          "logging"
+        ],
+        "title": "F5FirewallRule"
+      },
+      "F5FirewallRuleEndpoint": {
+        "properties": {
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          },
+          "ports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ports"
+          },
+          "addressLists": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Portlists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "addresses",
+          "ports",
+          "addressLists",
+          "portLists"
+        ],
+        "title": "F5FirewallRuleEndpoint"
+      },
+      "F5GatewayPolicyAssociation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "gateway",
+            "title": "Kind",
+            "default": "gateway"
+          },
+          "bnk_policy_name": {
+            "type": "string",
+            "title": "Bnk Policy Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "gateway_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Name"
+          },
+          "listener_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listener Name"
+          },
+          "firewall_policy_name": {
+            "type": "string",
+            "title": "Firewall Policy Name"
+          },
+          "gateway_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Ip"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "rules_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Count"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/F5FirewallRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "bnk_policy_status": {
+            "$ref": "#/components/schemas/PolicyStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bnk_policy_name",
+          "namespace",
+          "firewall_policy_name"
+        ],
+        "title": "F5GatewayPolicyAssociation"
+      },
+      "F5PolicyGatewayAssociationsResponse": {
+        "properties": {
+          "associations": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/F5GatewayPolicyAssociation"
+                },
+                {
+                  "$ref": "#/components/schemas/F5EgressPolicyAssociation"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Associations"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "associations",
+          "count",
+          "cluster_id"
+        ],
+        "title": "F5PolicyGatewayAssociationsResponse"
+      },
       "FailedTag": {
         "properties": {
           "tag": {
@@ -47660,6 +47961,54 @@
         ],
         "title": "FleetOperatorHealth",
         "description": "Health summary for a single operator/cluster in the fleet view."
+      },
+      "GatewayTopologyResponse": {
+        "properties": {
+          "topology": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyGateway"
+            },
+            "type": "array",
+            "title": "Topology"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/TopologyDataPlane"
+          },
+          "referenceGrants": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrant"
+            },
+            "type": "array",
+            "title": "Referencegrants"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/TopologyCounts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topology",
+          "dataPlane",
+          "referenceGrants",
+          "counts",
+          "cluster_id"
+        ],
+        "title": "GatewayTopologyResponse"
       },
       "GitSourceValidation": {
         "properties": {
@@ -52897,6 +53246,36 @@
           "created_at"
         ],
         "title": "PolicyOut"
+      },
+      "PolicyStatus": {
+        "properties": {
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "title": "PolicyStatus"
       },
       "PreviewMemberOut": {
         "properties": {
@@ -61732,6 +62111,332 @@
         "title": "TaskIdsRequest",
         "description": "Body for bulk operations log operations (#21)."
       },
+      "TopologyAddressList": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "addresses"
+        ],
+        "title": "TopologyAddressList"
+      },
+      "TopologyAnalyzer": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          },
+          "scriptType": {
+            "type": "string",
+            "title": "Scripttype"
+          },
+          "dataSources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datasources"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "schedule",
+          "scriptType",
+          "dataSources",
+          "parameters"
+        ],
+        "title": "TopologyAnalyzer"
+      },
+      "TopologyCneInstance": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Features"
+          },
+          "networkAttachments": {
+            "items": {},
+            "type": "array",
+            "title": "Networkattachments"
+          },
+          "containerPlatform": {
+            "type": "string",
+            "title": "Containerplatform"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "features",
+          "networkAttachments",
+          "containerPlatform",
+          "phase",
+          "ready"
+        ],
+        "title": "TopologyCneInstance"
+      },
+      "TopologyCondition": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "lastTransitionTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lasttransitiontime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "status"
+        ],
+        "title": "TopologyCondition"
+      },
+      "TopologyCounts": {
+        "properties": {
+          "gateways": {
+            "type": "integer",
+            "title": "Gateways"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "grpcRoutes": {
+            "type": "integer",
+            "title": "Grpcroutes"
+          },
+          "tcpRoutes": {
+            "type": "integer",
+            "title": "Tcproutes"
+          },
+          "udpRoutes": {
+            "type": "integer",
+            "title": "Udproutes"
+          },
+          "tlsRoutes": {
+            "type": "integer",
+            "title": "Tlsroutes"
+          },
+          "l4Routes": {
+            "type": "integer",
+            "title": "L4Routes"
+          },
+          "totalRoutes": {
+            "type": "integer",
+            "title": "Totalroutes"
+          },
+          "referenceGrants": {
+            "type": "integer",
+            "title": "Referencegrants"
+          },
+          "securityPolicies": {
+            "type": "integer",
+            "title": "Securitypolicies"
+          },
+          "networkPolicies": {
+            "type": "integer",
+            "title": "Networkpolicies"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "iRules": {
+            "type": "integer",
+            "title": "Irules"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "vlans": {
+            "type": "integer",
+            "title": "Vlans"
+          },
+          "cneInstances": {
+            "type": "integer",
+            "title": "Cneinstances"
+          },
+          "staticRoutes": {
+            "type": "integer",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "type": "integer",
+            "title": "Snatpools"
+          },
+          "egresses": {
+            "type": "integer",
+            "title": "Egresses"
+          },
+          "hslPublishers": {
+            "type": "integer",
+            "title": "Hslpublishers"
+          },
+          "logProfiles": {
+            "type": "integer",
+            "title": "Logprofiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gateways",
+          "listeners",
+          "httpRoutes",
+          "grpcRoutes",
+          "tcpRoutes",
+          "udpRoutes",
+          "tlsRoutes",
+          "l4Routes",
+          "totalRoutes",
+          "referenceGrants",
+          "securityPolicies",
+          "networkPolicies",
+          "firewallPolicies",
+          "iRules",
+          "analyzers",
+          "vlans",
+          "cneInstances",
+          "staticRoutes",
+          "snatPools",
+          "egresses",
+          "hslPublishers",
+          "logProfiles"
+        ],
+        "title": "TopologyCounts"
+      },
+      "TopologyDataPlane": {
+        "properties": {
+          "vlans": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyVlan"
+            },
+            "type": "array",
+            "title": "Vlans"
+          },
+          "cneInstances": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCneInstance"
+            },
+            "type": "array",
+            "title": "Cneinstances"
+          },
+          "staticRoutes": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyStaticRoute"
+            },
+            "type": "array",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "items": {
+              "$ref": "#/components/schemas/TopologySnatPool"
+            },
+            "type": "array",
+            "title": "Snatpools"
+          },
+          "egresses": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyEgress"
+            },
+            "type": "array",
+            "title": "Egresses"
+          },
+          "logging": {
+            "$ref": "#/components/schemas/TopologyLogging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vlans",
+          "cneInstances",
+          "staticRoutes",
+          "snatPools",
+          "egresses",
+          "logging"
+        ],
+        "title": "TopologyDataPlane"
+      },
       "TopologyEdge": {
         "properties": {
           "id": {
@@ -61760,6 +62465,218 @@
         ],
         "title": "TopologyEdge",
         "description": "A directed edge in the topology graph."
+      },
+      "TopologyEgress": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "snatType": {
+            "type": "string",
+            "title": "Snattype"
+          },
+          "egressSnatpool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egresssnatpool"
+          },
+          "firewallEnforcedPolicy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firewallenforcedpolicy"
+          },
+          "logProfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logprofile"
+          },
+          "capturedNamespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capturednamespaces"
+          },
+          "vxlan": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vxlan"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "snatType",
+          "capturedNamespaces",
+          "ready"
+        ],
+        "title": "TopologyEgress"
+      },
+      "TopologyFirewallPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyFwRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "addressLists": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyAddressList"
+            },
+            "type": "array",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyPortList"
+            },
+            "type": "array",
+            "title": "Portlists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "rules",
+          "addressLists",
+          "portLists"
+        ],
+        "title": "TopologyFirewallPolicy"
+      },
+      "TopologyFwRule": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol"
+          },
+          "logging": {
+            "type": "boolean",
+            "title": "Logging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "action",
+          "ipProtocol",
+          "logging"
+        ],
+        "title": "TopologyFwRule"
+      },
+      "TopologyGateway": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "gatewayClassName": {
+            "type": "string",
+            "title": "Gatewayclassname"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyListener"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "securityPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologySecurityPolicy"
+            },
+            "type": "array",
+            "title": "Securitypolicies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "gatewayClassName",
+          "addresses",
+          "listeners",
+          "securityPolicies"
+        ],
+        "title": "TopologyGateway"
       },
       "TopologyGraphResponse": {
         "properties": {
@@ -61806,6 +62723,190 @@
         ],
         "title": "TopologyGraphResponse",
         "description": "Response for GET /api/k8s/clusters/{cluster_id}/topology."
+      },
+      "TopologyListener": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "protocol": {
+            "type": "string",
+            "title": "Protocol"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "attachedRouteCount": {
+            "type": "integer",
+            "title": "Attachedroutecount",
+            "default": 0
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyRoute"
+            },
+            "type": "array",
+            "title": "Routes"
+          },
+          "networkPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyNetworkPolicy"
+            },
+            "type": "array",
+            "title": "Networkpolicies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "protocol",
+          "routes",
+          "networkPolicies"
+        ],
+        "title": "TopologyListener"
+      },
+      "TopologyLogging": {
+        "properties": {
+          "hslPublishers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Hslpublishers"
+          },
+          "logProfiles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Logprofiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hslPublishers",
+          "logProfiles"
+        ],
+        "title": "TopologyLogging"
+      },
+      "TopologyNetworkPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "extensions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyNetworkPolicyExtension"
+            },
+            "type": "array",
+            "title": "Extensions"
+          },
+          "resolvedCount": {
+            "type": "integer",
+            "title": "Resolvedcount"
+          },
+          "totalExtensions": {
+            "type": "integer",
+            "title": "Totalextensions"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "extensions",
+          "resolvedCount",
+          "totalExtensions"
+        ],
+        "title": "TopologyNetworkPolicy"
+      },
+      "TopologyNetworkPolicyExtension": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "lineCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linecount"
+          },
+          "eventHandlers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eventhandlers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "group"
+        ],
+        "title": "TopologyNetworkPolicyExtension"
       },
       "TopologyNode": {
         "properties": {
@@ -61856,6 +62957,405 @@
         ],
         "title": "TopologyNode",
         "description": "A single node in the topology graph (Service, Pod, or owning workload)."
+      },
+      "TopologyPortList": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "ports": {
+            "items": {},
+            "type": "array",
+            "title": "Ports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "ports"
+        ],
+        "title": "TopologyPortList"
+      },
+      "TopologyReferenceGrant": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "from": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrantFrom"
+            },
+            "type": "array",
+            "title": "From"
+          },
+          "to": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrantTo"
+            },
+            "type": "array",
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "from",
+          "to"
+        ],
+        "title": "TopologyReferenceGrant"
+      },
+      "TopologyReferenceGrantFrom": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "kind",
+          "namespace"
+        ],
+        "title": "TopologyReferenceGrantFrom"
+      },
+      "TopologyReferenceGrantTo": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "kind"
+        ],
+        "title": "TopologyReferenceGrantTo"
+      },
+      "TopologyRoute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "hostnames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hostnames"
+          },
+          "backends": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyRouteBackend"
+            },
+            "type": "array",
+            "title": "Backends"
+          },
+          "analyzers": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyAnalyzer"
+            },
+            "type": "array",
+            "title": "Analyzers"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "default": false
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "conditionMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditionmessage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "kind",
+          "hostnames",
+          "backends",
+          "analyzers"
+        ],
+        "title": "TopologyRoute"
+      },
+      "TopologyRouteBackend": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": "Service"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TopologyRouteBackend"
+      },
+      "TopologySecurityPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "targetListener": {
+            "type": "string",
+            "title": "Targetlistener"
+          },
+          "firewallPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyFirewallPolicy"
+            },
+            "type": "array",
+            "title": "Firewallpolicies"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "targetListener",
+          "firewallPolicies"
+        ],
+        "title": "TopologySecurityPolicy"
+      },
+      "TopologySnatPool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "addresses"
+        ],
+        "title": "TopologySnatPool"
+      },
+      "TopologyStaticRoute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "gateway": {
+            "type": "string",
+            "title": "Gateway"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "destination",
+          "gateway"
+        ],
+        "title": "TopologyStaticRoute"
+      },
+      "TopologyVlan": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "interfaces": {
+            "items": {},
+            "type": "array",
+            "title": "Interfaces"
+          },
+          "selfipV4s": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selfipv4S"
+          },
+          "prefixLen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prefixlen"
+          },
+          "mtu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtu"
+          },
+          "internal": {
+            "type": "boolean",
+            "title": "Internal"
+          },
+          "autoLasthop": {
+            "type": "string",
+            "title": "Autolasthop"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "interfaces",
+          "selfipV4s",
+          "internal",
+          "autoLasthop",
+          "ready"
+        ],
+        "title": "TopologyVlan"
       },
       "TransferOwnershipRequest": {
         "properties": {

@@ -37,6 +37,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { getSeverityConfig } from '@/lib/health-severity';
 
 // ─── Types (matching backend response) ─────────────────────────────────
 
@@ -64,6 +65,9 @@ interface TopologyRoute {
   hostnames: string[];
   backends: TopologyBackend[];
   analyzers: TopologyAnalyzer[];
+  accepted: boolean;
+  conditions: Array<{ type: string; status: string; reason?: string; message?: string }>;
+  conditionMessage?: string | null;
 }
 
 interface TopologyExtension {
@@ -80,6 +84,9 @@ interface TopologyNetPolicy {
   extensions: TopologyExtension[];
   resolvedCount: number;
   totalExtensions: number;
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 interface TopologyFwRule {
@@ -111,12 +118,17 @@ interface TopologySecPolicy {
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFwPolicy[];
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 interface TopologyListener {
   name: string;
   protocol: string;
   port: number | null;
+  attachedRouteCount: number;
+  conditions: Array<{ type: string; status: string; reason?: string; message?: string }>;
   routes: TopologyRoute[];
   networkPolicies: TopologyNetPolicy[];
 }
@@ -126,6 +138,9 @@ interface TopologyGateway {
   namespace: string;
   gatewayClassName: string;
   addresses: string[];
+  accepted: boolean;
+  programmed: boolean;
+  conditions: Array<{ type: string; status: string; reason?: string; message?: string }>;
   listeners: TopologyListener[];
   securityPolicies: TopologySecPolicy[];
 }
@@ -176,6 +191,7 @@ interface DataPlaneCNEInstance {
   networkAttachments: string[];
   containerPlatform: string;
   phase: string;
+  ready: boolean;
 }
 
 interface DataPlaneStaticRoute {
@@ -231,9 +247,17 @@ interface DataPlane {
   };
 }
 
+interface TopologyReferenceGrant {
+  name: string;
+  namespace: string;
+  from: Array<{ group: string; kind: string; namespace: string }>;
+  to: Array<{ group: string; kind: string }>;
+}
+
 interface TopologyResponse {
   topology: TopologyGateway[];
   dataPlane: DataPlane;
+  referenceGrants: TopologyReferenceGrant[];
   counts: TopologyCounts;
   trafficStats?: {
     available?: boolean;
@@ -271,6 +295,64 @@ interface F5BNKTopologyViewerProps {
   namespace?: string;
   /** Called when the user clicks a route or backend in the tree */
   onSelectResource?: (selection: TopologyResourceSelection) => void;
+}
+
+// ─── Operational-state helpers ─────────────────────────────────────────
+
+function severityFromConditions(
+  conditions: Array<{ type: string; status: string }> | undefined,
+): 'healthy' | 'unhealthy' | 'degraded' | 'unknown' {
+  if (!conditions || conditions.length === 0) return 'unknown';
+  const relevant = conditions.filter(
+    (c) => c.type === 'Ready' || c.type === 'Programmed' || c.type === 'Accepted'
+  );
+  if (relevant.length === 0) return 'unknown';
+
+  const order = { unhealthy: 0, critical: 0, degraded: 1, warning: 1, unknown: 2, healthy: 3 };
+  let worst: 'healthy' | 'unhealthy' | 'degraded' = 'healthy';
+  for (const c of relevant) {
+    const sev: 'healthy' | 'unhealthy' | 'degraded' =
+      c.status === 'True' ? 'healthy' : c.status === 'False' ? 'unhealthy' : 'degraded';
+    if (order[sev] < order[worst]) {
+      worst = sev;
+    }
+  }
+  return worst;
+}
+
+function StatusBadge({
+  label,
+  conditions,
+}: {
+  label?: string;
+  conditions: Array<{ type: string; status: string }> | undefined;
+}) {
+  const severity = severityFromConditions(conditions);
+  const config = getSeverityConfig(severity);
+  const text = label ?? config.label;
+  return (
+    <Badge
+      variant={severity === 'healthy' ? 'success' : severity === 'unhealthy' ? 'destructive' : severity === 'degraded' ? 'warning' : 'muted'}
+      className="text-[10px]"
+    >
+      {text}
+    </Badge>
+  );
+}
+
+function StatusDot({
+  ready,
+  label,
+}: {
+  ready: boolean;
+  label?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[10px]">
+      <span className={cn('h-2 w-2 rounded-full', ready ? 'bg-success' : 'bg-warning')} />
+      {label && <span className="text-muted-foreground">{label}</span>}
+    </span>
+  );
 }
 
 // ─── Collapsible Section ───────────────────────────────────────────────
@@ -449,6 +531,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
   const topology = (data as TopologyResponse)?.topology || [];
   const dataPlane = (data as TopologyResponse)?.dataPlane;
   const counts = (data as TopologyResponse)?.counts;
+  const referenceGrants = (data as TopologyResponse)?.referenceGrants || [];
   const trafficStats = (data as TopologyResponse)?.trafficStats;
 
   const listenerStatsMap = useMemo(() => {
@@ -581,6 +664,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                 <Badge variant="outline" className="text-xs">
                   {gw.gatewayClassName}
                 </Badge>
+                <StatusBadge conditions={gw.conditions} />
               </div>
               <div className="text-xs text-muted-foreground">
                 {gw.namespace}
@@ -610,6 +694,12 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                   <Badge variant="secondary" className="text-xs">
                     {listener.protocol}:{listener.port}
                   </Badge>
+                  {listener.attachedRouteCount > 0 && (
+                    <Badge variant="outline" className="text-xs">
+                      {listener.attachedRouteCount} route{listener.attachedRouteCount !== 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                  <StatusBadge conditions={listener.conditions} />
                   {stats && (
                     <>
                       <Badge variant="info" className="text-xs">
@@ -630,12 +720,26 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                   badge={listenerBadges}
                 >
                 {/* ── Routes (HTTP, GRPC, TCP, UDP, TLS, L4) ── */}
-                {listener.routes.map((route) => (
+                {listener.routes.map((route) => {
+                  const routeBadges = (
+                    <>
+                      {route.kind !== 'HTTPRoute' && (
+                        <Badge variant="outline" className="text-[10px]">{route.kind}</Badge>
+                      )}
+                      <Badge
+                        variant={route.accepted ? 'success' : 'warning'}
+                        className="text-[10px]"
+                      >
+                        {route.accepted ? 'Accepted' : 'Pending'}
+                      </Badge>
+                    </>
+                  );
+                  return (
                   <CollapsibleSection
                     key={`${route.namespace}/${route.name}`}
                     title={route.name}
                     icon={Route}
-                    badge={route.kind !== 'HTTPRoute' ? route.kind : undefined}
+                    badge={routeBadges}
                     indent={1}
                     defaultOpen={route.analyzers.length > 0}
                     onClickTitle={onSelectResource ? () => onSelectResource({ kind: route.kind, name: route.name, namespace: route.namespace }) : undefined}
@@ -717,7 +821,8 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                       </CollapsibleSection>
                     ))}
                   </CollapsibleSection>
-                ))}
+                  );
+                })}
 
                 {listener.routes.length === 0 && (
                   <TreeLeaf
@@ -729,12 +834,20 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                 )}
 
                 {/* ── Network Policies (per-listener) ── */}
-                {listener.networkPolicies.map((np) => (
+                {listener.networkPolicies.map((np) => {
+                  const netPolicyBadges = (
+                    <>
+                      <Badge variant="outline" className="text-[10px]">NetPolicy</Badge>
+                      <StatusDot ready={np.resolved} label={np.resolved ? 'Resolved' : 'Unresolved'} />
+                      <StatusDot ready={np.programmed} label={np.programmed ? 'Programmed' : 'Pending'} />
+                    </>
+                  );
+                  return (
                   <CollapsibleSection
                     key={np.name}
                     title={np.name}
                     icon={Network}
-                    badge="NetPolicy"
+                    badge={netPolicyBadges}
                     indent={1}
                     defaultOpen={true}
                     onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'BNKNetPolicy', name: np.name, namespace: np.namespace }) : undefined}
@@ -789,7 +902,8 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                       </div>
                     )}
                   </CollapsibleSection>
-                ))}
+                  );
+                })}
               </CollapsibleSection>
             );
           })}
@@ -802,7 +916,15 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     key={sp.name}
                     title={sp.name}
                     icon={ShieldAlert}
-                    badge={sp.targetListener ? `→ ${sp.targetListener}` : 'All Listeners'}
+                    badge={(
+                      <>
+                        <Badge variant="outline" className="text-[10px]">
+                          {sp.targetListener ? `→ ${sp.targetListener}` : 'All Listeners'}
+                        </Badge>
+                        <StatusDot ready={sp.resolved} label={sp.resolved ? 'Resolved' : 'Unresolved'} />
+                        <StatusDot ready={sp.programmed} label={sp.programmed ? 'Programmed' : 'Pending'} />
+                      </>
+                    )}
                     onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'BNKSecPolicy', name: sp.name, namespace: sp.namespace }) : undefined}
                   >
                     {sp.firewallPolicies.map((fw) => (
@@ -895,6 +1017,46 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
         </div>
       ))}
 
+      {/* ── Reference Grants ── */}
+      {referenceGrants.length > 0 && (
+        <div className="rounded-lg border overflow-hidden bg-card border-border">
+          <div className="px-4 py-3 border-b flex items-center gap-3 bg-muted/50 border-border">
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-info/10">
+              <Shield className="h-4 w-4 text-info" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-sm">Reference Grants</span>
+                <Badge variant="outline" className="text-xs">Cross-namespace access</Badge>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {referenceGrants.length} grant{referenceGrants.length !== 1 ? 's' : ''} allowing references across namespaces
+              </div>
+            </div>
+          </div>
+          <div className="p-3 space-y-2">
+            {referenceGrants.map((rg) => (
+              <div
+                key={`${rg.namespace}/${rg.name}`}
+                className="flex items-start gap-2 text-sm px-2 py-1.5 rounded-md bg-muted/50"
+              >
+                <Shield className="h-3.5 w-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-medium">{rg.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {rg.namespace}
+                    {' · '}
+                    from: {rg.from.map((f) => `${f.kind}@${f.namespace}`).join(', ')}
+                    {' → '}
+                    to: {rg.to.map((t) => `${t.kind}${t.group ? ` (${t.group})` : ''}`).join(', ')}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Data Plane Section ── */}
       {hasDataPlane && (
         <div className="rounded-lg border overflow-hidden bg-card border-border">
@@ -933,7 +1095,12 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                 key={cne.name}
                 title={cne.name}
                 icon={Cpu}
-                badge={cne.phase || 'Unknown'}
+                badge={(
+                  <>
+                    <Badge variant="secondary" className="text-xs">{cne.phase || 'Unknown'}</Badge>
+                    <StatusDot ready={cne.ready} label={cne.ready ? 'Ready' : 'Pending'} />
+                  </>
+                )}
                 onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'CNEInstance', name: cne.name, namespace: cne.namespace }) : undefined}
               >
                 {/* Network Attachments */}

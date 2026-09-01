@@ -17601,6 +17601,95 @@ export interface components {
             /** Verify Https Cert */
             verify_https_cert?: boolean | null;
         };
+        /** F5EgressPolicyAssociation */
+        F5EgressPolicyAssociation: {
+            /**
+             * Kind
+             * @default egress
+             * @constant
+             */
+            kind: "egress";
+            /** Egress Name */
+            egress_name?: string | null;
+            /** Namespace */
+            namespace: string;
+            /** Captured Namespaces */
+            captured_namespaces?: string[];
+            /** Snat Type */
+            snat_type?: string | null;
+            /** Firewall Policy Name */
+            firewall_policy_name: string;
+            /** Rules Count */
+            rules_count?: number | null;
+            /** Rules */
+            rules?: components["schemas"]["F5FirewallRule"][];
+            egress_status?: components["schemas"]["PolicyStatus"];
+        };
+        /** F5FirewallRule */
+        F5FirewallRule: {
+            /** Name */
+            name: string;
+            /** Action */
+            action: string;
+            /** Ipprotocol */
+            ipProtocol: string;
+            source: components["schemas"]["F5FirewallRuleEndpoint"];
+            destination: components["schemas"]["F5FirewallRuleEndpoint"];
+            /** Logging */
+            logging: boolean;
+        };
+        /** F5FirewallRuleEndpoint */
+        F5FirewallRuleEndpoint: {
+            /** Addresses */
+            addresses: unknown[];
+            /** Ports */
+            ports: string[];
+            /** Addresslists */
+            addressLists: string[];
+            /** Portlists */
+            portLists: string[];
+        };
+        /** F5GatewayPolicyAssociation */
+        F5GatewayPolicyAssociation: {
+            /**
+             * Kind
+             * @default gateway
+             * @constant
+             */
+            kind: "gateway";
+            /** Bnk Policy Name */
+            bnk_policy_name: string;
+            /** Namespace */
+            namespace: string;
+            /** Gateway Name */
+            gateway_name?: string | null;
+            /** Listener Name */
+            listener_name?: string | null;
+            /** Firewall Policy Name */
+            firewall_policy_name: string;
+            /** Gateway Ip */
+            gateway_ip?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Protocol */
+            protocol?: string | null;
+            /** Rules Count */
+            rules_count?: number | null;
+            /** Rules */
+            rules?: components["schemas"]["F5FirewallRule"][];
+            bnk_policy_status?: components["schemas"]["PolicyStatus"];
+        };
+        /** F5PolicyGatewayAssociationsResponse */
+        F5PolicyGatewayAssociationsResponse: {
+            /** Associations */
+            associations: (components["schemas"]["F5GatewayPolicyAssociation"] | components["schemas"]["F5EgressPolicyAssociation"])[];
+            /** Count */
+            count: number;
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
+        };
         /**
          * FailedTag
          * @description A single tag that could not be added to the Catalog.
@@ -17932,6 +18021,19 @@ export interface components {
             account_id?: string | null;
             /** Discovery Status */
             discovery_status?: string | null;
+        };
+        /** GatewayTopologyResponse */
+        GatewayTopologyResponse: {
+            /** Topology */
+            topology: components["schemas"]["TopologyGateway"][];
+            dataPlane: components["schemas"]["TopologyDataPlane"];
+            /** Referencegrants */
+            referenceGrants: components["schemas"]["TopologyReferenceGrant"][];
+            counts: components["schemas"]["TopologyCounts"];
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
         };
         /**
          * GitSourceValidation
@@ -19871,6 +19973,23 @@ export interface components {
             created_by: string | null;
             /** Created At */
             created_at: string | null;
+        };
+        /** PolicyStatus */
+        PolicyStatus: {
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
         };
         /** PreviewMemberOut */
         PreviewMemberOut: {
@@ -23043,6 +23162,121 @@ export interface components {
             /** Task Ids */
             task_ids: number[];
         };
+        /** TopologyAddressList */
+        TopologyAddressList: {
+            /** Name */
+            name: string;
+            /** Addresses */
+            addresses: unknown[];
+        };
+        /** TopologyAnalyzer */
+        TopologyAnalyzer: {
+            /** Name */
+            name: string;
+            /** Schedule */
+            schedule: string;
+            /** Scripttype */
+            scriptType: string;
+            /** Datasources */
+            dataSources: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: string;
+            };
+        };
+        /** TopologyCneInstance */
+        TopologyCneInstance: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Features */
+            features: {
+                [key: string]: boolean;
+            };
+            /** Networkattachments */
+            networkAttachments: unknown[];
+            /** Containerplatform */
+            containerPlatform: string;
+            /** Phase */
+            phase: string;
+            /** Ready */
+            ready: boolean;
+        };
+        /** TopologyCondition */
+        TopologyCondition: {
+            /** Type */
+            type: string;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Lasttransitiontime */
+            lastTransitionTime?: string | null;
+        };
+        /** TopologyCounts */
+        TopologyCounts: {
+            /** Gateways */
+            gateways: number;
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Grpcroutes */
+            grpcRoutes: number;
+            /** Tcproutes */
+            tcpRoutes: number;
+            /** Udproutes */
+            udpRoutes: number;
+            /** Tlsroutes */
+            tlsRoutes: number;
+            /** L4Routes */
+            l4Routes: number;
+            /** Totalroutes */
+            totalRoutes: number;
+            /** Referencegrants */
+            referenceGrants: number;
+            /** Securitypolicies */
+            securityPolicies: number;
+            /** Networkpolicies */
+            networkPolicies: number;
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Irules */
+            iRules: number;
+            /** Analyzers */
+            analyzers: number;
+            /** Vlans */
+            vlans: number;
+            /** Cneinstances */
+            cneInstances: number;
+            /** Staticroutes */
+            staticRoutes: number;
+            /** Snatpools */
+            snatPools: number;
+            /** Egresses */
+            egresses: number;
+            /** Hslpublishers */
+            hslPublishers: number;
+            /** Logprofiles */
+            logProfiles: number;
+        };
+        /** TopologyDataPlane */
+        TopologyDataPlane: {
+            /** Vlans */
+            vlans: components["schemas"]["TopologyVlan"][];
+            /** Cneinstances */
+            cneInstances: components["schemas"]["TopologyCneInstance"][];
+            /** Staticroutes */
+            staticRoutes: components["schemas"]["TopologyStaticRoute"][];
+            /** Snatpools */
+            snatPools: components["schemas"]["TopologySnatPool"][];
+            /** Egresses */
+            egresses: components["schemas"]["TopologyEgress"][];
+            logging: components["schemas"]["TopologyLogging"];
+        };
         /**
          * TopologyEdge
          * @description A directed edge in the topology graph.
@@ -23056,6 +23290,78 @@ export interface components {
             target: string;
             /** Kind */
             kind: string;
+        };
+        /** TopologyEgress */
+        TopologyEgress: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Snattype */
+            snatType: string;
+            /** Egresssnatpool */
+            egressSnatpool?: string | null;
+            /** Firewallenforcedpolicy */
+            firewallEnforcedPolicy?: string | null;
+            /** Logprofile */
+            logProfile?: string | null;
+            /** Capturednamespaces */
+            capturedNamespaces: string[];
+            /** Vxlan */
+            vxlan?: {
+                [key: string]: string;
+            } | null;
+            /** Ready */
+            ready: boolean;
+        };
+        /** TopologyFirewallPolicy */
+        TopologyFirewallPolicy: {
+            /** Name */
+            name: string;
+            /** Rules */
+            rules: components["schemas"]["TopologyFwRule"][];
+            /** Addresslists */
+            addressLists: components["schemas"]["TopologyAddressList"][];
+            /** Portlists */
+            portLists: components["schemas"]["TopologyPortList"][];
+        };
+        /** TopologyFwRule */
+        TopologyFwRule: {
+            /** Name */
+            name: string;
+            /** Action */
+            action: string;
+            /** Ipprotocol */
+            ipProtocol: string;
+            /** Logging */
+            logging: boolean;
+        };
+        /** TopologyGateway */
+        TopologyGateway: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Gatewayclassname */
+            gatewayClassName: string;
+            /** Addresses */
+            addresses: string[];
+            /**
+             * Accepted
+             * @default false
+             */
+            accepted: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Listeners */
+            listeners: components["schemas"]["TopologyListener"][];
+            /** Securitypolicies */
+            securityPolicies: components["schemas"]["TopologySecurityPolicy"][];
         };
         /**
          * TopologyGraphResponse
@@ -23072,6 +23378,77 @@ export interface components {
             namespace: string;
             /** Info */
             info?: string | null;
+        };
+        /** TopologyListener */
+        TopologyListener: {
+            /** Name */
+            name: string;
+            /** Protocol */
+            protocol: string;
+            /** Port */
+            port?: number | null;
+            /**
+             * Attachedroutecount
+             * @default 0
+             */
+            attachedRouteCount: number;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Routes */
+            routes: components["schemas"]["TopologyRoute"][];
+            /** Networkpolicies */
+            networkPolicies: components["schemas"]["TopologyNetworkPolicy"][];
+        };
+        /** TopologyLogging */
+        TopologyLogging: {
+            /** Hslpublishers */
+            hslPublishers: {
+                [key: string]: unknown;
+            }[];
+            /** Logprofiles */
+            logProfiles: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** TopologyNetworkPolicy */
+        TopologyNetworkPolicy: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Extensions */
+            extensions: components["schemas"]["TopologyNetworkPolicyExtension"][];
+            /** Resolvedcount */
+            resolvedCount: number;
+            /** Totalextensions */
+            totalExtensions: number;
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
+        };
+        /** TopologyNetworkPolicyExtension */
+        TopologyNetworkPolicyExtension: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Group */
+            group: string;
+            /** Linecount */
+            lineCount?: number | null;
+            /** Eventhandlers */
+            eventHandlers?: string[];
         };
         /**
          * TopologyNode
@@ -23097,6 +23474,151 @@ export interface components {
             meta?: {
                 [key: string]: unknown;
             };
+        };
+        /** TopologyPortList */
+        TopologyPortList: {
+            /** Name */
+            name: string;
+            /** Ports */
+            ports: unknown[];
+        };
+        /** TopologyReferenceGrant */
+        TopologyReferenceGrant: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** From */
+            from: components["schemas"]["TopologyReferenceGrantFrom"][];
+            /** To */
+            to: components["schemas"]["TopologyReferenceGrantTo"][];
+        };
+        /** TopologyReferenceGrantFrom */
+        TopologyReferenceGrantFrom: {
+            /** Group */
+            group: string;
+            /** Kind */
+            kind: string;
+            /** Namespace */
+            namespace: string;
+        };
+        /** TopologyReferenceGrantTo */
+        TopologyReferenceGrantTo: {
+            /** Group */
+            group: string;
+            /** Kind */
+            kind: string;
+        };
+        /** TopologyRoute */
+        TopologyRoute: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Kind */
+            kind: string;
+            /** Hostnames */
+            hostnames: string[];
+            /** Backends */
+            backends: components["schemas"]["TopologyRouteBackend"][];
+            /** Analyzers */
+            analyzers: components["schemas"]["TopologyAnalyzer"][];
+            /**
+             * Accepted
+             * @default false
+             */
+            accepted: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Conditionmessage */
+            conditionMessage?: string | null;
+        };
+        /** TopologyRouteBackend */
+        TopologyRouteBackend: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Weight */
+            weight?: number | null;
+            /**
+             * Kind
+             * @default Service
+             */
+            kind: string;
+            /**
+             * Group
+             * @default
+             */
+            group: string;
+        };
+        /** TopologySecurityPolicy */
+        TopologySecurityPolicy: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Targetlistener */
+            targetListener: string;
+            /** Firewallpolicies */
+            firewallPolicies: components["schemas"]["TopologyFirewallPolicy"][];
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
+        };
+        /** TopologySnatPool */
+        TopologySnatPool: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Addresses */
+            addresses: unknown[];
+        };
+        /** TopologyStaticRoute */
+        TopologyStaticRoute: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Destination */
+            destination: string;
+            /** Gateway */
+            gateway: string;
+        };
+        /** TopologyVlan */
+        TopologyVlan: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Interfaces */
+            interfaces: unknown[];
+            /** Selfipv4S */
+            selfipV4s: string[];
+            /** Prefixlen */
+            prefixLen?: number | string | null;
+            /** Mtu */
+            mtu?: number | null;
+            /** Internal */
+            internal: boolean;
+            /** Autolasthop */
+            autoLasthop: string;
+            /** Ready */
+            ready: boolean;
         };
         /**
          * TransferOwnershipRequest
@@ -26275,7 +26797,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GatewayTopologyResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26308,7 +26830,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["F5PolicyGatewayAssociationsResponse"];
                 };
             };
             /** @description Validation Error */

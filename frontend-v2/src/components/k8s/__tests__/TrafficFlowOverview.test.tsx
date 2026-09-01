@@ -22,6 +22,7 @@ const emptyBnkData = {
     egresses: [],
     logging: { hslPublishers: [], logProfiles: [] },
   },
+  referenceGrants: [],
   topologyCounts: {
     gateways: 0, listeners: 0, httpRoutes: 0, grpcRoutes: 0, tcpRoutes: 0,
     udpRoutes: 0, tlsRoutes: 0, l4Routes: 0, totalRoutes: 0, referenceGrants: 0,
@@ -41,10 +42,15 @@ const populatedBnkData = {
     namespace: 'bnk-demo',
     gatewayClassName: 'f5-bnk',
     addresses: ['10.1.1.100'],
+    accepted: true,
+    programmed: true,
+    conditions: [{ type: 'Accepted', status: 'True' }],
     listeners: [{
       name: 'http',
       protocol: 'HTTP',
       port: 80,
+      attachedRouteCount: 1,
+      conditions: [{ type: 'Accepted', status: 'True' }],
       routes: [{
         name: 'api-route',
         namespace: 'bnk-demo',
@@ -54,6 +60,8 @@ const populatedBnkData = {
           { name: 'api-svc', namespace: 'bnk-demo', port: 8080, weight: 100, kind: 'Service', group: '' },
         ],
         analyzers: [],
+        accepted: true,
+        conditions: [{ type: 'Accepted', status: 'True' }],
       }],
       networkPolicies: [],
     }],
@@ -61,6 +69,9 @@ const populatedBnkData = {
       name: 'prod-sec-policy',
       namespace: 'bnk-demo',
       targetListener: 'http',
+      resolved: true,
+      programmed: true,
+      messages: {},
       firewallPolicies: [{
         name: 'fw-policy-1',
         rules: [
@@ -93,6 +104,7 @@ const populatedBnkData = {
       networkAttachments: [],
       containerPlatform: 'kubernetes',
       phase: 'Running',
+      ready: true,
     }],
     vlans: [{
       name: 'external-vlan',
@@ -251,6 +263,45 @@ describe('TrafficFlowOverview', () => {
       });
       const ruleMatches = screen.getAllByText(/1 rule/);
       expect(ruleMatches.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shows operational status chips on gateway and route boxes', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json(populatedBnkData);
+        })
+      );
+
+      render(<TrafficFlowOverview clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-gateway')).toBeInTheDocument();
+      });
+      expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('Accepted').length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shows reference grants card when grants exist', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json({
+            ...populatedBnkData,
+            referenceGrants: [{
+              name: 'rg-1',
+              namespace: 'bnk-demo',
+              from: [{ group: 'gateway.networking.k8s.io', kind: 'HTTPRoute', namespace: 'app' }],
+              to: [{ group: '', kind: 'Service' }],
+            }],
+          });
+        })
+      );
+
+      render(<TrafficFlowOverview clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Reference Grants')).toBeInTheDocument();
+      });
+      expect(screen.getByText('rg-1')).toBeInTheDocument();
     });
 
     it('shows traffic stats summary chips when trafficStats available', async () => {
