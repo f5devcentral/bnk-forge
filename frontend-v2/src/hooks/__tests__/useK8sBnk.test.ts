@@ -131,7 +131,7 @@ describe('useF5BNKHealth', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(result.current.data).toMatchObject({ overall: 'healthy', cluster_id: 1 });
+    expect(result.current.data).toMatchObject({ overall_status: 'healthy', cluster_id: 1 });
   });
 });
 

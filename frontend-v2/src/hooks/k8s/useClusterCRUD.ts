@@ -200,6 +200,7 @@ export function useClusterResources(
     queryKey: queryKeys.k8s.clusters.resources(clusterId, resourceType, params),
     queryFn: () => api.getClusterResources(clusterId, resourceType, params),
     enabled: options?.enabled !== false && !!clusterId && !!resourceType,
+    staleTime: QUERY_STALE_TIME.DEFAULT,
     refetchInterval: options?.pollingEnabled ? POLL_INTERVALS.MEDIUM : false,
     placeholderData: (previousData) => previousData,
   });

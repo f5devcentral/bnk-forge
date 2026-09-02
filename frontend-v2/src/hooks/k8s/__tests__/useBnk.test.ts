@@ -189,7 +189,7 @@ describe('useF5BNKHealth', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toMatchObject({ overall: 'healthy', cluster_id: 1 });
+    expect(result.current.data).toMatchObject({ status: 'healthy', cluster_id: 1 });
   });
 });
 
