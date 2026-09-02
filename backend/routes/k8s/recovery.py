@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from core.cache import cache
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator
@@ -331,6 +332,7 @@ def _find_and_restart_pods(
 @handle_route_errors("check recovery status")
 def get_recovery_status(
     cluster_id: int,
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
     """
@@ -340,6 +342,12 @@ def get_recovery_status(
     - CWC cert staleness (cwc-license-certs vs cert-manager)
     - VLAN programming failures (Programmed: False)
     """
+    cache_key = f"recovery:status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -347,7 +355,7 @@ def get_recovery_status(
     cert_stale, cert_detail, cert_status = _check_cwc_cert_stale(api_client)
     vlans_failed, vlans_detail = _check_vlans_failed(api_client)
 
-    return RecoveryStatusResponse(
+    res = RecoveryStatusResponse(
         cwc_cert_stale=cert_stale,
         cwc_cert_status=cert_status,
         vlans_failed=vlans_failed,
@@ -355,6 +363,8 @@ def get_recovery_status(
         vlans_detail=vlans_detail,
         platform_healthy=not cert_stale and not vlans_failed,
     )
+    cache.set(cache_key, res, ttl_seconds=60)
+    return res
 
 
 @router.post(
@@ -377,6 +387,11 @@ def resync_cwc_certs(
       3. Restart CWC pod (so it re-reads the updated secret)
       4. Clean up stale agent pods (they may have old certs cached)
     """
+    cache.delete(f"recovery:status:{cluster_id}")
+    cache.delete(f"cwc:setup_status:{cluster_id}")
+    cache.delete(f"cwc:available:{cluster_id}")
+    cache.delete(f"license:status:{cluster_id}")
+
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -598,6 +613,10 @@ def platform_restart(
                 "status": "not_found",
                 "message": f"No TMM pods found in {bnk_ns} namespace",
             })
+
+    cache.delete(f"recovery:status:{cluster_id}")
+    cache.delete(f"bnk:pods:{cluster_id}")
+    cache.delete(f"tmm:debug:pods:{cluster_id}")
 
     component_list = ", ".join(r["component"] for r in restarted if r["status"] == "restarted")
     return PlatformRestartResponse(

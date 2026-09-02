@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
-  BnkHealthResponse,
   GatewayTopologyResponse,
   F5PolicyGatewayAssociationsResponse,
+  BnkTrafficStatsResponse,
+  BnkHealthEndpointResponse,
 } from '@/types';
-import { POLL_INTERVALS } from '@/lib/constants';
+import { POLL_INTERVALS, QUERY_STALE_TIME } from '@/lib/constants';
 import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
@@ -27,6 +28,7 @@ export function useBnkData(
     queryKey: queryKeys.k8s.clusters.bnkData(clusterId, params),
     queryFn: () => api.getBnkData(clusterId, params),
     enabled: options?.enabled !== false && !!clusterId,
+    staleTime: QUERY_STALE_TIME.DEFAULT,
     refetchInterval: options?.pollingEnabled !== false ? POLL_INTERVALS.SLOW : false,
     placeholderData: (previousData) => previousData,
   });
@@ -41,7 +43,12 @@ export function useF5BNKHealth(
   const query = useBnkData(clusterId, params, options);
   return {
     ...query,
-    data: query.data?.health as BnkHealthResponse | undefined,
+    data: query.data
+      ? ({
+          ...query.data.health,
+          cluster_id: clusterId,
+        } as BnkHealthEndpointResponse)
+      : undefined,
   };
 }
 
@@ -58,9 +65,10 @@ export function useF5GatewayTopology(
       dataPlane: query.data.dataPlane,
       referenceGrants: query.data.referenceGrants ?? [],
       counts: query.data.topologyCounts,
+      trafficStats: query.data.trafficStats,
       cluster_id: clusterId,
       namespace: params?.namespace ?? null,
-    } satisfies GatewayTopologyResponse : undefined,
+    } satisfies GatewayTopologyResponse & { trafficStats?: BnkTrafficStatsResponse } : undefined,
   };
 }
 
@@ -77,7 +85,8 @@ export function useF5PolicyGatewayAssociations(
       count: query.data.policyCount,
       cluster_id: clusterId,
       namespace: params?.namespace,
-    } as F5PolicyGatewayAssociationsResponse : undefined,
+      trafficStats: query.data.trafficStats,
+    } as F5PolicyGatewayAssociationsResponse & { trafficStats?: BnkTrafficStatsResponse } : undefined,
   };
 }
 

@@ -556,9 +556,13 @@ class ModuleSyncService:
         # Add depth 1 for faster cloning (shallow clone)
         git_cmd.extend(['--depth', '1'])
 
-        # Add branch if specified
-        if source.branch:
-            git_cmd.extend(['--branch', source.branch])
+        # Prefer git_ref over branch for the clone target: `git clone --branch`
+        # accepts branch names and tag names, and the resulting working tree is
+        # already checked out at that ref. Using a shallow branch clone followed
+        # by `git checkout <tag>` fails because `--depth 1` does not fetch tags.
+        clone_ref = source.git_ref or source.branch
+        if clone_ref:
+            git_cmd.extend(['--branch', clone_ref])
 
         # Handle authentication
         git_cmd.append(safe_source_url)
@@ -612,20 +616,8 @@ class ModuleSyncService:
                     )
                 raise RuntimeError(f"Git clone failed [{error_kind}] {guidance}: {sanitized}")
 
-            # Checkout specific ref if specified
-            if source.git_ref:
-                checkout_result = subprocess.run(
-                    ['git', 'checkout', source.git_ref],
-                    cwd=temp_dir,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-                if checkout_result.returncode != 0:
-                    error_kind, guidance = GitAuthService.classify_git_failure(checkout_result.stderr)
-                    sanitized = GitAuthService.sanitize_error_text(checkout_result.stderr, secrets=[auth_ctx.secret])
-                    raise RuntimeError(f"Git checkout failed [{error_kind}] {guidance}: {sanitized}")
+            # No separate checkout is needed: git clone --branch already checked
+            # out the requested ref (branch or tag).
         finally:
             cleanup_env()
 

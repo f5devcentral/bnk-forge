@@ -36,6 +36,7 @@ from services.bnk.helpers import (
 from services.bnk.palette import extract_palette_data
 from services.bnk.policy_associations import analyze_policy_associations
 from services.bnk.topology import analyze_topology
+from services.bnk.traffic_stats import analyze_traffic_stats, fetch_tmm_traffic_stats
 
 __all__ = [
     # Fetch
@@ -47,6 +48,8 @@ __all__ = [
     "analyze_backends",
     "extract_palette_data",
     "analyze_policy_associations",
+    "analyze_traffic_stats",
+    "fetch_tmm_traffic_stats",
     # Helpers
     "build_route_ref_map",
     "safe_get",

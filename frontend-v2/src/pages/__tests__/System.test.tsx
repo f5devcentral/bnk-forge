@@ -42,6 +42,10 @@ vi.mock('@/components/settings/AlertChannels', () => ({
   AlertChannels: () => <div data-testid="alert-channels">AlertChannels</div>,
 }));
 
+vi.mock('@/components/system/McpPanel', () => ({
+  McpPanel: () => <div data-testid="mcp-panel">McpPanel</div>,
+}));
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -56,6 +60,7 @@ describe('System', () => {
   it('renders all tab labels', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByText('System Monitor')).toBeInTheDocument();
+    expect(screen.getByText('MCP Server')).toBeInTheDocument();
     expect(screen.getByText('Audit Log')).toBeInTheDocument();
     expect(screen.getByText('Alerts')).toBeInTheDocument();
     expect(screen.getByText('Defaults')).toBeInTheDocument();
@@ -79,6 +84,15 @@ describe('System', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByTestId('perf-monitor')).toBeInTheDocument();
     expect(screen.getByTestId('sys-upgrade')).toBeInTheDocument();
+  });
+
+  it('switches to MCP Server tab and renders the panel', async () => {
+    const user = userEvent.setup();
+    render(<System />, { initialRoute: '/system' });
+    await user.click(screen.getByText('MCP Server'));
+    await waitFor(() => {
+      expect(screen.getByTestId('mcp-panel')).toBeInTheDocument();
+    });
   });
 
 });
