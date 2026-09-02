@@ -205,6 +205,13 @@ class BnkClusterDpfSummary(BaseModel):
     dpu_count: int
 
 
+class BnkNodeCapacity(BaseModel):
+    """Node allocatable CPU/memory capacity for a cluster."""
+
+    cpu_millicores: int = Field(default=0, description="Aggregated node allocatable CPU in millicores")
+    memory_bytes: int = Field(default=0, description="Aggregated node allocatable memory in bytes")
+
+
 class BnkClusterConsumption(BaseModel):
     """Per-cluster BNK resource consumption breakdown."""
 
@@ -218,6 +225,7 @@ class BnkClusterConsumption(BaseModel):
     control_plane: BnkPlaneConsumption
     data_plane: BnkPlaneConsumption
     total: BnkPlaneConsumption
+    node_capacity: BnkNodeCapacity = Field(default_factory=BnkNodeCapacity)
     metrics_available: bool
     metrics_error: str | None = None
     dpf: BnkClusterDpfSummary
@@ -235,6 +243,8 @@ class BnkFleetSummary(BaseModel):
     data_plane_pods: int
     total_cpu_millicores: int
     total_memory_bytes: int
+    node_capacity_cpu_millicores: int = 0
+    node_capacity_memory_bytes: int = 0
     dpf_detected_clusters: int
     dpu_count: int
 

@@ -14454,6 +14454,7 @@ export interface components {
             control_plane: components["schemas"]["BnkPlaneConsumption"];
             data_plane: components["schemas"]["BnkPlaneConsumption"];
             total: components["schemas"]["BnkPlaneConsumption"];
+            node_capacity?: components["schemas"]["BnkNodeCapacity"];
             /** Metrics Available */
             metrics_available: boolean;
             /** Metrics Error */
@@ -14661,6 +14662,16 @@ export interface components {
             total_cpu_millicores: number;
             /** Total Memory Bytes */
             total_memory_bytes: number;
+            /**
+             * Node Capacity Cpu Millicores
+             * @default 0
+             */
+            node_capacity_cpu_millicores: number;
+            /**
+             * Node Capacity Memory Bytes
+             * @default 0
+             */
+            node_capacity_memory_bytes: number;
             /** Dpf Detected Clusters */
             dpf_detected_clusters: number;
             /** Dpu Count */
@@ -14846,6 +14857,24 @@ export interface components {
              * @default 0
              */
             serversideTotConns: number;
+        };
+        /**
+         * BnkNodeCapacity
+         * @description Node allocatable CPU/memory capacity for a cluster.
+         */
+        BnkNodeCapacity: {
+            /**
+             * Cpu Millicores
+             * @description Aggregated node allocatable CPU in millicores
+             * @default 0
+             */
+            cpu_millicores: number;
+            /**
+             * Memory Bytes
+             * @description Aggregated node allocatable memory in bytes
+             * @default 0
+             */
+            memory_bytes: number;
         };
         /**
          * BnkPlaneConsumption

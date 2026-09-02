@@ -18,6 +18,20 @@ def _empty_plane() -> dict[str, int]:
     return {"count": 0, "cpu_millicores": 0, "memory_bytes": 0}
 
 
+def _empty_capacity() -> dict[str, int]:
+    return {"cpu_millicores": 0, "memory_bytes": 0}
+
+
+def _sum_node_capacity(nodes: dict[str, dict[str, Any]]) -> dict[str, int]:
+    """Sum allocatable CPU/memory across all nodes in the enrichment map."""
+    total_cpu = 0
+    total_memory = 0
+    for node in nodes.values():
+        total_cpu += int(node.get("allocatable_cpu", 0) or 0)
+        total_memory += int(node.get("allocatable_memory", 0) or 0)
+    return {"cpu_millicores": total_cpu, "memory_bytes": total_memory}
+
+
 def _classify_role(role: str | None) -> str:
     """Classify a pod role into 'control_plane', 'data_plane', or 'other'."""
     if role in _DATA_PLANE_ROLES:
@@ -105,6 +119,8 @@ def aggregate_cluster_consumption(
     metrics_lookup = _build_metrics_lookup(pod_metrics)
 
     dpf = dpf_summary or {"detected": False, "dpu_count": 0}
+    nodes = (bnk_data or {}).get("nodes", {}) or {}
+    node_capacity = _sum_node_capacity(nodes)
 
     if not reachable or bnk_data is None:
         return {
@@ -118,6 +134,7 @@ def aggregate_cluster_consumption(
             "control_plane": _empty_plane(),
             "data_plane": _empty_plane(),
             "total": _empty_plane(),
+            "node_capacity": node_capacity,
             "metrics_available": metrics_available,
             "metrics_error": metrics_error,
             "dpf": {"detected": bool(dpf.get("detected")), "dpu_count": int(dpf.get("dpu_count", 0))},
@@ -159,6 +176,7 @@ def aggregate_cluster_consumption(
         "control_plane": control_plane,
         "data_plane": data_plane,
         "total": total,
+        "node_capacity": node_capacity,
         "metrics_available": metrics_available,
         "metrics_error": metrics_error,
         "dpf": {"detected": bool(dpf.get("detected")), "dpu_count": int(dpf.get("dpu_count", 0))},
@@ -179,16 +197,21 @@ def aggregate_fleet_summary(clusters: list[dict[str, Any]]) -> dict[str, Any]:
     data_plane_pods = 0
     total_cpu = 0
     total_memory = 0
+    total_node_capacity_cpu = 0
+    total_node_capacity_memory = 0
 
     for cluster in clusters:
         total_plane = cluster.get("total", {})
         control_plane = cluster.get("control_plane", {})
         data_plane = cluster.get("data_plane", {})
+        node_capacity = cluster.get("node_capacity", {})
         total_bnk_pods += int(total_plane.get("count", 0))
         control_plane_pods += int(control_plane.get("count", 0))
         data_plane_pods += int(data_plane.get("count", 0))
         total_cpu += int(total_plane.get("cpu_millicores", 0))
         total_memory += int(total_plane.get("memory_bytes", 0))
+        total_node_capacity_cpu += int(node_capacity.get("cpu_millicores", 0))
+        total_node_capacity_memory += int(node_capacity.get("memory_bytes", 0))
 
     return {
         "total_clusters": total_clusters,
@@ -199,6 +222,8 @@ def aggregate_fleet_summary(clusters: list[dict[str, Any]]) -> dict[str, Any]:
         "data_plane_pods": data_plane_pods,
         "total_cpu_millicores": total_cpu,
         "total_memory_bytes": total_memory,
+        "node_capacity_cpu_millicores": total_node_capacity_cpu,
+        "node_capacity_memory_bytes": total_node_capacity_memory,
         "dpf_detected_clusters": dpf_detected_clusters,
         "dpu_count": dpu_count,
     }

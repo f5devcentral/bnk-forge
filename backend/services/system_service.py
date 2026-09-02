@@ -144,7 +144,9 @@ class SystemService:
 
             try:
                 # This single call both checks reachability and returns BNK inventory.
-                bnk_data = fetch_all_bnk_data(k8s_service, cluster.id)
+                # include_nodes=True so we can fall back to node allocatable capacity
+                # when cluster metrics-server is not installed.
+                bnk_data = fetch_all_bnk_data(k8s_service, cluster.id, include_nodes=True)
             except Exception as exc:
                 logger.warning(f"BNK consumption: cluster {cluster.name} (id={cluster.id}) unreachable: {exc}")
                 reachable = False

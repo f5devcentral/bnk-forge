@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
+CATEGORY_ALIASES: dict[str, str] = {
+    "infra": "infrastructure",
+    "app": "solution",
+    "apps": "solution",
+    "solutions": "solution",
+}
+
 
 def _resolve_category(manifest: dict[str, Any] | None, source_path: str | None = None) -> str:
     """Return the category for a blueprint release.
 
     Priority:
     1. ``manifest["category"]`` when the manifest is present and the value is
-       a non-empty string.
+       a non-empty string (normalized via CATEGORY_ALIASES).
     2. Fall back to ``"bnk"`` in all other cases (empty manifest, None manifest,
        or a manifest that has no ``category`` key / an empty value).
 
@@ -21,5 +28,6 @@ def _resolve_category(manifest: dict[str, Any] | None, source_path: str | None =
     if manifest:
         category = manifest.get("category")
         if category and isinstance(category, str) and category.strip():
-            return category.strip()
+            cat = category.strip().lower()
+            return CATEGORY_ALIASES.get(cat, cat)
     return "bnk"

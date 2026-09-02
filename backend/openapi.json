@@ -37378,6 +37378,9 @@
           "total": {
             "$ref": "#/components/schemas/BnkPlaneConsumption"
           },
+          "node_capacity": {
+            "$ref": "#/components/schemas/BnkNodeCapacity"
+          },
           "metrics_available": {
             "type": "boolean",
             "title": "Metrics Available"
@@ -37786,6 +37789,16 @@
           "total_memory_bytes": {
             "type": "integer",
             "title": "Total Memory Bytes"
+          },
+          "node_capacity_cpu_millicores": {
+            "type": "integer",
+            "title": "Node Capacity Cpu Millicores",
+            "default": 0
+          },
+          "node_capacity_memory_bytes": {
+            "type": "integer",
+            "title": "Node Capacity Memory Bytes",
+            "default": 0
           },
           "dpf_detected_clusters": {
             "type": "integer",
@@ -38201,6 +38214,25 @@
           "listenerName"
         ],
         "title": "BnkListenerTrafficStats"
+      },
+      "BnkNodeCapacity": {
+        "properties": {
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores",
+            "description": "Aggregated node allocatable CPU in millicores",
+            "default": 0
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes",
+            "description": "Aggregated node allocatable memory in bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "BnkNodeCapacity",
+        "description": "Node allocatable CPU/memory capacity for a cluster."
       },
       "BnkPlaneConsumption": {
         "properties": {
