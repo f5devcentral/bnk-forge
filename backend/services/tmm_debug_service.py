@@ -41,7 +41,7 @@ DEBUG_CONTAINER_NAME = "debug"
 # Short-term cache for TMM pod listing (read-only diagnostics; pods don't
 # change second-to-second). Avoids re-discovering F5 pods on every diagnostic
 # panel render / command run.
-_TMM_POD_LIST_CACHE_TTL = 15
+_TMM_POD_LIST_CACHE_TTL = 60
 
 # Default timeout for one-shot debug commands (seconds)
 DEFAULT_EXEC_TIMEOUT = 30
@@ -75,18 +75,34 @@ def list_tmm_debug_pods(
         [{ name, namespace, has_debug, containers: [str, ...] }]
 
     Uses bnk_pod_discovery to find TMM pods, then checks each pod's
-    container list for the "debug" container.     Results are cached for a
-    few seconds because this is hit repeatedly while the diagnostics panel
-    renders and runs commands.
+    container list for the "debug" container. Results are cached to avoid
+    re-discovery when the diagnostics panel renders. Also checks warm
+    caches from BNK health / pod discovery.
     """
     cache_key = _tmm_pod_list_cache_key(cluster_id)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    tenant_pods, utils_pods = discover_f5_pods(api_client)
-    classified = classify_f5_pods(tenant_pods, utils_pods)
-    tmm_pods = classified.get("tmm", [])
+    # Check if pods were already discovered by BNK data fetch / health dashboard
+    tmm_pods = None
+    bnk_pods_cached = cache.get(f"bnk:pods:{cluster_id}")
+    if bnk_pods_cached and isinstance(bnk_pods_cached, (tuple, list)) and len(bnk_pods_cached) == 2:
+        tenant_pods, utils_pods = bnk_pods_cached
+        classified = classify_f5_pods(tenant_pods, utils_pods)
+        tmm_pods = classified.get("tmm", [])
+    else:
+        for suffix in ("all:False", "all:True"):
+            data_cached = cache.get(f"bnk:data:{cluster_id}:{suffix}")
+            if data_cached and isinstance(data_cached, dict) and "classified_pods" in data_cached:
+                tmm_pods = data_cached["classified_pods"].get("tmm", [])
+                break
+
+    if tmm_pods is None:
+        tenant_pods, utils_pods = discover_f5_pods(api_client)
+        cache.set(f"bnk:pods:{cluster_id}", (tenant_pods, utils_pods), ttl_seconds=_TMM_POD_LIST_CACHE_TTL)
+        classified = classify_f5_pods(tenant_pods, utils_pods)
+        tmm_pods = classified.get("tmm", [])
 
     results = []
     for pod in tmm_pods:

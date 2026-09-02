@@ -49,7 +49,7 @@ _tmm_configview_executor: ThreadPoolExecutor | None = None
 # Short-term cache for TMM traffic stats. The expensive part is configview uuid
 # kubectl exec probes; cache the whole envelope so dashboard polling and tab
 # switching don't re-probe every few seconds.
-_TMM_TRAFFIC_STATS_CACHE_TTL = 60
+_TMM_TRAFFIC_STATS_CACHE_TTL = 120
 
 # Configview uuid-to-resource mappings are stable for a given TMM pod (they
 # reflect configured virtual servers/gateways). Cache them separately for 5

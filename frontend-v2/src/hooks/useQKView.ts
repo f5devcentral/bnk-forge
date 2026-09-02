@@ -23,6 +23,7 @@ export function useQKViewCheck(clusterId: number) {
     queryFn: () => qkviewApi.checkAvailability(clusterId),
     enabled: clusterId > 0,
     staleTime: 60_000, // 1 minute — CWC availability doesn't change often
+    placeholderData: (previousData) => previousData,
     retry: 1,
   });
 }
@@ -119,7 +120,8 @@ export function useCWCAPISetupStatus(clusterId: number, enabled = true) {
     queryKey: QKVIEW_KEYS.cwcApiSetupStatus(clusterId),
     queryFn: () => qkviewApi.getCWCAPISetupStatus(clusterId),
     enabled: enabled && clusterId > 0,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    placeholderData: (previousData) => previousData,
     retry: 1,
   });
 }

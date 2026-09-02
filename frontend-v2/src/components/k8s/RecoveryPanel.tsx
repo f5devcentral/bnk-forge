@@ -141,7 +141,8 @@ export function RecoveryPanel({ clusterId }: RecoveryPanelProps) {
     queryKey: ['recovery', 'status', clusterId],
     queryFn: () => recoveryApi.getStatus(clusterId),
     enabled: clusterId > 0,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    placeholderData: (previousData) => previousData,
     retry: 1,
   });
 
@@ -190,7 +191,7 @@ export function RecoveryPanel({ clusterId }: RecoveryPanelProps) {
     },
   });
 
-  if (statusLoading) {
+  if (statusLoading && !status) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
