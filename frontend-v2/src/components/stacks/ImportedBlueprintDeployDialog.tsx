@@ -412,16 +412,16 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
                     <p className="text-[11px] text-muted-foreground mt-1">Source: {template.source_path}</p>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-3 text-muted-foreground text-xs">
+                <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs shrink-0 max-w-sm justify-end">
                   {template.estimated_time && (
                     <div className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
+                      <Clock className="h-3 w-3 shrink-0" />
                       <span>{template.estimated_time}</span>
                     </div>
                   )}
                   {template.estimated_cost && (
                     <div className="flex items-center gap-1">
-                      <DollarSign className="h-3 w-3" />
+                      <DollarSign className="h-3 w-3 shrink-0" />
                       <span>{template.estimated_cost}</span>
                     </div>
                   )}

@@ -200,6 +200,11 @@ export interface BnkClusterDpfSummary {
   dpu_count: number;
 }
 
+export interface BnkNodeCapacity {
+  cpu_millicores: number;
+  memory_bytes: number;
+}
+
 export interface BnkClusterConsumption {
   cluster_id: number;
   cluster_name: string;
@@ -211,6 +216,7 @@ export interface BnkClusterConsumption {
   control_plane: BnkPlaneConsumption;
   data_plane: BnkPlaneConsumption;
   total: BnkPlaneConsumption;
+  node_capacity: BnkNodeCapacity;
   metrics_available: boolean;
   metrics_error: string | null;
   dpf: BnkClusterDpfSummary;
@@ -226,6 +232,8 @@ export interface BnkFleetSummary {
   data_plane_pods: number;
   total_cpu_millicores: number;
   total_memory_bytes: number;
+  node_capacity_cpu_millicores: number;
+  node_capacity_memory_bytes: number;
   dpf_detected_clusters: number;
   dpu_count: number;
 }

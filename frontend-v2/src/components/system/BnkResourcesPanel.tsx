@@ -143,14 +143,30 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
         <OverviewTile
           icon={Cpu}
           label="CPU"
-          value={formatCPU(fleet_summary.total_cpu_millicores)}
-          subtext="Across all BNK pods"
+          value={
+            fleet_summary.total_cpu_millicores > 0
+              ? formatCPU(fleet_summary.total_cpu_millicores)
+              : formatCPU(fleet_summary.node_capacity_cpu_millicores)
+          }
+          subtext={
+            fleet_summary.total_cpu_millicores > 0
+              ? "Across all BNK pods"
+              : "Node capacity (metrics-server unavailable)"
+          }
         />
         <OverviewTile
           icon={Database}
           label="Memory"
-          value={formatMemory(fleet_summary.total_memory_bytes)}
-          subtext="Across all BNK pods"
+          value={
+            fleet_summary.total_memory_bytes > 0
+              ? formatMemory(fleet_summary.total_memory_bytes)
+              : formatMemory(fleet_summary.node_capacity_memory_bytes)
+          }
+          subtext={
+            fleet_summary.total_memory_bytes > 0
+              ? "Across all BNK pods"
+              : "Node capacity (metrics-server unavailable)"
+          }
         />
       </div>
 
@@ -211,6 +227,11 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
                     <TableCell className="text-right tabular-nums">
                       {cluster.metrics_available ? (
                         formatCPU(cluster.total.cpu_millicores)
+                      ) : cluster.node_capacity.cpu_millicores > 0 ? (
+                        <span title="Node allocatable capacity (metrics-server unavailable)">
+                          {formatCPU(cluster.node_capacity.cpu_millicores)}
+                          <span className="text-muted-foreground">*</span>
+                        </span>
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
@@ -218,6 +239,11 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
                     <TableCell className="text-right tabular-nums">
                       {cluster.metrics_available ? (
                         formatMemory(cluster.total.memory_bytes)
+                      ) : cluster.node_capacity.memory_bytes > 0 ? (
+                        <span title="Node allocatable capacity (metrics-server unavailable)">
+                          {formatMemory(cluster.node_capacity.memory_bytes)}
+                          <span className="text-muted-foreground">*</span>
+                        </span>
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
@@ -231,6 +257,12 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
         {!fleet_summary.total_bnk_pods && clusters.length > 0 && (
           <p className="text-sm text-muted-foreground mt-4">
             No BNK workloads detected. Install BNK on a cluster to see resource usage.
+          </p>
+        )}
+        {clusters.some((c) => !c.metrics_available && c.node_capacity.cpu_millicores > 0) && (
+          <p className="text-xs text-muted-foreground mt-4">
+            * CPU/Memory values marked with * are node allocatable capacity, not live BNK pod usage.
+            Install metrics-server in each cluster to see actual BNK pod consumption.
           </p>
         )}
       </SectionCard>
