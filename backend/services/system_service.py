@@ -116,8 +116,8 @@ class SystemService:
     # BNK Resource Consumption
     # ================================================================
 
-    _BNK_CONSUMPTION_CACHE_KEY = "system:bnk-consumption"
-    _BNK_CONSUMPTION_TTL_SECONDS = 20
+    _BNK_CONSUMPTION_CACHE_KEY = "system:bnk_consumption"
+    _BNK_CONSUMPTION_TTL_SECONDS = 60
 
     def get_bnk_consumption(self) -> dict[str, Any]:
         """

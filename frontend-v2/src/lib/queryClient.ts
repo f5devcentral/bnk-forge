@@ -14,14 +14,14 @@ import { QUERY_STALE_TIME } from './constants';
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: QUERY_STALE_TIME.MEDIUM, // 10 seconds
+      staleTime: QUERY_STALE_TIME.DEFAULT, // 30 seconds
       retry: (failureCount, error) => {
         // Never retry auth errors — the interceptor handles logout
         const status = (error as { response?: { status?: number } })?.response?.status;
         if (status === 401 || status === 403) return false;
         return failureCount < 1;
       },
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: false,
       refetchOnReconnect: true,
       refetchOnMount: true,
     },

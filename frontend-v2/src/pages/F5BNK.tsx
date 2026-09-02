@@ -485,6 +485,7 @@ export default function F5BNK() {
     }),
     enabled: !!selectedCluster && !!selectedResourceType && !isSpecialView(selectedResourceType) && clusterReachable,
     staleTime: 30000,
+    placeholderData: (previousData) => previousData,
   });
 
   const { data: namespacesResponse } = useClusterNamespaces(selectedCluster || 0, {

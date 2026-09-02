@@ -25,9 +25,9 @@ from services.scanner.nodes import parse_node
 
 # Short-term cache for BNK data fetch. The dashboard polls /f5bnk/data and
 # /f5bnk/gateway-topology, and fleet BNK consumption aggregates the same data
-# across clusters. A 30-second TTL prevents redundant expensive K8s API bursts
+# across clusters. A 60-second TTL prevents redundant expensive K8s API bursts
 # when the user navigates/polls, while keeping staleness acceptable for views.
-_BNK_DATA_CACHE_TTL = 30
+_BNK_DATA_CACHE_TTL = 60
 _BNK_POD_DISCOVERY_CACHE_TTL = 15
 
 # Shared executor for BNK CRD/pod fetches. A per-request executor with

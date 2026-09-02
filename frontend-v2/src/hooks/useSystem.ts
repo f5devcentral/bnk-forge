@@ -189,14 +189,16 @@ export function useRestartContainers() {
  * PERFORMANCE: 60s polling, disabled when tab hidden, 2 min stale time.
  * The backend aggregates multi-cluster data and caches for 20 seconds.
  */
-export function useBnkConsumption() {
+export function useBnkConsumption(options?: { enabled?: boolean }) {
   const isVisible = useDocumentVisibility();
 
   return useQuery<BnkConsumptionResponse>({
     queryKey: queryKeys.system.bnkConsumption(),
     queryFn: () => api.getBnkConsumption(),
-    refetchInterval: isVisible ? POLL_INTERVALS.VERY_SLOW : false,
+    enabled: options?.enabled !== false,
+    refetchInterval: isVisible && options?.enabled !== false ? POLL_INTERVALS.VERY_SLOW : false,
     staleTime: QUERY_STALE_TIME.SYSTEM,
+    placeholderData: (previousData) => previousData,
   });
 }
 

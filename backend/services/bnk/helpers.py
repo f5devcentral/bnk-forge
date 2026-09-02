@@ -93,7 +93,7 @@ def get_policy_operational_status(resource: dict) -> dict[str, Any]:
     ancestors = status.get("ancestors")
     descendants = status.get("descendants")
 
-    if isinstance(ancestors, list) or isinstance(descendants, list):
+    if (isinstance(ancestors, list) and len(ancestors) > 0) or (isinstance(descendants, list) and len(descendants) > 0):
         ancestors_list = ancestors if isinstance(ancestors, list) else []
         descendants_list = descendants if isinstance(descendants, list) else []
 
@@ -151,10 +151,11 @@ def get_policy_operational_status(resource: dict) -> dict[str, Any]:
         or has_condition(resource, "Accepted")
         or has_condition(resource, "Ready")
     )
+    has_programmed_false = has_condition(resource, "Programmed", "False")
     programmed = (
         has_condition(resource, "Programmed")
-        or has_condition(resource, "Ready")
-        or (resolved and not get_condition_message(resource, "Programmed"))
+        or (has_condition(resource, "Ready") and not has_programmed_false)
+        or (resolved and not has_programmed_false and not get_condition_message(resource, "Programmed"))
     )
     return {
         "resolved": resolved,

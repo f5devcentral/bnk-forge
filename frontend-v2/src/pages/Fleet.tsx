@@ -3350,7 +3350,7 @@ export default function Fleet() {
     data: bnkConsumption,
     isLoading: bnkLoading,
     error: bnkError,
-  } = useBnkConsumption();
+  } = useBnkConsumption({ enabled: activeView === 'bnk' });
 
   const subtitle = 'Group clusters into fleets and operate them at scale — health, policy, compliance, and staged operations.';
 
