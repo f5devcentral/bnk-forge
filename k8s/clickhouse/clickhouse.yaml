@@ -1,0 +1,163 @@
+---
+# Secret for credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clickhouse-secret
+  namespace: waf-clickhouse
+type: Opaque
+stringData:
+  username: bnkforge
+  password: bnkforge_ch_pass
+
+---
+# ConfigMap with users.xml so our user has SQL-level access
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+  namespace: waf-clickhouse
+data:
+  users.xml: |
+    <clickhouse>
+      <users>
+        <bnkforge>
+          <password>bnkforge_ch_pass</password>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+          <profile>default</profile>
+          <quota>default</quota>
+          <access_management>1</access_management>
+        </bnkforge>
+      </users>
+    </clickhouse>
+  config.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+    </clickhouse>
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-data
+  namespace: waf-clickhouse
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: waf-clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.8
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            - name: CLICKHOUSE_DB
+              value: bnkforge
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-secret
+                  key: username
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-secret
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/bnkforge.xml
+              subPath: users.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/listen.xml
+              subPath: config.xml
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: clickhouse-data
+        - name: config
+          configMap:
+            name: clickhouse-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: waf-clickhouse
+spec:
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000
+
+---
+# NodePort so the devbox backend can reach ClickHouse
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse-nodeport
+  namespace: waf-clickhouse
+spec:
+  type: NodePort
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+      nodePort: 30123
+    - name: native
+      port: 9000
+      targetPort: 9000
+      nodePort: 30900

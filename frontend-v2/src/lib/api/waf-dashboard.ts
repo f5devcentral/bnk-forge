@@ -2,6 +2,15 @@ import { apiClient } from './client';
 
 export type TimeRange = '1h' | '24h' | '7d' | '30d';
 
+export interface DashboardGlobalFilter {
+  outcome?:     string;
+  policy_name?: string;
+  vs_name?:     string;
+  ip_client?:   string;
+  attack_type?: string;
+  method?:      string;
+}
+
 export interface DashboardUnavailable {
   available: false;
   reason: string;
@@ -122,73 +131,73 @@ export const wafDashboardApi = {
       .get<DashboardStatus | DashboardUnavailable>(`${base(clusterId)}/status`)
       .then((r) => r.data),
 
-  getSummary: (clusterId: number, timeRange: TimeRange) =>
+  getSummary: (clusterId: number, timeRange: TimeRange, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardSummary | DashboardUnavailable>(`${base(clusterId)}/summary`, {
-        params: { time_range: timeRange },
+        params: { time_range: timeRange, ...gf },
       })
       .then((r) => r.data),
 
-  getTrend: (clusterId: number, timeRange: TimeRange) =>
+  getTrend: (clusterId: number, timeRange: TimeRange, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTrend | DashboardUnavailable>(`${base(clusterId)}/trend`, {
-        params: { time_range: timeRange },
+        params: { time_range: timeRange, ...gf },
       })
       .then((r) => r.data),
 
-  getTopAttacks: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopAttacks: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopAttacks | DashboardUnavailable>(`${base(clusterId)}/top-attacks`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
-  getTopIps: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopIps: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopIps | DashboardUnavailable>(`${base(clusterId)}/top-ips`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
-  getTopUris: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopUris: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopUris | DashboardUnavailable>(`${base(clusterId)}/top-uris`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
-  getTopPolicies: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopPolicies: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopPolicies | DashboardUnavailable>(`${base(clusterId)}/top-policies`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
-  getRequestMethods: (clusterId: number, timeRange: TimeRange) =>
+  getRequestMethods: (clusterId: number, timeRange: TimeRange, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardRequestMethods | DashboardUnavailable>(`${base(clusterId)}/request-methods`, {
-        params: { time_range: timeRange },
+        params: { time_range: timeRange, ...gf },
       })
       .then((r) => r.data),
 
-  getSeverity: (clusterId: number, timeRange: TimeRange) =>
+  getSeverity: (clusterId: number, timeRange: TimeRange, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardSeverity | DashboardUnavailable>(`${base(clusterId)}/severity`, {
-        params: { time_range: timeRange },
+        params: { time_range: timeRange, ...gf },
       })
       .then((r) => r.data),
 
-  getTopSignatures: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopSignatures: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopSignatures | DashboardUnavailable>(`${base(clusterId)}/top-signatures`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
-  getTopInstances: (clusterId: number, timeRange: TimeRange, limit = 10) =>
+  getTopInstances: (clusterId: number, timeRange: TimeRange, limit = 10, gf?: DashboardGlobalFilter) =>
     apiClient
       .get<DashboardTopInstances | DashboardUnavailable>(`${base(clusterId)}/top-instances`, {
-        params: { time_range: timeRange, limit },
+        params: { time_range: timeRange, limit, ...gf },
       })
       .then((r) => r.data),
 
@@ -197,5 +206,21 @@ export const wafDashboardApi = {
       .get<DashboardSupportIdEvent | DashboardUnavailable>(`${base(clusterId)}/support-id`, {
         params: { support_id: supportId },
       })
+      .then((r) => r.data),
+
+  getTopSubviolations: (clusterId: number, namespace: string, hours = 24, limit = 10) =>
+    apiClient
+      .get<{ available: boolean; items: { sub_violation: string; hits: number; blocked: number }[] }>(
+        `${base(clusterId)}/top-subviolations`,
+        { params: { namespace, hours, limit } },
+      )
+      .then((r) => r.data),
+
+  getTopGeolocations: (clusterId: number, namespace: string, hours = 24, limit = 15) =>
+    apiClient
+      .get<{ available: boolean; items: { country: string; code: string; lat: number; lon: number; hits: number; blocked: number }[] }>(
+        `${base(clusterId)}/top-geolocations`,
+        { params: { namespace, hours, limit } },
+      )
       .then((r) => r.data),
 };

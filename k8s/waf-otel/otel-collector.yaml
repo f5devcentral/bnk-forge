@@ -1,0 +1,209 @@
+---
+# Namespace for all WAF observability components
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: waf-otel
+---
+# ConfigMap: OTEL Collector pipeline config
+# Receives TCP syslog from TMM HSL publisher, transforms NAP key=value → canonical
+# OTEL attributes, and exports to ClickHouse.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: waf-otel
+data:
+  config.yaml: |
+    receivers:
+      # RFC3164 syslog receiver — HSL publisher wraps NAP events in syslog framing
+      syslog:
+        tcp:
+          listen_address: "0.0.0.0:5514"
+        protocol: rfc3164
+
+    extensions:
+      health_check:
+        endpoint: "0.0.0.0:13133"
+
+    processors:
+      # Tag every record with the BNK-Forge cluster_id and ingest source
+      resource/cluster:
+        attributes:
+          - key: cluster_id
+            value: "1"
+            action: insert
+
+      # Parse NAP key=value fields from the syslog body
+      transform/nap_parse:
+        log_statements:
+          - context: log
+            statements:
+              - set(attributes["raw_message"], body)
+              - set(attributes["cluster_id"], resource.attributes["cluster_id"])
+              - set(attributes["attack_type"],
+                  ExtractPatterns(body, "attack_type=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "attack_type=\"")
+              - set(attributes["outcome"],
+                  ExtractPatterns(body, "outcome=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "outcome=\"")
+              - set(attributes["outcome"],
+                  ExtractPatterns(body, "request_status=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "request_status=\"") and attributes["outcome"] == ""
+              - set(attributes["policy_name"],
+                  ExtractPatterns(body, "policy_name=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "policy_name=\"")
+              - set(attributes["vs_name"],
+                  ExtractPatterns(body, "vs_name=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "vs_name=\"")
+              - set(attributes["ip_client"],
+                  ExtractPatterns(body, "ip_client=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "ip_client=\"")
+              - set(attributes["uri"],
+                  ExtractPatterns(body, "uri=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "uri=\"")
+              - set(attributes["method"],
+                  ExtractPatterns(body, "method=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "method=\"")
+              - set(attributes["support_id"],
+                  ExtractPatterns(body, "support_id=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "support_id=\"")
+              - set(attributes["sig_ids"],
+                  ExtractPatterns(body, "sig_ids=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "sig_ids=\"")
+              - set(attributes["sig_names"],
+                  ExtractPatterns(body, "sig_names=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "sig_names=\"")
+              - set(attributes["violation_rating"],
+                  ExtractPatterns(body, "violation_rating=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "violation_rating=\"")
+              - set(attributes["date_time"],
+                  ExtractPatterns(body, "date_time=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "date_time=\"")
+              - set(attributes["namespace"],
+                  ExtractPatterns(body, "namespace=\"(?P<v>[^\"]*)\"")["v"])
+                  where IsMatch(body, "namespace=\"")
+              - set(attributes["ingest_source"], "otel")
+
+      # Drop non-NAP lines — anything without a policy_name is not a WAF security event
+      filter/waf_only:
+        logs:
+          log_record:
+            - 'attributes["policy_name"] == ""'
+
+      batch:
+        send_batch_size: 200
+        timeout: 5s
+
+    exporters:
+      # ClickHouse native protocol — writes to waf_events_otel; MV transforms → waf_events
+      clickhouse:
+        endpoint: tcp://10.96.183.55:9000
+        username: bnkforge
+        password: bnkforge_ch_pass
+        database: bnkforge
+        logs_table_name: waf_events_otel
+        create_schema: false
+        timeout: 10s
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_elapsed_time: 300s
+
+      debug:
+        verbosity: basic
+        sampling_initial: 5
+        sampling_thereafter: 200
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        logs:
+          receivers: [syslog]
+          processors: [resource/cluster, transform/nap_parse, filter/waf_only, batch]
+          exporters: [clickhouse, debug]
+---
+# Service: exposes TCP syslog port inside the cluster
+# TMM's F5BigLogHslpub will point to this service IP:port
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: waf-otel
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: syslog-tcp
+      port: 5514
+      targetPort: 5514
+      protocol: TCP
+  type: ClusterIP
+---
+# NodePort service so TMM (which uses node IPs in HSL config) can reach the collector
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-nodeport
+  namespace: waf-otel
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: syslog-tcp
+      port: 5514
+      targetPort: 5514
+      nodePort: 30841
+      protocol: TCP
+  type: NodePort
+---
+# Deployment: single OTEL Collector instance
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: waf-otel
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.107.0
+          args: ["--config=/conf/config.yaml"]
+          ports:
+            - name: syslog-tcp
+              containerPort: 5514
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133   # OTEL health check extension port
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config

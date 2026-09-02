@@ -307,15 +307,19 @@ def _read_logs_from_clickhouse(
         params["urif"] = uri_filter
 
     where = " AND ".join(conditions)
-    sql = f"""
-        SELECT ts, outcome, attack_type, ip_client, method, uri,
-               policy_name, vs_name, violation_rating, support_id,
-               sig_ids, sig_names, raw_message, ingest_source
-        FROM {_CLICKHOUSE_DB}.waf_events
-        WHERE {where}
-        ORDER BY ts DESC
-        LIMIT {{limit:UInt32}}
-    """
+    # Use string concatenation — where contains ClickHouse {param:Type} placeholders
+    # that Python f-string would try to evaluate, causing a silent ValueError → empty results.
+    # raw_message/ingest_source live in waf_events_otel; waf_events has namespace/ingest_ts.
+    sql = (
+        "SELECT ts, outcome, attack_type, ip_client, method, uri,"
+        " policy_name, vs_name, violation_rating, support_id,"
+        " sig_ids, sig_names,"
+        " '' AS raw_message, 'clickhouse' AS ingest_source"
+        f" FROM {_CLICKHOUSE_DB}.waf_events"
+        f" WHERE {where}"
+        " ORDER BY ts DESC"
+        " LIMIT {limit:UInt32}"
+    )
 
     try:
         rows = ch.query(sql, params)

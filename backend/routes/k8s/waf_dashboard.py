@@ -41,6 +41,47 @@ def _hours(time_range: str) -> int:
     return _RANGE_HOURS.get(time_range, 24)
 
 
+def _build_filter_conditions(
+    params: dict,
+    outcome: str | None = None,
+    policy_name: str | None = None,
+    vs_name: str | None = None,
+    ip_client: str | None = None,
+    attack_type: str | None = None,
+    method: str | None = None,
+) -> list[str]:
+    """Return extra WHERE clauses for the global dashboard filter and populate params."""
+    conditions: list[str] = []
+    if outcome:
+        conditions.append("outcome = {g_outcome:String}")
+        params["g_outcome"] = outcome.upper()
+    if policy_name:
+        conditions.append("policy_name = {g_policy:String}")
+        params["g_policy"] = policy_name
+    if vs_name:
+        conditions.append("vs_name = {g_vs:String}")
+        params["g_vs"] = vs_name
+    if ip_client:
+        conditions.append("ip_client = {g_ip:String}")
+        params["g_ip"] = ip_client
+    if attack_type:
+        conditions.append("positionCaseInsensitive(attack_type, {g_atk:String}) > 0")
+        params["g_atk"] = attack_type
+    if method:
+        conditions.append("upper(method) = {g_method:String}")
+        params["g_method"] = method.upper()
+    return conditions
+
+
+# Shared Query annotation for the six global dashboard filter params (no default in Query — use = None at call site)
+_G_OUTCOME     = Query(description="Filter by WAF outcome (REJECTED|ALERTED|PASSED)")
+_G_POLICY      = Query(description="Filter by policy name (exact)")
+_G_VS          = Query(description="Filter by virtual server / instance name (exact)")
+_G_IP          = Query(description="Filter by client IP address (exact)")
+_G_ATTACK_TYPE = Query(description="Filter by attack type (substring)")
+_G_METHOD      = Query(description="Filter by HTTP method (GET|POST|etc., case-insensitive)")
+
+
 def _unavailable() -> dict:
     return {
         "available": False,
@@ -74,6 +115,12 @@ def dashboard_status(cluster_id: int):
 def dashboard_summary(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Return KPI numbers: total, rejected_pct, top_attack_type, unique_ips."""
     ch = get_clickhouse()
@@ -81,6 +128,11 @@ def dashboard_summary(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
 
     rows = ch.query(
         f"""
@@ -93,11 +145,11 @@ def dashboard_summary(
             topK(1)(attack_type)[1]                         AS top_attack_type
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND attack_type != 'N/A'
           OR (cluster_id = {{cid:UInt32}} AND ts >= now() - INTERVAL {{h:UInt32}} HOUR AND outcome != 'PASSED')
         """,
-        {"cid": cluster_id, "h": h},
+        gf_params,
     )
 
     # Simpler, correct query
@@ -111,9 +163,9 @@ def dashboard_summary(
             uniqExact(ip_client)           AS unique_ips
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
         """,
-        {"cid": cluster_id, "h": h},
+        gf_params,
     )
 
     top_attack_rows = ch.query(
@@ -121,14 +173,14 @@ def dashboard_summary(
         SELECT attack_type, count() AS cnt
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND attack_type != 'N/A'
           AND outcome = 'REJECTED'
         GROUP BY attack_type
         ORDER BY cnt DESC
         LIMIT 1
         """,
-        {"cid": cluster_id, "h": h},
+        gf_params,
     )
 
     row = rows[0] if rows else {}
@@ -156,6 +208,12 @@ def dashboard_summary(
 def dashboard_trend(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """
     Return time-bucketed event counts split by outcome.
@@ -167,6 +225,11 @@ def dashboard_trend(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     # Use 6-hour buckets for 30-day view to keep the series manageable
     bucket_hours = 6 if h > 7 * 24 else 1
 
@@ -179,11 +242,11 @@ def dashboard_trend(
             countIf(outcome = 'ALERTED')  AS ALERTED
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
         GROUP BY bucket
         ORDER BY bucket
         """,
-        {"cid": cluster_id, "h": h, "bucket": bucket_hours},
+        {**gf_params, "bucket": bucket_hours},
     )
 
     return {
@@ -212,6 +275,12 @@ def dashboard_top_attacks(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top attack types by event count."""
     ch = get_clickhouse()
@@ -219,6 +288,11 @@ def dashboard_top_attacks(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -227,13 +301,13 @@ def dashboard_top_attacks(
             countIf(outcome = 'REJECTED') AS rejected
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND attack_type != 'N/A'
         GROUP BY attack_type
         ORDER BY cnt DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     total = sum(int(r["cnt"]) for r in rows)
@@ -261,6 +335,12 @@ def dashboard_top_ips(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top source IPs by blocked event count."""
     ch = get_clickhouse()
@@ -268,6 +348,11 @@ def dashboard_top_ips(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -277,13 +362,13 @@ def dashboard_top_ips(
             max(ts) AS last_seen
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND ip_client != ''
         GROUP BY ip_client
         ORDER BY blocked_hits DESC, total_hits DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     return {
@@ -310,6 +395,12 @@ def dashboard_top_uris(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top attacked URIs."""
     ch = get_clickhouse()
@@ -317,6 +408,11 @@ def dashboard_top_uris(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -327,14 +423,14 @@ def dashboard_top_uris(
             max(ts) AS last_seen
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND uri != ''
           AND outcome = 'REJECTED'
         GROUP BY uri
         ORDER BY cnt DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     return {
@@ -362,6 +458,12 @@ def dashboard_top_policies(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top policies by hit count — mirrors NIM's 'Top WAF Policies' panel."""
     ch = get_clickhouse()
@@ -369,6 +471,11 @@ def dashboard_top_policies(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -379,13 +486,13 @@ def dashboard_top_policies(
             uniqExact(ip_client)           AS unique_ips
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND policy_name != ''
         GROUP BY policy_name
         ORDER BY hits DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     return {
@@ -412,6 +519,12 @@ def dashboard_top_policies(
 def dashboard_request_methods(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """HTTP method distribution — mirrors NIM's 'Request Methods' panel."""
     ch = get_clickhouse()
@@ -419,18 +532,23 @@ def dashboard_request_methods(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT method, count() AS cnt
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND method != ''
         GROUP BY method
         ORDER BY cnt DESC
         LIMIT 10
         """,
-        {"cid": cluster_id, "h": h},
+        gf_params,
     )
 
     return {
@@ -448,6 +566,12 @@ def dashboard_request_methods(
 def dashboard_severity(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Violation-rating distribution — mirrors NIM's 'Severity' panel."""
     ch = get_clickhouse()
@@ -455,6 +579,11 @@ def dashboard_severity(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -462,12 +591,12 @@ def dashboard_severity(
             count() AS cnt
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
         GROUP BY violation_rating
         ORDER BY violation_rating DESC
         LIMIT 10
         """,
-        {"cid": cluster_id, "h": h},
+        gf_params,
     )
 
     # Map numeric rating to severity label matching BIG-IP NAP conventions
@@ -500,6 +629,12 @@ def dashboard_top_signatures(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top triggered signature names — mirrors NIM's 'Top Signatures' panel."""
     ch = get_clickhouse()
@@ -507,6 +642,11 @@ def dashboard_top_signatures(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -517,14 +657,14 @@ def dashboard_top_signatures(
             countIf(outcome = 'REJECTED')  AS blocked
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND sig_names != ''
           AND sig_names != 'N/A'
         GROUP BY sig_names
         ORDER BY hits DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     return {
@@ -552,6 +692,12 @@ def dashboard_top_instances(
     cluster_id: int,
     time_range: Annotated[str, Query()] = "24h",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    outcome:     Annotated[str | None, _G_OUTCOME]     = None,
+    policy_name: Annotated[str | None, _G_POLICY]      = None,
+    vs_name:     Annotated[str | None, _G_VS]          = None,
+    ip_client:   Annotated[str | None, _G_IP]          = None,
+    attack_type: Annotated[str | None, _G_ATTACK_TYPE] = None,
+    method:      Annotated[str | None, _G_METHOD]      = None,
 ):
     """Top virtual servers (instances) by hit count — mirrors NIM's 'Top Attacked Instances' panel."""
     ch = get_clickhouse()
@@ -559,6 +705,11 @@ def dashboard_top_instances(
         return _unavailable()
 
     h = _hours(time_range)
+    gf_params: dict = {"cid": cluster_id, "h": h}
+    gf_conds = _build_filter_conditions(
+        gf_params, outcome, policy_name, vs_name, ip_client, attack_type, method
+    )
+    gf_extra = (" AND " + " AND ".join(gf_conds)) if gf_conds else ""
     rows = ch.query(
         f"""
         SELECT
@@ -569,13 +720,13 @@ def dashboard_top_instances(
             uniqExact(ip_client)           AS unique_ips
         FROM {_DB}.waf_events
         WHERE cluster_id = {{cid:UInt32}}
-          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR{gf_extra}
           AND vs_name != ''
         GROUP BY vs_name
         ORDER BY hits DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"cid": cluster_id, "h": h, "lim": limit},
+        {**gf_params, "lim": limit},
     )
 
     return {
@@ -591,6 +742,138 @@ def dashboard_top_instances(
             }
             for r in rows
         ],
+    }
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/top-subviolations",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF top sub-violations")
+def dashboard_top_subviolations(
+    cluster_id: int,
+    namespace: str,
+    hours: int = 24,
+    limit: int = 10,
+):
+    """Top sub-violations parsed from NAP events (e.g. 'Host header contains IP address')."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    rows = ch.query(
+        f"""
+        SELECT
+            arrayJoin(splitByString(',', sub_violations)) AS sub_violation,
+            count() AS hits,
+            countIf(outcome = 'REJECTED') AS blocked
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+          AND sub_violations != ''
+        GROUP BY sub_violation
+        HAVING trimBoth(sub_violation) != ''
+        ORDER BY hits DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        {"cid": cluster_id, "h": hours, "lim": limit},
+    )
+    return {
+        "available": True,
+        "items": [
+            {"sub_violation": r["sub_violation"].strip(), "hits": int(r["hits"]), "blocked": int(r["blocked"])}
+            for r in rows if r["sub_violation"].strip()
+        ],
+    }
+
+
+# Prefix-to-country map for attacker IPs generated by the traffic generator
+# Covers the pool in traffic-gen.py; extended with common cloud/hosting prefixes.
+_GEO_MAP = {
+    "185.234": ("Germany", "DE", 51.2, 10.5),
+    "45.142": ("Netherlands", "NL", 52.4, 4.9),
+    "91.108": ("Russia", "RU", 61.5, 105.3),
+    "5.188": ("Russia", "RU", 61.5, 105.3),
+    "31.184": ("Russia", "RU", 61.5, 105.3),
+    "198.235": ("United States", "US", 38.0, -97.0),
+    "212.102": ("United Kingdom", "GB", 55.4, -3.4),
+    "162.55": ("Germany", "DE", 51.2, 10.5),
+    "195.123": ("Luxembourg", "LU", 49.6, 6.1),
+    "89.248": ("Netherlands", "NL", 52.4, 4.9),
+    "103.21": ("China", "CN", 35.9, 104.2),
+    "104.16": ("United States", "US", 38.0, -97.0),
+    "172.67": ("United States", "US", 38.0, -97.0),
+    "10.244": ("Private", "–", 0.0, 0.0),
+    "11.11": ("Private", "–", 0.0, 0.0),
+    "98.234": ("United States", "US", 38.0, -97.0),
+    "76.120": ("United States", "US", 38.0, -97.0),
+    "71.198": ("United States", "US", 38.0, -97.0),
+    "108.14": ("United States", "US", 38.0, -97.0),
+    "67.189": ("United States", "US", 38.0, -97.0),
+    "50.77": ("United States", "US", 38.0, -97.0),
+}
+
+
+def _ip_to_geo(ip: str):
+    for prefix, geo in _GEO_MAP.items():
+        if ip.startswith(prefix + "."):
+            return geo
+    return ("Unknown", "–", 0.0, 0.0)
+
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/waf/dashboard/top-geolocations",
+    dependencies=[Depends(require_viewer)],
+)
+@handle_route_errors("fetch WAF top geolocations")
+def dashboard_top_geolocations(
+    cluster_id: int,
+    namespace: str,
+    hours: int = 24,
+    limit: int = 15,
+):
+    """Top attacker geolocations with lat/lon for world-map rendering."""
+    ch = get_clickhouse()
+    if not ch.available:
+        return _unavailable()
+
+    rows = ch.query(
+        f"""
+        SELECT
+            coalesce(nullIf(x_forwarded_for, ''), ip_client) AS ip,
+            count()                AS hits,
+            countIf(outcome = 'REJECTED') AS blocked
+        FROM {_DB}.waf_events
+        WHERE cluster_id = {{cid:UInt32}}
+          AND ts >= now() - INTERVAL {{h:UInt32}} HOUR
+        GROUP BY ip
+        ORDER BY hits DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        {"cid": cluster_id, "h": hours, "lim": limit},
+    )
+
+    items = []
+    by_country: dict = {}
+    for r in rows:
+        ip = r["ip"]
+        country, code, lat, lon = _ip_to_geo(ip)
+        if code == "–":
+            continue
+        key = code
+        if key in by_country:
+            by_country[key]["hits"] += int(r["hits"])
+            by_country[key]["blocked"] += int(r["blocked"])
+        else:
+            by_country[key] = {
+                "country": country, "code": code,
+                "lat": lat, "lon": lon,
+                "hits": int(r["hits"]), "blocked": int(r["blocked"]),
+            }
+
+    return {
+        "available": True,
+        "items": sorted(by_country.values(), key=lambda x: -x["hits"])[:limit],
     }
 
 

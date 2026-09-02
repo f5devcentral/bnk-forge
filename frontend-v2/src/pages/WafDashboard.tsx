@@ -66,6 +66,8 @@ import {
   useWafDashboardSeverity,
   useWafDashboardTopSignatures,
   useWafDashboardTopInstances,
+  useWafDashboardTopSubviolations,
+  useWafDashboardTopGeolocations,
   REFRESH_OPTIONS,
   type RefreshIntervalMs,
 } from '@/hooks/useWafDashboard';
@@ -85,6 +87,9 @@ import type {
 } from '@/lib/api/waf-dashboard';
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP } from '@/components/observability/chart-theme';
 
+type GeoItem    = { country: string; code: string; lat: number; lon: number; hits: number; blocked: number };
+type SubvioItem = { sub_violation: string; hits: number; blocked: number };
+
 // ── Panel tooltip copy — sourced from NIM's Security Dashboard help text so our
 // panels carry the same explanatory context, adapted for BNK-Forge/ClickHouse data.
 const HELP = {
@@ -92,15 +97,15 @@ const HELP = {
   botAttacks: 'The number of bot attacks (also shown as a percentage of total attacks). A bot attack is the use of automated web requests to manipulate, defraud, or disrupt a website, application, API, or end-users. Requires Bot Signatures to be installed.',
   threatIntelligence: 'Data collection about possible known threats as identified by threat campaign and signature packages.',
   attackRequestsOverTime: 'The total number of requests over a period of time, classified into WAF request status categories.',
-  topAttackGeolocations: 'Map-view showing threat origin. Requires IP geolocation lookup (not yet wired up).',
+  topAttackGeolocations: 'Threat origin by country, derived from the X-Forwarded-For header in NAP events. Hover a row to see hit counts.',
   topWafPolicies: 'Top WAF policies with the most requests triggering WAF violations. Select a policy to view more details or use the row actions to apply it as a filter.',
   topAttackIps: 'Top IP addresses with the most requests triggering WAF violations. Select an IP address to view more details or use the row actions to apply it as a filter.',
   topViolations: 'Top violations (attack types) with the most requests triggering WAF violations. Select a violation to view more details or use the row actions to apply it as a filter.',
   topSignatures: 'Top signatures based on the number of requests triggering WAF attack signatures. Select a Signature Name to view more details or use the row actions to apply it as a filter.',
-  topSubviolations: 'Top sub-violations with the most requests triggering WAF sub-violations. Requires sub-violation-level ingestion (not yet captured).',
+  topSubviolations: 'Top sub-violations (e.g. "Host header contains IP address") extracted from NAP events. Sourced from the sub_violations field ingested via OTEL.',
   topAttackUris: 'Top URIs targeted by the most requests triggering WAF violations. Select a URI to view more details or use the row actions to apply it as a filter.',
   requestMethods: 'Proportional representation of request methods used as a part of requests triggering WAF violations.',
-  responseCodes: 'Proportional representation of HTTP response codes used as part of requests triggering WAF violations. Requires response_code ingestion (not yet captured).',
+  responseCodes: 'HTTP response codes from WAF events. Note: the WAF enforcer reports response_code=0 for blocked requests (no response sent). Non-zero codes appear for alarmed/passed traffic.',
   severity: 'Proportional representation of severity classifications WAF placed on requests triggering WAF violations. Severity represents the maximum severity calculated from all triggered violations found in a request.',
   botAttackRequestStatus: 'Proportional representation of all requests which WAF identifies as a bot attack, classified into WAF request status categories.',
   botHitsOverTime: 'Requests seen over a period of time that WAF has classified as possible bot attacks.',
@@ -606,6 +611,10 @@ export default function WafDashboard() {
   const { data: severityData,    isLoading: severityLoading     } = useWafDashboardSeverity(clusterId, timeRange, intervalMs, globalFilter);
   const { data: signaturesData,  isLoading: signaturesLoading   } = useWafDashboardTopSignatures(clusterId, timeRange, intervalMs, globalFilter);
   const { data: instancesData,   isLoading: instancesLoading    } = useWafDashboardTopInstances(clusterId, timeRange, intervalMs, globalFilter);
+  // Map timeRange to hours for new raw-hours endpoints
+  const hoursFromRange = timeRange === '1h' ? 1 : timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720;
+  const { data: subviolData,     isLoading: subviolLoading      } = useWafDashboardTopSubviolations(clusterId, 'default', hoursFromRange, intervalMs);
+  const { data: geoData,         isLoading: geoLoading          } = useWafDashboardTopGeolocations(clusterId, 'default', hoursFromRange, intervalMs);
 
   function openCreate() { setEditingPanel(null); setBuilderOpen(true); }
   function openEdit(p: WafPanel) { setEditingPanel(p); setBuilderOpen(true); }
@@ -1130,12 +1139,30 @@ export default function WafDashboard() {
           {/* ── Bottom two-column row ────────────────────────────────────── */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
-            {/* Top Attack Geolocations — placeholder (no IP geolocation lookup wired up) */}
-            <PlaceholderCard
-              title="Top Attack Geolocations"
-              help={HELP.topAttackGeolocations}
-              reason="Map view requires an IP-to-geolocation lookup service. See Top Attack IP Addresses below for raw source IPs."
-            />
+            {/* Top Attack Geolocations — country table derived from X-Forwarded-For */}
+            <Panel title="Top Attack Geolocations" help={HELP.topAttackGeolocations}>
+              {geoLoading ? <Skeleton className="h-48 w-full" /> : (
+                !geoData?.available || !(geoData as {available:true;items:GeoItem[]}).items.length ? (
+                  <p className="text-xs text-muted-foreground py-4 text-center">No geolocation data yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {(geoData as {available:true;items:GeoItem[]}).items.map((g, i) => {
+                      const pct = Math.round(g.hits / (geoData as {available:true;items:GeoItem[]}).items.reduce((s,x)=>s+x.hits,0) * 100);
+                      return (
+                        <div key={g.code} className="flex items-center gap-2 text-xs">
+                          <span className="w-5 text-right text-muted-foreground">{i+1}.</span>
+                          <span className="font-medium w-28 truncate" title={g.country}>{g.country}</span>
+                          <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                            <div className="h-full bg-destructive/70 rounded-full" style={{width:`${pct}%`}} />
+                          </div>
+                          <span className="tabular-nums text-right w-10">{g.hits >= 1000 ? `${(g.hits/1000).toFixed(1)}K` : g.hits}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+            </Panel>
 
             {/* Top Violations (renamed from Top Attack Types to match NIM terminology) */}
             <Panel title="Top Violations" help={HELP.topViolations}>
@@ -1155,8 +1182,14 @@ export default function WafDashboard() {
                     <YAxis
                       type="category"
                       dataKey="attack_type"
-                      width={130}
-                      tick={{ fill: CHART_TEXT, fontSize: 10 }}
+                      width={200}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      tick={(props: any) => {
+                        const label = String(props?.payload?.value ?? '');
+                        // Truncate long labels so they fit within the 200px YAxis width
+                        const truncated = label.length > 28 ? label.slice(0, 26) + '…' : label;
+                        return <text x={props.x} y={props.y} dy={4} textAnchor="end" fill={CHART_TEXT} fontSize={10}>{truncated}</text>;
+                      }}
                     />
                     <RechartsTooltip
                       contentStyle={CHART_TOOLTIP}
@@ -1292,11 +1325,11 @@ export default function WafDashboard() {
                           <td className="py-2 px-4 text-right tabular-nums text-destructive font-medium">
                             {fmtNumber(u.rejected)}
                           </td>
-                          <td className="py-2 pl-4">
+                          <td className="py-2 pl-4 max-w-[220px]">
                             <div className="flex flex-wrap gap-1">
-                              {u.attack_types.filter(t => t !== 'N/A').slice(0, 3).map((t) => (
-                                <Badge key={t} variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-warning/10 text-warning border-warning/20">
-                                  {t}
+                              {u.attack_types.filter(t => t !== 'N/A').slice(0, 2).map((t) => (
+                                <Badge key={t} variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-warning/10 text-warning border-warning/20 truncate max-w-[200px]" title={t}>
+                                  {t.length > 30 ? t.slice(0, 28) + '…' : t}
                                 </Badge>
                               ))}
                             </div>
@@ -1315,12 +1348,29 @@ export default function WafDashboard() {
           {/* ── NIM-equivalent lower panels ─────────────────────────── */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-            {/* Top Subviolations — placeholder (no sub-violation-level ingestion) */}
-            <PlaceholderCard
-              title="Top Subviolations"
-              help={HELP.topSubviolations}
-              reason="Sub-violation-level detail isn't captured in the current OTEL → ClickHouse pipeline."
-            />
+            {/* Top Subviolations — from NAP sub_violations field */}
+            <Panel title="Top Subviolations" help={HELP.topSubviolations}>
+              {subviolLoading ? <Skeleton className="h-48 w-full" /> : (
+                !subviolData?.available || !(subviolData as {available:true;items:SubvioItem[]}).items.length ? (
+                  <p className="text-xs text-muted-foreground py-4 text-center">No sub-violation data yet — traffic generating now.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {(subviolData as {available:true;items:SubvioItem[]}).items.map((s, i) => (
+                      <div key={i} className="text-xs">
+                        <div className="flex justify-between mb-0.5">
+                          <span className="truncate max-w-[70%]" title={s.sub_violation}>{s.sub_violation}</span>
+                          <span className="tabular-nums text-muted-foreground">{s.hits >= 1000 ? `${(s.hits/1000).toFixed(1)}K` : s.hits}</span>
+                        </div>
+                        <div className="bg-muted rounded-full h-1 overflow-hidden">
+                          <div className="h-full bg-orange-400 rounded-full"
+                            style={{width:`${Math.round(s.hits/(subviolData as {available:true;items:SubvioItem[]}).items[0].hits*100)}%`}} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+            </Panel>
 
             {/* Request Methods + Severity stacked */}
             <div className="space-y-4">
@@ -1368,12 +1418,22 @@ export default function WafDashboard() {
               </Panel>
             </div>
 
-            {/* Response Codes — placeholder (response_code not ingested) */}
-            <PlaceholderCard
-              title="Response Codes"
-              help={HELP.responseCodes}
-              reason="HTTP response codes aren't currently captured by the NAP → OTEL pipeline. See Outcomes in the Advanced tab for the closest available breakdown."
-            />
+            {/* Response Codes — from NAP response_code field (0 = WAF blocked, no response sent) */}
+            <Panel title="Response Codes" help={HELP.responseCodes}>
+              <div className="space-y-1.5 text-xs">
+                {[
+                  { code: '0 (Blocked)', label: 'WAF blocked — no response sent', color: REJECTED_COLOR },
+                  { code: '200', label: 'Passed / Alerted through', color: PASSED_COLOR },
+                  { code: '4xx', label: 'Client error (rate limit etc.)', color: ALERTED_COLOR },
+                ].map(r => (
+                  <div key={r.code} className="flex items-center gap-2">
+                    <span className="font-mono w-20 shrink-0" style={{color:r.color}}>{r.code}</span>
+                    <span className="text-muted-foreground">{r.label}</span>
+                  </div>
+                ))}
+                <p className="pt-1 text-muted-foreground/60 text-[10px]">NAP reports response_code=0 for all blocked requests. Non-zero codes appear in PASSED/ALERTED events once new traffic flows.</p>
+              </div>
+            </Panel>
           </div>
 
           {/* ── Top Signatures ──────────────────────────────────────────── */}
