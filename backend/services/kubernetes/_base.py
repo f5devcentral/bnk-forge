@@ -214,10 +214,11 @@ class KubernetesServiceBase:
 
         region = cluster.region or aws_env.get("AWS_REGION") or aws_env.get("AWS_DEFAULT_REGION") or "us-east-1"
         access_key = aws_env.get("AWS_ACCESS_KEY_ID") or "default"
-        cache_key = f"eks_token:{cluster.id}:{region}:{access_key}"
+        cluster_id = getattr(cluster, "id", getattr(cluster, "name", "default"))
+        cache_key = f"eks_token:{cluster_id}:{region}:{access_key}"
         cached = cache.get(cache_key)
         if cached:
-            logger.debug("Using cached EKS token for cluster %s", cluster.name)
+            logger.debug("Using cached EKS token for cluster %s", getattr(cluster, "name", "unknown"))
             return cached
 
         try:

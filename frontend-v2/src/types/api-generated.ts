@@ -30487,7 +30487,9 @@ export interface operations {
     };
     get_recovery_status_api_k8s_clusters__cluster_id__recovery_status_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;

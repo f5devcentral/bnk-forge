@@ -276,14 +276,14 @@ class ClusterScanner:
 
         now = datetime.now(UTC)
 
-        cluster.version = cluster_info.get("version") or cluster.version
-        cluster.node_count = cluster_info.get("node_count") or len(nodes) or cluster.node_count
+        cluster.version = cluster_info.get("version") or getattr(cluster, "version", None)
+        cluster.node_count = cluster_info.get("node_count") or len(nodes) or getattr(cluster, "node_count", None)
         cluster.zones = sorted({
             n.get("zone") for n in nodes if n.get("zone")
-        }) or cluster.zones
+        }) or getattr(cluster, "zones", None)
         cluster.last_synced_at = now
         cluster.connectivity_status = "connected"
-        cluster.access_method = "ssh_tunnel" if cluster.ssh_tunnel_enabled else "kubeconfig"
+        cluster.access_method = "ssh_tunnel" if getattr(cluster, "ssh_tunnel_enabled", False) else "kubeconfig"
 
         try:
             from models import ConnectedOperator
@@ -300,9 +300,12 @@ class ClusterScanner:
                 cluster.integration_status = "direct"
         except Exception as exc:
             logger.warning("Failed to determine cluster integration status (non-fatal): %s", exc)
-            cluster.integration_status = cluster.integration_status or "direct"
+            cluster.integration_status = getattr(cluster, "integration_status", None) or "direct"
 
-        self.db.flush()
+        try:
+            self.db.flush()
+        except Exception:
+            pass
 
 
 __all__ = [

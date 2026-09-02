@@ -28,7 +28,7 @@ from services.scanner.nodes import parse_node
 # across clusters. A 60-second TTL prevents redundant expensive K8s API bursts
 # when the user navigates/polls, while keeping staleness acceptable for views.
 _BNK_DATA_CACHE_TTL = 60
-_BNK_POD_DISCOVERY_CACHE_TTL = 15
+_BNK_POD_DISCOVERY_CACHE_TTL = 60
 
 # Shared executor for BNK CRD/pod fetches. A per-request executor with
 # max_workers=20 explodes the process thread count when multiple BNK pages
