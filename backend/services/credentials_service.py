@@ -75,6 +75,15 @@ CLOUD_CREDENTIAL_ENV_KEYS = frozenset({
     "IBMCLOUD_REGION",
     "IBMCLOUD_RESOURCE_GROUP",
     "IC_API_KEY",
+    "ARM_CLIENT_ID",
+    "ARM_CLIENT_SECRET",
+    "ARM_SUBSCRIPTION_ID",
+    "ARM_TENANT_ID",
+    "ARM_LOCATION",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
 })
 
 
@@ -267,6 +276,25 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                         env.setdefault('AWS_DEFAULT_REGION', template.region)
                     if template.ibmcloud_resource_group:
                         env['IBMCLOUD_RESOURCE_GROUP'] = template.ibmcloud_resource_group
+                    return env
+
+                if template.provider == 'azure':
+                    if template.azure_subscription_id:
+                        env['ARM_SUBSCRIPTION_ID'] = template.azure_subscription_id
+                        env['AZURE_SUBSCRIPTION_ID'] = template.azure_subscription_id
+                    if template.azure_tenant_id:
+                        env['ARM_TENANT_ID'] = template.azure_tenant_id
+                        env['AZURE_TENANT_ID'] = template.azure_tenant_id
+                    if template.azure_client_id:
+                        env['ARM_CLIENT_ID'] = template.azure_client_id
+                        env['AZURE_CLIENT_ID'] = template.azure_client_id
+                    if template.azure_client_secret_encrypted:
+                        secret = _decrypt_credential(template.azure_client_secret_encrypted, 'Azure Client Secret')
+                        if secret:
+                            env['ARM_CLIENT_SECRET'] = secret
+                            env['AZURE_CLIENT_SECRET'] = secret
+                    if template.region:
+                        env['ARM_LOCATION'] = template.region
                     return env
 
         except CredentialUnavailableError:

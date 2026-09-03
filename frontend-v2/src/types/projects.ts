@@ -26,9 +26,14 @@ export interface CloudCredentialTemplate {
   aws_credentials_expiry?: string;
   gcp_project_id?: string;
   has_gcp_credentials: boolean;
+  azure_auth_method?: string; // service_principal, sso
   azure_subscription_id?: string;
   azure_tenant_id?: string;
+  azure_client_id?: string;
+  has_azure_client_secret?: boolean;
   has_azure_credentials: boolean;
+  azure_sso_authenticated_at?: string;
+  azure_sso_token_expiry?: string;
   has_ibmcloud_api_key: boolean;
   ibmcloud_resource_group?: string;
   ibm_cos_instance_name?: string;
@@ -46,7 +51,7 @@ export interface CloudCredentialTemplate {
   updated_at: string;
   projects_count: number;
   // Passive cloud-API observation (RFC connectivity Phase 2). Populated by
-  // every real boto3 call site so the UI can show "AWS access OK as of X"
+  // every real boto3/ARM call site so the UI can show "AWS/Azure access OK as of X"
   // without re-clicking Test.
   last_successful_call_at?: string | null;
   last_error_at?: string | null;
@@ -144,8 +149,11 @@ export interface CloudCredentialTemplateCreate {
   aws_sso_role_name?: string;
   gcp_credentials?: string;
   gcp_project_id?: string;
+  azure_auth_method?: string;
   azure_subscription_id?: string;
   azure_tenant_id?: string;
+  azure_client_id?: string;
+  azure_client_secret?: string;
   azure_credentials?: string;
   ibmcloud_api_key?: string;
   ibmcloud_resource_group?: string;

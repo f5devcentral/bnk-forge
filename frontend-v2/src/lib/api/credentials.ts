@@ -53,8 +53,33 @@ export const credentialsApi = {
   listAWSRegions: () =>
     apiClient.get<{ provider: string; regions: CloudRegionOption[] }>('/api/cloud-auth/aws/regions').then((res) => res.data),
 
+  listAzureRegions: () =>
+    apiClient.get<{ provider: string; regions: CloudRegionOption[] }>('/api/cloud-auth/azure/regions').then((res) => res.data),
+
   listIBMCosInstances: (ibmcloudApiKey: string) =>
     apiClient.post<{ instances: IBCosInstanceOption[] }>('/api/cloud-auth/ibm/cos-instances/query', { ibmcloud_api_key: ibmcloudApiKey }).then((res) => res.data),
+
+  // Azure Cloud Authentication
+  initiateAzureSSO: (data: { tenant_id?: string; client_id?: string; template_id?: number }) =>
+    apiClient.post<SSODeviceCodeResponse>('/api/cloud-auth/azure/sso/initiate', data).then((res) => res.data),
+
+  pollAzureSSO: (data: { device_code: string; tenant_id?: string; client_id?: string; template_id?: number }) =>
+    apiClient.post<{
+      success: boolean;
+      message?: string;
+      pending?: boolean;
+      data?: {
+        access_token: string;
+        expires_in: number;
+        refresh_token?: string;
+      };
+    }>('/api/cloud-auth/azure/sso/poll', data).then((res) => res.data),
+
+  listAzureSubscriptions: (data: { access_token: string }) =>
+    apiClient.post<{
+      success: boolean;
+      subscriptions: Array<{ subscription_id: string; display_name: string; state: string }>;
+    }>('/api/cloud-auth/azure/subscriptions', data).then((res) => res.data),
 
   // Cloud Authentication
   initiateAWSSSO: (data: { start_url: string; region?: string; project_id?: number }) =>

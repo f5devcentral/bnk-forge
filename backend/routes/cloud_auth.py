@@ -88,6 +88,26 @@ class AWSListRolesRequest(_AWSRegionMixin):
     region: str | None = None
 
 
+class AzureSSOInitiateRequest(BaseModel):
+    """Request model for initiating Azure SSO device authorization"""
+    tenant_id: str | None = Field(default="common", max_length=256)
+    client_id: str | None = Field(default=None, max_length=256)
+    template_id: int | None = None
+
+
+class AzureSSOPollRequest(BaseModel):
+    """Request model for polling Azure SSO token"""
+    device_code: str = Field(..., max_length=512)
+    tenant_id: str | None = Field(default="common", max_length=256)
+    client_id: str | None = Field(default=None, max_length=256)
+    template_id: int | None = None
+
+
+class AzureSubscriptionsRequest(BaseModel):
+    """Request model for listing Azure subscriptions"""
+    access_token: str = Field(..., max_length=4096)
+
+
 class CloudRegionsQueryRequest(BaseModel):
     provider: str = Field(..., max_length=50)
     ibmcloud_api_key: str | None = Field(default=None, max_length=8192)
@@ -193,6 +213,16 @@ def list_aws_regions():
         key=lambda r: r["label"],
     )
     return {"provider": "aws", "regions": regions}
+
+
+@router.get("/azure/regions", response_model=CloudRegionsResponse)
+@handle_route_errors("list Azure regions")
+def list_azure_regions():
+    """List Azure regions in the canonical {value, label} shape."""
+    from services.azure_auth_service import AzureAuthService
+    service = AzureAuthService()
+    regions = service.get_common_azure_regions()
+    return {"provider": "azure", "regions": regions}
 
 
 @router.post("/ibm/cos-instances/query", response_model=IBCosInstancesResponse)
@@ -565,6 +595,49 @@ def delete_project_aws_credentials(project_id: int, db: Session = Depends(get_db
         "success": True,
         "message": "AWS credentials removed successfully"
     }
+
+
+# ============================================================
+# Azure Authentication Endpoints
+# ============================================================
+
+@router.post("/azure/sso/initiate")
+@handle_route_errors("initiate Azure SSO authentication")
+def initiate_azure_sso(request: AzureSSOInitiateRequest, db: Session = Depends(get_db)):
+    """Initiate Azure Entra ID device code authorization flow."""
+    from services.azure_auth_service import AzureAuthService
+    service = AzureAuthService()
+    result = service.initiate_device_authorization(
+        tenant_id=request.tenant_id or "common",
+        client_id=request.client_id,
+    )
+    return {"success": True, "data": result}
+
+
+@router.post("/azure/sso/poll")
+@handle_route_errors("poll Azure SSO authentication")
+def poll_azure_sso(request: AzureSSOPollRequest, db: Session = Depends(get_db)):
+    """Poll Azure Entra ID token endpoint for device code completion."""
+    from services.azure_auth_service import AzureAuthService
+    service = AzureAuthService()
+    result = service.poll_for_token(
+        device_code=request.device_code,
+        tenant_id=request.tenant_id or "common",
+        client_id=request.client_id,
+    )
+    if result.get("pending"):
+        return JSONResponse(status_code=202, content={"success": False, "message": "Authorization pending", "pending": True})
+    return {"success": True, "data": result}
+
+
+@router.post("/azure/subscriptions")
+@handle_route_errors("list Azure subscriptions")
+def list_azure_subscriptions(request: AzureSubscriptionsRequest):
+    """List Azure subscriptions accessible by the access token."""
+    from services.azure_auth_service import AzureAuthService
+    service = AzureAuthService()
+    subs = service.list_subscriptions(request.access_token)
+    return {"success": True, "subscriptions": subs}
 
 
 # ============================================================

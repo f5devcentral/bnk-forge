@@ -85,10 +85,18 @@ class CloudCredentialTemplate(Base):
     gcp_credentials_encrypted = Column(Text)
     gcp_project_id = Column(String(255))
 
-    # Azure credentials (future)
+    # Azure credentials
+    azure_auth_method = Column(String(50), nullable=True)  # 'service_principal' or 'sso'
     azure_subscription_id = Column(String(255))
     azure_tenant_id = Column(String(255))
+    azure_client_id = Column(String(255))
+    azure_client_secret_encrypted = Column(Text)
     azure_credentials_encrypted = Column(Text)
+    # Azure SSO / Device Flow Session
+    azure_sso_access_token_encrypted = Column(Text)
+    azure_sso_refresh_token_encrypted = Column(Text)
+    azure_sso_token_expiry = Column(DateTime(timezone=True))
+    azure_sso_authenticated_at = Column(DateTime(timezone=True))
 
     # IBM Cloud credentials
     ibmcloud_api_key_encrypted = Column(Text)
