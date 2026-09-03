@@ -43,8 +43,11 @@ class CredentialTemplateBase(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
+    azure_auth_method: str | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: str | None = None
     azure_credentials: str | None = None
     ibmcloud_api_key: str | None = None
     ibmcloud_resource_group: str | None = "default"
@@ -97,8 +100,11 @@ class CredentialTemplateUpdate(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
+    azure_auth_method: str | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: str | None = None
     azure_credentials: str | None = None
     ibmcloud_api_key: str | None = None
     ibmcloud_resource_group: str | None = None
@@ -149,9 +155,14 @@ class CredentialTemplateResponse(BaseModel):
     aws_credentials_expiry: datetime | None
     gcp_project_id: str | None
     has_gcp_credentials: bool
-    azure_subscription_id: str | None
-    azure_tenant_id: str | None
-    has_azure_credentials: bool
+    azure_auth_method: str | None = None
+    azure_subscription_id: str | None = None
+    azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    has_azure_client_secret: bool = False
+    has_azure_credentials: bool = False
+    azure_sso_authenticated_at: datetime | None = None
+    azure_sso_token_expiry: datetime | None = None
     has_ibmcloud_api_key: bool
     ibmcloud_resource_group: str | None = None
     ibm_cos_instance_name: str | None = None
