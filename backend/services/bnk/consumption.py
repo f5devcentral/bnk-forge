@@ -106,6 +106,8 @@ def aggregate_cluster_consumption(
     pod_metrics_response: dict[str, Any] | None,
     dpf_summary: dict[str, Any] | None,
     reachable: bool = True,
+    cloud_provider: str | None = None,
+    region: str | None = None,
 ) -> dict[str, Any]:
     """
     Build a per-cluster consumption dict from BNK data + metrics.
@@ -126,6 +128,8 @@ def aggregate_cluster_consumption(
         return {
             "cluster_id": cluster_id,
             "cluster_name": cluster_name,
+            "cloud_provider": cloud_provider,
+            "region": region,
             "reachable": False,
             "bnk_installed": False,
             "bnk_version": None,
@@ -168,6 +172,8 @@ def aggregate_cluster_consumption(
     return {
         "cluster_id": cluster_id,
         "cluster_name": cluster_name,
+        "cloud_provider": cloud_provider,
+        "region": region,
         "reachable": True,
         "bnk_installed": bnk_installed,
         "bnk_version": bnk_version,

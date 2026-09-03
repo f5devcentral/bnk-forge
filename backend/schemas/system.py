@@ -217,6 +217,8 @@ class BnkClusterConsumption(BaseModel):
 
     cluster_id: int
     cluster_name: str
+    cloud_provider: str | None = None
+    region: str | None = None
     reachable: bool
     bnk_installed: bool
     bnk_version: str | None = None

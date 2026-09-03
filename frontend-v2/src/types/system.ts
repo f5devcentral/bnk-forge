@@ -208,6 +208,8 @@ export interface BnkNodeCapacity {
 export interface BnkClusterConsumption {
   cluster_id: number;
   cluster_name: string;
+  cloud_provider?: string | null;
+  region?: string | null;
   reachable: boolean;
   bnk_installed: boolean;
   bnk_version: string | null;

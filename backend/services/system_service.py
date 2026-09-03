@@ -177,6 +177,8 @@ class SystemService:
                 pod_metrics_response=pod_metrics_response,
                 dpf_summary=dpf_summary,
                 reachable=reachable,
+                cloud_provider=getattr(cluster, "cloud_provider", None),
+                region=getattr(cluster, "region", None),
             )
 
         # Collect per-cluster data in parallel with a per-cluster timeout.
@@ -201,6 +203,8 @@ class SystemService:
                         pod_metrics_response={"available": False, "error": "Timed out collecting cluster consumption"},
                         dpf_summary={"detected": False, "dpu_count": 0},
                         reachable=False,
+                        cloud_provider=getattr(cluster, "cloud_provider", None),
+                        region=getattr(cluster, "region", None),
                     ))
                 except Exception as exc:
                     logger.warning(f"BNK consumption: cluster {cluster.name} (id={cluster.id}) failed: {exc}")
@@ -213,6 +217,8 @@ class SystemService:
                         pod_metrics_response={"available": False, "error": str(exc)},
                         dpf_summary={"detected": False, "dpu_count": 0},
                         reachable=False,
+                        cloud_provider=getattr(cluster, "cloud_provider", None),
+                        region=getattr(cluster, "region", None),
                     ))
 
         result = {

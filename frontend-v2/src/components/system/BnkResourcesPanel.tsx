@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatBytes } from '@/lib/utils';
+import { getCloudProviderBadgeInfo, getClusterLocationInfo } from '@/lib/aws-regions';
 import type { BnkConsumptionResponse, BnkPlaneConsumption } from '@/types/system';
 
 interface BnkResourcesPanelProps {
@@ -191,6 +192,8 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
               <TableHeader>
                 <TableRow>
                   <TableHead>Cluster</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Region</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Nodes</TableHead>
                   <TableHead className="text-right">BNK Pods</TableHead>
@@ -201,25 +204,49 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clusters.map((cluster) => (
-                  <TableRow key={cluster.cluster_id}>
-                    <TableCell className="font-medium">
-                      {cluster.cluster_name}
-                      {cluster.bnk_version && (
-                        <span className="ml-2 text-xs text-muted-foreground">v{cluster.bnk_version}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {cluster.reachable ? (
-                        cluster.bnk_installed ? (
-                          <Badge variant="outline" className="text-xs">BNK installed</Badge>
+                {clusters.map((cluster) => {
+                  const badgeInfo = getCloudProviderBadgeInfo(cluster.cloud_provider);
+                  const locationInfo = getClusterLocationInfo(cluster.cloud_provider, cluster.region);
+
+                  return (
+                    <TableRow key={cluster.cluster_id}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <span>{cluster.cluster_name}</span>
+                          {cluster.bnk_version && (
+                            <span className="text-xs text-muted-foreground">v{cluster.bnk_version}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={badgeInfo.badgeVariant} className={badgeInfo.badgeClass}>
+                          {badgeInfo.shortLabel}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {locationInfo ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono"
+                            title={locationInfo.label}
+                          >
+                            <span>{locationInfo.flag}</span>
+                            <span>{locationInfo.display}</span>
+                          </span>
                         ) : (
-                          <Badge variant="secondary" className="text-xs">No BNK</Badge>
-                        )
-                      ) : (
-                        <Badge variant="destructive" className="text-xs">Offline</Badge>
-                      )}
-                    </TableCell>
+                          <span className="text-muted-foreground text-xs">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {cluster.reachable ? (
+                          cluster.bnk_installed ? (
+                            <Badge variant="outline" className="text-xs">BNK installed</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">No BNK</Badge>
+                          )
+                        ) : (
+                          <Badge variant="destructive" className="text-xs">Offline</Badge>
+                        )}
+                      </TableCell>
                     <TableCell>{cluster.node_count ?? '-'}</TableCell>
                     <TableCell className="text-right tabular-nums">{cluster.total.count}</TableCell>
                     <TableCell className="text-right tabular-nums">{cluster.control_plane.count}</TableCell>
@@ -249,7 +276,8 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
