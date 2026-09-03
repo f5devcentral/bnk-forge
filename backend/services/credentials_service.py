@@ -382,32 +382,87 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
     return env
 
 
-def get_gcp_service_account_info(project: Project, db=None) -> dict | None:
+def get_gcp_service_account_info(project: Project | None, db=None) -> dict | None:
     """
     Return the parsed GCP service-account JSON for a project, or None.
 
     The SA key is stored encrypted on the project's CloudCredentialTemplate
-    (``gcp_credentials_encrypted``).  Mint an access token from this value
-    via ``google.oauth2.service_account.Credentials`` to authenticate the
-    Python kubernetes client to GKE without needing the
+    (``gcp_credentials_encrypted``) or the default GCP template.  Mint an access
+    token from this value via ``google.oauth2.service_account.Credentials`` to
+    authenticate the Python kubernetes client to GKE without needing the
     ``gke-gcloud-auth-plugin`` binary inside the container.
     """
-    if not (project.credential_template_id and db):
-        return None
+    template = None
+    if db:
+        if project and getattr(project, "credential_template_id", None):
+            template = db.query(CloudCredentialTemplate).filter(
+                CloudCredentialTemplate.id == project.credential_template_id
+            ).first()
 
-    template = db.query(CloudCredentialTemplate).filter(
-        CloudCredentialTemplate.id == project.credential_template_id
-    ).first()
-    if not template or template.provider != "gcp":
-        return None
-    if not template.gcp_credentials_encrypted:
-        return None
+        if not template or template.provider != "gcp" or not template.gcp_credentials_encrypted:
+            template = db.query(CloudCredentialTemplate).filter(
+                CloudCredentialTemplate.provider == "gcp",
+                CloudCredentialTemplate.is_default == True,
+            ).first()
 
-    sa_json = _decrypt_credential(template.gcp_credentials_encrypted, "GCP SA JSON")
-    if not sa_json:
-        return None
-    try:
-        return json.loads(sa_json)
-    except json.JSONDecodeError as e:
-        logger.error(f"GCP credentials for template '{template.name}' are not valid JSON: {e}")
-        return None
+    if template and template.provider == "gcp" and template.gcp_credentials_encrypted:
+        sa_json = _decrypt_credential(template.gcp_credentials_encrypted, "GCP SA JSON")
+        if sa_json:
+            try:
+                return json.loads(sa_json)
+            except json.JSONDecodeError as e:
+                logger.error(f"GCP credentials for template '{template.name}' are not valid JSON: {e}")
+
+    # Fallback to environment variable
+    gcp_sa_env = os.getenv("GCP_SERVICE_ACCOUNT_KEY") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if gcp_sa_env:
+        try:
+            return json.loads(gcp_sa_env)
+        except json.JSONDecodeError as e:
+            logger.error(f"GCP credentials from environment are not valid JSON: {e}")
+
+    return None
+
+
+def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[str, str, str] | None:
+    """
+    Return (tenant_id, client_id, client_secret) for an Azure project or global default, or None.
+
+    Resolves credentials from:
+    1. Project's CloudCredentialTemplate (via credential_template_id)
+    2. Global default Azure CloudCredentialTemplate (is_default=True)
+    3. Environment variables (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)
+    """
+    template = None
+    if db:
+        if project and getattr(project, "credential_template_id", None):
+            template = db.query(CloudCredentialTemplate).filter(
+                CloudCredentialTemplate.id == project.credential_template_id
+            ).first()
+
+        if not template or template.provider != "azure" or not template.azure_credentials_encrypted:
+            template = db.query(CloudCredentialTemplate).filter(
+                CloudCredentialTemplate.provider == "azure",
+                CloudCredentialTemplate.is_default == True,
+            ).first()
+
+    if template and template.provider == "azure" and template.azure_credentials_encrypted and template.azure_tenant_id:
+        creds_json = _decrypt_credential(template.azure_credentials_encrypted, "Azure credentials")
+        if creds_json:
+            try:
+                creds = json.loads(creds_json)
+                client_id = creds.get("client_id") or creds.get("clientId")
+                client_secret = creds.get("client_secret") or creds.get("clientSecret")
+                if client_id and client_secret:
+                    return (template.azure_tenant_id, client_id, client_secret)
+            except json.JSONDecodeError as e:
+                logger.error(f"Azure credentials for template '{template.name}' are not valid JSON: {e}")
+
+    # Fallback to environment variables
+    env_tenant = os.getenv("AZURE_TENANT_ID") or os.getenv("ARM_TENANT_ID")
+    env_client_id = os.getenv("AZURE_CLIENT_ID") or os.getenv("ARM_CLIENT_ID")
+    env_client_secret = os.getenv("AZURE_CLIENT_SECRET") or os.getenv("ARM_CLIENT_SECRET")
+    if env_tenant and env_client_id and env_client_secret:
+        return (env_tenant, env_client_id, env_client_secret)
+
+    return None

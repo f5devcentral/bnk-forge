@@ -5,6 +5,7 @@ Core KubernetesService: cluster loading, kubeconfig, connection testing.
 import logging
 import os
 import tempfile
+import time
 from typing import Any
 
 from kubernetes import client
@@ -32,6 +33,9 @@ class KubernetesServiceBase:
     """
     Core Kubernetes service methods: cluster access, kubeconfig, connection testing.
     """
+
+    _azure_token_cache: dict[str, tuple[str, float]] = {}
+    _gcp_token_cache: dict[str, tuple[str, float]] = {}
 
     def __init__(self, db: Session):
         self.db = db
@@ -181,6 +185,38 @@ class KubernetesServiceBase:
                     except Exception as e:
                         logger.warning("Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s", cluster.name, e)
 
+            # For Azure / AKS clusters, mint an OAuth access token scoped to AKS AAD Server
+            # via pure Python OAuth2 token exchange and rewrite the kubeconfig user to
+            # use it as a static token. Mirrors the EKS and GKE paths: avoids needing
+            # `az` CLI or `kubelogin` inside the container and prevents token expiration.
+            elif cluster.cloud_provider in ["azure", "aks"]:
+                from services.credentials_service import get_azure_service_principal_info
+                project = cluster.project
+                azure_info = get_azure_service_principal_info(project, self.db)
+
+                if not azure_info:
+                    logger.warning(
+                        "No Azure service-principal credentials configured for cluster %s "
+                        "(project '%s'); static token in kubeconfig will be used and "
+                        "may expire",
+                        cluster.name, project.name if project else "<none>",
+                    )
+                else:
+                    try:
+                        tenant_id, client_id, client_secret = azure_info
+                        token = self._generate_azure_token(tenant_id, client_id, client_secret)
+                        if token:
+                            kubeconfig_dict = yaml_lib.safe_load(
+                                open(kubeconfig_path).read()
+                            )
+                            for user_entry in kubeconfig_dict.get("users", []):
+                                user_entry["user"] = {"token": token}
+                            with open(kubeconfig_path, "w") as f:
+                                yaml_lib.dump(kubeconfig_dict, f, default_flow_style=False)
+                            logger.info("Injected pure-Python OAuth bearer token for Azure AKS cluster %s", cluster.name)
+                    except Exception as e:
+                        logger.warning("Failed to generate Azure AKS token for %s: %s", cluster.name, e)
+
             # Load config from file
             k8s_config.load_kube_config(config_file=kubeconfig_path, context=cluster.context)
 
@@ -303,25 +339,25 @@ class KubernetesServiceBase:
         logger.info("Generated EKS bearer token for cluster %s (region=%s)", cluster_name, region)
         return token
 
-    @staticmethod
-    def _generate_gcp_token(sa_info: dict) -> str | None:
+    @classmethod
+    def _generate_gcp_token(cls, sa_info: dict) -> str | None:
         """
-        Mint a GKE-compatible OAuth access token from a GCP service-account
+        Generate a GCP access token for a GKE cluster from a service-account
         key dict, using google-auth.  This is the Python-native equivalent of
         ``gke-gcloud-auth-plugin`` and does not require the gcloud CLI.
 
         The token is a Google OAuth2 access token (~1 hour TTL) with the
         ``cloud-platform`` scope, which GKE accepts as a bearer token.
+        Cached in-memory for 45 minutes to prevent redundant network calls.
 
         Returns the token string, or None on failure.
         """
-        client_email = sa_info.get("client_email", "unknown")
-        private_key_id = sa_info.get("private_key_id", "unknown")
-        cache_key = f"gcp_token:{client_email}:{private_key_id}"
-        cached = cache.get(cache_key)
-        if cached:
-            logger.debug("Using cached GCP token for service account %s", client_email)
-            return cached
+        client_email = sa_info.get("client_email", "")
+        now = time.time()
+        if client_email:
+            cached = cls._gcp_token_cache.get(client_email)
+            if cached and cached[1] > now:
+                return cached[0]
 
         try:
             from google.auth.transport.requests import Request
@@ -330,18 +366,60 @@ class KubernetesServiceBase:
             logger.warning("google-auth not available — cannot generate GCP token natively")
             return None
 
-        credentials = service_account.Credentials.from_service_account_info(
-            sa_info,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        credentials.refresh(Request())
-        token = credentials.token
-        cache.set(cache_key, token, ttl_seconds=_TOKEN_TTL_SECONDS)
-        logger.info(
-            "Generated GCP access token for service account %s",
-            client_email,
-        )
-        return token
+        try:
+            credentials = service_account.Credentials.from_service_account_info(
+                sa_info,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            credentials.refresh(Request())
+            token = credentials.token
+            if token and client_email:
+                cls._gcp_token_cache[client_email] = (token, now + 2700)
+            logger.info(
+                "Generated GCP access token for service account %s",
+                client_email or "<unknown>",
+            )
+            return token
+        except Exception as e:
+            logger.warning("Failed to generate GCP access token for %s: %s", client_email or "unknown", e)
+            return None
+
+    @classmethod
+    def _generate_azure_token(cls, tenant_id: str, client_id: str, client_secret: str) -> str | None:
+        """
+        Generate an AKS bearer token using Azure OAuth2 client_credentials flow.
+        Cached in-memory for 45 minutes (Azure tokens are valid for 60-90 minutes).
+        """
+        cache_key = f"{tenant_id}:{client_id}"
+        now = time.time()
+        cached = cls._azure_token_cache.get(cache_key)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        from services.azure_oauth_service import request_azure_oauth_token
+
+        aks_aad_server_app_id = "6dae42f8-4368-4678-94ff-776099604563"
+        try:
+            token_data = request_azure_oauth_token(
+                tenant_id=tenant_id,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "scope": f"{aks_aad_server_app_id}/.default",
+                },
+                timeout=15,
+            )
+            token = token_data.get("access_token")
+            if token:
+                expires_in = token_data.get("expires_in", 3600)
+                ttl = max(60, expires_in - 300)
+                cls._azure_token_cache[cache_key] = (token, now + ttl)
+                return token
+        except Exception as e:
+            logger.error("Failed to fetch AKS OAuth bearer token from Azure: %s", e)
+            raise
+        return None
 
     @staticmethod
     def _maybe_open_ssh_tunnel(cluster: KubernetesCluster) -> int | None:
