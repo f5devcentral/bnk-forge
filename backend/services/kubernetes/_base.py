@@ -351,11 +351,26 @@ class KubernetesServiceBase:
             return None
 
         try:
+            import requests
             credentials = service_account.Credentials.from_service_account_info(
                 sa_info,
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
-            credentials.refresh(Request())
+            session = requests.Session()
+            try:
+                credentials.refresh(Request(session=session))
+            except Exception as ssl_err:
+                err_str = str(ssl_err).lower()
+                if "certificate verify failed" in err_str or "ssl" in err_str:
+                    logger.warning(
+                        "Retrying GCP token refresh without SSL verification due to certificate proxy interception: %s",
+                        ssl_err,
+                    )
+                    session.verify = False
+                    credentials.refresh(Request(session=session))
+                else:
+                    raise
+
             token = credentials.token
             if token and client_email:
                 cls._gcp_token_cache[client_email] = (token, now + 2700)

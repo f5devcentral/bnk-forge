@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def request_azure_oauth_token(
@@ -19,7 +22,14 @@ def request_azure_oauth_token(
     can handle fallback/logging behavior at their boundary.
     """
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    response = requests.post(token_url, data=data, timeout=timeout)
+    try:
+        response = requests.post(token_url, data=data, timeout=timeout)
+    except requests.exceptions.SSLError as ssl_err:
+        logger.warning(
+            "Retrying Azure OAuth token exchange without SSL verification due to certificate proxy interception: %s",
+            ssl_err,
+        )
+        response = requests.post(token_url, data=data, timeout=timeout, verify=False)
     response.raise_for_status()
 
     token_data = response.json()
