@@ -86,51 +86,36 @@ export function getProjectLocationInfo(
   credentialProvider?: string | null,
   projectType?: string | null,
 ): { flag: string; label: string; display: string } | null {
-  // Kubernetes / on-prem project type — always show on-prem style
-  if (projectType === 'kubernetes' || credentialProvider === 'ssh') {
-    if (region) {
+  const p = (cloudProvider || '').toLowerCase().trim();
+  const pt = (projectType || '').toLowerCase().trim();
+  const reg = (region || '').trim();
+
+  // Kubernetes / on-prem project type or SSH credential — always show on-prem style
+  if (pt === 'kubernetes' || credentialProvider === 'ssh' || p === 'on-prem' || p === 'bare-metal' || p === 'metal') {
+    if (reg) {
       // User set a custom location label (e.g., "singapore", "lab-rack-3")
-      return { flag: '🖥️', label: region, display: region };
+      return { flag: '🖥️', label: reg, display: reg };
     }
     return { flag: '🖥️', label: 'On-Premises', display: 'On-Prem' };
   }
 
-  // Cloud projects with a known AWS region
-  if (region && (cloudProvider === 'aws' || cloudProvider === 'eks' || projectType === 'cloud-aws')) {
-    const regionInfo = getRegionInfo(region);
-    if (regionInfo) {
-      return { flag: regionInfo.flag, label: regionInfo.label, display: region };
+  const effectiveProvider = p || (pt.startsWith('cloud-') ? pt.replace('cloud-', '') : pt);
+
+  // If a region is specified, resolve via getClusterLocationInfo
+  if (reg) {
+    const loc = getClusterLocationInfo(effectiveProvider, reg);
+    if (loc) {
+      return loc;
     }
-    // Unknown AWS region string — still show it without flag
-    return { flag: '☁️', label: region, display: region };
+    return { flag: '🌐', label: reg, display: reg };
   }
 
-  // Azure / GCP with a region set
-  if (region && (cloudProvider === 'azure' || projectType === 'cloud-azure')) {
-    return { flag: '⛅', label: `Azure ${region}`, display: region };
-  }
-  if (region && (cloudProvider === 'gcp' || projectType === 'cloud-gcp')) {
-    return { flag: '🌤️', label: `GCP ${region}`, display: region };
-  }
-  if (region && (cloudProvider === 'ibm' || projectType === 'cloud-ibm')) {
-    return { flag: '🟦', label: `IBM Cloud ${region}`, display: region };
-  }
-
-  // On-prem or kubernetes projects — no region, no flag
-  if (cloudProvider === 'on-prem' || cloudProvider === 'kubernetes' || cloudProvider === 'none') {
+  // On-prem or kubernetes projects without region
+  if (p === 'on-prem' || p === 'bare-metal' || p === 'metal' || p === 'kubernetes' || p === 'none') {
     return { flag: '🖥️', label: 'On-Premises', display: 'On-Prem' };
   }
 
-  // No cloud_provider set and no region — show nothing
-  if (!region && !cloudProvider) {
-    return null;
-  }
-
-  // Fallback: region is set but provider unknown — show generic
-  if (region) {
-    return { flag: '🌐', label: region, display: region };
-  }
-
+  // No provider and no region
   return null;
 }
 
@@ -250,44 +235,10 @@ export function getClusterLocationInfo(
   }
 
   const regLower = reg.toLowerCase();
-  // GCP / multi-cloud region heuristics
-  if (regLower.startsWith('us-') || regLower.startsWith('northamerica-')) {
-    const flag = regLower.startsWith('northamerica-northeast') ? '🇨🇦' : '🇺🇸';
-    return { flag, label: reg, display: reg };
-  }
-  if (regLower.startsWith('europe-') || regLower.startsWith('eu-')) {
-    let flag = '🇪🇺';
-    if (regLower.includes('west1') && !regLower.includes('west10') && !regLower.includes('west12')) flag = '🇧🇪';
-    else if (regLower.includes('west2')) flag = '🇬🇧';
-    else if (regLower.includes('west3') || regLower.includes('west10') || regLower === 'eu-de') flag = '🇩🇪';
-    else if (regLower.includes('west4')) flag = '🇳🇱';
-    else if (regLower.includes('west6')) flag = '🇨🇭';
-    else if (regLower.includes('west8') || regLower.includes('west12')) flag = '🇮🇹';
-    else if (regLower.includes('west9')) flag = '🇫🇷';
-    else if (regLower.includes('north1')) flag = '🇫🇮';
-    else if (regLower.includes('southwest1') || regLower === 'eu-es') flag = '🇪🇸';
-    else if (regLower.includes('central2')) flag = '🇵🇱';
-    else if (regLower === 'eu-gb') flag = '🇬🇧';
-    return { flag, label: reg, display: reg };
-  }
-  if (regLower.startsWith('asia-') || regLower.startsWith('ap-') || regLower.startsWith('jp-')) {
-    let flag = '🌏';
-    if (regLower.includes('east1')) flag = '🇹🇼';
-    else if (regLower.includes('east2')) flag = '🇭🇰';
-    else if (regLower.includes('northeast1') || regLower.includes('northeast2') || regLower.startsWith('jp-')) flag = '🇯🇵';
-    else if (regLower.includes('northeast3')) flag = '🇰🇷';
-    else if (regLower.includes('south1') || regLower.includes('south2')) flag = '🇮🇳';
-    else if (regLower.includes('southeast1')) flag = '🇸🇬';
-    else if (regLower.includes('southeast2')) flag = '🇮🇩';
-    return { flag, label: reg, display: reg };
-  }
-  if (regLower.startsWith('australia-') || regLower.startsWith('au-')) {
-    return { flag: '🇦🇺', label: reg, display: reg };
-  }
-  if (regLower.startsWith('southamerica-') || regLower.startsWith('sa-') || regLower.startsWith('br-')) {
-    const flag = regLower.includes('west1') ? '🇨🇱' : '🇧🇷';
-    return { flag, label: reg, display: reg };
-  }
+  const isGcp = p === 'gcp' || p === 'gke' || p === 'google';
+  const isIbm = p === 'ibm' || p === 'roks' || p === 'ibmcloud';
+  const isAzure = p === 'azure' || p === 'aks';
+  const providerPrefix = isGcp ? 'GCP ' : isIbm ? 'IBM Cloud ' : isAzure ? 'Azure ' : '';
 
   // Azure region names (single word)
   const azureFlagMap: Record<string, { flag: string; label: string }> = {
@@ -331,7 +282,46 @@ export function getClusterLocationInfo(
 
   if (azureFlagMap[regLower]) {
     const az = azureFlagMap[regLower];
-    return { flag: az.flag, label: az.label, display: reg };
+    return { flag: az.flag, label: `Azure ${az.label}`, display: reg };
+  }
+
+  // Multi-cloud / GCP region heuristics
+  if (regLower.startsWith('us-') || regLower.startsWith('northamerica-')) {
+    const flag = regLower.startsWith('northamerica-northeast') ? '🇨🇦' : '🇺🇸';
+    return { flag, label: `${providerPrefix}${reg}`, display: reg };
+  }
+  if (regLower.startsWith('europe-') || regLower.startsWith('eu-')) {
+    let flag = '🇪🇺';
+    if (regLower.includes('west1') && !regLower.includes('west10') && !regLower.includes('west12')) flag = '🇧🇪';
+    else if (regLower.includes('west2')) flag = '🇬🇧';
+    else if (regLower.includes('west3') || regLower.includes('west10') || regLower === 'eu-de') flag = '🇩🇪';
+    else if (regLower.includes('west4')) flag = '🇳🇱';
+    else if (regLower.includes('west6')) flag = '🇨🇭';
+    else if (regLower.includes('west8') || regLower.includes('west12')) flag = '🇮🇹';
+    else if (regLower.includes('west9')) flag = '🇫🇷';
+    else if (regLower.includes('north1')) flag = '🇫🇮';
+    else if (regLower.includes('southwest1') || regLower === 'eu-es') flag = '🇪🇸';
+    else if (regLower.includes('central2')) flag = '🇵🇱';
+    else if (regLower === 'eu-gb') flag = '🇬🇧';
+    return { flag, label: `${providerPrefix}${reg}`, display: reg };
+  }
+  if (regLower.startsWith('asia-') || regLower.startsWith('ap-') || regLower.startsWith('jp-')) {
+    let flag = '🌏';
+    if (regLower.includes('east1')) flag = '🇹🇼';
+    else if (regLower.includes('east2')) flag = '🇭🇰';
+    else if (regLower.includes('northeast1') || regLower.includes('northeast2') || regLower.startsWith('jp-')) flag = '🇯🇵';
+    else if (regLower.includes('northeast3')) flag = '🇰🇷';
+    else if (regLower.includes('south1') || regLower.includes('south2')) flag = '🇮🇳';
+    else if (regLower.includes('southeast1')) flag = '🇸🇬';
+    else if (regLower.includes('southeast2')) flag = '🇮🇩';
+    return { flag, label: `${providerPrefix}${reg}`, display: reg };
+  }
+  if (regLower.startsWith('australia-') || regLower.startsWith('au-')) {
+    return { flag: '🇦🇺', label: `${providerPrefix}${reg}`, display: reg };
+  }
+  if (regLower.startsWith('southamerica-') || regLower.startsWith('sa-') || regLower.startsWith('br-')) {
+    const flag = regLower.includes('west1') ? '🇨🇱' : '🇧🇷';
+    return { flag, label: `${providerPrefix}${reg}`, display: reg };
   }
 
   // On-prem / Bare-metal custom region label
@@ -339,5 +329,5 @@ export function getClusterLocationInfo(
     return { flag: '🖥️', label: reg, display: reg };
   }
 
-  return { flag: '🌐', label: reg, display: reg };
+  return { flag: '🌐', label: `${providerPrefix}${reg}`, display: reg };
 }

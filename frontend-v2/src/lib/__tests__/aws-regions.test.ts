@@ -184,17 +184,25 @@ describe('getClusterLocationInfo()', () => {
     expect(res!.flag).toBe('🇺🇸');
   });
 
-  it('returns country flag for Azure regions', () => {
+  it('returns country flag and label for Azure regions', () => {
     const res = getClusterLocationInfo('azure', 'westeurope');
     expect(res).not.toBeNull();
     expect(res!.flag).toBe('🇳🇱');
-    expect(res!.label).toBe('West Europe');
+    expect(res!.label).toBe('Azure West Europe');
   });
 
   it('returns country flag for GCP regions', () => {
     const res = getClusterLocationInfo('gcp', 'australia-southeast1');
     expect(res).not.toBeNull();
     expect(res!.flag).toBe('🇦🇺');
+    expect(res!.label).toBe('GCP australia-southeast1');
+  });
+
+  it('returns country flag for Azure East US 2', () => {
+    const res = getClusterLocationInfo('azure', 'eastus2');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇺🇸');
+    expect(res!.label).toBe('Azure East US 2');
   });
 
   it('returns on-prem for bare-metal clusters', () => {
