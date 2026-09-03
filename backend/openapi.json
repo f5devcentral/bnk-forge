@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -12589,6 +12589,28 @@
         }
       }
     },
+    "/api/cloud-auth/azure/regions": {
+      "get": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "List Azure Regions",
+        "description": "List Azure regions in the canonical {value, label} shape.",
+        "operationId": "list_azure_regions_api_cloud_auth_azure_regions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudRegionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cloud-auth/ibm/cos-instances/query": {
       "post": {
         "tags": [
@@ -12929,6 +12951,126 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/sso/initiate": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "Initiate Azure Sso",
+        "description": "Initiate Azure Entra ID device code authorization flow.",
+        "operationId": "initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSSOInitiateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/sso/poll": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "Poll Azure Sso",
+        "description": "Poll Azure Entra ID token endpoint for device code completion.",
+        "operationId": "poll_azure_sso_api_cloud_auth_azure_sso_poll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSSOPollRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/subscriptions": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "List Azure Subscriptions",
+        "description": "List Azure subscriptions accessible by the access token.",
+        "operationId": "list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSubscriptionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -31586,6 +31728,115 @@
         ],
         "title": "AssignedLabelsRequest"
       },
+      "AzureSSOInitiateRequest": {
+        "properties": {
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "default": "common"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "type": "object",
+        "title": "AzureSSOInitiateRequest",
+        "description": "Request model for initiating Azure SSO device authorization"
+      },
+      "AzureSSOPollRequest": {
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Device Code"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "default": "common"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_code"
+        ],
+        "title": "AzureSSOPollRequest",
+        "description": "Request model for polling Azure SSO token"
+      },
+      "AzureSubscriptionsRequest": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "AzureSubscriptionsRequest",
+        "description": "Request model for listing Azure subscriptions"
+      },
       "BackupCreateRequest": {
         "properties": {
           "passphrase": {
@@ -40875,6 +41126,17 @@
             ],
             "title": "Gcp Project Id"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -40896,6 +41158,28 @@
               }
             ],
             "title": "Azure Tenant Id"
+          },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "azure_client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Secret"
           },
           "azure_credentials": {
             "anyOf": [
@@ -41238,6 +41522,17 @@
             "type": "boolean",
             "title": "Has Gcp Credentials"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -41260,9 +41555,50 @@
             ],
             "title": "Azure Tenant Id"
           },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "has_azure_client_secret": {
+            "type": "boolean",
+            "title": "Has Azure Client Secret",
+            "default": false
+          },
           "has_azure_credentials": {
             "type": "boolean",
-            "title": "Has Azure Credentials"
+            "title": "Has Azure Credentials",
+            "default": false
+          },
+          "azure_sso_authenticated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Sso Authenticated At"
+          },
+          "azure_sso_token_expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Sso Token Expiry"
           },
           "has_ibmcloud_api_key": {
             "type": "boolean",
@@ -41447,9 +41783,6 @@
           "aws_credentials_expiry",
           "gcp_project_id",
           "has_gcp_credentials",
-          "azure_subscription_id",
-          "azure_tenant_id",
-          "has_azure_credentials",
           "has_ibmcloud_api_key",
           "is_default",
           "created_at",
@@ -41682,6 +42015,17 @@
             ],
             "title": "Gcp Project Id"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -41703,6 +42047,28 @@
               }
             ],
             "title": "Azure Tenant Id"
+          },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "azure_client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Secret"
           },
           "azure_credentials": {
             "anyOf": [

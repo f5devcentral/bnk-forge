@@ -29,24 +29,24 @@ export function CloudRegionSelector({
     return <RegionSelector value={value} onValueChange={onValueChange} disabled={disabled} />;
   }
 
-  if (provider === 'ibm') {
-    if (options.length > 0) {
-      return (
-        <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-          <SelectTrigger>
-            <SelectValue placeholder={placeholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    }
+  if (options.length > 0) {
+    return (
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+        <SelectTrigger>
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
 
+  if (provider === 'ibm') {
     return (
       <div className="space-y-2">
         <Input
@@ -57,6 +57,22 @@ export function CloudRegionSelector({
         />
         <p className="text-xs text-muted-foreground">
           No IBM regions loaded yet. Enter a region manually or load them from IBM Cloud.
+        </p>
+      </div>
+    );
+  }
+
+  if (provider === 'azure') {
+    return (
+      <div className="space-y-2">
+        <Input
+          value={value}
+          onChange={(e) => onValueChange(e.target.value)}
+          placeholder="e.g., eastus"
+          disabled={disabled}
+        />
+        <p className="text-xs text-muted-foreground">
+          Enter an Azure location (e.g., eastus, westeurope, southeastasia).
         </p>
       </div>
     );
