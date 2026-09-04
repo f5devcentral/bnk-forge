@@ -39,7 +39,7 @@ croniter==5.0.1
 # Infrastructure tools
 python-hcl2==4.3.5
 # 3.1.58: GHSA-3f7w-8rr8-f37f needs >=3.1.57, GHSA-p538-c434-8v24 needs >=3.1.56.
-gitpython==3.1.58
+gitpython==3.1.59
 boto3==1.36.4
 google-auth==2.38.0
 paramiko==5.0.0
@@ -49,6 +49,7 @@ kr8s==0.20.15
 # HTTP
 httpx==0.28.1
 requests==2.33.0
+urllib3==2.7.0
 
 # Templating (DPU bf.conf renderer — Phase 4)
 # 3.1.6 fixes CVE-2025-27516 (sandbox bypass via |attr filter).

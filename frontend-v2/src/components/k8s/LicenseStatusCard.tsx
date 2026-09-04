@@ -89,7 +89,7 @@ export function LicenseStatusCard({ clusterId }: LicenseStatusCardProps) {
     isFetching,
   } = useLicenseStatus(clusterId);
 
-  const { data: cwcStatus } = useCWCStatus(clusterId, !isLoading);
+  const { data: cwcStatus } = useCWCStatus(clusterId);
 
   if (isLoading) {
     return (

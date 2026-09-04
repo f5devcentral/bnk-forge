@@ -17,6 +17,8 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,7 +32,11 @@ from core.errors import BadRequestError
 from core.worker_heartbeat import heartbeat
 from models import ApplicationSetting, AuditLog, DeploymentLog, ModuleLibrary, Project, ProjectModule, Task
 from models.enums import TaskStatus
+from services.bnk.consumption import aggregate_cluster_consumption, aggregate_fleet_summary
+from services.bnk.fetch import fetch_all_bnk_data
 from services.defaults_service import DEFAULT_REPO_URL
+from services.dpf.fetch import detect_dpf
+from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +111,123 @@ class SystemService:
 
         cache.set("system:health", health_data, ttl_seconds=30)
         return health_data
+
+    # ================================================================
+    # BNK Resource Consumption
+    # ================================================================
+
+    _BNK_CONSUMPTION_CACHE_KEY = "system:bnk_consumption"
+    _BNK_CONSUMPTION_TTL_SECONDS = 60
+
+    def get_bnk_consumption(self) -> dict[str, Any]:
+        """
+        Aggregate BNK resource consumption across all clusters.
+
+        Combines ``fetch_all_bnk_data`` with pod metrics to produce a
+        fleet-wide summary plus a per-cluster breakdown split by control
+        plane vs data plane. Results are cached in-memory for 20 seconds.
+        """
+        cached = cache.get(self._BNK_CONSUMPTION_CACHE_KEY)
+        if cached is not None:
+            return cached
+
+        from models.kubernetes import KubernetesCluster
+
+        clusters = self.db.query(KubernetesCluster).all()
+        k8s_service = KubernetesService(self.db)
+
+        def _collect_cluster(cluster) -> dict[str, Any]:
+            bnk_data: dict[str, Any] | None = None
+            pod_metrics_response: dict[str, Any] | None = None
+            dpf_summary: dict[str, Any] | None = None
+            reachable = True
+
+            try:
+                # This single call both checks reachability and returns BNK inventory.
+                # include_nodes=True so we can fall back to node allocatable capacity
+                # when cluster metrics-server is not installed.
+                bnk_data = fetch_all_bnk_data(k8s_service, cluster.id, include_nodes=True)
+            except Exception as exc:
+                logger.warning(f"BNK consumption: cluster {cluster.name} (id={cluster.id}) unreachable: {exc}")
+                reachable = False
+
+            if reachable and bnk_data is not None:
+                try:
+                    pod_metrics_response = k8s_service.get_pod_metrics(cluster.id)
+                except Exception as exc:
+                    logger.warning(f"BNK consumption: pod metrics failed for cluster {cluster.id}: {exc}")
+                    pod_metrics_response = {"available": False, "error": str(exc)}
+
+                try:
+                    dpf = detect_dpf(k8s_service, cluster.id)
+                    dpf_summary = {
+                        "detected": bool(dpf.get("detected")),
+                        "dpu_count": int(dpf.get("devices", {}).get("total", 0)),
+                    }
+                except Exception as exc:
+                    logger.warning(f"BNK consumption: DPF detection failed for cluster {cluster.id}: {exc}")
+                    dpf_summary = {"detected": False, "dpu_count": 0}
+
+            return aggregate_cluster_consumption(
+                cluster_id=cluster.id,
+                cluster_name=cluster.name,
+                node_count=getattr(cluster, "node_count", None),
+                status=cluster.status or "unknown",
+                bnk_data=bnk_data,
+                pod_metrics_response=pod_metrics_response,
+                dpf_summary=dpf_summary,
+                reachable=reachable,
+                cloud_provider=getattr(cluster, "cloud_provider", None),
+                region=getattr(cluster, "region", None),
+            )
+
+        # Collect per-cluster data in parallel with a per-cluster timeout.
+        # Without timeouts a single unreachable cluster can stall the whole
+        # fleet view for minutes (e.g. metrics-server not installed).
+        cluster_results: list[dict[str, Any]] = []
+        per_cluster_timeout = 30  # seconds
+        with ThreadPoolExecutor(max_workers=min(len(clusters) or 1, 8)) as executor:
+            futures = {executor.submit(_collect_cluster, c): c for c in clusters}
+            for future in futures:
+                cluster = futures[future]
+                try:
+                    cluster_results.append(future.result(timeout=per_cluster_timeout))
+                except FuturesTimeoutError:
+                    logger.warning(f"BNK consumption: cluster {cluster.name} (id={cluster.id}) timed out after {per_cluster_timeout}s")
+                    cluster_results.append(aggregate_cluster_consumption(
+                        cluster_id=cluster.id,
+                        cluster_name=cluster.name,
+                        node_count=getattr(cluster, "node_count", None),
+                        status=cluster.status or "unknown",
+                        bnk_data=None,
+                        pod_metrics_response={"available": False, "error": "Timed out collecting cluster consumption"},
+                        dpf_summary={"detected": False, "dpu_count": 0},
+                        reachable=False,
+                        cloud_provider=getattr(cluster, "cloud_provider", None),
+                        region=getattr(cluster, "region", None),
+                    ))
+                except Exception as exc:
+                    logger.warning(f"BNK consumption: cluster {cluster.name} (id={cluster.id}) failed: {exc}")
+                    cluster_results.append(aggregate_cluster_consumption(
+                        cluster_id=cluster.id,
+                        cluster_name=cluster.name,
+                        node_count=getattr(cluster, "node_count", None),
+                        status=cluster.status or "unknown",
+                        bnk_data=None,
+                        pod_metrics_response={"available": False, "error": str(exc)},
+                        dpf_summary={"detected": False, "dpu_count": 0},
+                        reachable=False,
+                        cloud_provider=getattr(cluster, "cloud_provider", None),
+                        region=getattr(cluster, "region", None),
+                    ))
+
+        result = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "fleet_summary": aggregate_fleet_summary(cluster_results),
+            "clusters": cluster_results,
+        }
+        cache.set(self._BNK_CONSUMPTION_CACHE_KEY, result, ttl_seconds=self._BNK_CONSUMPTION_TTL_SECONDS)
+        return result
 
     # ================================================================
     # Queue Metrics

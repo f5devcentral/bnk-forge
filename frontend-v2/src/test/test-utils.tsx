@@ -42,17 +42,18 @@ function createTestQueryClient() {
 interface TestWrapperProps {
   children: React.ReactNode;
   initialRoute?: string;
+  queryClient?: QueryClient;
 }
 
 /**
  * All-providers wrapper for testing.
  * Intentionally omits NotificationProvider/WebSocketProvider to avoid side effects.
  */
-function TestWrapper({ children, initialRoute = '/' }: TestWrapperProps) {
-  const queryClient = createTestQueryClient();
+function TestWrapper({ children, initialRoute = '/', queryClient }: TestWrapperProps) {
+  const [client] = React.useState(() => queryClient || createTestQueryClient());
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={client}>
       <ThemeProvider>
         <MemoryRouter initialEntries={[initialRoute]}>
           {children}
@@ -68,13 +69,14 @@ function TestWrapper({ children, initialRoute = '/' }: TestWrapperProps) {
  */
 function customRender(
   ui: ReactElement,
-  options?: Omit<RenderOptions, 'wrapper'> & { initialRoute?: string }
+  options?: Omit<RenderOptions, 'wrapper'> & { initialRoute?: string; queryClient?: QueryClient }
 ) {
-  const { initialRoute, ...renderOptions } = options || {};
+  const { initialRoute, queryClient, ...renderOptions } = options || {};
+  const client = queryClient || createTestQueryClient();
 
   return render(ui, {
     wrapper: ({ children }) => (
-      <TestWrapper initialRoute={initialRoute}>{children}</TestWrapper>
+      <TestWrapper initialRoute={initialRoute} queryClient={client}>{children}</TestWrapper>
     ),
     ...renderOptions,
   });

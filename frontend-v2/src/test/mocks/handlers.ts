@@ -28,6 +28,7 @@ import {
   mockSystemVersion,
   mockBackupStatus,
   mockMaintenanceStatus,
+  mockBnkConsumption,
   mockModules,
   mockModuleLibrary,
   mockModuleSources,
@@ -77,6 +78,7 @@ export {
   mockMaintenanceStatus,
   mockBackupStatusInProgress,
   mockMaintenanceActive,
+  mockBnkConsumption,
 } from '../test-fixtures';
 
 // ============================================================================
@@ -875,8 +877,54 @@ export const handlers = [
   }),
 
   // ========================================================================
-  // K8s Clusters
+  // K8s Search & Clusters
   // ========================================================================
+
+  http.get('*/api/k8s/search', ({ request }) => {
+    const url = new URL(request.url);
+    const q = url.searchParams.get('q') || '';
+    return HttpResponse.json({
+      query: q,
+      ingresses: [
+        {
+          kind: 'Ingress',
+          name: 'api-gateway',
+          namespace: 'prod-ingress',
+          matched_host: 'api.example.com',
+          all_hosts: ['api.example.com'],
+          cluster_id: 1,
+          cluster_name: 'test-cluster',
+          cloud_provider: 'aws',
+          region: 'us-west-2',
+          target_service: 'api-svc:8080',
+          status: 'Active',
+        },
+      ],
+      clusters: [
+        {
+          id: 1,
+          name: 'test-cluster',
+          cloud_provider: 'aws',
+          region: 'us-west-2',
+          status: 'active',
+          node_count: 5,
+          detected_platform_profile: 'EKS',
+        },
+      ],
+      projects: [
+        {
+          id: 1,
+          name: 'test-project',
+          description: 'Production API backend',
+          cloud_provider: 'aws',
+          region: 'us-west-2',
+          module_count: 4,
+          deployed_count: 4,
+          failed_count: 0,
+        },
+      ],
+    });
+  }),
 
   http.get('*/api/k8s/clusters', ({ request }) => {
     const url = new URL(request.url);
@@ -1453,6 +1501,10 @@ export const handlers = [
 
   http.get('*/api/system/version', () => {
     return HttpResponse.json(mockSystemVersion);
+  }),
+
+  http.get('*/api/system/bnk-consumption', () => {
+    return HttpResponse.json(mockBnkConsumption);
   }),
 
   http.post('*/api/system/upgrade', () => {

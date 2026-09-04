@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -1026,6 +1026,47 @@
         }
       }
     },
+    "/api/projects/{project_id}/k8s/clusters/detect-credentials": {
+      "post": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Detect And Register Clusters From Credentials",
+        "description": "Discover Kubernetes clusters via the project's cloud credential templates.",
+        "operationId": "detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/k8s/clusters": {
       "post": {
         "tags": [
@@ -1157,6 +1198,49 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BatchConnectivityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/connectivity": {
+      "get": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Project Batch Connectivity Check",
+        "description": "Probe connectivity for all clusters in a project in parallel.",
+        "operationId": "project_batch_connectivity_check_api_projects__project_id__connectivity_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchConnectivityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -3731,13 +3815,71 @@
         }
       }
     },
+    "/api/k8s/search": {
+      "get": {
+        "tags": [
+          "k8s-search"
+        ],
+        "summary": "Global Search",
+        "description": "Unified global multi-cluster and infrastructure search.\n\nSearches across:\n- Ingresses, HTTPRoutes, VirtualServers, and Services in all reachable clusters\n- Clusters (by name, cloud provider, region)\n- Projects (by name, description, cloud provider, region)",
+        "operationId": "global_search_api_k8s_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Search query string (FQDN, hostname, IP, cluster, project)",
+              "title": "Q"
+            },
+            "description": "Search query string (FQDN, hostname, IP, cluster, project)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSearchResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/f5bnk/data": {
       "get": {
         "tags": [
           "k8s-f5bnk"
         ],
         "summary": "Get Bnk Data",
-        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.",
+        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.\n\nQuery parameters:\n  - force: bypass the 15-second BNK data / TMM traffic-stats cache.",
         "operationId": "get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get",
         "parameters": [
           {
@@ -3764,6 +3906,16 @@
               ],
               "title": "Namespace"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -3771,7 +3923,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BnkDataResponse"
+                }
               }
             }
           },
@@ -3828,7 +3982,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BnkHealthEndpointResponse"
+                }
               }
             }
           },
@@ -3885,7 +4041,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayTopologyResponse"
+                }
               }
             }
           },
@@ -3942,7 +4100,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/F5PolicyGatewayAssociationsResponse"
+                }
               }
             }
           },
@@ -4612,7 +4772,106 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/stats": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Stats",
+        "description": "Summary tiles: total requests, success rate, avg latency, tokens, cost, models.",
+        "operationId": "get_llm_stats_api_k8s_llm_observability_stats_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4697,7 +4956,116 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "requests",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmHistogramResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/histogram": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Histogram",
+        "description": "Time-series for one metric (requests|tokens|cost|models|latency).",
+        "operationId": "get_llm_histogram_api_k8s_llm_observability_histogram_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4792,7 +5160,106 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmRankingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/rankings": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Rankings",
+        "description": "Per-model rows with window-over-window trend deltas.",
+        "operationId": "get_llm_rankings_api_k8s_llm_observability_rankings_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4877,7 +5344,116 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "cost",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmProviderUsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/provider-usage": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Provider Usage",
+        "description": "Time-series folded to inferred provider (cost|tokens|latency).",
+        "operationId": "get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4972,7 +5548,152 @@
             "in": "path",
             "required": true,
             "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "content_search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content Search"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "nanosecond cursor for load-older",
+              "title": "End"
+            },
+            "description": "nanosecond cursor for load-older"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmLogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/logs": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Logs",
+        "description": "Per-request log rows, newest first; ``next_end`` is the load-older cursor.",
+        "operationId": "get_llm_logs_api_k8s_llm_observability_logs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5103,7 +5824,74 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmFilterDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/filterdata": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Filterdata",
+        "description": "Distinct model + status label values for filter dropdowns.",
+        "operationId": "get_llm_filterdata_api_k8s_llm_observability_filterdata_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -9476,6 +10264,16 @@
               "type": "integer",
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -12589,6 +13387,28 @@
         }
       }
     },
+    "/api/cloud-auth/azure/regions": {
+      "get": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "List Azure Regions",
+        "description": "List Azure regions in the canonical {value, label} shape.",
+        "operationId": "list_azure_regions_api_cloud_auth_azure_regions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudRegionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cloud-auth/ibm/cos-instances/query": {
       "post": {
         "tags": [
@@ -12929,6 +13749,126 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/sso/initiate": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "Initiate Azure Sso",
+        "description": "Initiate Azure Entra ID device code authorization flow.",
+        "operationId": "initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSSOInitiateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/sso/poll": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "Poll Azure Sso",
+        "description": "Poll Azure Entra ID token endpoint for device code completion.",
+        "operationId": "poll_azure_sso_api_cloud_auth_azure_sso_poll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSSOPollRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud-auth/azure/subscriptions": {
+      "post": {
+        "tags": [
+          "cloud-auth"
+        ],
+        "summary": "List Azure Subscriptions",
+        "description": "List Azure subscriptions accessible by the access token.",
+        "operationId": "list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AzureSubscriptionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -15257,6 +16197,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProcessMetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/bnk-consumption": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get Bnk Consumption",
+        "description": "Get fleet-wide BNK resource consumption.",
+        "operationId": "get_bnk_consumption_api_system_bnk_consumption_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BnkConsumptionResponse"
                 }
               }
             }
@@ -25035,6 +25997,16 @@
               "type": "integer",
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -25077,6 +26049,16 @@
             "schema": {
               "type": "integer",
               "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
             }
           }
         ],
@@ -31586,6 +32568,115 @@
         ],
         "title": "AssignedLabelsRequest"
       },
+      "AzureSSOInitiateRequest": {
+        "properties": {
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "default": "common"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "type": "object",
+        "title": "AzureSSOInitiateRequest",
+        "description": "Request model for initiating Azure SSO device authorization"
+      },
+      "AzureSSOPollRequest": {
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Device Code"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "default": "common"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_code"
+        ],
+        "title": "AzureSSOPollRequest",
+        "description": "Request model for polling Azure SSO token"
+      },
+      "AzureSubscriptionsRequest": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "AzureSubscriptionsRequest",
+        "description": "Request model for listing Azure subscriptions"
+      },
       "BackupCreateRequest": {
         "properties": {
           "passphrase": {
@@ -37181,6 +38272,145 @@
         ],
         "title": "BnkClusterConfigSummary"
       },
+      "BnkClusterConsumption": {
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "type": "string",
+            "title": "Cluster Name"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "reachable": {
+            "type": "boolean",
+            "title": "Reachable"
+          },
+          "bnk_installed": {
+            "type": "boolean",
+            "title": "Bnk Installed"
+          },
+          "bnk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bnk Version"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "control_plane": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "data_plane": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "total": {
+            "$ref": "#/components/schemas/BnkPlaneConsumption"
+          },
+          "node_capacity": {
+            "$ref": "#/components/schemas/BnkNodeCapacity"
+          },
+          "metrics_available": {
+            "type": "boolean",
+            "title": "Metrics Available"
+          },
+          "metrics_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics Error"
+          },
+          "dpf": {
+            "$ref": "#/components/schemas/BnkClusterDpfSummary"
+          },
+          "top_pods": {
+            "items": {
+              "$ref": "#/components/schemas/BnkTopPod"
+            },
+            "type": "array",
+            "title": "Top Pods"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "cluster_name",
+          "reachable",
+          "bnk_installed",
+          "status",
+          "control_plane",
+          "data_plane",
+          "total",
+          "metrics_available",
+          "dpf"
+        ],
+        "title": "BnkClusterConsumption",
+        "description": "Per-cluster BNK resource consumption breakdown."
+      },
+      "BnkClusterDpfSummary": {
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "title": "Detected"
+          },
+          "dpu_count": {
+            "type": "integer",
+            "title": "Dpu Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detected",
+          "dpu_count"
+        ],
+        "title": "BnkClusterDpfSummary",
+        "description": "Lightweight DPF/DPU summary for a single cluster."
+      },
       "BnkClusterMemberAssignRequest": {
         "properties": {
           "control_plane_host_id": {
@@ -37262,6 +38492,744 @@
         ],
         "title": "BnkClusterMemberAssignResponse"
       },
+      "BnkConsumptionResponse": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "fleet_summary": {
+            "$ref": "#/components/schemas/BnkFleetSummary"
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/BnkClusterConsumption"
+            },
+            "type": "array",
+            "title": "Clusters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "fleet_summary",
+          "clusters"
+        ],
+        "title": "BnkConsumptionResponse",
+        "description": "Response for GET /api/system/bnk-consumption."
+      },
+      "BnkDataResponse": {
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/BnkHealthResponse"
+          },
+          "topology": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Topology"
+          },
+          "dataPlane": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Dataplane"
+          },
+          "referenceGrants": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Referencegrants"
+          },
+          "topologyCounts": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Topologycounts"
+          },
+          "policyAssociations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Policyassociations"
+          },
+          "policyCount": {
+            "type": "integer",
+            "title": "Policycount"
+          },
+          "backends": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backends"
+          },
+          "palette": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Palette"
+          },
+          "trafficStats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BnkTrafficStatsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "health",
+          "topology",
+          "dataPlane",
+          "referenceGrants",
+          "topologyCounts",
+          "policyAssociations",
+          "policyCount",
+          "cluster_id"
+        ],
+        "title": "BnkDataResponse",
+        "description": "Wrapper for the unified /f5bnk/data endpoint.\n\nThe ``health`` and ``trafficStats`` keys are strongly typed; the remaining\nkeys are kept as loose dicts because their schemas are large and already\ntyped manually in the frontend. This lets OpenAPI capture new fields\nwithout coupling the whole topology/palette response to Pydantic."
+      },
+      "BnkEgressTrafficStats": {
+        "properties": {
+          "egressName": {
+            "type": "string",
+            "title": "Egressname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "clientsideBytesIn": {
+            "type": "integer",
+            "title": "Clientsidebytesin",
+            "default": 0
+          },
+          "clientsideBytesOut": {
+            "type": "integer",
+            "title": "Clientsidebytesout",
+            "default": 0
+          },
+          "clientsideCurConns": {
+            "type": "integer",
+            "title": "Clientsidecurconns",
+            "default": 0
+          },
+          "clientsideTotConns": {
+            "type": "integer",
+            "title": "Clientsidetotconns",
+            "default": 0
+          },
+          "serversideBytesIn": {
+            "type": "integer",
+            "title": "Serversidebytesin",
+            "default": 0
+          },
+          "serversideBytesOut": {
+            "type": "integer",
+            "title": "Serversidebytesout",
+            "default": 0
+          },
+          "serversideCurConns": {
+            "type": "integer",
+            "title": "Serversidecurconns",
+            "default": 0
+          },
+          "serversideTotConns": {
+            "type": "integer",
+            "title": "Serversidetotconns",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "egressName",
+          "namespace"
+        ],
+        "title": "BnkEgressTrafficStats"
+      },
+      "BnkFirewallRuleTrafficStats": {
+        "properties": {
+          "policyName": {
+            "type": "string",
+            "title": "Policyname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ruleName": {
+            "type": "string",
+            "title": "Rulename"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "default": ""
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol",
+            "default": ""
+          },
+          "hitCount": {
+            "type": "integer",
+            "title": "Hitcount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "policyName",
+          "namespace",
+          "ruleName"
+        ],
+        "title": "BnkFirewallRuleTrafficStats"
+      },
+      "BnkFleetSummary": {
+        "properties": {
+          "total_clusters": {
+            "type": "integer",
+            "title": "Total Clusters"
+          },
+          "reachable_clusters": {
+            "type": "integer",
+            "title": "Reachable Clusters"
+          },
+          "bnk_installed_clusters": {
+            "type": "integer",
+            "title": "Bnk Installed Clusters"
+          },
+          "total_bnk_pods": {
+            "type": "integer",
+            "title": "Total Bnk Pods"
+          },
+          "control_plane_pods": {
+            "type": "integer",
+            "title": "Control Plane Pods"
+          },
+          "data_plane_pods": {
+            "type": "integer",
+            "title": "Data Plane Pods"
+          },
+          "total_cpu_millicores": {
+            "type": "integer",
+            "title": "Total Cpu Millicores"
+          },
+          "total_memory_bytes": {
+            "type": "integer",
+            "title": "Total Memory Bytes"
+          },
+          "node_capacity_cpu_millicores": {
+            "type": "integer",
+            "title": "Node Capacity Cpu Millicores",
+            "default": 0
+          },
+          "node_capacity_memory_bytes": {
+            "type": "integer",
+            "title": "Node Capacity Memory Bytes",
+            "default": 0
+          },
+          "dpf_detected_clusters": {
+            "type": "integer",
+            "title": "Dpf Detected Clusters"
+          },
+          "dpu_count": {
+            "type": "integer",
+            "title": "Dpu Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_clusters",
+          "reachable_clusters",
+          "bnk_installed_clusters",
+          "total_bnk_pods",
+          "control_plane_pods",
+          "data_plane_pods",
+          "total_cpu_millicores",
+          "total_memory_bytes",
+          "dpf_detected_clusters",
+          "dpu_count"
+        ],
+        "title": "BnkFleetSummary",
+        "description": "Fleet-wide BNK consumption rollup."
+      },
+      "BnkHealthAISection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "analyzerDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthAnalyzerDetail"
+            },
+            "type": "array",
+            "title": "Analyzerdetails"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "analyzers",
+          "analyzerDetails"
+        ],
+        "title": "BnkHealthAISection"
+      },
+      "BnkHealthDataPlaneSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "tmm": {
+            "$ref": "#/components/schemas/HealthTmmComponent"
+          },
+          "cneInstance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthCneInstance"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Cneinstance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "tmm",
+          "cneInstance"
+        ],
+        "title": "BnkHealthDataPlaneSection"
+      },
+      "BnkHealthEndpointResponse": {
+        "properties": {
+          "overall": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Overall"
+          },
+          "installShape": {
+            "type": "string",
+            "title": "Installshape",
+            "default": "unknown"
+          },
+          "installMethod": {
+            "type": "string",
+            "title": "Installmethod",
+            "default": "Unknown"
+          },
+          "connectivity": {
+            "$ref": "#/components/schemas/HealthConnectivityStatus"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/HealthIntegrationStatus"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BnkHealthPlatformSection"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/BnkHealthDataPlaneSection"
+          },
+          "networking": {
+            "$ref": "#/components/schemas/BnkHealthNetworkingSection"
+          },
+          "security": {
+            "$ref": "#/components/schemas/BnkHealthSecuritySection"
+          },
+          "ai": {
+            "$ref": "#/components/schemas/BnkHealthAISection"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/HealthCounts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "overall",
+          "connectivity",
+          "integration",
+          "platform",
+          "dataPlane",
+          "networking",
+          "security",
+          "ai",
+          "counts",
+          "cluster_id"
+        ],
+        "title": "BnkHealthEndpointResponse"
+      },
+      "BnkHealthNetworkingSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "gateways": {
+            "$ref": "#/components/schemas/HealthGatewayComponent"
+          },
+          "vlans": {
+            "$ref": "#/components/schemas/HealthVlanComponent"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "staticRoutes": {
+            "type": "integer",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "type": "integer",
+            "title": "Snatpools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "gateways",
+          "vlans",
+          "listeners",
+          "httpRoutes",
+          "staticRoutes",
+          "snatPools"
+        ],
+        "title": "BnkHealthNetworkingSection"
+      },
+      "BnkHealthPlatformSection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "flo": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "controller": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "crdInstaller": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          },
+          "analyzer": {
+            "$ref": "#/components/schemas/HealthPlatformComponent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "flo",
+          "controller",
+          "crdInstaller",
+          "analyzer"
+        ],
+        "title": "BnkHealthPlatformSection"
+      },
+      "BnkHealthResponse": {
+        "properties": {
+          "overall": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Overall"
+          },
+          "installShape": {
+            "type": "string",
+            "title": "Installshape",
+            "default": "unknown"
+          },
+          "installMethod": {
+            "type": "string",
+            "title": "Installmethod",
+            "default": "Unknown"
+          },
+          "connectivity": {
+            "$ref": "#/components/schemas/HealthConnectivityStatus"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/HealthIntegrationStatus"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BnkHealthPlatformSection"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/BnkHealthDataPlaneSection"
+          },
+          "networking": {
+            "$ref": "#/components/schemas/BnkHealthNetworkingSection"
+          },
+          "security": {
+            "$ref": "#/components/schemas/BnkHealthSecuritySection"
+          },
+          "ai": {
+            "$ref": "#/components/schemas/BnkHealthAISection"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/HealthCounts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "overall",
+          "connectivity",
+          "integration",
+          "platform",
+          "dataPlane",
+          "networking",
+          "security",
+          "ai",
+          "counts"
+        ],
+        "title": "BnkHealthResponse"
+      },
+      "BnkHealthSecuritySection": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "securityPolicies": {
+            "type": "integer",
+            "title": "Securitypolicies"
+          },
+          "networkPolicies": {
+            "type": "integer",
+            "title": "Networkpolicies"
+          },
+          "addressLists": {
+            "type": "integer",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "type": "integer",
+            "title": "Portlists"
+          },
+          "irules": {
+            "$ref": "#/components/schemas/HealthIRulesComponent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "firewallPolicies",
+          "securityPolicies",
+          "networkPolicies",
+          "addressLists",
+          "portLists",
+          "irules"
+        ],
+        "title": "BnkHealthSecuritySection"
+      },
+      "BnkListenerTrafficStats": {
+        "properties": {
+          "gatewayName": {
+            "type": "string",
+            "title": "Gatewayname"
+          },
+          "gatewayNamespace": {
+            "type": "string",
+            "title": "Gatewaynamespace"
+          },
+          "listenerName": {
+            "type": "string",
+            "title": "Listenername"
+          },
+          "clientsideBytesIn": {
+            "type": "integer",
+            "title": "Clientsidebytesin",
+            "default": 0
+          },
+          "clientsideBytesOut": {
+            "type": "integer",
+            "title": "Clientsidebytesout",
+            "default": 0
+          },
+          "clientsideCurConns": {
+            "type": "integer",
+            "title": "Clientsidecurconns",
+            "default": 0
+          },
+          "clientsideTotConns": {
+            "type": "integer",
+            "title": "Clientsidetotconns",
+            "default": 0
+          },
+          "serversideBytesIn": {
+            "type": "integer",
+            "title": "Serversidebytesin",
+            "default": 0
+          },
+          "serversideBytesOut": {
+            "type": "integer",
+            "title": "Serversidebytesout",
+            "default": 0
+          },
+          "serversideCurConns": {
+            "type": "integer",
+            "title": "Serversidecurconns",
+            "default": 0
+          },
+          "serversideTotConns": {
+            "type": "integer",
+            "title": "Serversidetotconns",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "gatewayName",
+          "gatewayNamespace",
+          "listenerName"
+        ],
+        "title": "BnkListenerTrafficStats"
+      },
+      "BnkNodeCapacity": {
+        "properties": {
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores",
+            "description": "Aggregated node allocatable CPU in millicores",
+            "default": 0
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes",
+            "description": "Aggregated node allocatable memory in bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "BnkNodeCapacity",
+        "description": "Node allocatable CPU/memory capacity for a cluster."
+      },
+      "BnkPlaneConsumption": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Number of BNK pods in this plane"
+          },
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores",
+            "description": "Aggregated CPU usage in millicores"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes",
+            "description": "Aggregated memory usage in bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "cpu_millicores",
+          "memory_bytes"
+        ],
+        "title": "BnkPlaneConsumption",
+        "description": "CPU/memory/pod count for a single BNK plane (control-plane or data-plane)."
+      },
       "BnkReleaseListResponse": {
         "properties": {
           "releases": {
@@ -37310,6 +39278,117 @@
           "upserted"
         ],
         "title": "BnkReleaseSyncResponse"
+      },
+      "BnkTopPod": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "cpu_millicores": {
+            "type": "integer",
+            "title": "Cpu Millicores"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "title": "Memory Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "role",
+          "cpu_millicores",
+          "memory_bytes"
+        ],
+        "title": "BnkTopPod",
+        "description": "A single BNK pod ranked by resource consumption."
+      },
+      "BnkTrafficStatsResponse": {
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "podName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Podname"
+          },
+          "sampledAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampledat"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/BnkListenerTrafficStats"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "egresses": {
+            "items": {
+              "$ref": "#/components/schemas/BnkEgressTrafficStats"
+            },
+            "type": "array",
+            "title": "Egresses"
+          },
+          "firewallRules": {
+            "items": {
+              "$ref": "#/components/schemas/BnkFirewallRuleTrafficStats"
+            },
+            "type": "array",
+            "title": "Firewallrules"
+          }
+        },
+        "type": "object",
+        "title": "BnkTrafficStatsResponse",
+        "description": "Traffic statistics mapped from TMM dataplane counters."
       },
       "Body_create_file_secret_api_projects__project_id__secrets_file_post": {
         "properties": {
@@ -38868,6 +40947,79 @@
             ],
             "title": "Meta Data"
           },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Status"
+          },
+          "connectivity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectivity Status"
+          },
+          "integration_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Status"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "access_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Method"
+          },
           "deployable_release_id": {
             "anyOf": [
               {
@@ -39256,6 +41408,73 @@
         "title": "ClusterScanEnvelope",
         "description": "Typed envelope for POST /api/k8s/clusters/{id}/scan."
       },
+      "ClusterSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "detected_platform_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected Platform Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "title": "ClusterSearchResult"
+      },
       "ClusterSummary": {
         "properties": {
           "id": {
@@ -39447,6 +41666,68 @@
               }
             ],
             "title": "Node Count"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Status"
+          },
+          "connectivity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectivity Status"
+          },
+          "integration_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Status"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "access_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Method"
           },
           "deployable_release_id": {
             "anyOf": [
@@ -40875,6 +43156,17 @@
             ],
             "title": "Gcp Project Id"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -40896,6 +43188,28 @@
               }
             ],
             "title": "Azure Tenant Id"
+          },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "azure_client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Secret"
           },
           "azure_credentials": {
             "anyOf": [
@@ -41238,6 +43552,17 @@
             "type": "boolean",
             "title": "Has Gcp Credentials"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -41260,9 +43585,50 @@
             ],
             "title": "Azure Tenant Id"
           },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "has_azure_client_secret": {
+            "type": "boolean",
+            "title": "Has Azure Client Secret",
+            "default": false
+          },
           "has_azure_credentials": {
             "type": "boolean",
-            "title": "Has Azure Credentials"
+            "title": "Has Azure Credentials",
+            "default": false
+          },
+          "azure_sso_authenticated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Sso Authenticated At"
+          },
+          "azure_sso_token_expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Sso Token Expiry"
           },
           "has_ibmcloud_api_key": {
             "type": "boolean",
@@ -41447,9 +43813,6 @@
           "aws_credentials_expiry",
           "gcp_project_id",
           "has_gcp_credentials",
-          "azure_subscription_id",
-          "azure_tenant_id",
-          "has_azure_credentials",
           "has_ibmcloud_api_key",
           "is_default",
           "created_at",
@@ -41682,6 +44045,17 @@
             ],
             "title": "Gcp Project Id"
           },
+          "azure_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Auth Method"
+          },
           "azure_subscription_id": {
             "anyOf": [
               {
@@ -41703,6 +44077,28 @@
               }
             ],
             "title": "Azure Tenant Id"
+          },
+          "azure_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Id"
+          },
+          "azure_client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Client Secret"
           },
           "azure_credentials": {
             "anyOf": [
@@ -45791,6 +48187,303 @@
         "type": "object",
         "title": "F5DeviceUpdate"
       },
+      "F5EgressPolicyAssociation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "egress",
+            "title": "Kind",
+            "default": "egress"
+          },
+          "egress_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "captured_namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Captured Namespaces"
+          },
+          "snat_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snat Type"
+          },
+          "firewall_policy_name": {
+            "type": "string",
+            "title": "Firewall Policy Name"
+          },
+          "rules_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Count"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/F5FirewallRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "egress_status": {
+            "$ref": "#/components/schemas/PolicyStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "namespace",
+          "firewall_policy_name"
+        ],
+        "title": "F5EgressPolicyAssociation"
+      },
+      "F5FirewallRule": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol"
+          },
+          "source": {
+            "$ref": "#/components/schemas/F5FirewallRuleEndpoint"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/F5FirewallRuleEndpoint"
+          },
+          "logging": {
+            "type": "boolean",
+            "title": "Logging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "action",
+          "ipProtocol",
+          "source",
+          "destination",
+          "logging"
+        ],
+        "title": "F5FirewallRule"
+      },
+      "F5FirewallRuleEndpoint": {
+        "properties": {
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          },
+          "ports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ports"
+          },
+          "addressLists": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Portlists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "addresses",
+          "ports",
+          "addressLists",
+          "portLists"
+        ],
+        "title": "F5FirewallRuleEndpoint"
+      },
+      "F5GatewayPolicyAssociation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "gateway",
+            "title": "Kind",
+            "default": "gateway"
+          },
+          "bnk_policy_name": {
+            "type": "string",
+            "title": "Bnk Policy Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "gateway_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Name"
+          },
+          "listener_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listener Name"
+          },
+          "firewall_policy_name": {
+            "type": "string",
+            "title": "Firewall Policy Name"
+          },
+          "gateway_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Ip"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "rules_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Count"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/F5FirewallRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "bnk_policy_status": {
+            "$ref": "#/components/schemas/PolicyStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bnk_policy_name",
+          "namespace",
+          "firewall_policy_name"
+        ],
+        "title": "F5GatewayPolicyAssociation"
+      },
+      "F5PolicyGatewayAssociationsResponse": {
+        "properties": {
+          "associations": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/F5GatewayPolicyAssociation"
+                },
+                {
+                  "$ref": "#/components/schemas/F5EgressPolicyAssociation"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Associations"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "associations",
+          "count",
+          "cluster_id"
+        ],
+        "title": "F5PolicyGatewayAssociationsResponse"
+      },
       "FailedTag": {
         "properties": {
           "tag": {
@@ -46592,6 +49285,50 @@
               }
             ],
             "title": "Detected Platform Provider"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Status"
           }
         },
         "type": "object",
@@ -46616,6 +49353,54 @@
         "title": "FleetOperatorHealth",
         "description": "Health summary for a single operator/cluster in the fleet view."
       },
+      "GatewayTopologyResponse": {
+        "properties": {
+          "topology": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyGateway"
+            },
+            "type": "array",
+            "title": "Topology"
+          },
+          "dataPlane": {
+            "$ref": "#/components/schemas/TopologyDataPlane"
+          },
+          "referenceGrants": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrant"
+            },
+            "type": "array",
+            "title": "Referencegrants"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/TopologyCounts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topology",
+          "dataPlane",
+          "referenceGrants",
+          "counts",
+          "cluster_id"
+        ],
+        "title": "GatewayTopologyResponse"
+      },
       "GitSourceValidation": {
         "properties": {
           "git_url": {
@@ -46635,6 +49420,40 @@
         "title": "GitSourceValidation",
         "description": "Schema for git source validation"
       },
+      "GlobalSearchResultResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "ingresses": {
+            "items": {
+              "$ref": "#/components/schemas/IngressSearchResult"
+            },
+            "type": "array",
+            "title": "Ingresses"
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterSearchResult"
+            },
+            "type": "array",
+            "title": "Clusters"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSearchResult"
+            },
+            "type": "array",
+            "title": "Projects"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "GlobalSearchResultResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -46647,6 +49466,529 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HealthAnalyzerDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "schedule"
+        ],
+        "title": "HealthAnalyzerDetail"
+      },
+      "HealthCneInstance": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "HealthCneInstance"
+      },
+      "HealthConnectivityStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "reachable",
+              "partial",
+              "unreachable",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "checkedAt": {
+            "type": "string",
+            "title": "Checkedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "checkedAt"
+        ],
+        "title": "HealthConnectivityStatus"
+      },
+      "HealthCounts": {
+        "properties": {
+          "gateways": {
+            "type": "integer",
+            "title": "Gateways"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "vlans": {
+            "type": "integer",
+            "title": "Vlans"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "irules": {
+            "type": "integer",
+            "title": "Irules"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "cneInstances": {
+            "type": "integer",
+            "title": "Cneinstances"
+          },
+          "tmm_pods": {
+            "type": "integer",
+            "title": "Tmm Pods"
+          },
+          "tmm_running": {
+            "type": "integer",
+            "title": "Tmm Running"
+          },
+          "tmm_containers": {
+            "type": "string",
+            "title": "Tmm Containers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gateways",
+          "listeners",
+          "httpRoutes",
+          "vlans",
+          "firewallPolicies",
+          "irules",
+          "analyzers",
+          "cneInstances",
+          "tmm_pods",
+          "tmm_running",
+          "tmm_containers"
+        ],
+        "title": "HealthCounts"
+      },
+      "HealthGatewayComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "accepted": {
+            "type": "integer",
+            "title": "Accepted"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "accepted",
+          "severity",
+          "explanation",
+          "addresses"
+        ],
+        "title": "HealthGatewayComponent"
+      },
+      "HealthIRuleDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "accepted",
+          "programmed"
+        ],
+        "title": "HealthIRuleDetail"
+      },
+      "HealthIRulesComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "accepted": {
+            "type": "integer",
+            "title": "Accepted"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthIRuleDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "accepted",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthIRulesComponent"
+      },
+      "HealthIntegrationStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "operatorConnected": {
+            "type": "boolean",
+            "title": "Operatorconnected"
+          },
+          "operatorMode": {
+            "type": "string",
+            "enum": [
+              "direct_ws",
+              "polling",
+              "kubeconfig"
+            ],
+            "title": "Operatormode"
+          },
+          "operatorVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operatorversion"
+          },
+          "lastSeen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseen"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "operatorConnected",
+          "operatorMode",
+          "message"
+        ],
+        "title": "HealthIntegrationStatus"
+      },
+      "HealthPlatformComponent": {
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "podDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPodDetail"
+            },
+            "type": "array",
+            "title": "Poddetails"
+          },
+          "remediationActions": {
+            "items": {
+              "$ref": "#/components/schemas/HealthRemediationAction"
+            },
+            "type": "array",
+            "title": "Remediationactions"
+          },
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Namespaces"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running"
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "explanation",
+          "podDetails",
+          "remediationActions",
+          "total",
+          "severity"
+        ],
+        "title": "HealthPlatformComponent"
+      },
+      "HealthPodDetail": {
+        "properties": {
+          "podName": {
+            "type": "string",
+            "title": "Podname"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "nodeName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodename"
+          },
+          "nodeZone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodezone"
+          },
+          "nodeInstanceType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeinstancetype"
+          },
+          "hostIP": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostip"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "restartCount": {
+            "type": "integer",
+            "title": "Restartcount"
+          },
+          "containersReady": {
+            "type": "string",
+            "title": "Containersready"
+          },
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "podName",
+          "namespace",
+          "phase",
+          "restartCount",
+          "containersReady",
+          "issue"
+        ],
+        "title": "HealthPodDetail"
+      },
+      "HealthRemediationAction": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "view_logs",
+              "restart_pod",
+              "describe",
+              "diagnostics"
+            ],
+            "title": "Action"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "action",
+          "target",
+          "namespace"
+        ],
+        "title": "HealthRemediationAction"
       },
       "HealthSubmission": {
         "properties": {
@@ -46677,6 +50019,179 @@
         },
         "type": "object",
         "title": "HealthSubmission"
+      },
+      "HealthTmmComponent": {
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "podDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPodDetail"
+            },
+            "type": "array",
+            "title": "Poddetails"
+          },
+          "remediationActions": {
+            "items": {
+              "$ref": "#/components/schemas/HealthRemediationAction"
+            },
+            "type": "array",
+            "title": "Remediationactions"
+          },
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Namespaces"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Zones"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "pods": {
+            "type": "integer",
+            "title": "Pods"
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "containersTotal": {
+            "type": "integer",
+            "title": "Containerstotal"
+          },
+          "containersReady": {
+            "type": "integer",
+            "title": "Containersready"
+          },
+          "totalRestarts": {
+            "type": "integer",
+            "title": "Totalrestarts"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "explanation",
+          "podDetails",
+          "remediationActions",
+          "pods",
+          "running",
+          "containersTotal",
+          "containersReady",
+          "totalRestarts",
+          "severity"
+        ],
+        "title": "HealthTmmComponent"
+      },
+      "HealthVlanComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthVlanDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthVlanComponent"
+      },
+      "HealthVlanDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "interfaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Interfaces"
+          },
+          "selfIPs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selfips"
+          },
+          "mtu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtu"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "programmed",
+          "interfaces",
+          "selfIPs"
+        ],
+        "title": "HealthVlanDetail"
       },
       "HeartbeatSubmission": {
         "properties": {
@@ -47465,6 +50980,89 @@
           "message"
         ],
         "title": "ImportedBlueprintProjectCreateResponse"
+      },
+      "IngressSearchResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "matched_host": {
+            "type": "string",
+            "title": "Matched Host"
+          },
+          "all_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "All Hosts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "type": "string",
+            "title": "Cluster Name"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "target_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Service"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "namespace",
+          "matched_host",
+          "cluster_id",
+          "cluster_name"
+        ],
+        "title": "IngressSearchResult"
       },
       "InstallChartRequest": {
         "properties": {
@@ -48329,6 +51927,28 @@
           "resp_body": {
             "type": "string",
             "title": "Resp Body"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           }
         },
         "type": "object",
@@ -51157,6 +54777,36 @@
         ],
         "title": "PolicyOut"
       },
+      "PolicyStatus": {
+        "properties": {
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "title": "PolicyStatus"
+      },
       "PreviewMemberOut": {
         "properties": {
           "id": {
@@ -52931,6 +56581,72 @@
         ],
         "title": "ProjectMutationResponse",
         "description": "Response for project create/update/delete."
+      },
+      "ProjectSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "module_count": {
+            "type": "integer",
+            "title": "Module Count",
+            "default": 0
+          },
+          "deployed_count": {
+            "type": "integer",
+            "title": "Deployed Count",
+            "default": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "ProjectSearchResult"
       },
       "ProjectUpdate": {
         "properties": {
@@ -59991,6 +63707,332 @@
         "title": "TaskIdsRequest",
         "description": "Body for bulk operations log operations (#21)."
       },
+      "TopologyAddressList": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "addresses"
+        ],
+        "title": "TopologyAddressList"
+      },
+      "TopologyAnalyzer": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          },
+          "scriptType": {
+            "type": "string",
+            "title": "Scripttype"
+          },
+          "dataSources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datasources"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "schedule",
+          "scriptType",
+          "dataSources",
+          "parameters"
+        ],
+        "title": "TopologyAnalyzer"
+      },
+      "TopologyCneInstance": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Features"
+          },
+          "networkAttachments": {
+            "items": {},
+            "type": "array",
+            "title": "Networkattachments"
+          },
+          "containerPlatform": {
+            "type": "string",
+            "title": "Containerplatform"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "features",
+          "networkAttachments",
+          "containerPlatform",
+          "phase",
+          "ready"
+        ],
+        "title": "TopologyCneInstance"
+      },
+      "TopologyCondition": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "lastTransitionTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lasttransitiontime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "status"
+        ],
+        "title": "TopologyCondition"
+      },
+      "TopologyCounts": {
+        "properties": {
+          "gateways": {
+            "type": "integer",
+            "title": "Gateways"
+          },
+          "listeners": {
+            "type": "integer",
+            "title": "Listeners"
+          },
+          "httpRoutes": {
+            "type": "integer",
+            "title": "Httproutes"
+          },
+          "grpcRoutes": {
+            "type": "integer",
+            "title": "Grpcroutes"
+          },
+          "tcpRoutes": {
+            "type": "integer",
+            "title": "Tcproutes"
+          },
+          "udpRoutes": {
+            "type": "integer",
+            "title": "Udproutes"
+          },
+          "tlsRoutes": {
+            "type": "integer",
+            "title": "Tlsroutes"
+          },
+          "l4Routes": {
+            "type": "integer",
+            "title": "L4Routes"
+          },
+          "totalRoutes": {
+            "type": "integer",
+            "title": "Totalroutes"
+          },
+          "referenceGrants": {
+            "type": "integer",
+            "title": "Referencegrants"
+          },
+          "securityPolicies": {
+            "type": "integer",
+            "title": "Securitypolicies"
+          },
+          "networkPolicies": {
+            "type": "integer",
+            "title": "Networkpolicies"
+          },
+          "firewallPolicies": {
+            "type": "integer",
+            "title": "Firewallpolicies"
+          },
+          "iRules": {
+            "type": "integer",
+            "title": "Irules"
+          },
+          "analyzers": {
+            "type": "integer",
+            "title": "Analyzers"
+          },
+          "vlans": {
+            "type": "integer",
+            "title": "Vlans"
+          },
+          "cneInstances": {
+            "type": "integer",
+            "title": "Cneinstances"
+          },
+          "staticRoutes": {
+            "type": "integer",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "type": "integer",
+            "title": "Snatpools"
+          },
+          "egresses": {
+            "type": "integer",
+            "title": "Egresses"
+          },
+          "hslPublishers": {
+            "type": "integer",
+            "title": "Hslpublishers"
+          },
+          "logProfiles": {
+            "type": "integer",
+            "title": "Logprofiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gateways",
+          "listeners",
+          "httpRoutes",
+          "grpcRoutes",
+          "tcpRoutes",
+          "udpRoutes",
+          "tlsRoutes",
+          "l4Routes",
+          "totalRoutes",
+          "referenceGrants",
+          "securityPolicies",
+          "networkPolicies",
+          "firewallPolicies",
+          "iRules",
+          "analyzers",
+          "vlans",
+          "cneInstances",
+          "staticRoutes",
+          "snatPools",
+          "egresses",
+          "hslPublishers",
+          "logProfiles"
+        ],
+        "title": "TopologyCounts"
+      },
+      "TopologyDataPlane": {
+        "properties": {
+          "vlans": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyVlan"
+            },
+            "type": "array",
+            "title": "Vlans"
+          },
+          "cneInstances": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCneInstance"
+            },
+            "type": "array",
+            "title": "Cneinstances"
+          },
+          "staticRoutes": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyStaticRoute"
+            },
+            "type": "array",
+            "title": "Staticroutes"
+          },
+          "snatPools": {
+            "items": {
+              "$ref": "#/components/schemas/TopologySnatPool"
+            },
+            "type": "array",
+            "title": "Snatpools"
+          },
+          "egresses": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyEgress"
+            },
+            "type": "array",
+            "title": "Egresses"
+          },
+          "logging": {
+            "$ref": "#/components/schemas/TopologyLogging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vlans",
+          "cneInstances",
+          "staticRoutes",
+          "snatPools",
+          "egresses",
+          "logging"
+        ],
+        "title": "TopologyDataPlane"
+      },
       "TopologyEdge": {
         "properties": {
           "id": {
@@ -60019,6 +64061,218 @@
         ],
         "title": "TopologyEdge",
         "description": "A directed edge in the topology graph."
+      },
+      "TopologyEgress": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "snatType": {
+            "type": "string",
+            "title": "Snattype"
+          },
+          "egressSnatpool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egresssnatpool"
+          },
+          "firewallEnforcedPolicy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firewallenforcedpolicy"
+          },
+          "logProfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logprofile"
+          },
+          "capturedNamespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capturednamespaces"
+          },
+          "vxlan": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vxlan"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "snatType",
+          "capturedNamespaces",
+          "ready"
+        ],
+        "title": "TopologyEgress"
+      },
+      "TopologyFirewallPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyFwRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "addressLists": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyAddressList"
+            },
+            "type": "array",
+            "title": "Addresslists"
+          },
+          "portLists": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyPortList"
+            },
+            "type": "array",
+            "title": "Portlists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "rules",
+          "addressLists",
+          "portLists"
+        ],
+        "title": "TopologyFirewallPolicy"
+      },
+      "TopologyFwRule": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "ipProtocol": {
+            "type": "string",
+            "title": "Ipprotocol"
+          },
+          "logging": {
+            "type": "boolean",
+            "title": "Logging"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "action",
+          "ipProtocol",
+          "logging"
+        ],
+        "title": "TopologyFwRule"
+      },
+      "TopologyGateway": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "gatewayClassName": {
+            "type": "string",
+            "title": "Gatewayclassname"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyListener"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "securityPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologySecurityPolicy"
+            },
+            "type": "array",
+            "title": "Securitypolicies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "gatewayClassName",
+          "addresses",
+          "listeners",
+          "securityPolicies"
+        ],
+        "title": "TopologyGateway"
       },
       "TopologyGraphResponse": {
         "properties": {
@@ -60065,6 +64319,190 @@
         ],
         "title": "TopologyGraphResponse",
         "description": "Response for GET /api/k8s/clusters/{cluster_id}/topology."
+      },
+      "TopologyListener": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "protocol": {
+            "type": "string",
+            "title": "Protocol"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "attachedRouteCount": {
+            "type": "integer",
+            "title": "Attachedroutecount",
+            "default": 0
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyRoute"
+            },
+            "type": "array",
+            "title": "Routes"
+          },
+          "networkPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyNetworkPolicy"
+            },
+            "type": "array",
+            "title": "Networkpolicies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "protocol",
+          "routes",
+          "networkPolicies"
+        ],
+        "title": "TopologyListener"
+      },
+      "TopologyLogging": {
+        "properties": {
+          "hslPublishers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Hslpublishers"
+          },
+          "logProfiles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Logprofiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hslPublishers",
+          "logProfiles"
+        ],
+        "title": "TopologyLogging"
+      },
+      "TopologyNetworkPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "extensions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyNetworkPolicyExtension"
+            },
+            "type": "array",
+            "title": "Extensions"
+          },
+          "resolvedCount": {
+            "type": "integer",
+            "title": "Resolvedcount"
+          },
+          "totalExtensions": {
+            "type": "integer",
+            "title": "Totalextensions"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "extensions",
+          "resolvedCount",
+          "totalExtensions"
+        ],
+        "title": "TopologyNetworkPolicy"
+      },
+      "TopologyNetworkPolicyExtension": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "lineCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linecount"
+          },
+          "eventHandlers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eventhandlers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "group"
+        ],
+        "title": "TopologyNetworkPolicyExtension"
       },
       "TopologyNode": {
         "properties": {
@@ -60115,6 +64553,405 @@
         ],
         "title": "TopologyNode",
         "description": "A single node in the topology graph (Service, Pod, or owning workload)."
+      },
+      "TopologyPortList": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "ports": {
+            "items": {},
+            "type": "array",
+            "title": "Ports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "ports"
+        ],
+        "title": "TopologyPortList"
+      },
+      "TopologyReferenceGrant": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "from": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrantFrom"
+            },
+            "type": "array",
+            "title": "From"
+          },
+          "to": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyReferenceGrantTo"
+            },
+            "type": "array",
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "from",
+          "to"
+        ],
+        "title": "TopologyReferenceGrant"
+      },
+      "TopologyReferenceGrantFrom": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "kind",
+          "namespace"
+        ],
+        "title": "TopologyReferenceGrantFrom"
+      },
+      "TopologyReferenceGrantTo": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "kind"
+        ],
+        "title": "TopologyReferenceGrantTo"
+      },
+      "TopologyRoute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "hostnames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hostnames"
+          },
+          "backends": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyRouteBackend"
+            },
+            "type": "array",
+            "title": "Backends"
+          },
+          "analyzers": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyAnalyzer"
+            },
+            "type": "array",
+            "title": "Analyzers"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "default": false
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "conditionMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditionmessage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "kind",
+          "hostnames",
+          "backends",
+          "analyzers"
+        ],
+        "title": "TopologyRoute"
+      },
+      "TopologyRouteBackend": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": "Service"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TopologyRouteBackend"
+      },
+      "TopologySecurityPolicy": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "targetListener": {
+            "type": "string",
+            "title": "Targetlistener"
+          },
+          "firewallPolicies": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyFirewallPolicy"
+            },
+            "type": "array",
+            "title": "Firewallpolicies"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed",
+            "default": false
+          },
+          "messages": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "targetListener",
+          "firewallPolicies"
+        ],
+        "title": "TopologySecurityPolicy"
+      },
+      "TopologySnatPool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "addresses": {
+            "items": {},
+            "type": "array",
+            "title": "Addresses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "addresses"
+        ],
+        "title": "TopologySnatPool"
+      },
+      "TopologyStaticRoute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "gateway": {
+            "type": "string",
+            "title": "Gateway"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "destination",
+          "gateway"
+        ],
+        "title": "TopologyStaticRoute"
+      },
+      "TopologyVlan": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "interfaces": {
+            "items": {},
+            "type": "array",
+            "title": "Interfaces"
+          },
+          "selfipV4s": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selfipv4S"
+          },
+          "prefixLen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prefixlen"
+          },
+          "mtu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtu"
+          },
+          "internal": {
+            "type": "boolean",
+            "title": "Internal"
+          },
+          "autoLasthop": {
+            "type": "string",
+            "title": "Autolasthop"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "interfaces",
+          "selfipV4s",
+          "internal",
+          "autoLasthop",
+          "ready"
+        ],
+        "title": "TopologyVlan"
       },
       "TransferOwnershipRequest": {
         "properties": {

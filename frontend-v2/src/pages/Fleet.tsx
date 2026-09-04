@@ -47,6 +47,8 @@ import {
   AlertCircle,
   Play,
   Square,
+  Gauge,
+  Info,
 } from 'lucide-react';
 import {
   useFleetHealth,
@@ -90,6 +92,8 @@ import {
 import { AddClusterFlowDialog } from '@/components/k8s/AddClusterFlowDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
+import { useBnkConsumption } from '@/hooks/useSystem';
+import { BnkResourcesPanel, type ProviderScope } from '@/components/system/BnkResourcesPanel';
 import { queryKeys } from '@/lib/queryKeys';
 
 // DPFInfrastructurePanel is now rendered under /infrastructure (D-022 P6 IA).
@@ -644,9 +648,16 @@ function CompareResult({ result }: { result: FleetCompareResult }) {
 // Overview view
 // ──────────────────────────────────────────────────────────────────────────────
 
-function OverviewView({ fleetId }: { fleetId?: number }) {
+function OverviewView({
+  fleetId,
+  selectedProvider = 'all',
+  searchQuery = '',
+}: {
+  fleetId?: number;
+  selectedProvider?: string;
+  searchQuery?: string;
+}) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
 
   const { data: fleet, isLoading, isFetching, isError, error } = useFleetHealth();
   const { states: connectivityStates } = useConnectivity();
@@ -662,18 +673,51 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
     );
   }, [fleetId, fleetMembers]);
 
-  // counts — fleet-scoped when fleetId is set, global otherwise.
-  // Must be declared AFTER `operators` would be available, but `operators` is
-  // declared further below. We compute it inline here to avoid TDZ by reading
-  // from fleet?.operators directly for the global branch and computing the
-  // fleet branch after `operators` is resolved via the closure over
-  // `fleetClusterIds`. We re-declare `operators` inline for the fleet-scoped
-  // branch to keep a single useMemo.
+  const [showCompare, setShowCompare] = useState(false);
+  const [showPromotionWizard, setShowPromotionWizard] = useState(false);
+  const [showAddCluster, setShowAddCluster] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [sortField, setSortField] = useState<SortField>('status');
+  const [sortAsc, setSortAsc] = useState(true);
+
+  // When scoped to a fleet or filtered, filter operators.
+  const operators = useMemo(() => {
+    let all = fleet?.operators ?? [];
+    if (fleetClusterIds !== null) {
+      all = all.filter((op) => fleetClusterIds.has(op.cluster_id));
+    }
+    if (selectedProvider && selectedProvider !== 'all') {
+      all = all.filter((op) => {
+        const p = (op.detected_platform_provider || '').toLowerCase();
+        const profile = (op.detected_platform_profile || '').toLowerCase();
+        if (selectedProvider === 'aws') return p.includes('aws') || p.includes('eks') || profile.includes('aws') || profile.includes('eks');
+        if (selectedProvider === 'azure') return p.includes('azure') || p.includes('aks') || p.includes('azr') || profile.includes('azure') || profile.includes('aks');
+        if (selectedProvider === 'gke') return p.includes('gke') || p.includes('gcp') || p.includes('google') || profile.includes('gke');
+        if (selectedProvider === 'ibm') return p.includes('ibm') || p.includes('roks') || profile.includes('ibm') || profile.includes('roks');
+        if (selectedProvider === 'metal') return p.includes('metal') || p.includes('bare') || p.includes('on-prem') || profile.includes('metal') || profile.includes('bare');
+        return true;
+      });
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      all = all.filter(
+        (op) =>
+          op.cluster_name.toLowerCase().includes(q) ||
+          (op.bnk_version && op.bnk_version.toLowerCase().includes(q)) ||
+          (op.kubernetes_version && op.kubernetes_version.toLowerCase().includes(q))
+      );
+    }
+    return all;
+  }, [fleet?.operators, fleetClusterIds, selectedProvider, searchQuery]);
+
+  // counts — scoped to filtered operators
   const counts = useMemo(() => {
     if (!fleet) return { total: 0, healthy: 0, stale: 0, warning: 0, critical: 0, offline: 0 };
 
-    if (!fleetId || fleetClusterIds === null) {
-      // Global view — use the aggregate from the API response directly.
+    const isFiltered = (fleetId && fleetClusterIds !== null) || (selectedProvider && selectedProvider !== 'all') || searchQuery.trim().length > 0;
+
+    if (!isFiltered) {
+      // Global unfiltered view
       const stale = (fleet.operators ?? []).filter((op) => {
         if (!['healthy', 'warning', 'degraded'].includes(op.status)) return false;
         const conn = connectivityStates[reachabilityKey('cluster', op.cluster_id)];
@@ -689,41 +733,21 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
       };
     }
 
-    // Fleet-scoped view — derive from the filtered operator list.
-    const filtered = (fleet.operators ?? []).filter((op) => fleetClusterIds.has(op.cluster_id));
-    const stale = filtered.filter((op) => {
+    // Filtered view — derive from the filtered operator list.
+    const stale = operators.filter((op) => {
       if (!['healthy', 'warning', 'degraded'].includes(op.status)) return false;
       const conn = connectivityStates[reachabilityKey('cluster', op.cluster_id)];
       return conn?.state === 'unreachable';
     }).length;
     return {
-      total: filtered.length,
-      healthy: Math.max(0, filtered.filter((op) => op.status === 'healthy').length - stale),
+      total: operators.length,
+      healthy: Math.max(0, operators.filter((op) => op.status === 'healthy').length - stale),
       stale,
-      warning: filtered.filter((op) => op.status === 'warning').length,
-      critical: filtered.filter((op) => op.status === 'critical' || op.status === 'unhealthy').length,
-      offline: filtered.filter((op) => op.status === 'offline').length,
+      warning: operators.filter((op) => op.status === 'warning' || op.status === 'degraded').length,
+      critical: operators.filter((op) => op.status === 'critical' || op.status === 'unhealthy').length,
+      offline: operators.filter((op) => op.status === 'offline').length,
     };
-  }, [fleet, fleetId, fleetClusterIds, connectivityStates]);
-
-  const [showCompare, setShowCompare] = useState(false);
-  const [showPromotionWizard, setShowPromotionWizard] = useState(false);
-  const [showAddCluster, setShowAddCluster] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [sortField, setSortField] = useState<SortField>('status');
-  const [sortAsc, setSortAsc] = useState(true);
-
-  const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['fleet'] });
-    queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', 'connectivity'] });
-  }, [queryClient]);
-
-  // When scoped to a fleet, filter operators to those in the fleet's cluster members.
-  const operators = useMemo(() => {
-    const all = fleet?.operators ?? [];
-    if (fleetClusterIds === null) return all;
-    return all.filter((op) => fleetClusterIds.has(op.cluster_id));
-  }, [fleet?.operators, fleetClusterIds]);
+  }, [fleet, fleetId, fleetClusterIds, selectedProvider, searchQuery, operators, connectivityStates]);
 
   const sortedOperators = useMemo(
     () => sortOperators(operators, sortField, sortAsc),
@@ -746,6 +770,8 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
     });
   }, []);
 
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+
   const handleViewHealth = useCallback(
     (op: FleetOperatorHealth) => {
       localStorage.setItem('bnk-forge-bnk-cluster', String(op.cluster_id));
@@ -764,53 +790,70 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
 
   const handleViewDpf = useCallback(
     (op: FleetOperatorHealth) => {
-      // D-022 P6 IA: DPU hardware view moved to the Infrastructure section.
       navigate(`/infrastructure?tab=dpus&cluster=${op.cluster_id}`);
     },
     [navigate],
   );
 
-  const canCompare = selectedIds.length === 2;
-
   return (
     <div className="space-y-6">
-      {/* Action bar — global actions (Refresh / Promote config / Add cluster) are
-          hidden when rendered as a fleet Health facet (fleetId set); in that context
-          the view is read-only health for the fleet's members only. */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs text-muted-foreground">
-          {operators.length > 0 &&
-            `${operators.length} cluster${operators.length === 1 ? '' : 's'} · select two to compare`}
-        </div>
+      {/* Action bar */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {selectedIds.length > 0 && (
+            <div className="flex items-center gap-2 text-xs bg-muted/60 px-3 py-1.5 rounded-md">
+              <span className="font-medium text-foreground">
+                {selectedIds.length} cluster{selectedIds.length > 1 ? 's' : ''} selected
+              </span>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground underline ml-1"
+                onClick={clearSelection}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Compare button */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs gap-1.5"
+            disabled={selectedIds.length !== 2}
+            onClick={() => setShowCompare(true)}
+            title={
+              selectedIds.length === 2
+                ? 'Compare the two selected clusters'
+                : 'Select exactly 2 clusters to compare'
+            }
+          >
+            <GitCompare className="h-3.5 w-3.5" />
+            Compare {selectedIds.length === 2 ? '(2)' : ''}
+          </Button>
+
+          {/* Promotion wizard button */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs gap-1.5"
+            onClick={() => setShowPromotionWizard(true)}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Promote Config
+          </Button>
+
+          {/* Add cluster button */}
           {!fleetId && (
             <Button
-              variant="outline"
               size="sm"
-              onClick={handleRefresh}
-              disabled={isFetching}
-              title="Re-check connectivity for all clusters"
+              className="text-xs gap-1.5"
+              onClick={() => setShowAddCluster(true)}
             >
-              <RefreshCw className={cn('h-4 w-4 mr-1.5', isFetching && 'animate-spin')} />
-              {isFetching && !isLoading ? 'Checking…' : 'Refresh'}
-            </Button>
-          )}
-          {canCompare && (
-            <Button variant="outline" size="sm" onClick={() => setShowCompare(true)}>
-              <GitCompare className="h-4 w-4 mr-1.5" />
-              Compare selected
-            </Button>
-          )}
-          {!fleetId && operators.length >= 2 && (
-            <Button variant="outline" size="sm" onClick={() => setShowPromotionWizard(true)}>
-              <Upload className="h-4 w-4 mr-1.5" />
-              Promote config
-            </Button>
-          )}
-          {!fleetId && (
-            <Button variant="outline" size="sm" onClick={() => setShowAddCluster(true)}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add cluster
+              <Plus className="h-3.5 w-3.5" />
+              Add Cluster
             </Button>
           )}
         </div>
@@ -836,13 +879,17 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
         />
       )}
 
-      {/* Platform caveat */}
-      {fleet?.platform_context?.mixed_platform_profiles &&
-        fleet.platform_context.comparison_caveats?.[0] && (
-          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-            {fleet.platform_context.comparison_caveats[0]}
+      {/* Platform comparison caveats — shown in per-fleet view only when fleetId is set */}
+      {fleetId != null && fleet?.platform_context?.comparison_caveats && fleet.platform_context.comparison_caveats.length > 0 && (
+        <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            {fleet.platform_context.comparison_caveats.map((caveat, i) => (
+              <p key={i}>{caveat}</p>
+            ))}
           </div>
-        )}
+        </div>
+      )}
 
       {/* Error */}
       {isError && (
@@ -2997,33 +3044,70 @@ function FleetsView() {
   const [searchParams] = useSearchParams();
 
   const { data: targets, isLoading } = useFleetTargets();
+  const { data: fleetHealth } = useFleetHealth();
   const createTarget = useCreateFleetTarget();
   const updateTarget = useUpdateFleetTarget();
   const deleteTarget = useDeleteFleetTarget();
 
-  // Batch rollup for all visible fleets.
-  const targetIds = useMemo(() => targets?.map((t) => t.id) ?? [], [targets]);
-  const { data: rollupList } = useFleetRollups(targetIds);
-  const rollupById = useMemo((): Map<number, FleetRollup> => {
-    if (!rollupList) return new Map();
-    return new Map(rollupList.map((r) => [r.fleet_id, r]));
-  }, [rollupList]);
-
-  // Create form state
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createDescription, setCreateDescription] = useState('');
+  const [createMode, setCreateMode] = useState<'labels' | 'clusters'>('labels');
   const [createLabels, setCreateLabels] = useState<string[]>([]);
+  const [selectedClusterNames, setSelectedClusterNames] = useState<string[]>([]);
 
-  // Edit state
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editLabels, setEditLabels] = useState<string[]>([]);
 
+  const availableOperators = fleetHealth?.operators ?? [];
+
+  // Compute matching clusters for create form preview
+  const matchingClusters = useMemo(() => {
+    if (createMode === 'clusters') {
+      return availableOperators.filter((op) => selectedClusterNames.includes(op.cluster_name));
+    }
+    const validLabels = createLabels.filter((l) => l.includes('='));
+    if (validLabels.length === 0) return [];
+    return availableOperators.filter((op) => {
+      // Check if cluster matches labels
+      return validLabels.every((pair) => {
+        const [k, v] = pair.split('=').map((s) => s.trim().toLowerCase());
+        if (!k || !v) return true;
+        if (k === 'cloud' || k === 'provider') {
+          return (op.detected_platform_provider || '').toLowerCase().includes(v);
+        }
+        if (k === 'env' || k === 'environment') {
+          return op.cluster_name.toLowerCase().includes(v);
+        }
+        if (k === 'cluster' || k === 'name') {
+          return op.cluster_name.toLowerCase() === v;
+        }
+        return true;
+      });
+    });
+  }, [createMode, selectedClusterNames, createLabels, availableOperators]);
+
+  const targetIds = useMemo(() => (targets ?? []).map((t) => t.id), [targets]);
+  const { data: rollups } = useFleetRollups(targetIds);
+
+  const rollupById = useMemo(() => {
+    const map = new Map<number, import('@/types/fleet').FleetRollup>();
+    for (const r of rollups ?? []) {
+      map.set(r.fleet_id, r);
+    }
+    return map;
+  }, [rollups]);
+
   const handleCreate = () => {
-    if (!createName.trim()) return;
-    const labels = createLabels.filter((l) => l.includes('='));
+    let labels: string[] = [];
+    if (createMode === 'clusters') {
+      labels = selectedClusterNames.map((name) => `cluster=${name}`);
+    } else {
+      labels = createLabels.filter((l) => l.includes('='));
+    }
+
     createTarget.mutate(
       {
         name: createName.trim(),
@@ -3035,6 +3119,7 @@ function FleetsView() {
           setCreateName('');
           setCreateDescription('');
           setCreateLabels([]);
+          setSelectedClusterNames([]);
           setShowCreateForm(false);
           queryClient.invalidateQueries({ queryKey: ['fleet', 'targets'] });
         },
@@ -3086,12 +3171,23 @@ function FleetsView() {
 
   return (
     <div className="space-y-6">
+      {/* Educational guidance banner */}
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Info className="h-4 w-4 text-primary shrink-0" />
+          <h4 className="text-sm font-semibold text-foreground">What are Fleet Groups?</h4>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Fleet Groups allow you to target subsets of your Kubernetes estate (by cloud provider, environment tags, or direct cluster selection) to enforce security policies, detect drift, and orchestrate phased bulk upgrades.
+        </p>
+      </div>
+
       {/* Fleet list */}
       <SectionCard compact>
         <div className="flex items-center justify-between pb-2 mb-3 border-b border-border">
           <div className="flex items-center gap-2">
             <Flag className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Fleets</h3>
+            <h3 className="text-sm font-semibold text-foreground">Fleet Groups</h3>
             {targets && (
               <Badge variant="secondary" className="text-xs">
                 {targets.length}
@@ -3105,32 +3201,127 @@ function FleetsView() {
             onClick={() => setShowCreateForm(!showCreateForm)}
           >
             <Plus className="w-3 h-3" />
-            New Fleet
+            New Fleet Group
           </Button>
         </div>
 
+        {/* Estate summary bar */}
+        {rollups && rollups.length > 0 && (
+          <div className="mb-4">
+            <EstateSummaryBar rollups={rollups} />
+          </div>
+        )}
+
         {/* Create form */}
         {showCreateForm && (
-          <div className="mb-4 p-3 rounded-lg border border-border bg-muted/40 space-y-2">
-            <div className="text-xs font-medium text-foreground">New Fleet</div>
-            <input
-              placeholder="Fleet name (e.g. prod-clusters)"
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-              className="w-full rounded-md border border-border bg-card text-foreground px-2 py-1 text-xs"
-            />
-            <input
-              placeholder="Description (optional)"
-              value={createDescription}
-              onChange={(e) => setCreateDescription(e.target.value)}
-              className="w-full rounded-md border border-border bg-card text-foreground px-2 py-1 text-xs"
-            />
-            <div className="text-xs text-muted-foreground font-medium">Label selectors (AND)</div>
-            <SelectorBuilder
-              value={createLabels}
-              onChange={setCreateLabels}
-              disabled={createTarget.isPending}
-            />
+          <div className="mb-4 p-4 rounded-lg border border-border bg-muted/40 space-y-3">
+            <div className="text-xs font-semibold text-foreground">Create Fleet Group</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                placeholder="Fleet name (e.g. prod-aws-fleet)"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                className="w-full rounded-md border border-border bg-card text-foreground px-2.5 py-1.5 text-xs"
+              />
+              <input
+                placeholder="Description (optional)"
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                className="w-full rounded-md border border-border bg-card text-foreground px-2.5 py-1.5 text-xs"
+              />
+            </div>
+
+            {/* Mode selection toggle */}
+            <div className="flex items-center gap-2 pt-1 border-t border-border/60">
+              <span className="text-xs text-muted-foreground font-medium">Targeting Method:</span>
+              <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('labels')}
+                  className={cn(
+                    'px-2.5 py-1 rounded text-xs transition-colors',
+                    createMode === 'labels' ? 'bg-primary text-primary-foreground font-semibold' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Label Selectors
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('clusters')}
+                  className={cn(
+                    'px-2.5 py-1 rounded text-xs transition-colors',
+                    createMode === 'clusters' ? 'bg-primary text-primary-foreground font-semibold' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Direct Cluster Picking
+                </button>
+              </div>
+            </div>
+
+            {createMode === 'labels' ? (
+              <div className="space-y-1.5">
+                <div className="text-xs text-muted-foreground">Add key=value selectors (e.g. cloud=aws, env=prod):</div>
+                <SelectorBuilder
+                  value={createLabels}
+                  onChange={setCreateLabels}
+                  disabled={createTarget.isPending}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">Select clusters to include in this fleet group:</div>
+                <div className="max-h-40 overflow-y-auto space-y-1 rounded-md border border-border bg-card p-2">
+                  {availableOperators.map((op) => {
+                    const isChecked = selectedClusterNames.includes(op.cluster_name);
+                    return (
+                      <label
+                        key={op.cluster_id}
+                        className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/60 cursor-pointer text-xs"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            setSelectedClusterNames((prev) =>
+                              isChecked
+                                ? prev.filter((name) => name !== op.cluster_name)
+                                : [...prev, op.cluster_name]
+                            );
+                          }}
+                          className="rounded border-border"
+                        />
+                        <span className="font-medium text-foreground">{op.cluster_name}</span>
+                        {op.detected_platform_provider && (
+                          <Badge variant="outline" className="text-xs font-mono ml-auto">
+                            {op.detected_platform_provider}
+                          </Badge>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Matching Preview */}
+            <div className="rounded border border-border/80 bg-card p-2 text-xs flex items-center justify-between">
+              <span className="text-muted-foreground">
+                Matches <strong className="text-foreground">{matchingClusters.length}</strong> cluster{matchingClusters.length !== 1 ? 's' : ''}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {matchingClusters.slice(0, 4).map((c) => (
+                  <Badge key={c.cluster_id} variant="secondary" className="text-xs">
+                    {c.cluster_name}
+                  </Badge>
+                ))}
+                {matchingClusters.length > 4 && (
+                  <Badge variant="outline" className="text-xs">
+                    +{matchingClusters.length - 4} more
+                  </Badge>
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-2 pt-1">
               <Button
                 size="sm"
@@ -3138,7 +3329,7 @@ function FleetsView() {
                 onClick={handleCreate}
                 disabled={createTarget.isPending || !createName.trim()}
               >
-                {createTarget.isPending ? 'Creating…' : 'Create'}
+                {createTarget.isPending ? 'Creating…' : 'Create Fleet Group'}
               </Button>
               <Button
                 size="sm"
@@ -3149,13 +3340,6 @@ function FleetsView() {
                 Cancel
               </Button>
             </div>
-          </div>
-        )}
-
-        {/* Estate summary bar — shown when rollups are available */}
-        {rollupList && rollupList.length > 0 && (
-          <div className="mb-3 pb-3 border-b border-border">
-            <EstateSummaryBar rollups={rollupList} />
           </div>
         )}
 
@@ -3304,8 +3488,7 @@ function FleetsView() {
 // Main page
 // ──────────────────────────────────────────────────────────────────────────────
 
-// D-022 P6 IA: 'dpf' removed — DPU Infrastructure relocated to /infrastructure.
-type FleetView = 'overview' | 'inventory' | 'bulkops' | 'compliance' | 'fleets';
+type FleetView = 'overview' | 'fleets' | 'bnk' | 'inventory' | 'bulkops' | 'compliance';
 
 export default function Fleet() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -3314,22 +3497,26 @@ export default function Fleet() {
   const fleetParam = searchParams.get('fleet');
   const fleetDetailId = fleetParam ? Number(fleetParam) : null;
 
-  // backward compat with ?view=overview etc. (dpf deep-links now redirect to /infrastructure)
+  // backward compat with ?view=overview etc.
   const urlView = searchParams.get('view') ?? searchParams.get('tab');
-  const validViews: FleetView[] = ['fleets', 'inventory', 'bulkops', 'compliance', 'overview'];
+  const validViews: FleetView[] = ['overview', 'bnk', 'fleets', 'inventory', 'bulkops', 'compliance'];
   const initialView: FleetView =
-    urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'fleets';
+    urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'overview';
   const [activeView, setActiveView] = useState<FleetView>(initialView);
+
+  // Shared filter state across Estate Overview and Resource Rollup
+  const [selectedProvider, setSelectedProvider] = useState<ProviderScope>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const handleSelectView = useCallback(
     (view: string) => {
-      const v = validViews.includes(view as FleetView) ? (view as FleetView) : 'fleets';
+      const v = validViews.includes(view as FleetView) ? (view as FleetView) : 'overview';
       setActiveView(v);
       // Clear the fleet drill-down when switching top-level tabs.
       const next = new URLSearchParams(searchParams);
       next.delete('fleet');
       next.delete('detail_tab');
-      if (v === 'fleets') {
+      if (v === 'overview') {
         next.delete('view');
         next.delete('tab');
       } else {
@@ -3343,6 +3530,11 @@ export default function Fleet() {
   );
 
   const { refresh, isRefreshing } = usePageRefresh();
+  const {
+    data: bnkConsumption,
+    isLoading: bnkLoading,
+    error: bnkError,
+  } = useBnkConsumption({ enabled: activeView === 'bnk' });
 
   const subtitle = 'Group clusters into fleets and operate them at scale — health, policy, compliance, and staged operations.';
 
@@ -3361,24 +3553,91 @@ export default function Fleet() {
         <FleetDetailShell fleetId={fleetDetailId} />
       ) : (
         <Tabs value={activeView} onValueChange={handleSelectView}>
-          {/* D-022 P6 IA: 'DPU Infrastructure' tab removed — relocated to /infrastructure.
-              Fleets is the only top-level tab; all per-fleet views live in FleetDetailShell. */}
-          <ResourceViewTabs
-            variant="inline"
-            aria-label="Fleet views"
-            active={activeView}
-            onChange={(key) => handleSelectView(key)}
-            tabs={[
-              { key: 'fleets', label: 'Fleets', icon: Flag },
-            ]}
-          />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-3">
+            <ResourceViewTabs
+              variant="inline"
+              aria-label="Fleet views"
+              active={activeView}
+              onChange={(key) => handleSelectView(key)}
+              tabs={[
+                { key: 'overview', label: 'Estate Overview', icon: Globe },
+                { key: 'bnk', label: 'Resource & Version Rollup', icon: Gauge },
+                { key: 'fleets', label: 'Fleet Groups & Bulk Ops', icon: Flag },
+              ]}
+            />
+
+            {/* Shared Provider and Search Filters (active for Overview & Rollup) */}
+            {(activeView === 'overview' || activeView === 'bnk') && (
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Provider Chips */}
+                <div className="flex items-center bg-muted/60 p-1 rounded-lg text-xs">
+                  {[
+                    { id: 'all', label: 'ALL' },
+                    { id: 'aws', label: 'AWS' },
+                    { id: 'azure', label: 'AZR' },
+                    { id: 'gke', label: 'GKE' },
+                    { id: 'ibm', label: 'IBM' },
+                    { id: 'metal', label: 'METAL' },
+                  ].map((scope) => (
+                    <button
+                      key={scope.id}
+                      type="button"
+                      onClick={() => setSelectedProvider(scope.id as ProviderScope)}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer text-xs',
+                        selectedProvider === scope.id
+                          ? 'bg-card text-foreground shadow-xs font-semibold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {scope.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search Input */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Filter clusters…"
+                    className="h-7 w-36 sm:w-48 rounded-md border border-border bg-card px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1.5 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <TabsContent value="overview" className="mt-6">
+            <OverviewView selectedProvider={selectedProvider} searchQuery={searchQuery} />
+          </TabsContent>
+
+          <TabsContent value="bnk" className="mt-6">
+            <BnkResourcesPanel
+              data={bnkConsumption}
+              isLoading={bnkLoading}
+              error={bnkError}
+              provider={selectedProvider}
+              onProviderChange={setSelectedProvider}
+              hideProviderChips={true}
+            />
+          </TabsContent>
 
           <TabsContent value="fleets" className="mt-6">
             <FleetsView />
           </TabsContent>
 
-          {/* Legacy deep-links: ?view=inventory|bulkops|compliance|overview are forwarded to
-              the Fleets list tab (the views now live inside FleetDetailShell). */}
+          {/* Legacy deep-links: ?view=inventory|bulkops|compliance are forwarded to FleetsView */}
           <TabsContent value="inventory" className="mt-6">
             <FleetsView />
           </TabsContent>
@@ -3386,9 +3645,6 @@ export default function Fleet() {
             <FleetsView />
           </TabsContent>
           <TabsContent value="compliance" className="mt-6">
-            <FleetsView />
-          </TabsContent>
-          <TabsContent value="overview" className="mt-6">
             <FleetsView />
           </TabsContent>
         </Tabs>

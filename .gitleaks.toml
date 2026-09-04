@@ -33,6 +33,10 @@ regexes = [
   # Structural JWT test vector — the signature segment is the literal
   # "signature_here"; used to test _looks_like_jwt().
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ0ZXN0In0\.signature_here''',
+  # Synthetic Azure SSO mock refresh token in component tests
+  '''M\.R3_BAY\.-CgJ0ZXN0LXJlZnJlc2gtdG9rZW4''',
+  # Microsoft's publicly documented Azure CLI client ID (04b07795-8ddb-461a-bbee-02f9e1bf7b46)
+  '''04b07795-8ddb-461a-bbee-02f9e1bf7b46''',
 ]
 
 [[rules]]

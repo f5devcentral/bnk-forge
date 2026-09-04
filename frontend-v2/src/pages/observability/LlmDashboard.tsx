@@ -23,7 +23,6 @@ import { cn } from '@/lib/utils';
 import {
   ChartCard,
   ChartTypeToggle,
-  Gauge,
   TimeSeriesChart,
   TimeRangePicker,
   TrendBadge,
@@ -58,8 +57,6 @@ import type {
 
 const sumSeries = (series: LlmSeries[]): number =>
   series.reduce((acc, s) => acc + s.points.reduce((a, p) => a + p.value, 0), 0);
-
-const seriesTotal = (s: LlmSeries): number => s.points.reduce((a, p) => a + p.value, 0);
 
 const requestSeriesColor = (name: string): string =>
   name.toLowerCase().includes('error') ? ERROR_COLOR : SUCCESS_COLOR;
@@ -132,20 +129,6 @@ interface TabProps {
 }
 
 function OverviewTab({ clusterId, params, active }: TabProps) {
-  const tokens = useLlmHistogram(clusterId, { ...params, metric: 'tokens' }, active);
-
-  // Derive external cache hit rate from the token histogram's "cached" series.
-  const cacheRate = useMemo(() => {
-    const series = tokens.data?.series ?? [];
-    const cached = series.find((s) => s.name.toLowerCase().includes('cache'));
-    const input = series.find((s) => /input|prompt/.test(s.name.toLowerCase()));
-    if (!cached || !input) return null;
-    const c = seriesTotal(cached);
-    const i = seriesTotal(input);
-    if (c + i === 0) return 0;
-    return c / (c + i);
-  }, [tokens.data]);
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
       <HistogramCard
@@ -168,19 +151,6 @@ function OverviewTab({ clusterId, params, active }: TabProps) {
         stacked
         valueFormatter={fmtCompact}
         totalFormatter={fmtCompact}
-      />
-      <ChartCard
-        title="External Cache Hit Rate"
-        available={tokens.data?.available ?? true}
-        unavailableReason={tokens.data?.errors?.tokens || 'No token data'}
-        loading={tokens.isLoading}
-      >
-        <Gauge value={cacheRate ?? 0} label="cached ÷ input tokens" />
-      </ChartCard>
-      <ChartCard
-        title="Local Cache Hit Rate"
-        available={false}
-        unavailableReason="Local cache hit rate is not in the Tier-1 stream (deferred)."
       />
       <HistogramCard
         clusterId={clusterId}

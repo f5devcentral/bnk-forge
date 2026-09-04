@@ -44,7 +44,7 @@ import {
   Terminal, FileOutput, Rocket,
   Database, Plus, GitBranch, ChevronDown,
   CloudCog, Shield, Server, Layers, Camera, UserCheck, AlertTriangle, Search, CheckCircle, CircuitBoard, Cpu,
-  Clock, FileText,
+  Clock, FileText, ScrollText,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -96,8 +96,11 @@ const BareMetalPanel = lazy(() =>
 const DpuPanel = lazy(() =>
   import('@/components/dpu/DpuPanel').then((m) => ({ default: m.DpuPanel }))
 );
+const TaskHistory = lazy(() =>
+  import('@/pages/TaskHistory').then((m) => ({ default: m.default }))
+);
 import { useActiveRunHandle, useRunProgress, useExecutionPlan } from '@/hooks/useParallelExecution';
-import { getProjectLocationInfo } from '@/lib/aws-regions';
+import { getCloudProviderBadgeInfo, getProjectLocationInfo } from '@/lib/aws-regions';
 import { NodeDiscoveryPanel } from '@/components/discovery/NodeDiscoveryPanel';
 import { BackendBadge } from '@/components/projects/BackendBadge';
 import type { ProjectModule } from '@/types';
@@ -127,6 +130,7 @@ export default function ProjectDetailV2() {
   // K8S-UX-001: clusters hook must be above projectMode which depends on it
   const { data: clusters } = useProjectClusters(projectId, { pollingEnabled: false });
   const locationInfo = project ? getProjectLocationInfo(project.cloud_provider, project.region, project.credential_template?.provider, project.project_type) : null;
+  const providerBadge = project ? getCloudProviderBadgeInfo(project.cloud_provider || project.project_type) : null;
   const targetPlatform = getProjectTargetPlatform(project);
   const targetPlatformLabel = getPlatformProfileLabel(targetPlatform);
   const managementBoundaryLabel = getManagementBoundaryLabel(project?.management_boundary);
@@ -197,7 +201,7 @@ export default function ProjectDetailV2() {
 
   // IMP-018: Sync page tab with URL query parameter for deep-linking & back/forward navigation
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['modules', 'variables', 'secrets', 'clusters', 'discovery', 'drift', 'snapshots', 'bare-metal', 'dpu'] as const;
+  const validTabs = ['modules', 'variables', 'secrets', 'clusters', 'discovery', 'drift', 'snapshots', 'bare-metal', 'dpu', 'operations'] as const;
   type PageTab = typeof validTabs[number];
   const urlTab = searchParams.get('tab');
   // K8S-UX-001: Default tab depends on project mode — K8s-only projects
@@ -452,9 +456,15 @@ export default function ProjectDetailV2() {
               <p className="text-sm text-muted-foreground mt-1">{project.description}</p>
             )}
             <div className="flex flex-wrap items-center gap-2 mt-3">
+              {providerBadge && (
+                <Badge variant={providerBadge.badgeVariant} className={providerBadge.badgeClass}>
+                  {providerBadge.shortLabel}
+                </Badge>
+              )}
               {locationInfo && (
-                <Badge variant="outline" className="text-xs font-normal whitespace-nowrap">
-                  {locationInfo.flag} {locationInfo.display}
+                <Badge variant="outline" className="text-xs font-normal whitespace-nowrap gap-1">
+                  <span>{locationInfo.flag}</span>
+                  <span>{locationInfo.display}</span>
                 </Badge>
               )}
               <BackendBadge
@@ -631,6 +641,7 @@ export default function ProjectDetailV2() {
                 { key: 'snapshots', label: 'Snapshots', icon: Camera },
               ]
             : []),
+          { key: 'operations', label: 'Operations Log', icon: ScrollText },
         ];
         return (
           <ResourceViewTabs
@@ -744,6 +755,17 @@ export default function ProjectDetailV2() {
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="max-w-7xl">
             <SnapshotHistory projectId={projectId} />
+          </div>
+        </div>
+      )}
+
+      {/* Operations Log Tab */}
+      {pageTab === 'operations' && (
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          <div className="max-w-7xl">
+            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+              <TaskHistory projectId={projectId} embedded />
+            </Suspense>
           </div>
         </div>
       )}

@@ -10,6 +10,8 @@ re-fetch from the cluster.
 """
 
 import logging
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from kubernetes import client as k8s_client
@@ -17,7 +19,10 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
+from models import ConnectedOperator, KubernetesCluster
 from routes.auth import require_operator, require_viewer
+from schemas.bnk import BnkDataResponse, BnkHealthEndpointResponse
+from schemas.f5bnk import F5PolicyGatewayAssociationsResponse, GatewayTopologyResponse
 from schemas.k8s import (
     AbortMigrationRequest,
     CisTranslateRequest,
@@ -40,10 +45,13 @@ from services.bnk_data_service import (
     analyze_health,
     analyze_policy_associations,
     analyze_topology,
+    analyze_traffic_stats,
     extract_palette_data,
     fetch_all_bnk_data,
+    fetch_tmm_traffic_stats,
 )
 from services.kubernetes_service import KubernetesService
+from services.operator_registry import is_operator_live_connected
 from services.proxy_discovery_service import (
     _safe_list_all_custom,
     _safe_list_all_ingresses,
@@ -56,14 +64,107 @@ router = APIRouter(prefix="/api", tags=["k8s-f5bnk"])
 
 
 # ============================================================================
+# Connectivity / integration context helpers
+# ============================================================================
+
+
+def _dt_to_str(dt: datetime | None) -> str | None:
+    """Format a datetime as ISO-8601, returning None if absent."""
+    if not dt:
+        return None
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _build_bnk_context(cluster: KubernetesCluster, db: Session) -> dict[str, Any]:
+    """Build connectivity and integration metadata for the BNK health response.
+
+    Connectivity reuses the cluster's persisted ``status`` field, which is the
+    same value surfaced by the cluster list/detail endpoints.  The live probe
+    details remain available on ``/api/k8s/clusters/{id}/connectivity``.
+
+    Integration reflects whether a BNK operator is linked to this cluster and
+    is currently live-connected (via the shared helper used by fleet health
+    and the operator list).  Kubeconfig-only management is a supported mode
+    and reports as healthy.
+    """
+    status_map = {
+        "active": "connected",
+        "connecting": "unknown",
+        "inactive": "unreachable",
+        "error": "unreachable",
+    }
+    cluster_status = (cluster.status or "").lower()
+    connectivity_status = status_map.get(cluster_status, "unknown")
+    connectivity_message = {
+        "connected": "Kubernetes API is accessible",
+        "unknown": "Connectivity status is unknown",
+        "unreachable": "Kubernetes API is unreachable",
+    }.get(connectivity_status, "Connectivity status is unknown")
+
+    connectivity = {
+        "status": connectivity_status,
+        "message": connectivity_message,
+        "checkedAt": _dt_to_str(cluster.last_synced_at),
+    }
+
+    linked_op = (
+        db.query(ConnectedOperator)
+        .filter(ConnectedOperator.cluster_id == cluster.id)
+        .first()
+    )
+    if linked_op:
+        operator_connected = is_operator_live_connected(linked_op)
+        operator_mode = linked_op.connectivity_mode or "direct_ws"
+        last_seen = _dt_to_str(linked_op.last_heartbeat_at or linked_op.last_connected_at)
+        integration = {
+            "status": "healthy" if operator_connected else "warning",
+            "operatorConnected": operator_connected,
+            "operatorMode": operator_mode,
+            "operatorVersion": linked_op.operator_version,
+            "lastSeen": last_seen,
+            "message": (
+                f"Operator {linked_op.operator_id} is connected"
+                if operator_connected
+                else f"Operator {linked_op.operator_id} is disconnected"
+            ),
+        }
+    else:
+        if connectivity_status == "connected":
+            integration_status = "healthy"
+            integration_msg = "Cluster managed via kubeconfig"
+        elif connectivity_status == "unreachable":
+            integration_status = "warning"
+            integration_msg = "Cluster managed via kubeconfig (Kubernetes API unreachable)"
+        else:
+            integration_status = "unknown"
+            integration_msg = "Cluster managed via kubeconfig (Connectivity unverified)"
+
+        integration = {
+            "status": integration_status,
+            "operatorConnected": False,
+            "operatorMode": "kubeconfig",
+            "operatorVersion": None,
+            "lastSeen": _dt_to_str(cluster.last_synced_at),
+            "message": integration_msg,
+        }
+
+    return {"connectivity": connectivity, "integration": integration}
+
+
+# ============================================================================
 # Unified BNK Data Endpoint
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/data", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/data",
+    response_model=BnkDataResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("fetch BNK data")
 def get_bnk_data(
     cluster_id: int,
     namespace: str | None = None,
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
     """
@@ -72,9 +173,30 @@ def get_bnk_data(
     Returns health analysis, topology graph, and policy associations
     in a single response. The frontend caches this under one query key
     so switching between Health, Topology, and Policy Map tabs is instant.
+
+    Query parameters:
+      - force: bypass the 15-second BNK data / TMM traffic-stats cache.
     """
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    cluster = k8s_service.get_cluster(cluster_id)
+    data = fetch_all_bnk_data(
+        k8s_service, cluster_id, namespace, include_nodes=True, force=force
+    )
+    data.update(_build_bnk_context(cluster, db))
+
+    # Traffic stats require the TMM debug sidecar.  Fetching them here keeps
+    # the unified response shape so all insight tabs share the same cache key.
+    # Errors are captured inside the trafficStats envelope; they never fail
+    # the whole /f5bnk/data request.
+    try:
+        api_client = k8s_service.load_kubeconfig(cluster)
+        raw_stats = fetch_tmm_traffic_stats(
+            api_client, data.get("classified_pods", {}), cluster_id=cluster_id, force=force
+        )
+        traffic_stats = analyze_traffic_stats(data, raw_stats)
+    except Exception:
+        logger.exception("Failed to collect TMM traffic stats for cluster %d", cluster_id)
+        traffic_stats = analyze_traffic_stats(data, None)
 
     health = analyze_health(data)
     topo = analyze_topology(data)
@@ -92,6 +214,7 @@ def get_bnk_data(
         "policyCount": policy["count"],
         "backends": backends,
         "palette": palette,
+        "trafficStats": traffic_stats,
         "cluster_id": cluster_id,
         "namespace": namespace,
     }
@@ -102,7 +225,11 @@ def get_bnk_data(
 # These now delegate to the shared data service.
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/health", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/health",
+    response_model=BnkHealthEndpointResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get BNK health")
 def get_bnk_health(
     cluster_id: int,
@@ -111,13 +238,19 @@ def get_bnk_health(
 ):
     """BNK health dashboard — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    cluster = k8s_service.get_cluster(cluster_id)
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
+    data.update(_build_bnk_context(cluster, db))
     result = analyze_health(data)
     result["cluster_id"] = cluster_id
     return result
 
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/gateway-topology", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/gateway-topology",
+    response_model=GatewayTopologyResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get gateway topology")
 def get_gateway_topology(
     cluster_id: int,
@@ -126,14 +259,20 @@ def get_gateway_topology(
 ):
     """Gateway topology graph — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with /f5bnk/data and /f5bnk/health
+    # so switching tabs reuses the same fetched BNK state.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     result = analyze_topology(data)
     result["cluster_id"] = cluster_id
     result["namespace"] = namespace
     return result
 
 
-@router.get("/k8s/clusters/{cluster_id}/f5bnk/policy-gateway-associations", dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/f5bnk/policy-gateway-associations",
+    response_model=F5PolicyGatewayAssociationsResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("get policy-gateway associations")
 def get_policy_gateway_associations(
     cluster_id: int,
@@ -142,7 +281,9 @@ def get_policy_gateway_associations(
 ):
     """Policy-gateway associations — delegates to shared data service."""
     k8s_service = KubernetesService(db)
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with /f5bnk/data and /f5bnk/health
+    # so switching tabs reuses the same fetched BNK state.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     result = analyze_policy_associations(data)
     result["cluster_id"] = cluster_id
     result["namespace"] = namespace
@@ -225,7 +366,8 @@ def get_a2a_agents(
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster) if probe else None
 
-    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace)
+    # include_nodes=True aligns the cache key with the other BNK insight endpoints.
+    data = fetch_all_bnk_data(k8s_service, cluster_id, namespace, include_nodes=True)
     topo = analyze_topology(data)
 
     agents = discover_a2a_agents(

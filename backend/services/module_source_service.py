@@ -264,6 +264,30 @@ class ModuleSourceService:
         set_default(self.db, "module_library.git_url", source.url)
         set_default(self.db, "module_library.git_ref", source.git_ref or source.branch or "main")
 
+    def _reconcile_official_source_ref(self, source: ModuleSource) -> None:
+        """Keep the canonical official module library source aligned with settings.
+
+        The official source is identified by matching the configured
+        ``module_library.git_url``. When the operator changes that setting (or
+        the source row was created under an older value), a direct source sync
+        should use the current setting rather than a stale branch/git_ref.
+        """
+        if source.source_type != "git":
+            return
+        default_url = self._get_default_module_source_url()
+        if not default_url:
+            return
+        normalized_source = (
+            GitAuthService.strip_url_credentials(source.url).rstrip("/").removesuffix(".git")
+        )
+        normalized_default = (
+            GitAuthService.strip_url_credentials(default_url).rstrip("/").removesuffix(".git")
+        )
+        if normalized_source == normalized_default:
+            default_ref = self._get_default_module_source_ref()
+            source.branch = default_ref
+            source.git_ref = default_ref
+
     def _create_module_source_audit(
         self,
         *,
@@ -1440,6 +1464,7 @@ class ModuleSourceService:
 
         if source.source_type == 'git':
             from services.module_sync_service import ModuleSyncService
+            self._reconcile_official_source_ref(source)
             sync_service = ModuleSyncService(self.db)
             try:
                 results = sync_service.sync_git_source(source)

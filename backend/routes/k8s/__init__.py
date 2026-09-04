@@ -20,6 +20,7 @@ from routes.k8s.f5bnk import router as f5bnk_router
 from routes.k8s.llm_observability import router as llm_observability_router
 from routes.k8s.recovery import router as recovery_router
 from routes.k8s.resources import router as resources_router
+from routes.k8s.search import router as search_router
 from routes.k8s.tmm_debug import router as tmm_debug_router
 from routes.k8s.topology import router as topology_router
 from routes.k8s.tunnels import router as tunnels_router
@@ -28,6 +29,7 @@ __all__ = [
     "clusters_router",
     "crds_router",
     "resources_router",
+    "search_router",
     "f5bnk_router",
     "llm_observability_router",
     "dpf_router",

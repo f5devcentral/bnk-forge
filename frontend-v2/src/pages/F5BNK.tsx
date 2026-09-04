@@ -29,6 +29,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
+import { useBnkData } from '@/hooks/k8s/useBnk';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -41,10 +42,8 @@ import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer'
 import { ResourceDeleteDialog } from '@/components/k8s/ResourceDeleteDialog';
 import { ResourceEditDialog } from '@/components/k8s/ResourceEditDialog';
 import { ResourceCreateDialog } from '@/components/k8s/ResourceCreateDialog';
-import { F5BNKPolicyViewer } from '@/components/k8s/F5BNKPolicyViewer';
 import { F5AIAnalyzerViewer } from '@/components/k8s/F5AIAnalyzerViewer';
 import { F5iRuleViewer } from '@/components/k8s/F5iRuleViewer';
-import { F5BNKTopologyViewer } from '@/components/k8s/F5BNKTopologyViewer';
 import { BackendsCollection } from '@/components/k8s/BackendsCollection';
 import { PolicyBuilder } from '@/components/k8s/PolicyBuilder';
 import { ConfigBuilder } from '@/components/k8s/ConfigBuilder';
@@ -52,6 +51,8 @@ import { BNKHealthDashboard } from '@/components/k8s/BNKHealthDashboard';
 import { BNKUpgradePanel } from '@/components/k8s/BNKUpgradePanel';
 import { BNKReleaseRegistry } from '@/components/k8s/BNKReleaseRegistry';
 import { TrafficFlowOverview } from '@/components/k8s/TrafficFlowOverview';
+import { F5BNKTopologyViewer, type TopologyResourceSelection } from '@/components/k8s/F5BNKTopologyViewer';
+import { F5BNKPolicyViewer } from '@/components/k8s/F5BNKPolicyViewer';
 import { RunbookWizard } from '@/components/runbooks/RunbookWizard';
 import { QKViewPanel } from '@/components/k8s/QKViewPanel';
 import { LicensingPanel } from '@/components/k8s/LicensingPanel';
@@ -68,7 +69,6 @@ import { STORAGE_KEYS } from '@/lib/storage-keys';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import type { K8sResource } from '@/types/kubernetes';
-import type { TopologyResourceSelection } from '@/components/k8s/F5BNKTopologyViewer';
 
 import {
   VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_UPGRADE, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA,
@@ -161,10 +161,45 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
       return (
         <div className="p-6 overflow-y-auto">
           <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-2">Traffic Flow</h2>
-            <p className={descClass}>How traffic flows through BNK — infrastructure, gateways, routes, and backends with configuration insights</p>
+            <h2 className="text-xl font-semibold mb-2">Traffic Flow Pipeline</h2>
+            <p className={descClass}>End-to-end data plane pipeline from client ingress through Gateway listeners to backend workloads</p>
           </div>
-          <TrafficFlowOverview clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} onNavigateView={onNavigateView} />
+          <TrafficFlowOverview
+            clusterId={clusterId}
+            namespace={namespace}
+            onSelectResource={onTopologySelect}
+            onNavigateView={onNavigateView}
+          />
+        </div>
+      );
+
+    case VIEW_TOPOLOGY:
+      return (
+        <div className="p-6 overflow-y-auto">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold mb-2">Object Topology Graph</h2>
+            <p className={descClass}>Declarative Kubernetes resource graph connecting Gateways, Routes, Security Extensions, and Analyzers</p>
+          </div>
+          <F5BNKTopologyViewer
+            clusterId={clusterId}
+            namespace={namespace}
+            onSelectResource={onTopologySelect}
+          />
+        </div>
+      );
+
+    case VIEW_POLICY_MAP:
+      return (
+        <div className="p-6 overflow-y-auto">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold mb-2">Policy & Security Matrix</h2>
+            <p className={descClass}>Association mapping of BNK Security Policies, Firewall Rules, and DDoS profiles attached to listeners</p>
+          </div>
+          <F5BNKPolicyViewer
+            clusterId={clusterId}
+            namespace={namespace}
+            onSelectResource={onTopologySelect}
+          />
         </div>
       );
 
@@ -176,30 +211,6 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
             <p className={descClass}>Real-time health status for all F5 BNK platform components — auto-refreshes every 30 seconds</p>
           </div>
           <BNKHealthDashboard clusterId={clusterId} namespace={namespace} />
-        </div>
-      );
-
-    case VIEW_TOPOLOGY:
-      return (
-        <div className="p-6">
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-2">Gateway Topology</h2>
-            <p className={descClass}>Complete object graph — click any resource name to view its details</p>
-          </div>
-          <F5BNKTopologyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
-        </div>
-      );
-
-    case VIEW_POLICY_MAP:
-      return (
-        <div className="p-6">
-          <div className="max-w-6xl mx-auto">
-            <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-2">Policy Associations</h2>
-              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners and egress traffic</p>
-            </div>
-            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
-          </div>
         </div>
       );
 
@@ -390,11 +401,11 @@ export default function F5BNK() {
       if (initialView === VIEW_DPF_INFRA) {
         // Navigate after mount via useEffect (can't call navigate in useState initializer)
         setTimeout(() => navigate('/fleet?tab=dpf'), 0);
-        return VIEW_HEALTH;
+        return VIEW_TOPOLOGY;
       }
       return initialView;
     }
-    return VIEW_HEALTH;
+    return VIEW_TOPOLOGY;
   });
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_MS.SEARCH);
@@ -484,6 +495,7 @@ export default function F5BNK() {
     }),
     enabled: !!selectedCluster && !!selectedResourceType && !isSpecialView(selectedResourceType) && clusterReachable,
     staleTime: 30000,
+    placeholderData: (previousData) => previousData,
   });
 
   const { data: namespacesResponse } = useClusterNamespaces(selectedCluster || 0, {
@@ -798,6 +810,16 @@ export default function F5BNK() {
 
   const resolvedNamespace = selectedNamespace === 'all' ? undefined : selectedNamespace;
 
+  // Prefetch the unified BNK data bundle in the background while the user is
+  // on any BNK tab. This warms the cache for Traffic Flow / Topology / Policy
+  // so tab switching feels instant; the lightweight /f5bnk/health endpoint
+  // still drives the Health Dashboard landing view.
+  useBnkData(
+    selectedCluster ?? 0,
+    { namespace: resolvedNamespace },
+    { enabled: !!selectedCluster, pollingEnabled: false }
+  );
+
   return (
     <ResourceExplorerLayout>
       {/* Header */}
@@ -806,7 +828,10 @@ export default function F5BNK() {
         subtitle="BIG-IP Next for Kubernetes — gateways, policies, and traffic flow"
         projects={projects || []}
         selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
+        onProjectChange={(id) => {
+          setSelectedProject(id);
+          setSelectedCluster(null);
+        }}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
