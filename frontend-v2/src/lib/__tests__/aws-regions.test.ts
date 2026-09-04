@@ -8,6 +8,8 @@ import {
   CONTINENT_ORDER,
   getRegionInfo,
   getProjectLocationInfo,
+  getCloudProviderBadgeInfo,
+  getClusterLocationInfo,
 } from '../aws-regions';
 
 describe('AWS_REGIONS', () => {
@@ -140,5 +142,72 @@ describe('getProjectLocationInfo()', () => {
     const result = getProjectLocationInfo('aws', 'xx-unknown-99', undefined, 'cloud-aws');
     expect(result).not.toBeNull();
     expect(result!.display).toBe('xx-unknown-99');
+  });
+});
+
+describe('getCloudProviderBadgeInfo()', () => {
+  it('returns AWS badge for aws and eks', () => {
+    expect(getCloudProviderBadgeInfo('aws').shortLabel).toBe('AWS');
+    expect(getCloudProviderBadgeInfo('eks').shortLabel).toBe('AWS');
+  });
+
+  it('returns GKE badge for gcp and gke', () => {
+    expect(getCloudProviderBadgeInfo('gcp').shortLabel).toBe('GKE');
+    expect(getCloudProviderBadgeInfo('gke').shortLabel).toBe('GKE');
+  });
+
+  it('returns AZR badge for azure and aks', () => {
+    expect(getCloudProviderBadgeInfo('azure').shortLabel).toBe('AZR');
+    expect(getCloudProviderBadgeInfo('aks').shortLabel).toBe('AZR');
+  });
+
+  it('returns IBM badge for ibm and roks', () => {
+    expect(getCloudProviderBadgeInfo('ibm').shortLabel).toBe('IBM');
+    expect(getCloudProviderBadgeInfo('roks').shortLabel).toBe('IBM');
+  });
+
+  it('returns METAL badge for on-prem and bare-metal', () => {
+    expect(getCloudProviderBadgeInfo('bare-metal').shortLabel).toBe('METAL');
+    expect(getCloudProviderBadgeInfo('on-prem').shortLabel).toBe('METAL');
+  });
+
+  it('returns K8S default for empty or generic provider', () => {
+    expect(getCloudProviderBadgeInfo(null).shortLabel).toBe('K8S');
+    expect(getCloudProviderBadgeInfo('').shortLabel).toBe('K8S');
+  });
+});
+
+describe('getClusterLocationInfo()', () => {
+  it('returns country flag for AWS regions', () => {
+    const res = getClusterLocationInfo('aws', 'us-east-1');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇺🇸');
+  });
+
+  it('returns country flag and label for Azure regions', () => {
+    const res = getClusterLocationInfo('azure', 'westeurope');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇳🇱');
+    expect(res!.label).toBe('Azure West Europe');
+  });
+
+  it('returns country flag for GCP regions', () => {
+    const res = getClusterLocationInfo('gcp', 'australia-southeast1');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇦🇺');
+    expect(res!.label).toBe('GCP australia-southeast1');
+  });
+
+  it('returns country flag for Azure East US 2', () => {
+    const res = getClusterLocationInfo('azure', 'eastus2');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇺🇸');
+    expect(res!.label).toBe('Azure East US 2');
+  });
+
+  it('returns on-prem for bare-metal clusters', () => {
+    const res = getClusterLocationInfo('bare-metal', null);
+    expect(res).not.toBeNull();
+    expect(res!.display).toBe('On-Prem');
   });
 });
