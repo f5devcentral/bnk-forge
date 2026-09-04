@@ -39,7 +39,7 @@ croniter==5.0.1
 # Infrastructure tools
 python-hcl2==4.3.5
 # 3.1.58: GHSA-3f7w-8rr8-f37f needs >=3.1.57, GHSA-p538-c434-8v24 needs >=3.1.56.
-gitpython==3.1.58
+gitpython==3.1.59
 boto3==1.36.4
 google-auth==2.38.0
 paramiko==5.0.0
