@@ -60,6 +60,7 @@ describe('System', () => {
   it('renders all tab labels', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByText('System Monitor')).toBeInTheDocument();
+    expect(screen.getByText('Version & Upgrade')).toBeInTheDocument();
     expect(screen.getByText('MCP Server')).toBeInTheDocument();
     expect(screen.getByText('Audit Log')).toBeInTheDocument();
     expect(screen.getByText('Alerts')).toBeInTheDocument();
@@ -83,7 +84,17 @@ describe('System', () => {
   it('renders System Monitor content by default', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByTestId('perf-monitor')).toBeInTheDocument();
-    expect(screen.getByTestId('sys-upgrade')).toBeInTheDocument();
+    expect(screen.getByTestId('db-mgmt')).toBeInTheDocument();
+    expect(screen.getByTestId('container-mgmt')).toBeInTheDocument();
+  });
+
+  it('switches to Version & Upgrade tab and renders SystemUpgrade', async () => {
+    const user = userEvent.setup();
+    render(<System />, { initialRoute: '/system' });
+    await user.click(screen.getByText('Version & Upgrade'));
+    await waitFor(() => {
+      expect(screen.getByTestId('sys-upgrade')).toBeInTheDocument();
+    });
   });
 
   it('switches to MCP Server tab and renders the panel', async () => {

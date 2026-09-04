@@ -394,15 +394,18 @@ export function K8sClusterList({
                       <Settings className="mr-2 h-4 w-4" />
                       Prerequisite checks
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setBnkClusterTarget(cluster);
-                        setBnkMemberDialogOpen(true);
-                      }}
-                    >
-                      <Network className="mr-2 h-4 w-4 text-primary" />
-                      BNK Orchestration (ADR-424)
-                    </DropdownMenuItem>
+                    {(!['aws', 'eks', 'azure', 'aks', 'gcp', 'gke', 'ibm', 'roks'].includes((cluster.cloud_provider || '').toLowerCase()) ||
+                      Boolean(cluster.bnk_config?.host_ids?.length || cluster.bnk_config?.dpu_ids?.length)) && (
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setBnkClusterTarget(cluster);
+                          setBnkMemberDialogOpen(true);
+                        }}
+                      >
+                        <Network className="mr-2 h-4 w-4 text-primary" />
+                        Multi-Host & DPU Topology
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       onClick={() => handleDeleteClick(cluster)}
                       className="text-destructive"

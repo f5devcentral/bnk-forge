@@ -30,6 +30,7 @@ import {
   Moon,
   Sun,
   Monitor,
+  ArrowUpCircle,
   Settings2,
   ScrollText,
   Bell,
@@ -48,7 +49,7 @@ const URL_TAB_REDIRECTS: Record<string, string> = {
   'helm-repos': '/catalog?tab=helm-repos',
 };
 
-const VALID_TABS = ['monitor', 'mcp', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
+const VALID_TABS = ['monitor', 'upgrade', 'mcp', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
 
 export default function System() {
   const { theme, setTheme } = useUIStore();
@@ -92,6 +93,7 @@ export default function System() {
           onChange={handleTabChange}
           tabs={[
             { key: 'monitor', label: 'System Monitor', icon: Monitor },
+            { key: 'upgrade', label: 'Version & Upgrade', icon: ArrowUpCircle },
             { key: 'mcp', label: 'MCP Server', icon: Bot },
             { key: 'audit', label: 'Audit Log', icon: ScrollText },
             { key: 'alerts', label: 'Alerts', icon: Bell },
@@ -102,10 +104,13 @@ export default function System() {
         />
 
         <TabsContent value="monitor" className="space-y-6 mt-6">
-          <SystemUpgrade />
           <PerformanceMonitor />
           <DatabaseManagement />
           <ContainerManagement />
+        </TabsContent>
+
+        <TabsContent value="upgrade" className="mt-6">
+          <SystemUpgrade />
         </TabsContent>
 
         <TabsContent value="mcp" className="mt-6">

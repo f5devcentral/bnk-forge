@@ -1,21 +1,13 @@
 /**
- * Tests for Catalog page — Advanced toggle hiding/showing the Modules tab.
- *
- * Covers:
- *   (a) Modules tab is NOT rendered by default (advanced=false).
- *   (b) After toggling Advanced ON, the Modules tab appears.
- *   (c) ?tab=modules deep link auto-enables advanced and shows the Modules tab.
+ * Tests for Catalog page — Streamlined 4-tab architecture.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@/test/test-utils';
 import Catalog from '@/pages/Catalog';
 
-// ---------------------------------------------------------------------------
 // Mock all lazy-loaded sub-panels so Suspense resolves immediately
-// ---------------------------------------------------------------------------
-
 vi.mock('@/pages/Modules', () => ({
   default: () => <div data-testid="modules-panel">Modules Panel</div>,
 }));
@@ -28,109 +20,50 @@ vi.mock('@/components/catalog/HelmReposPanel', () => ({
   default: () => <div data-testid="helm-repos-panel">Helm Repos Panel</div>,
 }));
 
-vi.mock('@/components/settings/BluefieldImages', () => ({
-  BluefieldImages: () => <div data-testid="doca-panel">DOCA Panel</div>,
+vi.mock('@/components/catalog/SystemImagesPanel', () => ({
+  SystemImagesPanel: () => <div data-testid="system-images-panel">System Images Panel</div>,
+  default: () => <div data-testid="system-images-panel">System Images Panel</div>,
 }));
 
-vi.mock('@/components/settings/BfConfTemplates', () => ({
-  BfConfTemplates: () => <div data-testid="bfconf-panel">BfConf Panel</div>,
-}));
-
-// ---------------------------------------------------------------------------
-// localStorage helpers
-// ---------------------------------------------------------------------------
-
-const STORAGE_KEY = 'forge.catalog.advanced';
-
-beforeEach(() => {
-  localStorage.clear();
-});
-
-afterEach(() => {
-  localStorage.clear();
-});
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('Catalog — Advanced toggle', () => {
-  it('(a) Modules tab is NOT in the document by default', () => {
+describe('Catalog — 4-tab navigation', () => {
+  it('renders all 4 primary tabs by default without requiring an advanced switch', () => {
     render(<Catalog />, { initialRoute: '/catalog' });
-    // The TabsTrigger for Modules should not be rendered
-    expect(screen.queryByRole('tab', { name: /modules/i })).not.toBeInTheDocument();
-  });
-
-  it('default tab is Blueprints (active tab label visible)', () => {
-    render(<Catalog />, { initialRoute: '/catalog' });
-    // Blueprints tab should be present and the blueprints panel should render
-    expect(screen.getByRole('tab', { name: /blueprints/i })).toBeInTheDocument();
-  });
-
-  it('other tabs (Blueprints, Helm Repos, DOCA Releases, etc.) always appear', () => {
-    render(<Catalog />, { initialRoute: '/catalog' });
-    expect(screen.getByRole('tab', { name: /blueprints/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /helm repos/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /doca releases/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /bf\.conf templates/i })).toBeInTheDocument();
-  });
-
-  it('(b) after toggling Advanced ON, the Modules tab appears', async () => {
-    const user = userEvent.setup();
-    render(<Catalog />, { initialRoute: '/catalog' });
-
-    // The Advanced switch label renders "Advanced" text; the underlying input is a checkbox
-    const toggle = screen.getByRole('checkbox');
-    expect(toggle).not.toBeChecked();
-
-    await user.click(toggle);
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /modules/i })).toBeInTheDocument();
-    });
-
-    // localStorage should be persisted
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
-  });
-
-  it('persists Advanced=true across renders via localStorage', () => {
-    localStorage.setItem(STORAGE_KEY, 'true');
-    render(<Catalog />, { initialRoute: '/catalog' });
+    expect(screen.getByRole('tab', { name: /blueprints & stacks/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /modules/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /helm charts & repos/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /system & dpu images/i })).toBeInTheDocument();
   });
 
-  it('turning Advanced OFF while on Modules tab switches to Blueprints', async () => {
+  it('default tab is Blueprints & Stacks', async () => {
+    render(<Catalog />, { initialRoute: '/catalog' });
+    await waitFor(() => {
+      expect(screen.getByTestId('blueprints-panel')).toBeInTheDocument();
+    });
+  });
+
+  it('switches between tabs on click', async () => {
     const user = userEvent.setup();
-    localStorage.setItem(STORAGE_KEY, 'true');
-    render(<Catalog />, { initialRoute: '/catalog?tab=modules' });
+    render(<Catalog />, { initialRoute: '/catalog' });
 
-    // Modules tab is visible (advanced=true from storage)
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /modules/i })).toBeInTheDocument();
-    });
-
-    // Turn off Advanced
-    const toggle = screen.getByRole('checkbox');
-    await user.click(toggle);
+    const modulesTab = screen.getByRole('tab', { name: /modules/i });
+    await user.click(modulesTab);
 
     await waitFor(() => {
-      // Modules tab disappears
-      expect(screen.queryByRole('tab', { name: /modules/i })).not.toBeInTheDocument();
+      expect(screen.getByTestId('modules-panel')).toBeInTheDocument();
     });
-
-    // localStorage updated
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
   });
 
-  it('(c) ?tab=modules deep link auto-enables advanced and shows Modules tab', async () => {
-    // Start with advanced=false (no localStorage entry)
+  it('supports direct deep linking to ?tab=modules', async () => {
     render(<Catalog />, { initialRoute: '/catalog?tab=modules' });
-
-    // The useEffect should fire and auto-enable advanced
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /modules/i })).toBeInTheDocument();
+      expect(screen.getByTestId('modules-panel')).toBeInTheDocument();
     });
+  });
 
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
+  it('supports direct deep linking to legacy system image tab names like ?tab=doca-releases', async () => {
+    render(<Catalog />, { initialRoute: '/catalog?tab=doca-releases' });
+    await waitFor(() => {
+      expect(screen.getByTestId('system-images-panel')).toBeInTheDocument();
+    });
   });
 });

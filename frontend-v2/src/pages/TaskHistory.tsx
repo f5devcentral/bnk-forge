@@ -130,14 +130,25 @@ function StatusPill({ status }: { status: string }) {
 // Order shown in the chip row.
 const STATUS_ORDER: StatusKey[] = ['completed', 'in_progress', 'failed', 'queued', 'cancelled'];
 
-export default function TaskHistory() {
+export interface TaskHistoryProps {
+  projectId?: number;
+  embedded?: boolean;
+}
+
+export default function TaskHistory({ projectId, embedded = false }: TaskHistoryProps = {}) {
   const { data: projects } = useProjects();
 
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(projectId || null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAllTasks, setShowAllTasks] = useState(false);
+
+  useEffect(() => {
+    if (projectId !== undefined) {
+      setSelectedProjectId(projectId);
+    }
+  }, [projectId]);
 
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -289,14 +300,16 @@ export default function TaskHistory() {
   const visibleTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className={cn(embedded ? 'space-y-6' : 'p-6 space-y-6 max-w-7xl mx-auto')}>
       {/* Header */}
-      <PageHeader
-        title="Operations Log"
-        subtitle={`Deployment, helm, and operator operations executed across all projects.${stats7d.total > 0 ? ` ${stats7d.total} in the last 7 days.` : ''}`}
-        onRefresh={refresh}
-        isRefreshing={isRefreshing}
-      />
+      {!embedded && (
+        <PageHeader
+          title="Operations Log"
+          subtitle={`Deployment, helm, and operator operations executed across all projects.${stats7d.total > 0 ? ` ${stats7d.total} in the last 7 days.` : ''}`}
+          onRefresh={refresh}
+          isRefreshing={isRefreshing}
+        />
+      )}
 
       {/* 7-day KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -394,7 +407,7 @@ export default function TaskHistory() {
             </select>
           )}
 
-          {projects && projects.length > 0 && (
+          {!projectId && projects && projects.length > 0 && (
             <select
               value={selectedProjectId || ''}
               onChange={(e) =>

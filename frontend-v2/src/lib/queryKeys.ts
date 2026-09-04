@@ -532,6 +532,11 @@ export const queryKeys = {
     clusterStatus: (clusterId: number | undefined) => ['cluster-drift-status', clusterId] as const,
     stats: (projectId?: number, days?: number) => ['drift-stats', projectId, days] as const,
   },
+
+  // Global multi-cluster search
+  search: {
+    query: (q: string) => ['global-search', q] as const,
+  },
 } as const;
 
 /**

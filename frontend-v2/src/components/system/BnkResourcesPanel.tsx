@@ -5,7 +5,8 @@
  * control-plane vs data-plane breakdown, and top consumers.
  */
 
-import { Box, Cpu, Database, Gauge, Server } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Box, Cpu, Database, Gauge, Server, Layers } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SectionCard } from '@/components/ui/section-card';
@@ -18,14 +19,29 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatBytes } from '@/lib/utils';
+import { formatBytes, cn } from '@/lib/utils';
 import { getCloudProviderBadgeInfo, getClusterLocationInfo } from '@/lib/aws-regions';
 import type { BnkConsumptionResponse, BnkPlaneConsumption } from '@/types/system';
+
+export type ProviderScope = 'all' | 'aws' | 'azure' | 'gke' | 'ibm' | 'metal';
+
+function normalizeProvider(provider?: string | null): string {
+  const p = (provider || '').toLowerCase().trim();
+  if (p === 'aws' || p === 'eks') return 'aws';
+  if (p === 'azure' || p === 'aks') return 'azure';
+  if (p === 'gcp' || p === 'gke' || p === 'google') return 'gke';
+  if (p === 'bare-metal' || p === 'on-prem' || p === 'metal' || p === 'kubernetes') return 'metal';
+  if (p === 'ibm' || p === 'roks' || p === 'ibmcloud') return 'ibm';
+  return 'other';
+}
 
 interface BnkResourcesPanelProps {
   data: BnkConsumptionResponse | undefined;
   isLoading: boolean;
   error: Error | null;
+  provider?: ProviderScope;
+  onProviderChange?: (provider: ProviderScope) => void;
+  hideProviderChips?: boolean;
 }
 
 function formatCPU(millicores: number): string {
@@ -90,7 +106,14 @@ function OverviewTile({
   );
 }
 
-export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelProps) {
+export function BnkResourcesPanel({
+  data,
+  isLoading,
+  error,
+  provider,
+  onProviderChange,
+  hideProviderChips,
+}: BnkResourcesPanelProps) {
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -119,7 +142,59 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
   }
 
   const { fleet_summary, clusters } = data;
-  const topPods = clusters.flatMap((c) =>
+  const [internalProvider, setInternalProvider] = useState<ProviderScope>('all');
+  const selectedProvider = provider !== undefined ? provider : internalProvider;
+  const setSelectedProvider = onProviderChange || setInternalProvider;
+
+  const filteredClusters = useMemo(() => {
+    if (selectedProvider === 'all') return clusters;
+    return clusters.filter((c) => normalizeProvider(c.cloud_provider) === selectedProvider);
+  }, [clusters, selectedProvider]);
+
+  const summary = useMemo(() => {
+    if (selectedProvider === 'all') return fleet_summary;
+    const total_clusters = filteredClusters.length;
+    const reachable_clusters = filteredClusters.filter((c) => c.reachable).length;
+    const bnk_installed_clusters = filteredClusters.filter((c) => c.bnk_installed).length;
+    const total_bnk_pods = filteredClusters.reduce((sum, c) => sum + c.total.count, 0);
+    const control_plane_pods = filteredClusters.reduce((sum, c) => sum + c.control_plane.count, 0);
+    const data_plane_pods = filteredClusters.reduce((sum, c) => sum + c.data_plane.count, 0);
+    const total_cpu_millicores = filteredClusters.reduce(
+      (sum, c) => sum + (c.metrics_available ? c.total.cpu_millicores : 0),
+      0
+    );
+    const node_capacity_cpu_millicores = filteredClusters.reduce(
+      (sum, c) => sum + c.node_capacity.cpu_millicores,
+      0
+    );
+    const total_memory_bytes = filteredClusters.reduce(
+      (sum, c) => sum + (c.metrics_available ? c.total.memory_bytes : 0),
+      0
+    );
+    const node_capacity_memory_bytes = filteredClusters.reduce(
+      (sum, c) => sum + c.node_capacity.memory_bytes,
+      0
+    );
+    const dpf_detected_clusters = filteredClusters.filter((c) => c.dpf?.detected).length;
+    const dpu_count = filteredClusters.reduce((sum, c) => sum + (c.dpf?.dpu_count || 0), 0);
+
+    return {
+      total_clusters,
+      reachable_clusters,
+      bnk_installed_clusters,
+      total_bnk_pods,
+      control_plane_pods,
+      data_plane_pods,
+      total_cpu_millicores,
+      node_capacity_cpu_millicores,
+      total_memory_bytes,
+      node_capacity_memory_bytes,
+      dpf_detected_clusters,
+      dpu_count,
+    };
+  }, [filteredClusters, selectedProvider, fleet_summary]);
+
+  const topPods = filteredClusters.flatMap((c) =>
     c.top_pods.map((p) => ({ ...p, cluster_name: c.cluster_name }))
   );
   topPods.sort((a, b) => b.cpu_millicores - a.cpu_millicores);
@@ -127,65 +202,104 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
 
   return (
     <div className="space-y-6" data-testid="bnk-resources-panel">
+      {/* Header with Provider Filter Chips */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <Layers className="h-4 w-4 text-primary" />
+            BNK Infrastructure & Consumption
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Fleet-wide telemetry across Control Plane and Data Plane (TMM / CNF).
+          </p>
+        </div>
+        {!hideProviderChips && (
+          <div className="flex items-center bg-muted/60 p-1 rounded-lg text-xs self-start sm:self-auto">
+            {[
+              { id: 'all', label: `ALL (${clusters.length})` },
+              { id: 'aws', label: 'AWS' },
+              { id: 'azure', label: 'AZR' },
+              { id: 'gke', label: 'GKE' },
+              { id: 'ibm', label: 'IBM' },
+              { id: 'metal', label: 'METAL' },
+            ].map((scope) => (
+              <button
+                key={scope.id}
+                type="button"
+                onClick={() => setSelectedProvider(scope.id as ProviderScope)}
+                className={cn(
+                  'px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer text-xs',
+                  selectedProvider === scope.id
+                    ? 'bg-card text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {scope.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Overview tiles */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <OverviewTile
           icon={Server}
           label="Clusters"
-          value={fleet_summary.total_clusters}
-          subtext={`${fleet_summary.reachable_clusters} reachable · ${fleet_summary.bnk_installed_clusters} BNK installed`}
+          value={summary.total_clusters}
+          subtext={`${summary.reachable_clusters} reachable · ${summary.bnk_installed_clusters} BNK installed`}
         />
         <OverviewTile
           icon={Box}
           label="BNK Pods"
-          value={fleet_summary.total_bnk_pods}
-          subtext={`${fleet_summary.control_plane_pods} control-plane · ${fleet_summary.data_plane_pods} data-plane`}
+          value={summary.total_bnk_pods}
+          subtext={`${summary.control_plane_pods} control-plane · ${summary.data_plane_pods} data-plane`}
         />
         <OverviewTile
           icon={Cpu}
           label="CPU"
           value={
-            fleet_summary.total_cpu_millicores > 0
-              ? formatCPU(fleet_summary.total_cpu_millicores)
-              : formatCPU(fleet_summary.node_capacity_cpu_millicores)
+            summary.total_cpu_millicores > 0
+              ? formatCPU(summary.total_cpu_millicores)
+              : formatCPU(summary.node_capacity_cpu_millicores)
           }
           subtext={
-            fleet_summary.total_cpu_millicores > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
+            summary.total_cpu_millicores > 0
+              ? 'Across filtered BNK pods'
+              : 'Node capacity (metrics-server unavailable)'
           }
         />
         <OverviewTile
           icon={Database}
           label="Memory"
           value={
-            fleet_summary.total_memory_bytes > 0
-              ? formatMemory(fleet_summary.total_memory_bytes)
-              : formatMemory(fleet_summary.node_capacity_memory_bytes)
+            summary.total_memory_bytes > 0
+              ? formatMemory(summary.total_memory_bytes)
+              : formatMemory(summary.node_capacity_memory_bytes)
           }
           subtext={
-            fleet_summary.total_memory_bytes > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
+            summary.total_memory_bytes > 0
+              ? 'Across filtered BNK pods'
+              : 'Node capacity (metrics-server unavailable)'
           }
         />
       </div>
 
-      {fleet_summary.dpf_detected_clusters > 0 && (
+      {summary.dpf_detected_clusters > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Gauge className="h-4 w-4" />
           <span>
-            DPF detected on {fleet_summary.dpf_detected_clusters} cluster
-            {fleet_summary.dpf_detected_clusters > 1 ? 's' : ''} · {fleet_summary.dpu_count} DPU
-            {fleet_summary.dpu_count > 1 ? 's' : ''}
+            DPF detected on {summary.dpf_detected_clusters} cluster
+            {summary.dpf_detected_clusters > 1 ? 's' : ''} · {summary.dpu_count} DPU
+            {summary.dpu_count > 1 ? 's' : ''}
           </span>
         </div>
       )}
 
       {/* Cluster consumption table */}
-      <SectionCard title="Cluster Consumption">
-        {clusters.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No clusters registered.</p>
+      <SectionCard title={selectedProvider === 'all' ? 'Cluster Consumption' : `Cluster Consumption (${selectedProvider.toUpperCase()})`}>
+        {filteredClusters.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">No clusters found for this provider filter.</p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
@@ -204,7 +318,7 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clusters.map((cluster) => {
+                {filteredClusters.map((cluster) => {
                   const badgeInfo = getCloudProviderBadgeInfo(cluster.cloud_provider);
                   const locationInfo = getClusterLocationInfo(cluster.cloud_provider, cluster.region);
 
@@ -282,12 +396,12 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
             </Table>
           </div>
         )}
-        {!fleet_summary.total_bnk_pods && clusters.length > 0 && (
+        {!summary.total_bnk_pods && filteredClusters.length > 0 && (
           <p className="text-sm text-muted-foreground mt-4">
             No BNK workloads detected. Install BNK on a cluster to see resource usage.
           </p>
         )}
-        {clusters.some((c) => !c.metrics_available && c.node_capacity.cpu_millicores > 0) && (
+        {filteredClusters.some((c) => !c.metrics_available && c.node_capacity.cpu_millicores > 0) && (
           <p className="text-xs text-muted-foreground mt-4">
             * CPU/Memory values marked with * are node allocatable capacity, not live BNK pod usage.
             Install metrics-server in each cluster to see actual BNK pod consumption.
@@ -302,17 +416,17 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
             <PlaneBreakdown
               label="Control Plane"
               plane={{
-                count: fleet_summary.control_plane_pods,
-                cpu_millicores: clusters.reduce((sum, c) => sum + c.control_plane.cpu_millicores, 0),
-                memory_bytes: clusters.reduce((sum, c) => sum + c.control_plane.memory_bytes, 0),
+                count: summary.control_plane_pods,
+                cpu_millicores: filteredClusters.reduce((sum, c) => sum + c.control_plane.cpu_millicores, 0),
+                memory_bytes: filteredClusters.reduce((sum, c) => sum + c.control_plane.memory_bytes, 0),
               }}
             />
             <PlaneBreakdown
               label="Data Plane"
               plane={{
-                count: fleet_summary.data_plane_pods,
-                cpu_millicores: clusters.reduce((sum, c) => sum + c.data_plane.cpu_millicores, 0),
-                memory_bytes: clusters.reduce((sum, c) => sum + c.data_plane.memory_bytes, 0),
+                count: summary.data_plane_pods,
+                cpu_millicores: filteredClusters.reduce((sum, c) => sum + c.data_plane.cpu_millicores, 0),
+                memory_bytes: filteredClusters.reduce((sum, c) => sum + c.data_plane.memory_bytes, 0),
               }}
             />
           </div>

@@ -10,7 +10,6 @@
  */
 import { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -24,9 +23,6 @@ import {
   Activity,
   Server,
   LayoutDashboard,
-  CheckCircle2,
-  Circle,
-  ArrowRight,
   ArrowLeft,
   X,
   BookOpen,
@@ -34,7 +30,6 @@ import {
   ChevronRight,
   SearchX,
 } from 'lucide-react';
-import { useBenchmarkTargets, useBenchmarkAgents } from '@/hooks/useBenchmarks';
 
 import { BenchmarkTargetsTab } from './BenchmarkTargetsTab';
 import { BenchmarkAgentsTab } from './BenchmarkAgentsTab';
@@ -47,13 +42,6 @@ import { BenchmarkRunGroupView } from './BenchmarkRunGroupView';
 import { BenchmarkOverviewTab } from './BenchmarkOverviewTab';
 import { RunBenchmarkWizard, type RunBenchmarkWizardLaunchResult } from './RunBenchmarkWizard';
 import { deriveRunsViewState, derivePrimaryTabState, type SetupSection } from './benchmark-runs-view';
-
-interface StepState {
-  label: string;
-  description: string;
-  done: boolean;
-  tab: string;
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Getting Started Banner — dismissible, collapses to a re-openable pill (never
@@ -158,62 +146,7 @@ function SetupGuidePill({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Stepper banner — token-pure progress bar + step buttons
-// ──────────────────────────────────────────────────────────────────────────────
 
-function StepperBanner({
-  steps,
-  onStepClick,
-}: {
-  steps: StepState[];
-  onStepClick: (tab: string) => void;
-}) {
-  const completedCount = steps.filter((s) => s.done).length;
-  const allDone = completedCount === steps.length;
-  if (allDone) return null;
-
-  return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
-      <div className="flex items-center gap-2 mb-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Setup progress — {completedCount}/{steps.length}
-        </p>
-        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-success rounded-full transition-all duration-500"
-            style={{ width: `${(completedCount / steps.length) * 100}%` }}
-          />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-0.5">
-        {steps.map((step, i) => (
-          <div key={step.label} className="flex items-center">
-            <button
-              onClick={() => onStepClick(step.tab)}
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors',
-                step.done
-                  ? 'text-success'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
-              )}
-            >
-              {step.done ? (
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <Circle className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="font-medium">{step.label}</span>
-            </button>
-            {i < steps.length - 1 && (
-              <ArrowRight className="h-3 w-3 text-muted-foreground/60 mx-0.5 shrink-0" />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Setup tab — Targets/Agents/Configs as sub-sections, existing components as-is
@@ -425,16 +358,6 @@ export default function Benchmarks() {
     setSearchParams(next);
   }, [setSearchParams]);
 
-  // Stepper steps use legacy tab-string semantics: 'runs' -> primary Runs tab,
-  // anything else -> that Setup sub-section. Keeps StepperBanner itself untouched.
-  const handleStepClick = useCallback((tab: string) => {
-    if (tab === 'runs') {
-      goToPrimaryTab('runs');
-      return;
-    }
-    goToSetupSection(tab as SetupSection);
-  }, [goToPrimaryTab, goToSetupSection]);
-
   const goToRunDetail = useCallback((runId: number) => {
     const next = new URLSearchParams();
     next.set('tab', 'runs');
@@ -481,40 +404,6 @@ export default function Benchmarks() {
 
   const { refresh: handleRefresh, isRefreshing } = usePageRefresh();
 
-  const { data: targetsData } = useBenchmarkTargets();
-  const { data: agents } = useBenchmarkAgents();
-  const targets = targetsData?.targets ?? [];
-  const hasTargets = targets.length > 0;
-  const hasProxies = targets.some((t) => (t.proxy_count ?? 0) > 0);
-  const hasAgent = (agents ?? []).length > 0;
-
-  const steps: StepState[] = [
-    {
-      label: 'Add target',
-      description: 'Scan or add a K8s cluster + LLM endpoint',
-      done: hasTargets,
-      tab: 'targets',
-    },
-    {
-      label: 'Deploy proxies',
-      description: 'Deploy envoy/nginx/haproxy/BNK',
-      done: hasProxies,
-      tab: 'targets',
-    },
-    {
-      label: 'Connect agent',
-      description: 'Register a test machine',
-      done: hasAgent,
-      tab: 'agents',
-    },
-    {
-      label: 'Run test',
-      description: 'Trigger a benchmark run',
-      done: hasTargets && hasProxies && hasAgent,
-      tab: 'runs',
-    },
-  ];
-
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -533,7 +422,6 @@ export default function Benchmarks() {
         onCollapse={collapseGuide}
         onGoToAgents={() => goToSetupSection('agents')}
       />
-      <StepperBanner steps={steps} onStepClick={handleStepClick} />
 
       <Tabs value={primaryTab} onValueChange={goToPrimaryTab}>
         <ResourceViewTabs
