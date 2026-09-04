@@ -88,6 +88,8 @@ export interface LlmLogRow {
   status: string;
   req_body: string;
   resp_body: string;
+  cluster_id?: number;
+  cluster_name?: string;
 }
 
 export interface LlmLogs extends LlmEnvelope {

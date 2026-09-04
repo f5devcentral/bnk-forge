@@ -20,37 +20,38 @@ import type {
   LlmStats,
 } from '@/types/llm-observability';
 
-const base = (clusterId: number) => `/api/k8s/clusters/${clusterId}/llm-observability`;
+const base = (clusterId?: number) =>
+  clusterId ? `/api/k8s/clusters/${clusterId}/llm-observability` : `/api/k8s/llm-observability`;
 
 export const llmObservabilityApi = {
-  getStats: (clusterId: number, params?: LlmObservabilityParams) =>
+  getStats: (clusterId?: number, params?: LlmObservabilityParams) =>
     apiClient
       .get<LlmStats>(`${base(clusterId)}/stats`, { params })
       .then((res) => res.data),
 
   getHistogram: (
-    clusterId: number,
-    params: LlmObservabilityParams & { metric: LlmHistogramMetric },
+    clusterId?: number,
+    params?: LlmObservabilityParams & { metric?: LlmHistogramMetric },
   ) =>
     apiClient
       .get<LlmHistogram>(`${base(clusterId)}/histogram`, { params })
       .then((res) => res.data),
 
-  getRankings: (clusterId: number, params?: LlmObservabilityParams) =>
+  getRankings: (clusterId?: number, params?: LlmObservabilityParams) =>
     apiClient
       .get<LlmRankings>(`${base(clusterId)}/rankings`, { params })
       .then((res) => res.data),
 
   getProviderUsage: (
-    clusterId: number,
-    params: LlmObservabilityParams & { metric: LlmProviderMetric },
+    clusterId?: number,
+    params?: LlmObservabilityParams & { metric?: LlmProviderMetric },
   ) =>
     apiClient
       .get<LlmProviderUsage>(`${base(clusterId)}/provider-usage`, { params })
       .then((res) => res.data),
 
   getLogs: (
-    clusterId: number,
+    clusterId?: number,
     params?: LlmObservabilityParams & {
       limit?: number;
       end?: string;
@@ -61,7 +62,7 @@ export const llmObservabilityApi = {
       .get<LlmLogs>(`${base(clusterId)}/logs`, { params })
       .then((res) => res.data),
 
-  getFilterData: (clusterId: number, params?: { range?: LlmObservabilityParams['range'] }) =>
+  getFilterData: (clusterId?: number, params?: { range?: LlmObservabilityParams['range'] }) =>
     apiClient
       .get<LlmFilterData>(`${base(clusterId)}/filterdata`, { params })
       .then((res) => res.data),

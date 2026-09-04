@@ -80,6 +80,7 @@ from routes.k8s import (
     llm_observability_router,
     recovery_router,
     resources_router,
+    search_router,
     tmm_debug_router,
     topology_router,
     tunnels_router,
@@ -359,6 +360,7 @@ app.include_router(clusters_router)     # K8s cluster CRUD, scan, adaptive modul
 app.include_router(crds_router)         # CRD discovery — D-018 P1
 app.include_router(topology_router)    # Namespace topology graph — D-018 P4
 app.include_router(resources_router)    # K8s resource CRUD, pod/node ops, metrics
+app.include_router(search_router)       # Global multi-cluster & FQDN search
 app.include_router(f5bnk_router)        # F5 BNK gateways, topology, health
 app.include_router(llm_observability_router)  # AI-gateway observability — Loki request analytics
 app.include_router(dpf_router)          # NVIDIA DPF — DPU devices, clusters, services, health

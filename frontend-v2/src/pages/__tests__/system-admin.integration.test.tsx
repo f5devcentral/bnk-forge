@@ -48,6 +48,7 @@ describe('System Administration — Integration', () => {
     expect(tabLabels).toContain('Alerts');
     expect(tabLabels).toContain('Defaults');
     expect(tabLabels).toContain('Appearance');
+    expect(tabLabels).toContain('Version & Upgrade');
     expect(tabLabels).not.toContain('Module Library');
     expect(tabLabels).not.toContain('Helm Repos');
   });
@@ -56,11 +57,10 @@ describe('System Administration — Integration', () => {
   // 2. System Monitor tab shows health components
   // ────────────────────────────────────────────────────────────────────────
   it('shows performance and health content on System Monitor tab', async () => {
+    const user = userEvent.setup();
     render(<System />, { initialRoute: '/system' });
 
     // The System Monitor tab is the default — wait for sub-components to load.
-    // SystemUpgrade renders version info, PerformanceMonitor renders metrics,
-    // ContainerManagement renders container heading.
     await waitFor(
       () => {
         // SectionCard eyebrow title — sentence case now ("Container management").
@@ -68,6 +68,9 @@ describe('System Administration — Integration', () => {
       },
       { timeout: 3000 },
     );
+
+    // Switch to Version & Upgrade tab to verify version information
+    await user.click(screen.getByRole('tab', { name: /version & upgrade/i }));
 
     // SystemUpgrade should render version information from the mock
     await waitFor(

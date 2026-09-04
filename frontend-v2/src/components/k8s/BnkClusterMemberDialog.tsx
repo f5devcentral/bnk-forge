@@ -224,7 +224,7 @@ export function BnkClusterMemberDialog({
         <DialogHeader>
           <DialogTitle className={cn('text-xl font-bold flex items-center gap-2', tc.textPrimary)}>
             <Network className="h-5 w-5 text-primary" />
-            BNK Multi-Host & DPU Cluster Orchestration (ADR-424)
+            Multi-Host & DPU Topology
           </DialogTitle>
           <DialogDescription className={tc.textMuted}>
             Configure cluster membership, select the Control Plane host, and set the tmfifo IPAM pool for cluster{' '}

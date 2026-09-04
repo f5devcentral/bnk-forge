@@ -80,13 +80,12 @@ describe('Navigation Integration', () => {
       // Command Center — standalone home item above the OBSERVE section
       expect(screen.getByText('Command Center')).toBeInTheDocument();
 
-      // BUILD items — Catalog sits at the bottom after Operations Log.
+      // BUILD items — Catalog sits at the bottom after Projects.
       expect(screen.getByText('Access Methods')).toBeInTheDocument();
       expect(screen.getByText('Blueprints')).toBeInTheDocument();
       expect(screen.getByText('Projects')).toBeInTheDocument();
-      expect(screen.getByText('Operations Log')).toBeInTheDocument();
       expect(screen.getByText('Catalog')).toBeInTheDocument();
-      // K8S-UX-004: Helm Packages removed from sidebar — now integrated into Kubernetes page
+      // Operations Log is now in Project Detail tabs
 
       // OPERATE items
       expect(screen.getByText('Fleet')).toBeInTheDocument();
@@ -103,7 +102,7 @@ describe('Navigation Integration', () => {
   // 2. Sidebar nav links have correct hrefs
   // -------------------------------------------------------------------------
   describe('Sidebar nav links have correct hrefs', () => {
-    it('renders Projects with href="/projects", Activity with href="/tasks", Blueprints with href="/stacks"', async () => {
+    it('renders Projects with href="/projects", Blueprints with href="/stacks"', async () => {
       act(() => {
         useAuthStore.getState().login('mock-jwt-token', mockUser);
       });
@@ -117,9 +116,6 @@ describe('Navigation Integration', () => {
       // NavLink renders an <a> tag — find the link by its text content
       const projectsLink = screen.getByText('Projects').closest('a');
       expect(projectsLink).toHaveAttribute('href', '/projects');
-
-      const opsLogLink = screen.getByText('Operations Log').closest('a');
-      expect(opsLogLink).toHaveAttribute('href', '/tasks');
 
       const blueprintsLink = screen.getByText('Blueprints').closest('a');
       expect(blueprintsLink).toHaveAttribute('href', '/stacks');
