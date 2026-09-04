@@ -224,25 +224,29 @@ export function K8sCrdExplorerPanel({ clusterId }: K8sCrdExplorerPanelProps) {
 
               {/* Instances list */}
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Live Resource Instances ({(instancesData as any)?.resources?.length || 0})
-                </div>
+                {(() => {
+                  const liveResources: K8sResource[] = instancesData?.resources ?? [];
+                  return (
+                    <>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Live Resource Instances ({liveResources.length})
+                      </div>
 
-                {instancesLoading ? (
-                  <SkeletonTable rows={4} columns={3} />
-                ) : (instancesData as any)?.resources?.length > 0 ? (
-                  <div className="divide-y divide-border border border-border rounded-md overflow-hidden max-h-64 overflow-y-auto">
-                    {((instancesData as any).resources as K8sResource[]).map((inst) => {
-                      const isInstSelected = selectedInstance?.metadata?.name === inst.metadata?.name;
-                      return (
-                        <div
-                          key={inst.metadata?.uid || inst.metadata?.name}
-                          className={cn(
-                            'p-2.5 flex items-center justify-between gap-3 text-xs cursor-pointer transition-colors',
-                            isInstSelected ? 'bg-primary/10' : 'hover:bg-muted/40'
-                          )}
-                          onClick={() => setSelectedInstance(inst)}
-                        >
+                      {instancesLoading ? (
+                        <SkeletonTable rows={4} columns={3} />
+                      ) : liveResources.length > 0 ? (
+                        <div className="divide-y divide-border border border-border rounded-md overflow-hidden max-h-64 overflow-y-auto">
+                          {liveResources.map((inst) => {
+                            const isInstSelected = selectedInstance?.metadata?.name === inst.metadata?.name;
+                            return (
+                              <div
+                                key={inst.metadata?.uid || inst.metadata?.name}
+                                className={cn(
+                                  'p-2.5 flex items-center justify-between gap-3 text-xs cursor-pointer transition-colors',
+                                  isInstSelected ? 'bg-primary/10' : 'hover:bg-muted/40'
+                                )}
+                                onClick={() => setSelectedInstance(inst)}
+                              >
                           <div>
                             <span className="font-semibold text-foreground">
                               {inst.metadata?.name}
@@ -266,6 +270,9 @@ export function K8sCrdExplorerPanel({ clusterId }: K8sCrdExplorerPanelProps) {
                     No instances of <code className="text-foreground">{selectedCrd.kind}</code> found in this cluster / namespace scope.
                   </div>
                 )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Instance Detail Viewer */}

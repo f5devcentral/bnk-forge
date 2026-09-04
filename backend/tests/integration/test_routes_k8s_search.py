@@ -1,9 +1,10 @@
 """
 Integration tests for Global K8s and Infrastructure search — GET /api/k8s/search.
 """
-
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from models import KubernetesCluster, Project
 from routes.k8s.search import IngressSearchResult
 

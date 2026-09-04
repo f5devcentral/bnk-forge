@@ -3815,6 +3815,64 @@
         }
       }
     },
+    "/api/k8s/search": {
+      "get": {
+        "tags": [
+          "k8s-search"
+        ],
+        "summary": "Global Search",
+        "description": "Unified global multi-cluster and infrastructure search.\n\nSearches across:\n- Ingresses, HTTPRoutes, VirtualServers, and Services in all reachable clusters\n- Clusters (by name, cloud provider, region)\n- Projects (by name, description, cloud provider, region)",
+        "operationId": "global_search_api_k8s_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Search query string (FQDN, hostname, IP, cluster, project)",
+              "title": "Q"
+            },
+            "description": "Search query string (FQDN, hostname, IP, cluster, project)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSearchResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/f5bnk/data": {
       "get": {
         "tags": [
@@ -4714,7 +4772,106 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/stats": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Stats",
+        "description": "Summary tiles: total requests, success rate, avg latency, tokens, cost, models.",
+        "operationId": "get_llm_stats_api_k8s_llm_observability_stats_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4799,7 +4956,116 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "requests",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmHistogramResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/histogram": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Histogram",
+        "description": "Time-series for one metric (requests|tokens|cost|models|latency).",
+        "operationId": "get_llm_histogram_api_k8s_llm_observability_histogram_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4894,7 +5160,106 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmRankingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/rankings": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Rankings",
+        "description": "Per-model rows with window-over-window trend deltas.",
+        "operationId": "get_llm_rankings_api_k8s_llm_observability_rankings_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4979,7 +5344,116 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "cost",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmProviderUsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/provider-usage": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Provider Usage",
+        "description": "Time-series folded to inferred provider (cost|tokens|latency).",
+        "operationId": "get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5074,7 +5548,152 @@
             "in": "path",
             "required": true,
             "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "content_search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content Search"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "nanosecond cursor for load-older",
+              "title": "End"
+            },
+            "description": "nanosecond cursor for load-older"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmLogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/logs": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Logs",
+        "description": "Per-request log rows, newest first; ``next_end`` is the load-older cursor.",
+        "operationId": "get_llm_logs_api_k8s_llm_observability_logs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5205,7 +5824,74 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmFilterDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/filterdata": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Filterdata",
+        "description": "Distinct model + status label values for filter dropdowns.",
+        "operationId": "get_llm_filterdata_api_k8s_llm_observability_filterdata_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -37596,6 +38282,28 @@
             "type": "string",
             "title": "Cluster Name"
           },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
           "reachable": {
             "type": "boolean",
             "title": "Reachable"
@@ -40699,6 +41407,73 @@
         ],
         "title": "ClusterScanEnvelope",
         "description": "Typed envelope for POST /api/k8s/clusters/{id}/scan."
+      },
+      "ClusterSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "detected_platform_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected Platform Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "title": "ClusterSearchResult"
       },
       "ClusterSummary": {
         "properties": {
@@ -48645,6 +49420,40 @@
         "title": "GitSourceValidation",
         "description": "Schema for git source validation"
       },
+      "GlobalSearchResultResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "ingresses": {
+            "items": {
+              "$ref": "#/components/schemas/IngressSearchResult"
+            },
+            "type": "array",
+            "title": "Ingresses"
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterSearchResult"
+            },
+            "type": "array",
+            "title": "Clusters"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSearchResult"
+            },
+            "type": "array",
+            "title": "Projects"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "GlobalSearchResultResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -50172,6 +50981,89 @@
         ],
         "title": "ImportedBlueprintProjectCreateResponse"
       },
+      "IngressSearchResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "matched_host": {
+            "type": "string",
+            "title": "Matched Host"
+          },
+          "all_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "All Hosts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "type": "string",
+            "title": "Cluster Name"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "target_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Service"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "namespace",
+          "matched_host",
+          "cluster_id",
+          "cluster_name"
+        ],
+        "title": "IngressSearchResult"
+      },
       "InstallChartRequest": {
         "properties": {
           "release_name": {
@@ -51035,6 +51927,28 @@
           "resp_body": {
             "type": "string",
             "title": "Resp Body"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           }
         },
         "type": "object",
@@ -55667,6 +56581,72 @@
         ],
         "title": "ProjectMutationResponse",
         "description": "Response for project create/update/delete."
+      },
+      "ProjectSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "module_count": {
+            "type": "integer",
+            "title": "Module Count",
+            "default": 0
+          },
+          "deployed_count": {
+            "type": "integer",
+            "title": "Deployed Count",
+            "default": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "ProjectSearchResult"
       },
       "ProjectUpdate": {
         "properties": {

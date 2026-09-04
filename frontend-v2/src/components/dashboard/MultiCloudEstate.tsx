@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ClusterStatusBadge } from '@/components/ui/ClusterStatusBadge';
-import { reachabilityKey } from '@/lib/api/connectivity';
+import { reachabilityKey, type ReachabilityState } from '@/lib/api/connectivity';
 import { cn } from '@/lib/utils';
 import {
   getCloudProviderBadgeInfo,
@@ -40,7 +40,7 @@ interface MultiCloudEstateProps {
   projectsLoading?: boolean;
   clustersLoading?: boolean;
   fleetByCluster?: Record<string, FleetOperatorHealth>;
-  connectivityStates?: Record<string, any>;
+  connectivityStates?: Record<string, ReachabilityState>;
   projectDriftCounts?: Record<number, number>;
   onAddCluster?: () => void;
   className?: string;
@@ -186,7 +186,7 @@ export function MultiCloudEstate({
         name: 'Amazon Web Services (EKS)',
         shortLabel: 'AWS',
         matchKey: 'aws',
-        badgeClass: 'border-amber-500/40 text-amber-500 bg-amber-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-warning/40 text-warning bg-warning/10 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {
@@ -194,7 +194,7 @@ export function MultiCloudEstate({
         name: 'Microsoft Azure (AKS)',
         shortLabel: 'AZR',
         matchKey: 'azure',
-        badgeClass: 'border-sky-500/40 text-sky-500 bg-sky-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-accent/40 text-accent bg-accent/10 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {
@@ -202,7 +202,7 @@ export function MultiCloudEstate({
         name: 'Google Cloud Platform (GKE)',
         shortLabel: 'GKE',
         matchKey: 'gke',
-        badgeClass: 'border-blue-500/40 text-blue-500 bg-blue-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-primary/40 text-primary bg-primary/10 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {
@@ -210,7 +210,7 @@ export function MultiCloudEstate({
         name: 'Bare-Metal & On-Premises',
         shortLabel: 'METAL',
         matchKey: 'metal',
-        badgeClass: 'border-emerald-500/40 text-emerald-500 bg-emerald-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-success/40 text-success bg-success/10 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {
@@ -218,7 +218,7 @@ export function MultiCloudEstate({
         name: 'IBM Cloud (ROKS)',
         shortLabel: 'IBM',
         matchKey: 'ibm',
-        badgeClass: 'border-indigo-500/40 text-indigo-500 bg-indigo-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-secondary text-secondary-foreground bg-secondary/30 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {
@@ -274,12 +274,12 @@ export function MultiCloudEstate({
     const conn = cluster ? connectivityStates[reachabilityKey('cluster', cluster.id)] : undefined;
 
     const isReachUnreachable = conn?.state === 'unreachable';
-    const isReachChecking = conn?.state === 'checking';
+    const isReachUnknown = conn?.state === 'unknown';
     const isReachable = conn?.state === 'reachable' || (cluster && cluster.status === 'active' && !isReachUnreachable);
 
     const statusDot = isReachUnreachable
       ? 'bg-destructive'
-      : isReachChecking
+      : isReachUnknown
         ? 'bg-warning animate-pulse'
         : isReachable || (project && project.deployed_count > 0)
           ? 'bg-success'
@@ -376,7 +376,7 @@ export function MultiCloudEstate({
             <div className="mt-2.5 pt-2 border-t border-border/40">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground flex items-center gap-1 min-w-0">
-                  <FolderGit2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <FolderGit2 className="w-3.5 h-3.5 text-primary shrink-0" />
                   <span className="font-mono text-[11px] truncate max-w-[140px]" title={project.name}>
                     {project.name}
                   </span>

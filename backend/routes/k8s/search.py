@@ -8,8 +8,8 @@ Provides unified, multi-cluster search for:
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 from fastapi import APIRouter, Depends, Query
 from kubernetes import client as k8s_client

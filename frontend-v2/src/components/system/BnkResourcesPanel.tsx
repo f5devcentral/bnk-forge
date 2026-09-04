@@ -114,37 +114,12 @@ export function BnkResourcesPanel({
   onProviderChange,
   hideProviderChips,
 }: BnkResourcesPanelProps) {
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28" />
-          ))}
-        </div>
-        <Skeleton className="h-64" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <SectionCard title="BNK Resources">
-        <p className="text-sm text-destructive">
-          Failed to load BNK consumption: {error.message}
-        </p>
-      </SectionCard>
-    );
-  }
-
-  if (!data) {
-    return null;
-  }
-
-  const { fleet_summary, clusters } = data;
   const [internalProvider, setInternalProvider] = useState<ProviderScope>('all');
   const selectedProvider = provider !== undefined ? provider : internalProvider;
   const setSelectedProvider = onProviderChange || setInternalProvider;
+
+  const clusters = data?.clusters ?? [];
+  const fleet_summary = data?.fleet_summary;
 
   const filteredClusters = useMemo(() => {
     if (selectedProvider === 'all') return clusters;
@@ -152,6 +127,7 @@ export function BnkResourcesPanel({
   }, [clusters, selectedProvider]);
 
   const summary = useMemo(() => {
+    if (!fleet_summary) return null;
     if (selectedProvider === 'all') return fleet_summary;
     const total_clusters = filteredClusters.length;
     const reachable_clusters = filteredClusters.filter((c) => c.reachable).length;
@@ -192,7 +168,34 @@ export function BnkResourcesPanel({
       dpf_detected_clusters,
       dpu_count,
     };
-  }, [filteredClusters, selectedProvider, fleet_summary]);
+  }, [fleet_summary, filteredClusters, selectedProvider]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-28" />
+          ))}
+        </div>
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <SectionCard title="BNK Resources">
+        <p className="text-sm text-destructive">
+          Failed to load BNK consumption: {error.message}
+        </p>
+      </SectionCard>
+    );
+  }
+
+  if (!data || !summary) {
+    return null;
+  }
 
   const topPods = filteredClusters.flatMap((c) =>
     c.top_pods.map((p) => ({ ...p, cluster_name: c.cluster_name }))
