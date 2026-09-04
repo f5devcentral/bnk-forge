@@ -4,5 +4,5 @@
 pydantic>=2.10
 pyyaml>=6.0
 requests>=2.33
-urllib3>=2.0
+urllib3>=2.6.4
 reportlab>=4.0
