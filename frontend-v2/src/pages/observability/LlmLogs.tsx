@@ -316,7 +316,14 @@ export default function LlmLogs() {
                     <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
                       {fmtTime(row.ts)}
                     </TableCell>
-                    <TableCell className="max-w-[280px] truncate text-foreground/90">{row.message || '—'}</TableCell>
+                    <TableCell className="max-w-[280px] truncate text-foreground/90">
+                      {row.cluster_name && (
+                        <Badge variant="outline" className="mr-1.5 text-[10px] font-mono py-0 px-1 text-muted-foreground">
+                          {row.cluster_name}
+                        </Badge>
+                      )}
+                      {row.message || '—'}
+                    </TableCell>
                     {visibleCols.model && <TableCell className="text-xs text-foreground/80">{row.model}</TableCell>}
                     <TableCell className="text-right tabular-nums text-foreground/80">{fmtLatencyMs(row.latency_ms)}</TableCell>
                     {visibleCols.tokens && (

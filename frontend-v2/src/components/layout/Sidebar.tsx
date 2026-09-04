@@ -81,8 +81,6 @@ const navigationSections: {
       { name: 'Blueprints', href: '/stacks', icon: Layers },
       { name: 'Access Methods', href: '/auth-templates', icon: KeyRound, minRole: 'operator' },
       { name: 'Projects', href: '/projects', icon: FolderGit2, showCount: 'projects', showDriftBadge: true },
-      // K8S-UX-006: Operations Log moved under Build workflow
-      { name: 'Operations Log', href: '/tasks', icon: ScrollText, showCount: 'activity' },
     ],
   },
   {

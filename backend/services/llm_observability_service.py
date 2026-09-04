@@ -35,6 +35,7 @@ from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.config import settings
+from models.kubernetes import KubernetesCluster
 from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,14 @@ class LlmObservabilityService:
         self._port = settings.LOKI_PORT
         self._scheme = settings.LOKI_SCHEME
 
+    def _active_clusters(self) -> list[KubernetesCluster]:
+        return (
+            self.db.query(KubernetesCluster)
+            .filter(KubernetesCluster.status == "active")
+            .order_by(KubernetesCluster.name.asc())
+            .all()
+        )
+
     # -- endpoint / time helpers ------------------------------------------
 
     @property
@@ -261,8 +270,40 @@ class LlmObservabilityService:
     # -- endpoints --------------------------------------------------------
 
     def stats(
-        self, cluster_id: int, range_: str, model: str | None = None, status: str | None = None
+        self, cluster_id: int | None, range_: str, model: str | None = None, status: str | None = None
     ) -> dict[str, Any]:
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.stats(c.id, range_, model, status)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            total_requests = sum(v.get("total_requests", 0) for v in valid)
+            total_tokens = sum(v.get("total_tokens", 0) for v in valid)
+            total_cost = sum(v.get("total_cost", 0.0) for v in valid)
+            total_models = max((v.get("models", 0) for v in valid), default=0)
+            if total_requests > 0:
+                success_rate = sum(v.get("success_rate", 0.0) * v.get("total_requests", 0) for v in valid) / total_requests
+                avg_latency_ms = sum(v.get("avg_latency_ms", 0.0) * v.get("total_requests", 0) for v in valid) / total_requests
+            else:
+                success_rate = 0.0
+                avg_latency_ms = 0.0
+            return self._ok(
+                total_requests=int(total_requests),
+                success_rate=success_rate,
+                avg_latency_ms=avg_latency_ms,
+                total_tokens=int(total_tokens),
+                total_cost=total_cost,
+                models=int(total_models),
+                errors={},
+            )
+
         api_client = self._client(cluster_id)
         end_ns = time.time_ns()
         rng = f"{self._range_s(range_)}s"
@@ -309,12 +350,44 @@ class LlmObservabilityService:
 
     def histogram(
         self,
-        cluster_id: int,
+        cluster_id: int | None,
         range_: str,
         metric: str,
         model: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.histogram(c.id, range_, metric, model, status)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            step_s = valid[0].get("step_s", self._step_s(range_))
+            series_map: dict[str, dict[str, float]] = {}
+            for r in valid:
+                for s in r.get("series", []):
+                    s_name = s.get("name", "")
+                    if s_name not in series_map:
+                        series_map[s_name] = {}
+                    for p in s.get("points", []):
+                        ts = p.get("ts", "")
+                        if metric == "latency":
+                            curr = series_map[s_name].get(ts, 0.0)
+                            series_map[s_name][ts] = (curr + p.get("value", 0.0)) / (2 if curr else 1)
+                        else:
+                            series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
+            merged_series = []
+            for s_name, points_dict in series_map.items():
+                points = [{"ts": ts, "value": val} for ts, val in sorted(points_dict.items())]
+                merged_series.append({"name": s_name, "points": points})
+            return self._ok(metric=metric, step_s=step_s, series=merged_series, errors={})
+
         api_client = self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
@@ -413,12 +486,44 @@ class LlmObservabilityService:
 
     def provider_usage(
         self,
-        cluster_id: int,
+        cluster_id: int | None,
         range_: str,
         metric: str,
         model: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.provider_usage(c.id, range_, metric, model, status)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            step_s = valid[0].get("step_s", self._step_s(range_))
+            series_map: dict[str, dict[str, float]] = {}
+            for r in valid:
+                for s in r.get("series", []):
+                    s_name = s.get("name", "")
+                    if s_name not in series_map:
+                        series_map[s_name] = {}
+                    for p in s.get("points", []):
+                        ts = p.get("ts", "")
+                        if metric == "latency":
+                            curr = series_map[s_name].get(ts, 0.0)
+                            series_map[s_name][ts] = (curr + p.get("value", 0.0)) / (2 if curr else 1)
+                        else:
+                            series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
+            merged_series = []
+            for s_name, points_dict in series_map.items():
+                points = [{"ts": ts, "value": val} for ts, val in sorted(points_dict.items())]
+                merged_series.append({"name": s_name, "points": points})
+            return self._ok(metric=metric, step_s=step_s, series=merged_series, errors={})
+
         api_client = self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
@@ -449,8 +554,58 @@ class LlmObservabilityService:
         return self._ok(metric=metric, step_s=step_s, series=series, errors=errors)
 
     def rankings(
-        self, cluster_id: int, range_: str, model: str | None = None, status: str | None = None
+        self, cluster_id: int | None, range_: str, model: str | None = None, status: str | None = None
     ) -> dict[str, Any]:
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.rankings(c.id, range_, model, status)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            models_acc: dict[str, dict[str, Any]] = {}
+            for r in valid:
+                for row in r.get("rows", []):
+                    m = row["model"]
+                    if m not in models_acc:
+                        models_acc[m] = {
+                            "model": m,
+                            "provider": row["provider"],
+                            "requests": 0,
+                            "tokens": 0,
+                            "cost": 0.0,
+                            "total_latency_weighted": 0.0,
+                            "success_weighted": 0.0,
+                            "trend": row.get("trend", {}),
+                        }
+                    acc = models_acc[m]
+                    reqs = row.get("requests", 0)
+                    acc["requests"] += reqs
+                    acc["tokens"] += row.get("tokens", 0)
+                    acc["cost"] += row.get("cost", 0.0)
+                    acc["total_latency_weighted"] += row.get("avg_latency_ms", 0.0) * reqs
+                    acc["success_weighted"] += row.get("success_rate", 0.0) * reqs
+            rows = []
+            for m, acc in models_acc.items():
+                reqs = acc["requests"]
+                rows.append({
+                    "model": m,
+                    "provider": acc["provider"],
+                    "requests": reqs,
+                    "success_rate": (acc["success_weighted"] / reqs) if reqs else 0.0,
+                    "tokens": acc["tokens"],
+                    "cost": acc["cost"],
+                    "avg_latency_ms": (acc["total_latency_weighted"] / reqs) if reqs else 0.0,
+                    "trend": acc["trend"],
+                })
+            rows.sort(key=lambda x: x["requests"], reverse=True)
+            return self._ok(rows=rows, errors={})
+
         api_client = self._client(cluster_id)
         rng_s = self._range_s(range_)
         rng = f"{rng_s}s"
@@ -528,7 +683,7 @@ class LlmObservabilityService:
 
     def logs(
         self,
-        cluster_id: int,
+        cluster_id: int | None,
         range_: str,
         model: str | None = None,
         status: str | None = None,
@@ -536,8 +691,29 @@ class LlmObservabilityService:
         content_search: str | None = None,
         end: int | None = None,
     ) -> dict[str, Any]:
-        api_client = self._client(cluster_id)
         limit = max(1, min(limit, 1000))
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.logs(c.id, range_, model, status, limit, content_search, end)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            all_rows: list[dict[str, Any]] = []
+            for r in valid:
+                all_rows.extend(r.get("rows", []))
+            all_rows.sort(key=lambda x: x.get("ts", ""), reverse=True)
+            trimmed = all_rows[:limit]
+            return self._ok(rows=trimmed, next_end=None, errors={})
+
+        api_client = self._client(cluster_id)
+        cluster = self._k8s.get_cluster(cluster_id)
+        cluster_name = cluster.name if cluster else f"cluster-{cluster_id}"
         end_ns = end if end else time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
 
@@ -557,6 +733,9 @@ class LlmObservabilityService:
             return self._unavailable(err)
 
         rows, oldest_ns = self._parse_log_lines(data)
+        for r in rows:
+            r["cluster_id"] = cluster_id
+            r["cluster_name"] = cluster_name
         next_end = str(oldest_ns - 1) if (oldest_ns is not None and len(rows) >= limit) else None
         return self._ok(rows=rows, next_end=next_end, errors={})
 
@@ -602,7 +781,23 @@ class LlmObservabilityService:
         oldest_ns = entries[-1][0] if entries else None
         return rows, oldest_ns
 
-    def filterdata(self, cluster_id: int, range_: str) -> dict[str, Any]:
+    def filterdata(self, cluster_id: int | None, range_: str) -> dict[str, Any]:
+        if cluster_id is None:
+            clusters = self._active_clusters()
+            if not clusters:
+                return self._unavailable("No active Kubernetes clusters available")
+            results = _run_parallel([
+                lambda c=c: self.filterdata(c.id, range_)
+                for c in clusters
+            ])
+            valid = [r for r in results if r.get("available")]
+            if not valid:
+                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                return self._unavailable(err)
+            models = sorted(set(m for r in valid for m in r.get("models", [])))
+            statuses = sorted(set(s for r in valid for s in r.get("statuses", [])))
+            return self._ok(models=models, statuses=statuses, errors={})
+
         api_client = self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000

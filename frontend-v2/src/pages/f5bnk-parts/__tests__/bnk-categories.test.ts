@@ -37,34 +37,34 @@ describe('buildBnkCategories', () => {
     expect(names).toEqual(bnkResourceCategories.map((c) => c.category));
   });
 
-  it('preserves Insights as the first category', () => {
+  it('preserves Topology & Insights as the first category', () => {
     const result = buildBnkCategories([]);
-    expect(result[0].category).toBe('Insights');
+    expect(result[0].category).toBe('Topology & Insights');
   });
 
   it('preserves VIEW_* special views in static categories', () => {
     const result = buildBnkCategories([]);
-    const insights = result.find((c) => c.category === 'Insights');
-    const keys = insights?.items.map((i) => i.key) ?? [];
+    const health = result.find((c) => c.category === 'Health & Diagnostics');
+    const keys = health?.items.map((i) => i.key) ?? [];
     expect(keys).toContain(VIEW_HEALTH);
   });
 
-  it('preserves VIEW_POLICY_BUILDER in Build category', () => {
+  it('preserves VIEW_POLICY_BUILDER in Policies & Security category', () => {
     const result = buildBnkCategories([]);
-    const build = result.find((c) => c.category === 'Build');
-    expect(build?.items.map((i) => i.key)).toContain(VIEW_POLICY_BUILDER);
+    const policies = result.find((c) => c.category === 'Policies & Security');
+    expect(policies?.items.map((i) => i.key)).toContain(VIEW_POLICY_BUILDER);
   });
 
   it('merges a discovered CRD into an existing category via a real backend slug', () => {
-    // CRDInfo.category is the backend slug ('networking'), never the display name.
+    // CRDInfo.category is the backend slug ('networking'), mapped to System & Configuration.
     const result = buildBnkCategories([
       crd({
         name: 'newvlans.k8s.f5net.com', kind: 'NewVlan', plural: 'newvlans',
         group: 'k8s.f5net.com', category: 'networking', source: 'registry-enriched',
       }),
     ]);
-    const networking = result.find((c) => c.category === 'Networking');
-    const keys = networking?.items.map((i) => i.key) ?? [];
+    const system = result.find((c) => c.category === 'System & Configuration');
+    const keys = system?.items.map((i) => i.key) ?? [];
     expect(keys).toContain('newvlans.k8s.f5net.com');
     // Static items still present
     expect(keys).toContain('f5spkvlan');
@@ -79,13 +79,14 @@ describe('buildBnkCategories', () => {
     expect(names).not.toContain('custom.io');
   });
 
-  it('collapses an unmapped backend category slug into "Other" (e.g. "f5-bnk")', () => {
+  it('routes an unmapped backend category slug ("f5-bnk") into System & Configuration', () => {
     const result = buildBnkCategories([
-      crd({ kind: 'Afm', plural: 'afms', group: 'k8s.f5.com', category: 'f5-bnk' }),
+      crd({ name: 'things.example.com', kind: 'Afm', plural: 'afms', group: 'k8s.f5.com', category: 'f5-bnk' }),
     ]);
     const names = result.map((c) => c.category);
     expect(names).not.toContain('f5-bnk');
-    expect(names).toContain('Other');
+    const system = result.find((c) => c.category === 'System & Configuration');
+    expect(system?.items.map((i) => i.key)).toContain('things.example.com');
   });
 
   it('routes a real curated slug ("networking") into its actual curated tab, not "Other"', () => {
@@ -93,10 +94,10 @@ describe('buildBnkCategories', () => {
       crd({ name: 'vlans.k8s.f5.com', kind: 'Vlan', plural: 'vlans', group: 'k8s.f5.com', category: 'networking' }),
     ]);
     const names = result.map((c) => c.category);
-    expect(names).toContain('Networking');
+    expect(names).toContain('System & Configuration');
     expect(names).not.toContain('networking'); // lowercase slug never rendered as its own tab
-    const networking = result.find((c) => c.category === 'Networking');
-    expect(networking?.items.map((i) => i.key)).toContain('vlans.k8s.f5.com');
+    const system = result.find((c) => c.category === 'System & Configuration');
+    expect(system?.items.map((i) => i.key)).toContain('vlans.k8s.f5.com');
   });
 
   it('stays curated + at most one "Other" even with many uncategorized CRDs (regression)', () => {
@@ -109,27 +110,21 @@ describe('buildBnkCategories', () => {
   });
 
   it('does not duplicate a static item (kind-based dedup, mismatched plural)', () => {
-    // 'f5spkvlan' (static key = kind.lower()) is already in the curated Networking list.
-    // The discovered plural 'f5spkvlans' differs from the static key, but the dedup
-    // check matches on kind, not plural, so it must not be double-listed.
+    // 'f5spkvlan' (static key = kind.lower()) is already in System & Configuration.
     const result = buildBnkCategories([
       crd({
         name: 'f5spkvlans.k8s.f5net.com', kind: 'F5SpkVlan', plural: 'f5spkvlans',
         group: 'k8s.f5net.com', category: 'networking', source: 'registry-enriched',
       }),
     ]);
-    const networking = result.find((c) => c.category === 'Networking');
-    const vlanItems = networking?.items.filter(
+    const system = result.find((c) => c.category === 'System & Configuration');
+    const vlanItems = system?.items.filter(
       (i) => i.key === 'f5spkvlan' || i.key === 'f5spkvlans.k8s.f5net.com'
     ) ?? [];
     expect(vlanItems).toHaveLength(1);
   });
 
   it('dedups a curated Gateway CRD whose backend slug does not map to a curated tab name (kind=Gateway, slug=gateway-api)', () => {
-    // Real backend slug: ResourceCategory.GATEWAY_API = 'gateway-api' (core/k8s_types.py:51).
-    // 'gateway-api' isn't a curated tab name, so without the global kind-dedup this
-    // would render a second 'Gateway' entry in 'Other' alongside the curated one in
-    // 'Traffic Management'.
     const result = buildBnkCategories([
       crd({
         name: 'gateways.gateway.networking.k8s.io', kind: 'Gateway', plural: 'gateways',
@@ -138,7 +133,7 @@ describe('buildBnkCategories', () => {
     ]);
     const names = result.map((c) => c.category);
     expect(names).not.toContain('Other');
-    const traffic = result.find((c) => c.category === 'Traffic Management');
+    const traffic = result.find((c) => c.category === 'Gateways & Traffic');
     const gatewayItems = traffic?.items.filter(
       (i) => i.key === 'gateway' || i.key === 'gateways.gateway.networking.k8s.io'
     ) ?? [];
@@ -146,9 +141,6 @@ describe('buildBnkCategories', () => {
   });
 
   it('dedups a curated BNKSecPolicy CRD whose backend slug does not map to a curated tab name (kind=BNKSecPolicy, slug=f5-bnk)', () => {
-    // Real backend slug: ResourceCategory.F5_BNK = 'f5-bnk' (core/k8s_types.py:52).
-    // Without the global kind-dedup this would render a second 'BNKSecPolicy' entry in
-    // 'Other' alongside the curated 'bnksecpolicy' entry in 'Security'.
     const result = buildBnkCategories([
       crd({
         name: 'bnksecpolicies.gateway.k8s.f5net.com', kind: 'BNKSecPolicy', plural: 'bnksecpolicies',
@@ -157,7 +149,7 @@ describe('buildBnkCategories', () => {
     ]);
     const names = result.map((c) => c.category);
     expect(names).not.toContain('Other');
-    const security = result.find((c) => c.category === 'Security');
+    const security = result.find((c) => c.category === 'Policies & Security');
     const secPolicyItems = security?.items.filter(
       (i) => i.key === 'bnksecpolicy' || i.key === 'bnksecpolicies.gateway.k8s.f5net.com'
     ) ?? [];

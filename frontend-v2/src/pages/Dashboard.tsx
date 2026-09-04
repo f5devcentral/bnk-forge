@@ -1,56 +1,38 @@
 /**
- * Dashboard — K8s-first Command Center
+ * Dashboard — K8s-first Multi-Cloud Command Center & Hero Omnisearch
  *
- * K8S-UX-009: Reworked to make K8s a first-class citizen.
- *
- * Layout (top to bottom):
- *   1. Action bar — greeting, subtitle with fleet status, quick actions
- *   2. Fleet Health Overview — horizontal fleet status bar with operator mini-cards
- *   3. Active Operations — in-progress tasks (K8s + IaC)
- *   4. Attention Needed — failures, drift, unhealthy clusters, offline operators
- *   5. Projects + Clusters (side by side) — clusters enriched with BNK data
- *   6. Stats row — health ring + stat cards (includes Operators count)
- *   7. Activity feed — recent operations
- *   8. Blueprints — demoted to bottom, more compact
- *
- * Sub-components in components/dashboard/:
- *   HealthRing, StatCard, ActiveOperationCard, AttentionCard, ActivityItem, SectionHeader
+ * Updated: Replaced static health scoring ring, recent operations, and blueprint catalog
+ * with Hero Omnisearch (multi-cloud FQDN / ingress / host / cluster / project search)
+ * and an interactive Multi-Cloud Estate View grouped by cloud provider (AWS, Azure, GKE, Bare Metal, IBM).
  */
 
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { SectionCard } from '@/components/ui/section-card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
-import { useDeploymentStats, useRecentDeployments } from '@/hooks/useDeployments';
+import { useRecentDeployments } from '@/hooks/useDeployments';
 import { useProjects } from '@/hooks/useProjects';
 import { useGlobalDriftSummary, useRecentDrifted, useProjectDriftCounts, useGlobalDriftCount } from '@/hooks/useDrift';
 import { useTasks } from '@/hooks/useTasks';
 import { useAllClusters } from '@/hooks/useK8s';
-import { useStackTemplates } from '@/hooks/useStacks';
 import { useFleetHealth, useFleetTargets, useFleetRollups } from '@/hooks/useFleet';
-import { ClusterStatusBadge } from '@/components/ui/ClusterStatusBadge';
 import { useConnectivity } from '@/hooks/useConnectivity';
 import { reachabilityKey } from '@/lib/api/connectivity';
 import { cn } from '@/lib/utils';
 import { formatTimeAgo } from '@/lib/time-utils';
 import { DISPLAY_LIMITS } from '@/lib/constants';
-import { calculateHealthScore } from '@/lib/health-utils';
-import { StackDetailDialog } from '@/components/stacks/StackDetailDialog';
 import { AddClusterFlowDialog } from '@/components/k8s/AddClusterFlowDialog';
-import { SSHConnectivityBadge } from '@/components/ui/SSHConnectivityBadge';
 import {
-  HealthRing,
-  StatCard,
   ActiveOperationCard,
   AttentionCard,
-  ActivityItem,
   SectionHeader,
   ValueJourneyBanner,
+  HeroOmniSearch,
+  MultiCloudEstate,
 } from '@/components/dashboard';
 import type { AttentionItem as AttentionItemType } from '@/components/dashboard';
 import {
@@ -60,32 +42,20 @@ import {
   policyStateFromRollup,
 } from '@/components/fleet/FleetTrafficLights';
 import {
-  Activity,
   AlertTriangle,
   ArrowRight,
   ArrowUpRight,
-  Box,
   CheckCircle2,
   Clock,
   Flag,
-  FolderGit2,
   GitCompare,
-  Globe,
-  Layers,
-  Package,
   Rocket,
   Server,
-  Shield,
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  getCloudProviderBadgeInfo,
-  getClusterLocationInfo,
-  getProjectLocationInfo,
-} from '@/lib/aws-regions';
-import type { FleetOperatorHealth, FleetOperatorStatus, FleetRollup } from '@/types/fleet';
+import { useNavigate } from 'react-router-dom';
+import type { FleetOperatorHealth, FleetRollup } from '@/types/fleet';
 
 // ============================================================================
 // Helpers
@@ -98,66 +68,27 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-const blueprintCategoryIcons: Record<string, React.ElementType> = {
-  infrastructure: Server,
-  bnk: Shield,
-  solution: Rocket,
-  custom: Package,
-};
-
-/** Token-pure status dot color for fleet operator status */
-function getFleetStatusDot(status: FleetOperatorStatus): string {
-  switch (status) {
-    case 'healthy': return 'bg-success';
-    case 'warning': return 'bg-warning';
-    case 'critical': return 'bg-destructive';
-    case 'offline': return 'bg-muted-foreground';
-    default: return 'bg-muted-foreground';
-  }
-}
-
-/** Token-pure text color for fleet operator status */
-function getFleetStatusText(status: FleetOperatorStatus): string {
-  switch (status) {
-    case 'healthy': return 'text-success';
-    case 'warning': return 'text-warning';
-    case 'critical': return 'text-destructive';
-    case 'offline': return 'text-muted-foreground';
-    default: return 'text-muted-foreground';
-  }
-}
-
 // ============================================================================
 // Main Dashboard Component
 // ============================================================================
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [selectedBlueprintSlug, setSelectedBlueprintSlug] = useState('');
-  const [blueprintDialogOpen, setBlueprintDialogOpen] = useState(false);
   const [showAddCluster, setShowAddCluster] = useState(false);
 
   const { refresh, isRefreshing } = usePageRefresh();
 
   // --- Data fetching ---
-  const { data: stats, isLoading: statsLoading } = useDeploymentStats();
   const { data: recentDeployments } = useRecentDeployments(10);
   const { data: projects, isLoading: projectsLoading, isError: projectsError, error: projectsErrorData, refetch: refetchProjects } = useProjects();
-  const { data: driftSummary } = useGlobalDriftSummary();
+  useGlobalDriftSummary();
   const { data: recentDrifted } = useRecentDrifted(6);
   const driftCount = useGlobalDriftCount();
   const projectDriftCounts = useProjectDriftCounts(20);
   const { data: tasksData } = useTasks({ limit: 10 });
   const { data: clustersData, isLoading: clustersLoading } = useAllClusters();
-  // Read the connectivity registry once so per-cluster lookups in the .map()
-  // below don't violate hooks-in-loops. Used to flag "stale-but-was-healthy"
-  // clusters: when reachability is offline but fleet last reported healthy,
-  // we render amber + "<status> Xm ago" instead of a misleading green pill.
   const { states: connectivityStates } = useConnectivity();
-  const { data: blueprints } = useStackTemplates({ is_featured: true });
-  // Fleet health (operator-level) — still used for Clusters section enrichment + Attention
   const { data: fleetHealth } = useFleetHealth();
-  // Fleet entity model — D-022 P6: Command Center leads with actual fleets + conformance
   const { data: fleetTargets, isLoading: fleetsLoading } = useFleetTargets();
   const fleetTargetIds = useMemo(() => fleetTargets?.map((t) => t.id) ?? [], [fleetTargets]);
   const { data: fleetRollupList } = useFleetRollups(fleetTargetIds);
@@ -166,31 +97,14 @@ export default function Dashboard() {
     return new Map(fleetRollupList.map((r) => [r.fleet_id, r]));
   }, [fleetRollupList]);
 
-  const dashboardBlueprints = useMemo(() => {
-    if (!blueprints || blueprints.length === 0) return [];
-    const featured = blueprints.filter((b) => b.is_featured);
-    return featured.length > 0 ? featured.slice(0, 4) : blueprints.slice(0, 4);
-  }, [blueprints]);
-
-  const healthScore = calculateHealthScore({
-    totalModules: stats?.activeModules || 0,
-    deployedModules: stats?.deployedModules || 0,
-    failedModules: stats?.failedModules || 0,
-    driftedModules: driftSummary?.modules_with_drift || 0,
-  });
-
   const projectCount = projects?.length || 0;
   const clusterCount = clustersData?.clusters?.length || 0;
 
-  // Fleet health derived data (operator-level — used for Clusters enrichment + Attention section)
+  // Fleet health derived data
   const fleetTotal = fleetHealth?.total_clusters || 0;
   const fleetCritical = fleetHealth?.critical || 0;
   const fleetOperators = useMemo(() => fleetHealth?.operators || [], [fleetHealth?.operators]);
 
-  // Stale-healthy reconciliation: clusters the operator last reported as
-  // healthy but that forge can't currently reach. They should NOT count as
-  // healthy — we have no way to verify right now. Move them to a separate
-  // "stale" bucket so the green count is honest.
   const fleetStaleHealthy = useMemo(() => {
     if (!fleetHealth?.operators) return 0;
     return fleetHealth.operators.filter((op) => {
@@ -201,7 +115,6 @@ export default function Dashboard() {
   }, [fleetHealth?.operators, connectivityStates]);
   const fleetHealthy = Math.max(0, (fleetHealth?.healthy || 0) - fleetStaleHealthy);
 
-  // Create a map of cluster_name -> fleet health for enriching cluster cards
   const fleetByCluster = useMemo(() => {
     const map: Record<string, FleetOperatorHealth> = {};
     fleetOperators.forEach((op) => {
@@ -210,12 +123,10 @@ export default function Dashboard() {
     return map;
   }, [fleetOperators]);
 
-  // Unhealthy clusters for attention section
   const unhealthyClusters = useMemo(() => {
     return fleetOperators.filter(op => op.status === 'critical' || op.status === 'warning');
   }, [fleetOperators]);
 
-  // Offline operators for attention section
   const offlineOperators = useMemo(() => {
     return fleetOperators.filter(op => op.status === 'offline');
   }, [fleetOperators]);
@@ -249,31 +160,11 @@ export default function Dashboard() {
     });
   }, [recentDeployments, projects]);
 
-  // Total attention count: failures + drift + unhealthy clusters + offline operators
   const totalAttentionCount = attentionItems.length
     + (recentDrifted?.length || 0)
     + unhealthyClusters.length
     + offlineOperators.length;
 
-  const recentActivity = useMemo(() => {
-    return tasksData?.tasks?.slice(0, DISPLAY_LIMITS.RECENT_ACTIVITY).map(task => {
-      const statusMap: Record<string, 'success' | 'progress' | 'failed'> = {
-        completed: 'success',
-        in_progress: 'progress',
-        failed: 'failed',
-        queued: 'progress',
-      };
-      return {
-        action: task.task_type.charAt(0).toUpperCase() + task.task_type.slice(1),
-        module: task.module_name || 'Project',
-        project: task.project_name || 'Unknown',
-        time: formatTimeAgo(task.created_at),
-        status: statusMap[task.status] || ('progress' as const),
-      };
-    }) || [];
-  }, [tasksData]);
-
-  // Fleet conformance subtitle — D-022 P6: lead with fleet entity model
   const fleetSubtitleText = useMemo(() => {
     if (!fleetTargets || fleetTargets.length === 0) return null;
     const total = fleetTargets.length;
@@ -292,7 +183,6 @@ export default function Dashboard() {
     return `${total} fleet${total !== 1 ? 's' : ''} · ${healthy} healthy`;
   }, [fleetTargets, fleetRollupList]);
 
-  // Subtitle line: prioritize active ops / fleet conformance, then fallback
   const subtitleText = useMemo(() => {
     if (activeOps.length > 0) {
       return `${activeOps.length} operation${activeOps.length > 1 ? 's' : ''} in progress`;
@@ -310,17 +200,12 @@ export default function Dashboard() {
     return `${projectCount} project${projectCount !== 1 ? 's' : ''} · ${clusterCount} cluster${clusterCount !== 1 ? 's' : ''}`;
   }, [activeOps, fleetSubtitleText, fleetCritical, fleetHealthy, fleetTotal, driftCount, projectCount, clusterCount]);
 
-  // ========================================================================
-  // K8s-first layout
-  // ========================================================================
-
   if (projectsError) {
     return <ErrorState error={projectsErrorData} onRetry={refetchProjects} />;
   }
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto" data-onboarding="dashboard">
-
       {/* 1. PAGE HEADER */}
       <PageHeader
         title={getGreeting()}
@@ -345,10 +230,16 @@ export default function Dashboard() {
         }
       />
 
-      {/* 1b. VALUE JOURNEY — GAP-004 */}
+      {/* 1b. VALUE JOURNEY */}
       <ValueJourneyBanner />
 
-      {/* 2. FLEETS OVERVIEW — D-022 P6: fleet-entity model (conformance + attention-needed) */}
+      {/* 2. HERO OMNISEARCH — Instant FQDN, Ingress, VIP, Cluster, and Project jumping */}
+      <HeroOmniSearch
+        projects={projects || []}
+        clusters={clustersData?.clusters || []}
+      />
+
+      {/* 3. FLEETS OVERVIEW — Fleet entity model conformance */}
       {(fleetsLoading || (fleetTargets && fleetTargets.length > 0)) && (
         <SectionCard>
           <div className="flex items-center justify-between mb-4">
@@ -373,12 +264,10 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Estate summary — conformance headline */}
               {fleetRollupList && fleetRollupList.length > 0 && (
                 <EstateSummaryBar rollups={fleetRollupList} />
               )}
 
-              {/* Fleets needing attention — red/amber health, policy, or ops */}
               {(() => {
                 const attention = (fleetTargets ?? []).filter((t) => {
                   const r = fleetRollupById.get(t.id);
@@ -387,7 +276,6 @@ export default function Dashboard() {
                   const ps = policyStateFromRollup(r);
                   return hs === 'red' || hs === 'amber' || ps === 'red' || r.ops_state === 'red';
                 }).sort((a, b) => {
-                  // Worst-first: red > amber
                   const score = (id: number) => {
                     const r = fleetRollupById.get(id);
                     if (!r) return 0;
@@ -453,54 +341,6 @@ export default function Dashboard() {
                         </Link>
                       );
                     })}
-                    {attention.length > 5 && (
-                      <Link to="/fleet" className="block text-xs text-primary hover:text-primary/80 px-1 py-1">
-                        +{attention.length - 5} more fleets need attention
-                      </Link>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* All fleets compact summary — shown when rollups available */}
-              {fleetTargets && fleetTargets.length > 0 && fleetRollupList && fleetRollupList.length > 0 && (() => {
-                const allGreen = fleetTargets.every((t) => {
-                  const r = fleetRollupById.get(t.id);
-                  if (!r) return true;
-                  return healthStateFromRollup(r) === 'green' && policyStateFromRollup(r) !== 'red' && r.ops_state !== 'red';
-                });
-                if (allGreen) return null; // already shown "All fleets healthy"
-
-                // Show remaining fleets not in the attention list as compact chips
-                const attentionIds = new Set(
-                  (fleetTargets).filter((t) => {
-                    const r = fleetRollupById.get(t.id);
-                    if (!r) return false;
-                    const hs = healthStateFromRollup(r);
-                    const ps = policyStateFromRollup(r);
-                    return hs === 'red' || hs === 'amber' || ps === 'red' || r.ops_state === 'red';
-                  }).map((t) => t.id)
-                );
-                const greenFleets = fleetTargets.filter((t) => !attentionIds.has(t.id));
-                if (greenFleets.length === 0) return null;
-
-                return (
-                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border">
-                    {greenFleets.slice(0, 6).map((t) => (
-                      <Link key={t.id} to={`/fleet?fleet=${t.id}`}>
-                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-border text-xs text-muted-foreground hover:border-primary/30 hover:text-foreground transition-colors">
-                          <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                          {t.name}
-                        </span>
-                      </Link>
-                    ))}
-                    {greenFleets.length > 6 && (
-                      <Link to="/fleet">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full border border-border text-xs text-muted-foreground hover:text-foreground transition-colors">
-                          +{greenFleets.length - 6} more
-                        </span>
-                      </Link>
-                    )}
                   </div>
                 );
               })()}
@@ -509,7 +349,7 @@ export default function Dashboard() {
         </SectionCard>
       )}
 
-      {/* 3. ACTIVE OPERATIONS */}
+      {/* 4. ACTIVE OPERATIONS */}
       {activeOps.length > 0 && (
         <SectionCard>
           <SectionHeader icon={Zap} title="Active Operations" count={activeOps.length} />
@@ -521,7 +361,7 @@ export default function Dashboard() {
         </SectionCard>
       )}
 
-      {/* 4. ATTENTION NEEDED — now includes unhealthy clusters + offline operators */}
+      {/* 5. ATTENTION NEEDED */}
       {totalAttentionCount > 0 && (
         <SectionCard className="border-warning/30">
           <div className="flex items-center gap-2 mb-4">
@@ -531,39 +371,97 @@ export default function Dashboard() {
               {totalAttentionCount}
             </Badge>
           </div>
-          <div>
-            <div className="space-y-2">
-              {/* K8S-UX-009: Unhealthy clusters */}
-              {unhealthyClusters.map((op) => (
-                <Link key={`cluster-${op.operator_id}`} to="/fleet">
+          <div className="space-y-2">
+            {/* Unhealthy clusters */}
+            {unhealthyClusters.map((op) => (
+              <Link key={`cluster-${op.operator_id}`} to="/fleet">
+                <div className={cn(
+                  'flex items-center gap-3 p-4 rounded-xl border transition-all hover:shadow-sm',
+                  op.status === 'critical'
+                    ? 'border-destructive/20 hover:border-destructive/30'
+                    : 'border-warning/20 hover:border-warning/30'
+                )}>
                   <div className={cn(
-                    'flex items-center gap-3 p-4 rounded-xl border transition-all hover:shadow-sm',
-                    op.status === 'critical'
-                      ? 'border-destructive/20 hover:border-destructive/30'
-                      : 'border-warning/20 hover:border-warning/30'
+                    'p-2 rounded-lg',
+                    op.status === 'critical' ? 'bg-destructive/10' : 'bg-warning/10'
                   )}>
-                    <div className={cn(
-                      'p-2 rounded-lg',
-                      op.status === 'critical' ? 'bg-destructive/10' : 'bg-warning/10'
-                    )}>
-                      <Server className={cn(
-                        'h-5 w-5',
-                        op.status === 'critical' ? 'text-destructive' : 'text-warning'
-                      )} />
+                    <Server className={cn(
+                      'h-5 w-5',
+                      op.status === 'critical' ? 'text-destructive' : 'text-warning'
+                    )} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="font-semibold text-sm text-foreground">
+                        {op.cluster_name}
+                      </span>
+                      <Badge variant={op.status === 'critical' ? 'destructive' : 'warning'} className="text-[10px]">
+                        {op.status}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {op.bnk_version && (
+                        <span className="text-xs text-muted-foreground">BNK {op.bnk_version}</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {op.health_summary.healthy} healthy · {op.health_summary.warning} warning · {op.health_summary.critical} critical
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+
+            {/* Offline operators */}
+            {offlineOperators.map((op) => (
+              <Link key={`offline-${op.operator_id}`} to="/fleet?tab=operators">
+                <div className="flex items-center gap-3 p-4 rounded-xl border border-border hover:border-border/80 hover:shadow-sm transition-all">
+                  <div className="p-2 rounded-lg bg-muted">
+                    <WifiOff className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-semibold text-sm text-foreground">
+                      {op.cluster_name}
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Operator offline — last seen {op.last_seen ? formatTimeAgo(op.last_seen) : 'never'}
+                    </p>
+                  </div>
+                </div>
+              </Link>
+            ))}
+
+            {/* Per-module drift items */}
+            {recentDrifted && recentDrifted.length > 0 && recentDrifted.map((driftItem) => {
+              const totalChanges = driftItem.resource_changes
+                ? driftItem.resource_changes.add + driftItem.resource_changes.change + driftItem.resource_changes.destroy
+                : 0;
+              return (
+                <div
+                  key={`drift-${driftItem.id}`}
+                  className="p-4 rounded-xl border border-warning/20 hover:border-warning/30 transition-all hover:shadow-sm group"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-warning/10">
+                      <GitCompare className="h-5 w-5 text-warning" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-semibold text-sm text-foreground">
-                          {op.cluster_name}
+                          {driftItem.module_name}
                         </span>
-                        <Badge variant={op.status === 'critical' ? 'destructive' : 'warning'} className="text-[10px]">
-                          {op.status}
-                        </Badge>
+                        <span className="text-border">·</span>
+                        <span className="text-sm text-muted-foreground">
+                          {driftItem.project_name}
+                        </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        {op.bnk_version && (
-                          <span className="text-xs text-muted-foreground">BNK {op.bnk_version}</span>
+                        {totalChanges > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            {totalChanges} resource{totalChanges !== 1 ? 's' : ''} changed
+                          </span>
                         )}
+<<<<<<< HEAD
                         <span className="text-xs text-muted-foreground">
                           {op.health_summary.healthy} healthy · {op.health_summary.warning} warning · {op.health_summary.critical} critical
                         </span>
@@ -764,15 +662,16 @@ export default function Dashboard() {
                           >
                             <GitCompare className="h-3 w-3" />
                             {projectDriftCounts[project.id]}
+=======
+                        {driftItem.last_check_at && (
+                          <span className="text-xs flex items-center gap-1 text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            {formatTimeAgo(driftItem.last_check_at)}
+>>>>>>> abb84b2 (feat(ux): streamline multi-cloud estate, global omni-search, and bnk topology views)
                           </span>
                         )}
-                        <SSHConnectivityBadge
-                          variant="compact"
-                          credentialId={project.ssh_credential_id}
-                          label={project.ssh_credential?.name}
-                        />
-                        <ArrowRight className="h-3.5 w-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground" />
                       </div>
+<<<<<<< HEAD
                     </Link>
                   );
                 })}
@@ -982,33 +881,44 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2.5">
                     <div className="p-1.5 rounded-lg bg-primary/10">
                       <CatIcon className="h-4 w-4 text-primary" />
+=======
+>>>>>>> abb84b2 (feat(ux): streamline multi-cloud estate, global omni-search, and bnk topology views)
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-medium text-sm truncate text-foreground group-hover:text-primary transition-colors">
-                        {blueprint.name}
-                      </h4>
-                      <p className="text-xs truncate text-muted-foreground">
-                        {blueprint.description}
-                      </p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-warning hover:text-warning/80 hover:bg-warning/10 h-7 text-xs"
+                        onClick={() => navigate(`/projects/${driftItem.project_id}?tab=drift`)}
+                      >
+                        Review Changes
+                      </Button>
                     </div>
-                    <Badge variant="muted" className="text-[10px] flex-shrink-0">
-                      {blueprint.cloud_provider?.toUpperCase() || 'Any'}
-                    </Badge>
                   </div>
                 </div>
               );
             })}
+
+            {attentionItems.map((item) => (
+              <AttentionCard key={item.id} item={item} />
+            ))}
           </div>
         </SectionCard>
       )}
 
-      {/* Dialogs */}
-      <StackDetailDialog
-        slug={selectedBlueprintSlug}
-        open={blueprintDialogOpen}
-        onOpenChange={setBlueprintDialogOpen}
-        onSuccess={(projectId) => navigate(`/projects/${projectId}`)}
+      {/* 6. MULTI-CLOUD ESTATE VIEW — Grouped clusters & OpenTofu projects */}
+      <MultiCloudEstate
+        projects={projects || []}
+        clusters={clustersData?.clusters || []}
+        projectsLoading={projectsLoading}
+        clustersLoading={clustersLoading}
+        fleetByCluster={fleetByCluster}
+        connectivityStates={connectivityStates}
+        projectDriftCounts={projectDriftCounts}
+        onAddCluster={() => setShowAddCluster(true)}
       />
+
+      {/* Add Cluster Dialog */}
       <AddClusterFlowDialog open={showAddCluster} onOpenChange={setShowAddCluster} />
     </div>
   );

@@ -157,11 +157,22 @@ describe('useLlmStats', () => {
     expect(captured?.searchParams.get('status')).toBe('200');
   });
 
-  it('does not fetch when cluster is undefined', async () => {
+  it('fetches fleet aggregate when cluster is undefined', async () => {
+    let captured: URL | undefined;
+    server.use(
+      http.get('*/api/k8s/llm-observability/stats', ({ request }) => {
+        captured = new URL(request.url);
+        return HttpResponse.json(statsResponse);
+      }),
+    );
+
     const { result } = renderHook(() => useLlmStats(undefined, { range: '1h' }), {
       wrapper: createWrapper(),
     });
-    expect(result.current.fetchStatus).toBe('idle');
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.total_requests).toBe(1234);
+    expect(captured?.searchParams.get('range')).toBe('1h');
   });
 });
 

@@ -34,8 +34,8 @@ export function useLlmStats(
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.stats(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getStats(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getStats(clusterId, params),
+    enabled,
     placeholderData: (prev) => prev,
   });
 }
@@ -47,8 +47,8 @@ export function useLlmHistogram(
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.histogram(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getHistogram(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getHistogram(clusterId, params),
+    enabled,
     placeholderData: (prev) => prev,
   });
 }
@@ -60,8 +60,8 @@ export function useLlmRankings(
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.rankings(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getRankings(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getRankings(clusterId, params),
+    enabled,
     placeholderData: (prev) => prev,
   });
 }
@@ -73,8 +73,8 @@ export function useLlmProviderUsage(
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.providerUsage(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getProviderUsage(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getProviderUsage(clusterId, params),
+    enabled,
     placeholderData: (prev) => prev,
   });
 }
@@ -87,8 +87,8 @@ export function useLlmLogs(
   const enabled = options?.enabled ?? true;
   return useQuery({
     queryKey: queryKeys.llmObservability.logs(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getLogs(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getLogs(clusterId, params),
+    enabled,
     refetchInterval: options?.live ? POLL_INTERVALS.STANDARD : false,
   });
 }
@@ -96,7 +96,7 @@ export function useLlmLogs(
 export function useLlmFilterData(clusterId: number | undefined, range: LlmObservabilityParams['range']) {
   return useQuery({
     queryKey: queryKeys.llmObservability.filterData(clusterId ?? 0, keyParams({ range })),
-    queryFn: () => llmObservabilityApi.getFilterData(clusterId!, { range }),
-    enabled: !!clusterId,
+    queryFn: () => llmObservabilityApi.getFilterData(clusterId, { range }),
+    enabled: true,
   });
 }
