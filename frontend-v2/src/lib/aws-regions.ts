@@ -162,7 +162,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       label: 'Amazon Web Services',
       shortLabel: 'AWS',
       badgeVariant: 'outline',
-      badgeClass: 'border-amber-500/40 text-amber-500 bg-amber-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+      badgeClass: 'border-warning/40 text-warning bg-warning/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
   if (p === 'gcp' || p === 'gke' || p === 'google') {
@@ -171,7 +171,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       label: 'Google Cloud Platform (GKE)',
       shortLabel: 'GKE',
       badgeVariant: 'outline',
-      badgeClass: 'border-blue-500/40 text-blue-500 bg-blue-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+      badgeClass: 'border-primary/40 text-primary bg-primary/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
   if (p === 'azure' || p === 'aks') {
@@ -180,7 +180,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       label: 'Microsoft Azure (AKS)',
       shortLabel: 'AZR',
       badgeVariant: 'outline',
-      badgeClass: 'border-sky-500/40 text-sky-500 bg-sky-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+      badgeClass: 'border-accent/40 text-accent bg-accent/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
   if (p === 'ibm' || p === 'roks' || p === 'ibmcloud') {
@@ -189,7 +189,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       label: 'IBM Cloud (ROKS)',
       shortLabel: 'IBM',
       badgeVariant: 'outline',
-      badgeClass: 'border-indigo-500/40 text-indigo-500 bg-indigo-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+      badgeClass: 'border-secondary text-secondary-foreground bg-secondary/30 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
   if (p === 'on-prem' || p === 'bare-metal' || p === 'metal') {
@@ -198,7 +198,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       label: 'Bare-Metal / On-Premises',
       shortLabel: 'METAL',
       badgeVariant: 'outline',
-      badgeClass: 'border-emerald-500/40 text-emerald-500 bg-emerald-500/10 font-semibold text-[10px] px-1.5 py-0.5',
+      badgeClass: 'border-success/40 text-success bg-success/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
   return {
