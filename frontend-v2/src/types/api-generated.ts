@@ -4873,6 +4873,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud-auth/azure/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Azure Regions
+         * @description List Azure regions in the canonical {value, label} shape.
+         */
+        get: operations["list_azure_regions_api_cloud_auth_azure_regions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud-auth/ibm/cos-instances/query": {
         parameters: {
             query?: never;
@@ -5046,6 +5066,66 @@ export interface paths {
          * @description Remove AWS credentials from a project
          */
         delete: operations["delete_project_aws_credentials_api_cloud_auth_aws_credentials__project_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud-auth/azure/sso/initiate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Initiate Azure Sso
+         * @description Initiate Azure Entra ID device code authorization flow.
+         */
+        post: operations["initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud-auth/azure/sso/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Azure Sso
+         * @description Poll Azure Entra ID token endpoint for device code completion.
+         */
+        post: operations["poll_azure_sso_api_cloud_auth_azure_sso_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud-auth/azure/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Azure Subscriptions
+         * @description List Azure subscriptions accessible by the access token.
+         */
+        post: operations["list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -12699,6 +12779,46 @@ export interface components {
             };
         };
         /**
+         * AzureSSOInitiateRequest
+         * @description Request model for initiating Azure SSO device authorization
+         */
+        AzureSSOInitiateRequest: {
+            /**
+             * Tenant Id
+             * @default common
+             */
+            tenant_id: string | null;
+            /** Client Id */
+            client_id?: string | null;
+            /** Template Id */
+            template_id?: number | null;
+        };
+        /**
+         * AzureSSOPollRequest
+         * @description Request model for polling Azure SSO token
+         */
+        AzureSSOPollRequest: {
+            /** Device Code */
+            device_code: string;
+            /**
+             * Tenant Id
+             * @default common
+             */
+            tenant_id: string | null;
+            /** Client Id */
+            client_id?: string | null;
+            /** Template Id */
+            template_id?: number | null;
+        };
+        /**
+         * AzureSubscriptionsRequest
+         * @description Request model for listing Azure subscriptions
+         */
+        AzureSubscriptionsRequest: {
+            /** Access Token */
+            access_token: string;
+        };
+        /**
          * BackupCreateRequest
          * @description Request to create a backup archive.
          */
@@ -15652,10 +15772,16 @@ export interface components {
             gcp_credentials?: string | null;
             /** Gcp Project Id */
             gcp_project_id?: string | null;
+            /** Azure Auth Method */
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
             azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /** Azure Client Secret */
+            azure_client_secret?: string | null;
             /** Azure Credentials */
             azure_credentials?: string | null;
             /** Ibmcloud Api Key */
@@ -15736,12 +15862,28 @@ export interface components {
             gcp_project_id: string | null;
             /** Has Gcp Credentials */
             has_gcp_credentials: boolean;
+            /** Azure Auth Method */
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
-            azure_subscription_id: string | null;
+            azure_subscription_id?: string | null;
             /** Azure Tenant Id */
-            azure_tenant_id: string | null;
-            /** Has Azure Credentials */
+            azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /**
+             * Has Azure Client Secret
+             * @default false
+             */
+            has_azure_client_secret: boolean;
+            /**
+             * Has Azure Credentials
+             * @default false
+             */
             has_azure_credentials: boolean;
+            /** Azure Sso Authenticated At */
+            azure_sso_authenticated_at?: string | null;
+            /** Azure Sso Token Expiry */
+            azure_sso_token_expiry?: string | null;
             /** Has Ibmcloud Api Key */
             has_ibmcloud_api_key: boolean;
             /** Ibmcloud Resource Group */
@@ -15846,10 +15988,16 @@ export interface components {
             gcp_credentials?: string | null;
             /** Gcp Project Id */
             gcp_project_id?: string | null;
+            /** Azure Auth Method */
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
             azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /** Azure Client Secret */
+            azure_client_secret?: string | null;
             /** Azure Credentials */
             azure_credentials?: string | null;
             /** Ibmcloud Api Key */
@@ -31280,6 +31428,26 @@ export interface operations {
             };
         };
     };
+    list_azure_regions_api_cloud_auth_azure_regions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudRegionsResponse"];
+                };
+            };
+        };
+    };
     query_ibm_cos_instances_api_cloud_auth_ibm_cos_instances_query_post: {
         parameters: {
             query?: never;
@@ -31552,6 +31720,105 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSSOInitiateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_azure_sso_api_cloud_auth_azure_sso_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSSOPollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSubscriptionsRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
