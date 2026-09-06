@@ -603,7 +603,7 @@ def delete_project_aws_credentials(project_id: int, db: Session = Depends(get_db
 
 @router.post("/azure/sso/initiate")
 @handle_route_errors("initiate Azure SSO authentication")
-def initiate_azure_sso(request: AzureSSOInitiateRequest, db: Session = Depends(get_db)):
+def initiate_azure_sso(request: AzureSSOInitiateRequest):
     """Initiate Azure Entra ID device code authorization flow."""
     from services.azure_auth_service import AzureAuthService
     service = AzureAuthService()
@@ -616,7 +616,7 @@ def initiate_azure_sso(request: AzureSSOInitiateRequest, db: Session = Depends(g
 
 @router.post("/azure/sso/poll")
 @handle_route_errors("poll Azure SSO authentication")
-def poll_azure_sso(request: AzureSSOPollRequest, db: Session = Depends(get_db)):
+def poll_azure_sso(request: AzureSSOPollRequest):
     """Poll Azure Entra ID token endpoint for device code completion."""
     from services.azure_auth_service import AzureAuthService
     service = AzureAuthService()
