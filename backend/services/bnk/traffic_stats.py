@@ -322,9 +322,12 @@ def _fetch_configview_mappings(
         executor = _get_tmm_configview_executor()
         futures = [executor.submit(_probe_uuid, uuid) for uuid in uuids]
         for future in futures:
-            result = future.result()
-            if result:
-                mappings.append(result)
+            try:
+                result = future.result(timeout=timeout)
+                if result:
+                    mappings.append(result)
+            except Exception:
+                logger.debug("configview probe future failed or timed out", exc_info=True)
     except Exception:
         logger.debug("configview list probe failed", exc_info=True)
 
