@@ -412,23 +412,31 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
                 CloudCredentialTemplate.id == project.credential_template_id
             ).first()
 
-        if not template or template.provider != "azure" or not template.azure_credentials_encrypted:
+        if not template or template.provider != "azure":
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "azure",
                 CloudCredentialTemplate.is_default.is_(True),
             ).first()
 
-    if template and template.provider == "azure" and template.azure_credentials_encrypted and template.azure_tenant_id:
-        creds_json = _decrypt_credential(template.azure_credentials_encrypted, "Azure credentials")
-        if creds_json:
-            try:
-                creds = json.loads(creds_json)
-                client_id = creds.get("client_id") or creds.get("clientId")
-                client_secret = creds.get("client_secret") or creds.get("clientSecret")
-                if client_id and client_secret:
-                    return (template.azure_tenant_id, client_id, client_secret)
-            except json.JSONDecodeError as e:
-                logger.error(f"Azure credentials for template '{template.name}' are not valid JSON: {e}")
+    if template and template.provider == "azure" and template.azure_tenant_id:
+        # Check discrete fields first (PR 207 / modern UI)
+        if getattr(template, "azure_client_id", None) and getattr(template, "azure_client_secret_encrypted", None):
+            secret = _decrypt_credential(template.azure_client_secret_encrypted, "Azure client secret")
+            if secret:
+                return (template.azure_tenant_id, template.azure_client_id, secret)
+
+        # Fallback to legacy JSON blob
+        if getattr(template, "azure_credentials_encrypted", None):
+            creds_json = _decrypt_credential(template.azure_credentials_encrypted, "Azure credentials")
+            if creds_json:
+                try:
+                    creds = json.loads(creds_json)
+                    client_id = creds.get("client_id") or creds.get("clientId")
+                    client_secret = creds.get("client_secret") or creds.get("clientSecret")
+                    if client_id and client_secret:
+                        return (template.azure_tenant_id, client_id, client_secret)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Azure credentials for template '{template.name}' are not valid JSON: {e}")
 
     # Fallback to environment variables
     env_tenant = os.getenv("AZURE_TENANT_ID") or os.getenv("ARM_TENANT_ID")

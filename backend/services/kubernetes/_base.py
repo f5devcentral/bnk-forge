@@ -357,19 +357,7 @@ class KubernetesServiceBase:
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
             session = requests.Session()
-            try:
-                credentials.refresh(Request(session=session))
-            except Exception as ssl_err:
-                err_str = str(ssl_err).lower()
-                if "certificate verify failed" in err_str or "ssl" in err_str:
-                    logger.warning(
-                        "Retrying GCP token refresh without SSL verification due to certificate proxy interception: %s",
-                        ssl_err,
-                    )
-                    session.verify = False
-                    credentials.refresh(Request(session=session))
-                else:
-                    raise
+            credentials.refresh(Request(session=session))
 
             token = credentials.token
             if token and client_email:
@@ -397,7 +385,9 @@ class KubernetesServiceBase:
 
         from services.azure_oauth_service import request_azure_oauth_token
 
-        aks_aad_server_app_id = "6dae42f8-4368-4678-94ff-776099604563"
+        # Microsoft AKS Azure AD Server Application ID
+        # Authority: https://learn.microsoft.com/en-us/azure/aks/azure-ad-integration-cli
+        aks_aad_server_app_id = "6dae42f8-4368-4678-94ff-3960e28e3630"
         try:
             token_data = request_azure_oauth_token(
                 tenant_id=tenant_id,
