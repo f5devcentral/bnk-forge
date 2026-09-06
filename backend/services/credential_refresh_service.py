@@ -264,11 +264,15 @@ class CredentialRefreshService:
                 return False
 
             now_utc = datetime.now(UTC)
-            time_until_expiry = template.azure_sso_token_expiry - now_utc
+            expiry = template.azure_sso_token_expiry
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
 
-            # Check for 24-hour warning
+            time_until_expiry = expiry - now_utc
+
+            # Check for 24-hour warning (only once when within window)
             hours_until_expiry = time_until_expiry.total_seconds() / 3600
-            if 23 < hours_until_expiry < 25:
+            if 23.5 < hours_until_expiry <= 24.0:
                 self._create_notification(
                     db,
                     title="Azure SSO Credentials Expiring in 24 Hours",
