@@ -35,7 +35,7 @@ class TestGenerateAzureToken:
                     "grant_type": "client_credentials",
                     "client_id": client_id,
                     "client_secret": client_secret,
-                    "scope": "6dae42f8-4368-4678-94ff-776099604563/.default",
+                    "scope": "6dae42f8-4368-4678-94ff-3960e28e3630/.default",
                 },
                 timeout=15,
             )

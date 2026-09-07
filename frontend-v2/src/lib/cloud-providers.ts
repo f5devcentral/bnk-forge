@@ -38,7 +38,6 @@ export function cleanNameForMatching(name: string): string {
     .replace(/^(aws|azr|gke|ibm|metal|gcp|k8s)-/, '')
     .trim();
 }
-
 /**
  * Get display badge metadata for a cloud provider.
  */
@@ -234,4 +233,3 @@ export function formatAvailabilityZone(zone?: string | null): string {
   }
   return trimmed;
 }
-

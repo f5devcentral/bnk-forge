@@ -80,3 +80,51 @@ class TestCredentialsServiceCloudFallbacks:
 
         result = get_azure_service_principal_info(project_without_template, db)
         assert result == ("tenant-123", "my-client-id", "my-client-secret")
+
+    def test_get_gcp_service_account_info_does_not_fall_back_when_template_id_set_to_non_gcp(self):
+        db = MagicMock()
+        non_gcp_template = CloudCredentialTemplate(
+            id=99,
+            name="aws-template",
+            provider="aws",
+            is_default=False,
+        )
+        project_with_aws_template = Project(
+            id=3,
+            name="gke-demo-mismatched",
+            cloud_provider="gcp",
+            credential_template_id=99,
+        )
+
+        query_mock = MagicMock()
+        filter_mock = MagicMock()
+        filter_mock.first.return_value = non_gcp_template
+        query_mock.filter.return_value = filter_mock
+        db.query.return_value = query_mock
+
+        result = get_gcp_service_account_info(project_with_aws_template, db)
+        assert result is None
+
+    def test_get_azure_service_principal_info_does_not_fall_back_when_template_id_set_to_non_azure(self):
+        db = MagicMock()
+        non_azure_template = CloudCredentialTemplate(
+            id=88,
+            name="gcp-template",
+            provider="gcp",
+            is_default=False,
+        )
+        project_with_gcp_template = Project(
+            id=4,
+            name="aks-demo-mismatched",
+            cloud_provider="azure",
+            credential_template_id=88,
+        )
+
+        query_mock = MagicMock()
+        filter_mock = MagicMock()
+        filter_mock.first.return_value = non_azure_template
+        query_mock.filter.return_value = filter_mock
+        db.query.return_value = query_mock
+
+        result = get_azure_service_principal_info(project_with_gcp_template, db)
+        assert result is None
