@@ -483,23 +483,23 @@ export default function F5BNK() {
     const urlCluster = searchParams.get('cluster');
     if (urlCluster) {
       const parsed = parseInt(urlCluster);
-      if (!Number.isNaN(parsed) && parsed !== selectedCluster) {
-        setSelectedCluster(parsed);
+      if (!Number.isNaN(parsed)) {
+        setSelectedCluster((prev) => (prev !== parsed ? parsed : prev));
       }
     }
     const targetViewOrResource = mapParamToViewOrResource(
       searchParams.get('view') || searchParams.get('resource') || searchParams.get('tab')
     );
-    if (targetViewOrResource && targetViewOrResource !== selectedResourceType) {
-      setSelectedResourceType(targetViewOrResource);
+    if (targetViewOrResource) {
+      setSelectedResourceType((prev) => (prev !== targetViewOrResource ? targetViewOrResource : prev));
     }
     const urlNs = searchParams.get('namespace');
-    if (urlNs && urlNs !== selectedNamespace) {
-      setSelectedNamespace(urlNs);
+    if (urlNs) {
+      setSelectedNamespace((prev) => (prev !== urlNs ? urlNs : prev));
     }
     const urlName = searchParams.get('name') || searchParams.get('search');
-    if (urlName !== null && urlName !== undefined && urlName !== searchQuery) {
-      setSearchQuery(urlName);
+    if (urlName !== null && urlName !== undefined) {
+      setSearchQuery((prev) => (prev !== urlName ? urlName : prev));
     }
   }, [searchParams]);
 
