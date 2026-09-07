@@ -361,27 +361,39 @@ class LlmObservabilityService:
             if not clusters:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.histogram(c.id, range_, metric, model, status)
+                lambda c=c: (c, self.histogram(c.id, range_, metric, model, status))
                 for c in clusters
             ])
-            valid = [r for r in results if r.get("available")]
+            valid = [(c, r) for c, r in results if r.get("available")]
             if not valid:
-                err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
+                err = next((r.get("reason") for _, r in results if r.get("reason")), "All clusters unavailable")
                 return self._unavailable(err)
-            step_s = valid[0].get("step_s", self._step_s(range_))
+            step_s = valid[0][1].get("step_s", self._step_s(range_))
+
+            if metric == "latency":
+                # For latency across all clusters, emit one line/series per cluster
+                # representing its average latency over time.
+                cluster_series = []
+                for c, r in valid:
+                    avg_s = next((s for s in r.get("series", []) if s.get("name") == "avg"), None)
+                    if not avg_s and r.get("series"):
+                        avg_s = r["series"][0]
+                    if avg_s:
+                        cluster_series.append({
+                            "name": c.name,
+                            "points": avg_s.get("points", []),
+                        })
+                return self._ok(metric=metric, step_s=step_s, series=cluster_series, errors={})
+
             series_map: dict[str, dict[str, float]] = {}
-            for r in valid:
+            for _, r in valid:
                 for s in r.get("series", []):
                     s_name = s.get("name", "")
                     if s_name not in series_map:
                         series_map[s_name] = {}
                     for p in s.get("points", []):
                         ts = p.get("ts", "")
-                        if metric == "latency":
-                            curr = series_map[s_name].get(ts, 0.0)
-                            series_map[s_name][ts] = (curr + p.get("value", 0.0)) / (2 if curr else 1)
-                        else:
-                            series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
+                        series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
             merged_series = []
             for s_name, points_dict in series_map.items():
                 points = [{"ts": ts, "value": val} for ts, val in sorted(points_dict.items())]
@@ -505,6 +517,25 @@ class LlmObservabilityService:
                 err = next((r.get("reason") for r in results if r.get("reason")), "All clusters unavailable")
                 return self._unavailable(err)
             step_s = valid[0].get("step_s", self._step_s(range_))
+            if metric == "latency":
+                series_vals: dict[str, dict[str, list[float]]] = {}
+                for r in valid:
+                    for s in r.get("series", []):
+                        s_name = s.get("name", "")
+                        if s_name not in series_vals:
+                            series_vals[s_name] = {}
+                        for p in s.get("points", []):
+                            ts = p.get("ts", "")
+                            series_vals[s_name].setdefault(ts, []).append(p.get("value", 0.0))
+                merged_series = []
+                for s_name, points_dict in series_vals.items():
+                    points = [
+                        {"ts": ts, "value": (sum(vals) / len(vals)) if vals else 0.0}
+                        for ts, vals in sorted(points_dict.items())
+                    ]
+                    merged_series.append({"name": s_name, "points": points})
+                return self._ok(metric=metric, step_s=step_s, series=merged_series, errors={})
+
             series_map: dict[str, dict[str, float]] = {}
             for r in valid:
                 for s in r.get("series", []):
@@ -513,11 +544,7 @@ class LlmObservabilityService:
                         series_map[s_name] = {}
                     for p in s.get("points", []):
                         ts = p.get("ts", "")
-                        if metric == "latency":
-                            curr = series_map[s_name].get(ts, 0.0)
-                            series_map[s_name][ts] = (curr + p.get("value", 0.0)) / (2 if curr else 1)
-                        else:
-                            series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
+                        series_map[s_name][ts] = series_map[s_name].get(ts, 0.0) + p.get("value", 0.0)
             merged_series = []
             for s_name, points_dict in series_map.items():
                 points = [{"ts": ts, "value": val} for ts, val in sorted(points_dict.items())]
@@ -707,9 +734,22 @@ class LlmObservabilityService:
             all_rows: list[dict[str, Any]] = []
             for r in valid:
                 all_rows.extend(r.get("rows", []))
-            all_rows.sort(key=lambda x: x.get("ts", ""), reverse=True)
+            all_rows.sort(key=lambda x: (x.get("ts_ns") or x.get("ts", "")), reverse=True)
             trimmed = all_rows[:limit]
-            return self._ok(rows=trimmed, next_end=None, errors={})
+            next_end = None
+            if len(all_rows) >= limit and trimmed:
+                oldest_row = trimmed[-1]
+                oldest_ns = oldest_row.get("ts_ns")
+                if oldest_ns is None and oldest_row.get("ts"):
+                    try:
+                        import datetime
+                        dt = datetime.datetime.fromisoformat(oldest_row["ts"].replace("Z", "+00:00"))
+                        oldest_ns = int(dt.timestamp() * 1_000_000_000)
+                    except Exception:
+                        pass
+                if oldest_ns is not None:
+                    next_end = str(oldest_ns - 1)
+            return self._ok(rows=trimmed, next_end=next_end, errors={})
 
         api_client = self._client(cluster_id)
         cluster = self._k8s.get_cluster(cluster_id)
@@ -765,6 +805,7 @@ class LlmObservabilityService:
             rows.append(
                 {
                     "ts": _iso(ts_ns / 1_000_000_000),
+                    "ts_ns": ts_ns,
                     "type": "success" if status.startswith("2") else "error",
                     "message": str(rec.get("userq", "")),
                     "model": model,
