@@ -552,6 +552,7 @@ All QKView endpoints accept `cluster_id` as a query parameter.
 | GET | `/api/benchmarks/agents` | viewer | — | `list[BenchmarkAgentResponse]` | List agents |
 | GET | `/api/benchmarks/agents/{id}` | viewer | — | `BenchmarkAgentResponse` | Get agent |
 | DELETE | `/api/benchmarks/agents/{id}` | public | — | 204 | Deregister agent |
+| WS | `/ws/benchmarks/agents/{id}` | JWT / agent-token | — | WebSocket | Persistent bidirectional agent connection (heartbeat, run dispatch, auto-drain on connect) |
 
 ### Analysis
 
