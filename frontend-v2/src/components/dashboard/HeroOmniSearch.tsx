@@ -18,6 +18,7 @@ import {
   getCloudProviderBadgeInfo,
   getClusterLocationInfo,
   getProjectLocationInfo,
+  normalizeProvider,
 } from '@/lib/aws-regions';
 import type { Project, K8sCluster } from '@/types';
 import type { ClusterSearchResult, ProjectSearchResult } from '@/types/search';
@@ -97,11 +98,7 @@ export function HeroOmniSearch({
   const filteredIngresses = useMemo(() => {
     const list = searchResults?.ingresses || [];
     if (filter === 'all' || filter === 'fqdn') return list;
-    if (filter === 'aws') return list.filter((i) => i.cloud_provider?.toLowerCase().includes('aws') || i.cloud_provider?.toLowerCase().includes('eks'));
-    if (filter === 'azure') return list.filter((i) => i.cloud_provider?.toLowerCase().includes('azure') || i.cloud_provider?.toLowerCase().includes('aks'));
-    if (filter === 'gke') return list.filter((i) => i.cloud_provider?.toLowerCase().includes('gcp') || i.cloud_provider?.toLowerCase().includes('gke'));
-    if (filter === 'metal') return list.filter((i) => i.cloud_provider?.toLowerCase().includes('metal') || i.cloud_provider?.toLowerCase().includes('on-prem'));
-    return list;
+    return list.filter((i) => normalizeProvider(i.cloud_provider) === filter);
   }, [searchResults?.ingresses, filter]);
 
   const filteredClusters = useMemo(() => {
@@ -135,11 +132,7 @@ export function HeroOmniSearch({
 
     const list = Array.from(combinedMap.values());
     if (filter === 'all') return list;
-    if (filter === 'aws') return list.filter((c) => c.cloud_provider?.toLowerCase().includes('aws') || c.cloud_provider?.toLowerCase().includes('eks'));
-    if (filter === 'azure') return list.filter((c) => c.cloud_provider?.toLowerCase().includes('azure') || c.cloud_provider?.toLowerCase().includes('aks'));
-    if (filter === 'gke') return list.filter((c) => c.cloud_provider?.toLowerCase().includes('gcp') || c.cloud_provider?.toLowerCase().includes('gke'));
-    if (filter === 'metal') return list.filter((c) => c.cloud_provider?.toLowerCase().includes('metal') || c.cloud_provider?.toLowerCase().includes('on-prem'));
-    return list;
+    return list.filter((c) => normalizeProvider(c.cloud_provider) === filter);
   }, [searchResults?.clusters, clusters, query, filter]);
 
   const filteredProjects = useMemo(() => {
@@ -174,11 +167,7 @@ export function HeroOmniSearch({
 
     const list = Array.from(combinedMap.values());
     if (filter === 'all') return list;
-    if (filter === 'aws') return list.filter((p) => p.cloud_provider?.toLowerCase().includes('aws'));
-    if (filter === 'azure') return list.filter((p) => p.cloud_provider?.toLowerCase().includes('azure'));
-    if (filter === 'gke') return list.filter((p) => p.cloud_provider?.toLowerCase().includes('gcp') || p.cloud_provider?.toLowerCase().includes('gke'));
-    if (filter === 'metal') return list.filter((p) => p.cloud_provider?.toLowerCase().includes('metal') || p.cloud_provider?.toLowerCase().includes('on-prem'));
-    return list;
+    return list.filter((p) => normalizeProvider(p.cloud_provider) === filter);
   }, [searchResults?.projects, projects, query, filter]);
 
   const totalResultsCount =

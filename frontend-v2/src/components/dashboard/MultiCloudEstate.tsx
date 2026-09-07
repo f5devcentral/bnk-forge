@@ -21,7 +21,9 @@ import { cn } from '@/lib/utils';
 import {
   getCloudProviderBadgeInfo,
   getClusterLocationInfo,
-} from '@/lib/aws-regions';
+  normalizeProvider,
+  cleanNameForMatching,
+} from '@/lib/cloud-providers';
 import type { Project, K8sCluster } from '@/types';
 import type { FleetOperatorHealth } from '@/types/fleet';
 
@@ -58,23 +60,6 @@ interface ProviderGroup {
   environments: EnvironmentNode[];
 }
 
-function normalizeProvider(provider?: string | null): string {
-  const p = (provider || '').toLowerCase().trim();
-  if (p === 'aws' || p === 'eks') return 'aws';
-  if (p === 'azure' || p === 'aks') return 'azure';
-  if (p === 'gcp' || p === 'gke' || p === 'google') return 'gke';
-  if (p === 'bare-metal' || p === 'on-prem' || p === 'metal' || p === 'kubernetes') return 'metal';
-  if (p === 'ibm' || p === 'roks' || p === 'ibmcloud') return 'ibm';
-  return 'other';
-}
-
-function cleanNameForMatching(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/^(aws|azr|gke|ibm|metal|gcp|k8s)bnkctl-/, '')
-    .replace(/^(aws|azr|gke|ibm|metal|gcp|k8s)-/, '')
-    .trim();
-}
 
 export function MultiCloudEstate({
   projects = [],
