@@ -85,6 +85,8 @@ export interface HealthPodDetail {
   podName: string;
   namespace: string;
   nodeName?: string | null;
+  nodeZone?: string | null;
+  nodeInstanceType?: string | null;
   hostIP?: string | null;
   phase: string;
   restartCount: number;
