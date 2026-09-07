@@ -10,6 +10,8 @@ import {
   getProjectLocationInfo,
   getCloudProviderBadgeInfo,
   getClusterLocationInfo,
+  normalizeProvider,
+  cleanNameForMatching,
 } from '../aws-regions';
 
 describe('AWS_REGIONS', () => {
@@ -211,3 +213,58 @@ describe('getClusterLocationInfo()', () => {
     expect(res!.display).toBe('On-Prem');
   });
 });
+<<<<<<< HEAD
+=======
+
+describe('normalizeProvider()', () => {
+  it('normalizes AWS and EKS aliases to aws', () => {
+    expect(normalizeProvider('aws')).toBe('aws');
+    expect(normalizeProvider('eks')).toBe('aws');
+    expect(normalizeProvider('cloud-aws')).toBe('aws');
+    expect(normalizeProvider('AWS')).toBe('aws');
+  });
+
+  it('normalizes Azure and AKS aliases to azure', () => {
+    expect(normalizeProvider('azure')).toBe('azure');
+    expect(normalizeProvider('aks')).toBe('azure');
+    expect(normalizeProvider('cloud-azure')).toBe('azure');
+  });
+
+  it('normalizes GCP, GKE, and Google aliases to gke', () => {
+    expect(normalizeProvider('gcp')).toBe('gke');
+    expect(normalizeProvider('gke')).toBe('gke');
+    expect(normalizeProvider('google')).toBe('gke');
+    expect(normalizeProvider('cloud-gcp')).toBe('gke');
+  });
+
+  it('normalizes bare-metal, on-prem, and metal aliases to metal', () => {
+    expect(normalizeProvider('bare-metal')).toBe('metal');
+    expect(normalizeProvider('on-prem')).toBe('metal');
+    expect(normalizeProvider('metal')).toBe('metal');
+    expect(normalizeProvider('kubernetes')).toBe('metal');
+  });
+
+  it('normalizes IBM and ROKS aliases to ibm', () => {
+    expect(normalizeProvider('ibm')).toBe('ibm');
+    expect(normalizeProvider('roks')).toBe('ibm');
+    expect(normalizeProvider('ibmcloud')).toBe('ibm');
+  });
+
+  it('returns other for null, empty, or unknown strings', () => {
+    expect(normalizeProvider(null)).toBe('other');
+    expect(normalizeProvider('')).toBe('other');
+    expect(normalizeProvider('custom-unknown')).toBe('other');
+  });
+});
+
+describe('cleanNameForMatching()', () => {
+  it('strips bnkctl and standard provider prefixes', () => {
+    expect(cleanNameForMatching('awsbnkctl-prod-cluster')).toBe('prod-cluster');
+    expect(cleanNameForMatching('azrbnkctl-stage-cluster')).toBe('stage-cluster');
+    expect(cleanNameForMatching('gkebnkctl-demo')).toBe('demo');
+    expect(cleanNameForMatching('aws-my-app')).toBe('my-app');
+    expect(cleanNameForMatching('custom-service')).toBe('custom-service');
+  });
+});
+
+>>>>>>> f517ed3 (refactor(frontend): centralize cloud provider normalization and deduplicate filter logic)
