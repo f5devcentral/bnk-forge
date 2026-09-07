@@ -234,16 +234,14 @@ describe('Fleet', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders Fleets and BNK Resources top-level tabs; no DPU Infrastructure, Cluster Health, or Migration tab', () => {
-    // D-022 P6 IA: DPU Infrastructure relocated to /infrastructure.
-    // Top-level tabs: Fleets list + fleet-wide BNK Resources.
-    // Cluster Health is a per-fleet sub-tab; Migration moved to K8s page (D-022 P6 Slice A).
+  it('renders Overview, BNK Resources, and Fleets top-level tabs; no DPU Infrastructure or Migration tab', () => {
+    // Top-level tabs: Overview, BNK Resources, and Fleets (Fleets last).
     setFleetHealthMock();
     render(<Fleet />);
-    expect(screen.getByRole('tab', { name: /fleets/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /overview/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /bnk resources/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /fleets/i })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /dpu infrastructure/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: /cluster health/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /migration/i })).not.toBeInTheDocument();
   });
 
@@ -464,7 +462,7 @@ describe('Fleet', () => {
       isError: false,
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useFleetRollups>);
-    render(<Fleet />);
+    render(<Fleet />, { initialRoute: '/?view=fleets' });
     // Traffic-light labels should be visible in the fleet row.
     expect(screen.getAllByText('Health').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Policy').length).toBeGreaterThanOrEqual(1);
@@ -494,7 +492,7 @@ describe('Fleet', () => {
       isError: false,
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useFleetRollups>);
-    render(<Fleet />);
+    render(<Fleet />, { initialRoute: '/?view=fleets' });
     // Estate summary bar should show fleet count and healthy count.
     // "2 fleets" or similar text
     expect(screen.getByText('fleets')).toBeInTheDocument();
