@@ -8,17 +8,17 @@ Provides unified, multi-cluster search for:
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 from fastapi import APIRouter, Depends, Query
 from kubernetes import client as k8s_client
 from kubernetes.client.rest import ApiException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from core.errors import handle_route_errors
-from database import get_db
+from database import SessionLocal, get_db
 from models.kubernetes import KubernetesCluster
 from models.project import Project
 from routes.auth import require_viewer
@@ -77,7 +77,6 @@ def _scan_cluster_for_query(
     cloud_provider: str | None,
     region: str | None,
     query_str: str,
-    k8s_svc: KubernetesService,
 ) -> list[IngressSearchResult]:
     """Scan a single cluster for matching Ingresses, HTTPRoutes, VirtualServers, and Services."""
     results: list[IngressSearchResult] = []
@@ -85,12 +84,18 @@ def _scan_cluster_for_query(
     if not q:
         return results
 
+    thread_db = SessionLocal()
     try:
+        k8s_svc = KubernetesService(thread_db)
         cluster = k8s_svc.get_cluster(cluster_id)
+        if not cluster:
+            return results
         api_client = k8s_svc.load_kubeconfig(cluster)
     except Exception as e:
         logger.debug(f"Skipping cluster {cluster_name} (id={cluster_id}) due to client load error: {e}")
         return results
+    finally:
+        thread_db.close()
 
     # 1. Search Ingresses (networking.k8s.io)
     try:
@@ -357,12 +362,15 @@ def global_search(
     active_clusters_to_scan: list[KubernetesCluster] = []
 
     for c in all_db_clusters:
+        detected_profile = getattr(c, "detected_platform_profile", None)
         if (
             clean_q_lower in c.name.lower()
             or (c.cloud_provider and clean_q_lower in c.cloud_provider.lower())
             or (c.region and clean_q_lower in c.region.lower())
-            or (c.detected_platform_profile and clean_q_lower in c.detected_platform_profile.lower())
+            or (detected_profile and clean_q_lower in detected_profile.lower())
         ):
+            meta = c.meta_data if isinstance(getattr(c, "meta_data", None), dict) else {}
+            node_cnt = meta.get("node_count") if meta else None
             matching_clusters.append(
                 ClusterSearchResult(
                     id=c.id,
@@ -370,15 +378,15 @@ def global_search(
                     cloud_provider=c.cloud_provider,
                     region=c.region,
                     status=c.status or "active",
-                    node_count=c.node_count,
-                    detected_platform_profile=c.detected_platform_profile,
+                    node_count=node_cnt,
+                    detected_platform_profile=detected_profile,
                 )
             )
         if (c.status or "active").lower() == "active":
             active_clusters_to_scan.append(c)
 
     # 2. DB Search: Projects & OpenTofu Modules
-    all_db_projects = db.query(Project).all()
+    all_db_projects = db.query(Project).options(selectinload(Project.project_modules)).all()
     matching_projects: list[ProjectSearchResult] = []
     for p in all_db_projects:
         matched = (
@@ -411,7 +419,6 @@ def global_search(
             )
 
     # 3. Parallel Live Cluster Scanning
-    k8s_svc = KubernetesService(db)
     found_ingresses: list[IngressSearchResult] = []
 
     if active_clusters_to_scan:
@@ -424,7 +431,6 @@ def global_search(
                     cluster.cloud_provider,
                     cluster.region,
                     clean_q,
-                    k8s_svc,
                 )
                 for cluster in active_clusters_to_scan
             ]

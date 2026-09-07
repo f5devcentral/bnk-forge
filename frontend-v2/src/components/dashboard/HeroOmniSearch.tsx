@@ -20,6 +20,7 @@ import {
   getProjectLocationInfo,
 } from '@/lib/aws-regions';
 import type { Project, K8sCluster } from '@/types';
+import type { ClusterSearchResult, ProjectSearchResult } from '@/types/search';
 
 interface HeroOmniSearchProps {
   projects?: Project[];
@@ -126,7 +127,7 @@ export function HeroOmniSearch({
           }))
       : [];
 
-    const combinedMap = new Map<number, any>();
+    const combinedMap = new Map<number, ClusterSearchResult>();
     backendList.forEach((c) => combinedMap.set(c.id, c));
     localMatches.forEach((c) => {
       if (!combinedMap.has(c.id)) combinedMap.set(c.id, c);
@@ -145,7 +146,7 @@ export function HeroOmniSearch({
     if (filter === 'fqdn') return [];
     const qLower = query.trim().toLowerCase();
     const backendList = searchResults?.projects || [];
-    const localMatches = qLower
+    const localMatches: ProjectSearchResult[] = qLower
       ? projects
           .filter(
             (p) =>
@@ -165,7 +166,7 @@ export function HeroOmniSearch({
           }))
       : [];
 
-    const combinedMap = new Map<number, any>();
+    const combinedMap = new Map<number, ProjectSearchResult>();
     backendList.forEach((p) => combinedMap.set(p.id, p));
     localMatches.forEach((p) => {
       if (!combinedMap.has(p.id)) combinedMap.set(p.id, p);
@@ -287,7 +288,7 @@ export function HeroOmniSearch({
           className={cn(
             'px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer text-xs flex items-center gap-1',
             filter === 'aws'
-              ? 'bg-amber-500 text-white shadow-xs'
+              ? 'bg-primary text-primary-foreground shadow-xs'
               : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground'
           )}
         >
@@ -299,7 +300,7 @@ export function HeroOmniSearch({
           className={cn(
             'px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer text-xs flex items-center gap-1',
             filter === 'azure'
-              ? 'bg-sky-500 text-white shadow-xs'
+              ? 'bg-primary text-primary-foreground shadow-xs'
               : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground'
           )}
         >
@@ -311,7 +312,7 @@ export function HeroOmniSearch({
           className={cn(
             'px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer text-xs flex items-center gap-1',
             filter === 'gke'
-              ? 'bg-blue-500 text-white shadow-xs'
+              ? 'bg-primary text-primary-foreground shadow-xs'
               : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground'
           )}
         >
@@ -323,7 +324,7 @@ export function HeroOmniSearch({
           className={cn(
             'px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer text-xs flex items-center gap-1',
             filter === 'metal'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-primary text-primary-foreground shadow-xs'
               : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground'
           )}
         >
@@ -438,7 +439,7 @@ export function HeroOmniSearch({
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center shrink-0">
+                            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
                               <Server className="w-4 h-4" />
                             </div>
                             <div className="min-w-0">
@@ -497,7 +498,7 @@ export function HeroOmniSearch({
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+                            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
                               <FolderGit2 className="w-4 h-4" />
                             </div>
                             <div className="min-w-0">

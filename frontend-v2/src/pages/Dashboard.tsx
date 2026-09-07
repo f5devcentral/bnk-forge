@@ -54,7 +54,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { FleetOperatorHealth, FleetRollup } from '@/types/fleet';
 
 // ============================================================================
@@ -462,6 +462,7 @@ export default function Dashboard() {
                           </span>
                         )}
 <<<<<<< HEAD
+<<<<<<< HEAD
                         <span className="text-xs text-muted-foreground">
                           {op.health_summary.healthy} healthy · {op.health_summary.warning} warning · {op.health_summary.critical} critical
                         </span>
@@ -663,14 +664,16 @@ export default function Dashboard() {
                             <GitCompare className="h-3 w-3" />
                             {projectDriftCounts[project.id]}
 =======
+=======
+>>>>>>> 42ee999 (fix(ux): decouple multi-cloud UX from other branches and resolve search concurrency)
                         {driftItem.last_check_at && (
                           <span className="text-xs flex items-center gap-1 text-muted-foreground">
                             <Clock className="h-3 w-3" />
                             {formatTimeAgo(driftItem.last_check_at)}
->>>>>>> abb84b2 (feat(ux): streamline multi-cloud estate, global omni-search, and bnk topology views)
                           </span>
                         )}
                       </div>
+<<<<<<< HEAD
 <<<<<<< HEAD
                     </Link>
                   );
@@ -883,6 +886,8 @@ export default function Dashboard() {
                       <CatIcon className="h-4 w-4 text-primary" />
 =======
 >>>>>>> abb84b2 (feat(ux): streamline multi-cloud estate, global omni-search, and bnk topology views)
+=======
+>>>>>>> 42ee999 (fix(ux): decouple multi-cloud UX from other branches and resolve search concurrency)
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Button
