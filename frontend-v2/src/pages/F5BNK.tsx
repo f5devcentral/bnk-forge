@@ -30,6 +30,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { useBnkData } from '@/hooks/k8s/useBnk';
+import { queryKeys } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -537,6 +538,8 @@ export default function F5BNK() {
     //   - 'licensing' → BNK licensing status
     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
     queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
     queryClient.invalidateQueries({ queryKey: ['runbooks'] });
     queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     queryClient.invalidateQueries({ queryKey: ['qkview'] });
@@ -997,6 +1000,8 @@ export default function F5BNK() {
                   setResourceToDelete(null);
                   setSelectedResource(null);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
                   notify.error(parsed.title, parsed.message, { category: 'cluster' });
@@ -1028,6 +1033,8 @@ export default function F5BNK() {
                     setEditDialogOpen(false);
                     setResourceToEdit(null);
                     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                   }
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
@@ -1066,6 +1073,8 @@ export default function F5BNK() {
                 } else {
                   setCreateDialogOpen(false);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                 }
               } catch (error: unknown) {
                 const parsed = parseApiError(error);
