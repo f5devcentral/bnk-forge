@@ -889,6 +889,28 @@ class BenchmarkService(BaseService):
             .first()
         )
 
+    def get_first_pending_run_for_agent(self, agent_id: int) -> BenchmarkRun | None:
+        """Find the earliest pending run assigned to an agent that has no sibling currently running."""
+        running = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+            )
+            .first()
+        )
+        if running:
+            return None
+        return (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+            )
+            .order_by(BenchmarkRun.id)
+            .first()
+        )
+
     def claim_pending_run(self, run_id: int) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).

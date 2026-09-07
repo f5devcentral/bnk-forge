@@ -271,3 +271,27 @@ class TestClaimPendingRun:
         db.refresh(child)
         assert child.status == BenchmarkRunStatus.PENDING
         assert child.started_at is None
+
+
+class TestGetFirstPendingRunForAgent:
+    def test_returns_none_if_no_pending_runs(self, db):
+        svc = BenchmarkService(db)
+        assert svc.get_first_pending_run_for_agent(42) is None
+
+    def test_returns_first_pending_run(self, db):
+        group = _group(db, status="running", total_runs=2)
+        child1 = _child(db, group.id, "pending", agent_id=42, variant_label="c1")
+        child2 = _child(db, group.id, "pending", agent_id=42, variant_label="c2")
+
+        svc = BenchmarkService(db)
+        found = svc.get_first_pending_run_for_agent(42)
+        assert found is not None
+        assert found.id == child1.id
+
+    def test_returns_none_if_another_run_already_running_for_agent(self, db):
+        group = _group(db, status="running", total_runs=2)
+        _child(db, group.id, "running", agent_id=42, variant_label="c1")
+        _child(db, group.id, "pending", agent_id=42, variant_label="c2")
+
+        svc = BenchmarkService(db)
+        assert svc.get_first_pending_run_for_agent(42) is None

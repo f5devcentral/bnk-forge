@@ -1569,14 +1569,33 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     _agent_ws_connections[agent_id] = websocket
     logger.info("Agent %d connected via WebSocket", agent_id)
 
-    # Mark agent as connected
+    # Mark agent as connected and check for pending runs to dispatch
     db = next(get_db())
     try:
         svc = BenchmarkService(db)
         svc.update_agent_status(agent_id, "connected")
         db.commit()
-    except Exception:
-        pass
+
+        pending_run = svc.get_first_pending_run_for_agent(agent_id)
+        if pending_run:
+            if svc.claim_pending_run(pending_run.id):
+                db.commit()
+                sent = await send_command_to_agent(
+                    agent_id, {"type": "run", "run_id": pending_run.id, "config": pending_run.config_snapshot}
+                )
+                if sent:
+                    logger.info("Agent %d connect: dispatched pending run #%d", agent_id, pending_run.id)
+                    if pending_run.run_group_id:
+                        group = svc.get_run_group(pending_run.run_group_id)
+                        if group and group.status == BenchmarkRunStatus.PENDING:
+                            group.status = BenchmarkRunStatus.RUNNING
+                            group.started_at = datetime.now(UTC)
+                            db.commit()
+                else:
+                    svc.release_claimed_run(pending_run.id)
+                    db.commit()
+    except Exception as e:
+        logger.warning("Error checking pending runs on agent connect: %s", e)
     finally:
         db.close()
 
