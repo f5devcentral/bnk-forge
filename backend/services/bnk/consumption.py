@@ -7,6 +7,7 @@ shape used by ``GET /api/system/bnk-consumption``.
 
 from typing import Any
 
+from services.bnk.helpers import extract_bnk_version
 from services.bnk_pod_discovery import detect_install_shape
 
 # Roles that belong to the BNK control plane.
@@ -163,7 +164,7 @@ def aggregate_cluster_consumption(
     }
 
     # Derive BNK version from pod images (reuses fleet health heuristic)
-    bnk_version = _extract_bnk_version(classified)
+    bnk_version = extract_bnk_version(classified)
 
     return {
         "cluster_id": cluster_id,
@@ -227,17 +228,3 @@ def aggregate_fleet_summary(clusters: list[dict[str, Any]]) -> dict[str, Any]:
         "dpf_detected_clusters": dpf_detected_clusters,
         "dpu_count": dpu_count,
     }
-
-
-def _extract_bnk_version(classified_pods: dict[str, list[dict[str, Any]]]) -> str | None:
-    """Extract BNK version from TMM/FLO/controller container images."""
-    import re
-
-    for role in ("tmm", "flo", "controller"):
-        for pod in classified_pods.get(role, []):
-            for container in pod.get("containers", []):
-                image = container.get("image", "")
-                match = re.search(r":v?(\d+\.\d+\.\d+)", image)
-                if match:
-                    return match.group(1)
-    return None

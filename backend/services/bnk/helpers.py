@@ -9,6 +9,7 @@ Also used by ``runbook_service`` — these are the canonical versions
 of ``has_condition`` / ``get_condition_message``.
 """
 
+import re
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -308,3 +309,31 @@ BNK_RESOURCE_TYPES: list[str] = [
     # Core K8s
     "service",
 ]
+
+
+def extract_bnk_version(data: dict[str, Any] | None) -> str | None:
+    """
+    Extract BNK version from TMM, FLO, or controller container images.
+
+    Accepts either a full cluster BNK data dict or a classified_pods mapping directly.
+    """
+    if not data or not isinstance(data, dict):
+        return None
+    classified = data.get("classified_pods", data)
+    if not isinstance(classified, dict):
+        return None
+    for role in ("tmm", "flo", "controller"):
+        pods = classified.get(role, [])
+        if not isinstance(pods, list):
+            continue
+        for pod in pods:
+            if not isinstance(pod, dict):
+                continue
+            for container in pod.get("containers", []):
+                if not isinstance(container, dict):
+                    continue
+                image = container.get("image", "")
+                m = re.search(r":v?(\d+\.\d+\.\d+)", image)
+                if m:
+                    return m.group(1)
+    return None

@@ -21,6 +21,7 @@ from core.k8s_types import ApiGroups
 from database import get_db
 from models.kubernetes import KubernetesCluster
 from routes.auth import require_operator, require_viewer
+from services.bnk.helpers import extract_bnk_version
 from services.bnk_data_service import analyze_health, fetch_all_bnk_data
 from services.connectivity_probe_service import _parse_api_server, _probe_tcp
 from services.dpf.fetch import detect_dpf
@@ -157,27 +158,6 @@ def _derive_status_from_health(health: dict) -> str:
     return "unknown"
 
 
-def _extract_bnk_version(data: dict) -> str | None:
-    """
-    Extract BNK version from TMM pod container images.
-
-    TMM image tags follow the pattern: `<registry>/spk-tmm:v2.5.0-0.0.5`
-    We extract the semver portion (e.g., "2.5.0").
-    Falls back to FLO/controller images if TMM not found.
-    """
-    classified = data.get("classified_pods", {})
-    # Try TMM first, then FLO, then controller
-    for pod_type in ("tmm", "flo", "controller"):
-        for pod in classified.get(pod_type, []):
-            for container in pod.get("containers", []):
-                image = container.get("image", "")
-                # Match version tag: :v1.2.3 or :1.2.3 (with optional build suffix)
-                m = re.search(r":v?(\d+\.\d+\.\d+)", image)
-                if m:
-                    return m.group(1)
-    return None
-
-
 def _extract_uptime_seconds(data: dict) -> int:
     """
     Compute cluster uptime from the oldest running TMM or FLO pod start time.
@@ -214,7 +194,7 @@ def _extract_health_metrics(health: dict, data: dict) -> dict:
     counts = health.get("counts", {})
 
     # BNK version from pod images
-    bnk_version = _extract_bnk_version(data)
+    bnk_version = extract_bnk_version(data)
 
     # Uptime from oldest running BNK pod
     uptime_secs = _extract_uptime_seconds(data)
