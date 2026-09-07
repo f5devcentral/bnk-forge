@@ -272,14 +272,26 @@ class CredentialRefreshService:
 
             # Check for 24-hour warning (only once when within window)
             hours_until_expiry = time_until_expiry.total_seconds() / 3600
-            if 23.5 < hours_until_expiry <= 24.0:
-                self._create_notification(
-                    db,
-                    title="Azure SSO Credentials Expiring in 24 Hours",
-                    message=f"Credentials for '{template.name}' will expire tomorrow. Auto-refresh will attempt to renew them.",
-                    resource_type="credential_template",
-                    resource_id=template.id,
+            if 0 < hours_until_expiry <= 24.0:
+                recent_cutoff = now_utc - timedelta(hours=24)
+                existing = (
+                    db.query(Notification)
+                    .filter(
+                        Notification.resource_type == "credential_template",
+                        Notification.resource_id == template.id,
+                        Notification.title == "Azure SSO Credentials Expiring in 24 Hours",
+                        Notification.created_at >= recent_cutoff,
+                    )
+                    .first()
                 )
+                if not existing:
+                    self._create_notification(
+                        db,
+                        title="Azure SSO Credentials Expiring in 24 Hours",
+                        message=f"Credentials for '{template.name}' will expire tomorrow. Auto-refresh will attempt to renew them.",
+                        resource_type="credential_template",
+                        resource_id=template.id,
+                    )
 
             # If expiring within threshold, refresh
             if time_until_expiry.total_seconds() < (self.refresh_threshold_minutes * 60):
