@@ -1,7 +1,7 @@
 """Add Azure credential fields to cloud_credential_templates.
 
-Revision ID: v2_157
-Revises: v2_156
+Revision ID: v2_156
+Revises: v2_155
 """
 import sqlalchemy as sa
 
