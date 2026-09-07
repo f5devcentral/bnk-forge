@@ -11,14 +11,44 @@
 set -euo pipefail
 
 # ── Breaking-change detectors ────────────────────────────────────────────────
-# INV-15: _is_breaking_subject / _is_breaking_body are SINGLE-SOURCED in
-# scripts/lib/breaking-change-detect.sh and shared with compute_version_bump.sh and
-# the commit-lint gate (bonnyr-f5 #179 r6 F4 / #193 M5). If the extractor were
-# narrower than the bumper a break would major with no note; if wider a note would
-# appear with no bump -- the shared file removes that whole failure class by making
-# them the SAME code, and scripts/tests/detector-parity.test.sh asserts the wiring.
-# shellcheck source=scripts/lib/breaking-change-detect.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/breaking-change-detect.sh"
+# INV-15: _is_breaking_subject and _is_breaking_body MUST stay byte-identical to
+# the copies in compute_version_bump.sh. This is an invariant these two files must
+# uphold themselves -- if the extractor is narrower a break bumps the major with no
+# note; if wider a note appears with no bump. The CI job that DIFFS the two copies
+# and fails on any drift lands with #182 (bonnyr-f5 #179 r6 F4); it is not present
+# in this tree, so until #182 merges the invariant is enforced only by review and
+# by the shared self-test fixtures below -- keep the two copies in lock-step by hand.
+#
+# A marker counts as a real footer under two anchors (byte-identical to compute):
+#   * preceded by a BLANK line -> accepted with OR without a colon (keeps the #2
+#     no-colon paragraph break);
+#   * preceded by another TRAILER, or folded directly onto a conventional-commit
+#     SUBJECT -> accepted ONLY with a colon (catches a footer folded onto a scoped
+#     subject `fix(core): x`, bonnyr-f5 #179 r6 F1, while rejecting a prose header
+#     `Before:` / `Note:` followed by colon-less prose, r6 F2).
+# Wrapped prose (a marker after a PROSE line) is still rejected. _is_breaking_subject
+# is BANG-ONLY: the folded-footer-in-subject is caught by running _is_breaking_body
+# on %B (which preserves the newline git folds into %s), and scanning the raw subject
+# for the marker over-bumped on `docs: clarify what BREAKING CHANGE: means` (r5 Minor 1).
+_is_breaking_subject() {
+  grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<< "$1"
+}
+_is_breaking_body() {
+  awk '
+    BEGIN { prev_blank = 1; prev_trailer = 0 }
+    /^[[:space:]]*$/ { prev_blank = 1; prev_trailer = 0; next }
+    {
+      is_marker  = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE/)
+      is_colon   = ($0 ~ /^([*-][[:space:]]+)?(\*\*)?BREAKING[[:space:] -]+CHANGE(\*\*)?:/)
+      is_trailer = ($0 ~ /^[A-Za-z0-9][A-Za-z0-9-]*:([[:space:]]|$)/)
+      if (prev_blank && is_marker) found = 1
+      else if (prev_trailer && is_colon) found = 1
+      is_subject = (NR == 1 && $0 ~ /^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]/)
+      prev_blank = 0; prev_trailer = (is_trailer || is_subject)
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<< "$1"
+}
 
 # Emit the BREAKING CHANGE footer paragraph(s) -- flattened, markdown-bold
 # stripped. Takes the FULL raw message (%B). Capture uses the SAME start rule as
@@ -219,11 +249,6 @@ if [[ "${1:-}" == "--self-test" ]]; then
   if [[ $assertions -eq 0 ]]; then
     echo "FAIL: harness ran zero assertions"; fail=1
   fi
-  # END marker mirroring compute_version_bump.sh's self-test: it prints only after
-  # the LAST assertion, so the script-selftests gate can assert the harness reached
-  # the end (an early `exit 0` or a deleted assertion block is caught) WITHOUT the
-  # gate having to grep this script for its own --self-test flag (bonnyr-f5 #193 M6).
-  echo "=== END SELF-TEST ==="
   [[ $fail -eq 0 ]] && echo "extract-breaking-changes self-test: OK ($assertions assertions)"
   exit "$fail"
 fi
@@ -237,11 +262,13 @@ UNTIL="${2:-HEAD}"
 # a silent failure that fools a reviewer will fool a release). A VALID range with
 # no breaking commits is still fine — it prints nothing and exits 0.
 #
-# FAIL-CLOSED IS NOW EFFECTIVE (bonnyr-f5 #179 r6 F3; #193 minor): the three
-# call sites in .github/workflows/release.yml invoke this script WITHOUT `|| true`,
-# so this rc=1 propagates and fails the release instead of being swallowed into
-# BREAKING="". (The old note here said to "merge #179 WITH or AFTER #181" — that
-# already happened; both are in-tree and the `|| true` on the extract call is gone.)
+# MERGE-ORDER DEPENDENCY (bonnyr-f5 #179 r6 F3): this rc=1 is only *effective*
+# once the `|| true` is dropped from the three call sites in .github/workflows/
+# release.yml (currently `BREAKING=$(bash scripts/extract-breaking-changes.sh ...
+# || true)`), which swallow rc=1 back into rc=0 with BREAKING="" -- exactly the
+# outcome this guard exists to prevent. release.yml is not owned by #179; PR #181
+# removes those `|| true`. Merge #179 WITH or AFTER #181 so this guard actually
+# fails the release instead of being decorative.
 for _ref in "$SINCE" "$UNTIL"; do
   if ! git rev-parse --verify --quiet "${_ref}^{commit}" >/dev/null 2>&1; then
     echo "::error::extract-breaking-changes: '${_ref}' does not resolve to a commit — refusing to emit an empty breaking-changes section from a bad range." >&2
