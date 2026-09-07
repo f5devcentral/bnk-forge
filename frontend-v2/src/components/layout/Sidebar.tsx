@@ -81,6 +81,7 @@ const navigationSections: {
       { name: 'Blueprints', href: '/stacks', icon: Layers },
       { name: 'Access Methods', href: '/auth-templates', icon: KeyRound, minRole: 'operator' },
       { name: 'Projects', href: '/projects', icon: FolderGit2, showCount: 'projects', showDriftBadge: true },
+      { name: 'Operations Log', href: '/tasks', icon: ScrollText, showCount: 'activity' },
     ],
   },
   {

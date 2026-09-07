@@ -3,6 +3,8 @@
  * Updated: 2026-01-27
  */
 
+import { getClusterLocationInfo } from './cloud-providers';
+
 export interface AWSRegionInfo {
   value: string;
   label: string;
@@ -86,51 +88,36 @@ export function getProjectLocationInfo(
   credentialProvider?: string | null,
   projectType?: string | null,
 ): { flag: string; label: string; display: string } | null {
-  // Kubernetes / on-prem project type — always show on-prem style
-  if (projectType === 'kubernetes' || credentialProvider === 'ssh') {
-    if (region) {
+  const p = (cloudProvider || '').toLowerCase().trim();
+  const pt = (projectType || '').toLowerCase().trim();
+  const reg = (region || '').trim();
+
+  // Kubernetes / on-prem project type or SSH credential — always show on-prem style
+  if (pt === 'kubernetes' || credentialProvider === 'ssh' || p === 'on-prem' || p === 'bare-metal' || p === 'metal') {
+    if (reg) {
       // User set a custom location label (e.g., "singapore", "lab-rack-3")
-      return { flag: '🖥️', label: region, display: region };
+      return { flag: '🖥️', label: reg, display: reg };
     }
     return { flag: '🖥️', label: 'On-Premises', display: 'On-Prem' };
   }
 
-  // Cloud projects with a known AWS region
-  if (region && (cloudProvider === 'aws' || cloudProvider === 'eks' || projectType === 'cloud-aws')) {
-    const regionInfo = getRegionInfo(region);
-    if (regionInfo) {
-      return { flag: regionInfo.flag, label: regionInfo.label, display: region };
+  const effectiveProvider = p || (pt.startsWith('cloud-') ? pt.replace('cloud-', '') : pt);
+
+  // If a region is specified, resolve via getClusterLocationInfo
+  if (reg) {
+    const loc = getClusterLocationInfo(effectiveProvider, reg);
+    if (loc) {
+      return loc;
     }
-    // Unknown AWS region string — still show it without flag
-    return { flag: '☁️', label: region, display: region };
+    return { flag: '🌐', label: reg, display: reg };
   }
 
-  // Azure / GCP with a region set
-  if (region && (cloudProvider === 'azure' || projectType === 'cloud-azure')) {
-    return { flag: '⛅', label: `Azure ${region}`, display: region };
-  }
-  if (region && (cloudProvider === 'gcp' || projectType === 'cloud-gcp')) {
-    return { flag: '🌤️', label: `GCP ${region}`, display: region };
-  }
-  if (region && (cloudProvider === 'ibm' || projectType === 'cloud-ibm')) {
-    return { flag: '🟦', label: `IBM Cloud ${region}`, display: region };
-  }
-
-  // On-prem or kubernetes projects — no region, no flag
-  if (cloudProvider === 'on-prem' || cloudProvider === 'kubernetes' || cloudProvider === 'none') {
+  // On-prem or kubernetes projects without region
+  if (p === 'on-prem' || p === 'bare-metal' || p === 'metal' || p === 'kubernetes' || p === 'none') {
     return { flag: '🖥️', label: 'On-Premises', display: 'On-Prem' };
   }
 
-  // No cloud_provider set and no region — show nothing
-  if (!region && !cloudProvider) {
-    return null;
-  }
-
-  // Fallback: region is set but provider unknown — show generic
-  if (region) {
-    return { flag: '🌐', label: region, display: region };
-  }
-
+  // No provider and no region
   return null;
 }
 
@@ -157,3 +144,10 @@ export const CONTINENT_ORDER = [
   'South America',
   'GovCloud',
 ] as const;
+
+export {
+  getCloudProviderBadgeInfo,
+  getClusterLocationInfo,
+  type CloudProviderBadgeInfo,
+} from './cloud-providers';
+
