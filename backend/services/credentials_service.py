@@ -402,7 +402,7 @@ def get_gcp_service_account_info(project: Project | None, db=None) -> dict | Non
         if not template or template.provider != "gcp" or not template.gcp_credentials_encrypted:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "gcp",
-                CloudCredentialTemplate.is_default == True,
+                CloudCredentialTemplate.is_default.is_(True),
             ).first()
 
     if template and template.provider == "gcp" and template.gcp_credentials_encrypted:
@@ -443,7 +443,7 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
         if not template or template.provider != "azure" or not template.azure_credentials_encrypted:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "azure",
-                CloudCredentialTemplate.is_default == True,
+                CloudCredentialTemplate.is_default.is_(True),
             ).first()
 
     if template and template.provider == "azure" and template.azure_credentials_encrypted and template.azure_tenant_id:

@@ -11,6 +11,7 @@ services behind HTTPRoutes that could be A2A agents. The optional
 probe phase (with I/O) attempts to fetch actual agent cards.
 """
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -158,7 +159,6 @@ def _probe_agent_cards(
 
     Mutates candidates in-place, setting ``agentCard`` and ``probeStatus``.
     """
-    import json
     from kubernetes import client as k8s_client
 
     core_v1 = k8s_client.CoreV1Api(api_client)
