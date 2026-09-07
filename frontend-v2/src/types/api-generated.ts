@@ -5259,6 +5259,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud-auth/azure/sso/initiate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Initiate Azure Sso
+         * @description Initiate Azure Entra ID device code authorization flow.
+         */
+        post: operations["initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud-auth/azure/sso/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Azure Sso
+         * @description Poll Azure Entra ID token endpoint for device code completion.
+         */
+        post: operations["poll_azure_sso_api_cloud_auth_azure_sso_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud-auth/azure/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Azure Subscriptions
+         * @description List Azure subscriptions accessible by the access token.
+         */
+        post: operations["list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud-auth/ssh/configure": {
         parameters: {
             query?: never;
@@ -12927,6 +12987,46 @@ export interface components {
             };
         };
         /**
+         * AzureSSOInitiateRequest
+         * @description Request model for initiating Azure SSO device authorization
+         */
+        AzureSSOInitiateRequest: {
+            /**
+             * Tenant Id
+             * @default common
+             */
+            tenant_id: string | null;
+            /** Client Id */
+            client_id?: string | null;
+            /** Template Id */
+            template_id?: number | null;
+        };
+        /**
+         * AzureSSOPollRequest
+         * @description Request model for polling Azure SSO token
+         */
+        AzureSSOPollRequest: {
+            /** Device Code */
+            device_code: string;
+            /**
+             * Tenant Id
+             * @default common
+             */
+            tenant_id: string | null;
+            /** Client Id */
+            client_id?: string | null;
+            /** Template Id */
+            template_id?: number | null;
+        };
+        /**
+         * AzureSubscriptionsRequest
+         * @description Request model for listing Azure subscriptions
+         */
+        AzureSubscriptionsRequest: {
+            /** Access Token */
+            access_token: string;
+        };
+        /**
          * BackupCreateRequest
          * @description Request to create a backup archive.
          */
@@ -14606,6 +14706,10 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
             /** Reachable */
             reachable: boolean;
             /** Bnk Installed */
@@ -16393,7 +16497,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: ("service_principal" | "sso") | null;
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16483,7 +16587,7 @@ export interface components {
             /** Has Gcp Credentials */
             has_gcp_credentials: boolean;
             /** Azure Auth Method */
-            azure_auth_method?: ("service_principal" | "sso") | null;
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16609,7 +16713,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: ("service_principal" | "sso") | null;
+            azure_auth_method?: string | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -33490,6 +33594,105 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSSOInitiateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_azure_sso_api_cloud_auth_azure_sso_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSSOPollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureSubscriptionsRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
