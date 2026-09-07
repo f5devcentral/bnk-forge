@@ -15,23 +15,29 @@ import { useAllClusters } from '@/hooks/useK8sClusters';
 
 export interface ClusterPickerProps {
   value: number | undefined;
-  onChange: (clusterId: number) => void;
+  onChange: (clusterId: number | undefined) => void;
+  allowAll?: boolean;
 }
 
-export function ClusterPicker({ value, onChange }: ClusterPickerProps) {
+export function ClusterPicker({ value, onChange, allowAll = true }: ClusterPickerProps) {
   const { data } = useAllClusters();
   const clusters = data?.clusters ?? [];
 
   return (
     <Select
-      value={value != null ? String(value) : undefined}
-      onValueChange={(v) => onChange(Number(v))}
+      value={value != null ? String(value) : (allowAll ? '__all__' : undefined)}
+      onValueChange={(v) => onChange(v === '__all__' ? undefined : Number(v))}
     >
-      <SelectTrigger className="h-8 w-[200px] text-xs" aria-label="Cluster">
-        <Box className="h-3.5 w-3.5 text-muted-foreground" />
-        <SelectValue placeholder="Select cluster…" />
+      <SelectTrigger className="h-8 w-[220px] text-xs font-medium" aria-label="Cluster">
+        <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <SelectValue placeholder="All Clusters (Fleet Aggregate)" />
       </SelectTrigger>
       <SelectContent>
+        {allowAll && (
+          <SelectItem value="__all__" className="text-xs font-medium">
+            🌐 All Clusters (Fleet Aggregate)
+          </SelectItem>
+        )}
         {clusters.map((c) => (
           <SelectItem key={c.id} value={String(c.id)} className="text-xs">
             {c.name}

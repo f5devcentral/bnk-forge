@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["k8s-llm-observability"])
 
 _BASE = "/k8s/clusters/{cluster_id}/llm-observability"
+_FLEET_BASE = "/k8s/llm-observability"
 
 # NOTE: the handler arg is `time_range` (avoids shadowing the `range` builtin);
 # the query parameter stays `range` via Query(alias="range"), so the API/UI
@@ -44,13 +45,18 @@ _BASE = "/k8s/clusters/{cluster_id}/llm-observability"
 
 
 @router.get(
+    f"{_FLEET_BASE}/stats",
+    response_model=LlmStatsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/stats",
     response_model=LlmStatsResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway stats")
 async def get_llm_stats(
-    cluster_id: int,
+    cluster_id: int | None = None,
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
@@ -63,13 +69,18 @@ async def get_llm_stats(
 
 
 @router.get(
+    f"{_FLEET_BASE}/histogram",
+    response_model=LlmHistogramResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/histogram",
     response_model=LlmHistogramResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway histogram")
 async def get_llm_histogram(
-    cluster_id: int,
+    cluster_id: int | None = None,
     metric: str = Query(default="requests"),
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
@@ -83,13 +94,18 @@ async def get_llm_histogram(
 
 
 @router.get(
+    f"{_FLEET_BASE}/rankings",
+    response_model=LlmRankingsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/rankings",
     response_model=LlmRankingsResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway rankings")
 async def get_llm_rankings(
-    cluster_id: int,
+    cluster_id: int | None = None,
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
@@ -102,13 +118,18 @@ async def get_llm_rankings(
 
 
 @router.get(
+    f"{_FLEET_BASE}/provider-usage",
+    response_model=LlmProviderUsageResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/provider-usage",
     response_model=LlmProviderUsageResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway provider usage")
 async def get_llm_provider_usage(
-    cluster_id: int,
+    cluster_id: int | None = None,
     metric: str = Query(default="cost"),
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
@@ -122,13 +143,18 @@ async def get_llm_provider_usage(
 
 
 @router.get(
+    f"{_FLEET_BASE}/logs",
+    response_model=LlmLogsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/logs",
     response_model=LlmLogsResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway logs")
 async def get_llm_logs(
-    cluster_id: int,
+    cluster_id: int | None = None,
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
@@ -151,13 +177,18 @@ async def get_llm_logs(
 
 
 @router.get(
+    f"{_FLEET_BASE}/filterdata",
+    response_model=LlmFilterDataResponse,
+    dependencies=[Depends(require_viewer)],
+)
+@router.get(
     f"{_BASE}/filterdata",
     response_model=LlmFilterDataResponse,
     dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway filter data")
 async def get_llm_filterdata(
-    cluster_id: int,
+    cluster_id: int | None = None,
     time_range: str = Query(default="1h", alias="range"),
     db: Session = Depends(get_db),
 ):

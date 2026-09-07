@@ -11,11 +11,13 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import { Badge } from '@/components/ui/badge';
-import { Activity, AlertTriangle, Globe, LayoutGrid, Network, Server } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Activity, AlertTriangle, Globe, LayoutGrid, Network, Server, ExternalLink, ChevronLeft } from 'lucide-react';
 import { ResourcePageHeader } from '@/components/layout/ResourcePageHeader';
 import { ResourceExplorerLayout } from '@/components/layout/ResourceExplorerLayout';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
@@ -49,6 +51,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export default function CNF() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const borderDefault = 'border-border';
 
@@ -254,13 +257,131 @@ export default function CNF() {
     }
 
     if (!selectedCrdKey) {
+      const enrichedCategories = categories.filter((c) => c.enriched);
+
+      const filteredCategories = categories
+        .map((cat) => ({
+          ...cat,
+          items: searchQuery.trim()
+            ? cat.items.filter(
+                (i) =>
+                  i.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  i.key.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  cat.category.toLowerCase().includes(searchQuery.toLowerCase())
+              )
+            : cat.items,
+        }))
+        .filter((cat) => cat.items.length > 0);
+
       return (
-        <div className="p-4 flex items-center justify-center h-full">
-          <EmptyState
-            icon={Globe}
-            title="Select a resource type"
-            description="Choose a CRD from the sidebar to browse its instances."
-          />
+        <div className="p-6 space-y-6 overflow-y-auto max-w-6xl">
+          {/* Top KPI Metrics Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 rounded-lg border border-border bg-card shadow-xs">
+              <div className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5 text-primary" />
+                Discovered CRDs
+              </div>
+              <div className="text-xl font-bold text-foreground mt-1">{crdsData.count}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Across all API groups</div>
+            </div>
+
+            <div className="p-3 rounded-lg border border-border bg-card shadow-xs">
+              <div className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                <LayoutGrid className="h-3.5 w-3.5 text-primary" />
+                Categories
+              </div>
+              <div className="text-xl font-bold text-foreground mt-1">{categories.length}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {enrichedCategories.length} curated domains
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg border border-border bg-card shadow-xs">
+              <div className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                <Server className="h-3.5 w-3.5 text-primary" />
+                Active Cluster
+              </div>
+              <div className="text-sm font-semibold text-foreground mt-1.5 truncate">
+                {visibleClusters.find((c) => c.id === selectedCluster)?.name ?? 'Selected Cluster'}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {namespaces.length} namespaces
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg border border-border bg-card shadow-xs">
+              <div className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                <Network className="h-3.5 w-3.5 text-primary" />
+                Selected Scope
+              </div>
+              <div className="text-sm font-semibold text-foreground mt-1.5 truncate">
+                {selectedNamespace === 'all' ? 'All Namespaces' : selectedNamespace}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">Filter active</div>
+            </div>
+          </div>
+
+          {/* CRD Category Cards Grid */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <LayoutGrid className="h-4 w-4 text-primary" />
+                Resource Catalog
+              </h3>
+              <span className="text-xs text-muted-foreground">
+                Click any resource definition to inspect instances and telemetry
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredCategories.map((cat) => (
+                <div
+                  key={cat.category}
+                  className="rounded-lg border border-border bg-card p-4 space-y-3 shadow-xs hover:border-primary/40 transition-colors"
+                >
+                  <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                    <div className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                      {cat.category}
+                    </div>
+                    <Badge variant={cat.enriched ? 'default' : 'outline'} className="text-xs">
+                      {cat.items.length} {cat.items.length === 1 ? 'type' : 'types'}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {cat.items.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCrdKey(item.key);
+                          if (!expandedCategories.includes(cat.category)) {
+                            setExpandedCategories((prev) => [...prev, cat.category]);
+                          }
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-md hover:bg-muted/60 text-left transition-colors cursor-pointer group"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-foreground group-hover:text-primary transition-colors truncate">
+                            {item.label}
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono truncate">
+                            {item.crdInfo.group}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <Badge variant="outline" className="text-xs font-mono py-0 px-1">
+                            {item.crdInfo.version}
+                          </Badge>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       );
     }
@@ -326,13 +447,31 @@ export default function CNF() {
   const renderTopologyContent = () => {
     if (selectedNamespace === 'all') {
       return (
-        <div className="flex items-center justify-center h-full">
-          <EmptyState
-            icon={Network}
-            title="Select a namespace"
-            description="The topology view is namespace-scoped. Choose a specific namespace from the selector above."
-            size="sm"
-          />
+        <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+          <div className="max-w-md space-y-4">
+            <div className="p-3 bg-primary/10 rounded-full w-12 h-12 flex items-center justify-center mx-auto text-primary">
+              <Network className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground">Select a Namespace for Topology</h3>
+            <p className="text-xs text-muted-foreground">
+              Telco and CNF topology graphs map intra-namespace and secondary interface connections. Choose a namespace below to visualize:
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5 pt-2 max-h-48 overflow-y-auto">
+              {namespaces.map((ns) => {
+                const nsName = typeof ns === 'string' ? ns : ns.name;
+                return (
+                  <button
+                    key={nsName}
+                    type="button"
+                    onClick={() => setSelectedNamespace(nsName)}
+                    className="px-2.5 py-1 text-xs rounded-md border border-border bg-card hover:bg-primary/10 hover:border-primary/50 text-foreground transition-all cursor-pointer font-mono"
+                  >
+                    {nsName}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       );
     }
@@ -381,10 +520,21 @@ export default function CNF() {
       <div className="flex items-center gap-2">
         {view === 'browser' ? (
           <>
+            {selectedCrdKey && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground mr-1"
+                onClick={() => setSelectedCrdKey(null)}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Catalog
+              </Button>
+            )}
             <h2 className="text-sm font-semibold">
               {selectedCrdInfo
                 ? (selectedCrdInfo.display_name ?? selectedCrdInfo.kind)
-                : 'Custom Resources'}
+                : 'CNF & Network Functions'}
               {selectedCrdKey && resources.length > 0 && (
                 <span className="text-muted-foreground"> ({resources.length})</span>
               )}
@@ -397,18 +547,30 @@ export default function CNF() {
           </>
         ) : (
           <h2 className="text-sm font-semibold">
-            Topology
+            CNF Topology
             {topologyNamespace && (
               <span className="text-muted-foreground"> — {topologyNamespace}</span>
             )}
           </h2>
         )}
       </div>
-      {selectedCrdInfo?.source === 'registry-enriched' && view === 'browser' && (
-        <Badge variant="muted" className="text-xs">
-          curated
-        </Badge>
-      )}
+
+      <div className="flex items-center gap-2">
+        {selectedCrdInfo?.source === 'registry-enriched' && view === 'browser' && (
+          <Badge variant="muted" className="text-xs">
+            curated
+          </Badge>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+          onClick={() => navigate('/kubernetes')}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Raw K8s CRD Explorer
+        </Button>
+      </div>
     </div>
   );
 
@@ -419,8 +581,8 @@ export default function CNF() {
   return (
     <ResourceExplorerLayout>
       <ResourcePageHeader
-        title="Custom Resources"
-        subtitle="Discovery-driven CRD browser — read-only metadata, conditions, and YAML"
+        title="CNF Resources"
+        subtitle="Cloud-Native Network Functions & Telco Infrastructure — Multus secondary interfaces, SR-IOV, and CNF workloads"
         projects={projects || []}
         selectedProjectId={selectedProject}
         onProjectChange={(id) => {

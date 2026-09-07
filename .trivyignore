@@ -20,6 +20,12 @@ CVE-2025-68121 exp:2026-11-30
 # Added: 2026-02-23
 CVE-2024-45337 exp:2026-11-30
 
+# CVE-2026-56854: golang.org/x/crypto/ssh - Authentication bypass due to unenforced source-address restrictions
+# Present in pre-compiled helm, oras, and tofu binaries
+# Not exploitable in our context (we don't run an SSH server via helm/oras/tofu)
+# Added: 2026-09-04
+CVE-2026-56854 exp:2026-11-30
+
 # CVE-2026-33186: gRPC authorization bypass (google.golang.org/grpc < 1.79.3)
 # Affects: helm and tofu binaries in Docker image (grpc v1.76.0)
 # Status: Waiting for upstream helm/tofu releases with fixed grpc
