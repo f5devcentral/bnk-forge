@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 from core.errors import handle_route_errors
 from database import SessionLocal, get_db
 from models.kubernetes import KubernetesCluster
-from models.project import Project
+from models.project import Project, ProjectModule
 from routes.auth import require_viewer
 from services.kubernetes import KubernetesService
 
@@ -386,7 +386,11 @@ def global_search(
             active_clusters_to_scan.append(c)
 
     # 2. DB Search: Projects & OpenTofu Modules
-    all_db_projects = db.query(Project).options(selectinload(Project.project_modules)).all()
+    all_db_projects = (
+        db.query(Project)
+        .options(selectinload(Project.project_modules).selectinload(ProjectModule.library_module))
+        .all()
+    )
     matching_projects: list[ProjectSearchResult] = []
     for p in all_db_projects:
         matched = (
