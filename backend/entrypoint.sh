@@ -29,7 +29,14 @@ if [ -d "$CUSTOM_CERT_DIR" ]; then
         cp /etc/ssl/certs/ca-certificates.crt "$CUSTOM_BUNDLE"
         for cert in "$CUSTOM_CERT_DIR"/*.crt "$CUSTOM_CERT_DIR"/*.pem "$CUSTOM_CERT_DIR"/*.cer "$CUSTOM_CERT_DIR"/*.der; do
             [ -e "$cert" ] || continue
-            cat "$cert" >> "$CUSTOM_BUNDLE"
+            case "$cert" in
+                *.der)
+                    openssl x509 -inform DER -in "$cert" -out - >> "$CUSTOM_BUNDLE" 2>/dev/null || cat "$cert" >> "$CUSTOM_BUNDLE"
+                    ;;
+                *)
+                    cat "$cert" >> "$CUSTOM_BUNDLE"
+                    ;;
+            esac
         done
         # Make the bundle available to common TLS consumers.
         export SSL_CERT_FILE="$CUSTOM_BUNDLE"
