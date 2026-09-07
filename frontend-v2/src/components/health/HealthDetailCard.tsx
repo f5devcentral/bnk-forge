@@ -83,11 +83,11 @@ interface HealthDetailCardProps {
   /** Available remediation actions */
   remediationActions: HealthRemediationAction[];
   /** Namespaces the component's pods run in */
-  namespaces: string[];
+  namespaces?: string[];
   /** Availability zones the component's pods run in */
-  zones: string[];
+  zones?: string[];
   /** Node names the component's pods are scheduled on */
-  nodes: string[];
+  nodes?: string[];
   /** K8s cluster ID for API calls */
   clusterId: number;
   /** Additional content to render in the collapsed view */
@@ -105,9 +105,9 @@ export function HealthDetailCard({
   explanation,
   podDetails,
   remediationActions,
-  namespaces,
-  zones,
-  nodes,
+  namespaces = [],
+  zones = [],
+  nodes = [],
   clusterId,
   children,
   onViewLogs,

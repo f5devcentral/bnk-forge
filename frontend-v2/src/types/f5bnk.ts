@@ -864,6 +864,7 @@ export interface A2AAgentCard {
   defaultOutputModes: string[];
   provider: Record<string, string>;
   securitySchemes: Record<string, unknown>;
+  governance?: Record<string, string>;
   iconUrl?: string | null;
 }
 

@@ -94,6 +94,16 @@ function AgentCard({ agent }: { agent: A2AAgentCandidate }) {
               <Shield className="h-3 w-3" /> Auth
             </Badge>
           )}
+          {card.governance?.agent_framework && (
+            <Badge variant="secondary" className="text-xs gap-1 font-mono">
+              {card.governance.agent_framework}
+            </Badge>
+          )}
+          {card.governance?.cloud && (
+            <Badge variant="outline" className="text-xs gap-1">
+              {card.governance.cloud}
+            </Badge>
+          )}
         </div>
       )}
 

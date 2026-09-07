@@ -59,6 +59,7 @@ import {
 interface TrafficFlowOverviewProps {
   clusterId: number;
   namespace?: string;
+  searchQuery?: string;
   onSelectResource?: (selection: { kind: string; name: string; namespace: string }) => void;
   onNavigateView?: (viewKey: string) => void;
 }
@@ -319,11 +320,13 @@ function GatewayFlowRow({
   onSelectResource,
   gatewayStatsMap,
   listenerStatsMap,
+  searchQuery,
 }: {
   flow: GatewayFlowData;
   onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
   gatewayStatsMap: Map<string, { totalConns: number; curConns: number }>;
   listenerStatsMap: Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>;
+  searchQuery?: string;
 }) {
   const { gateway } = flow;
   const gatewayStats = gatewayStatsMap.get(`${gateway.namespace}/${gateway.name}`);
@@ -353,8 +356,18 @@ function GatewayFlowRow({
   const visibleRoutes = showAllRoutes ? allRoutes : allRoutes.slice(0, INITIAL_ROUTE_LIMIT);
   const visibleBackends = showAllBackends ? allBackends : allBackends.slice(0, INITIAL_BACKEND_LIMIT);
 
+  const isHighlighted = useMemo(() => {
+    if (!searchQuery || !searchQuery.trim()) return false;
+    const q = searchQuery.toLowerCase().trim();
+    if (gateway.name.toLowerCase().includes(q)) return true;
+    if (gateway.namespace.toLowerCase().includes(q)) return true;
+    if (allRoutes.some((r) => r.name.toLowerCase().includes(q))) return true;
+    if (allBackends.some((b) => b.toLowerCase().includes(q))) return true;
+    return false;
+  }, [searchQuery, gateway, allRoutes, allBackends]);
+
   return (
-    <div className="rounded-lg border overflow-hidden bg-card border-border">
+    <div className={cn("rounded-lg border overflow-hidden bg-card border-border transition-all", isHighlighted && "ring-2 ring-primary border-primary shadow-sm")}>
       {/* Gateway header bar */}
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 border-border">
         <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10">
@@ -588,12 +601,25 @@ function GatewayFlowRow({
 function EgressFlowRow({
   egress,
   onSelectResource,
+  searchQuery,
 }: {
   egress: TopologyEgress;
   onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  searchQuery?: string;
 }) {
+  const isHighlighted = useMemo(() => {
+    if (!searchQuery || !searchQuery.trim()) return false;
+    const q = searchQuery.toLowerCase().trim();
+    if (egress.name.toLowerCase().includes(q)) return true;
+    if (egress.namespace.toLowerCase().includes(q)) return true;
+    if (egress.capturedNamespaces.some((ns) => ns.toLowerCase().includes(q))) return true;
+    if (egress.firewallEnforcedPolicy && egress.firewallEnforcedPolicy.toLowerCase().includes(q)) return true;
+    if (egress.snatType && egress.snatType.toLowerCase().includes(q)) return true;
+    return false;
+  }, [searchQuery, egress]);
+
   return (
-    <div className="rounded-lg border overflow-hidden bg-card border-border">
+    <div className={cn("rounded-lg border overflow-hidden bg-card border-border transition-all", isHighlighted && "ring-2 ring-primary border-primary shadow-sm")}>
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 border-border">
         <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10">
           <ArrowRightLeft className="h-4 w-4 text-primary" />
@@ -690,9 +716,11 @@ function EgressFlowRow({
 
 function EgressSection({
   egresses,
+  searchQuery,
   onSelectResource,
 }: {
   egresses: TopologyEgress[];
+  searchQuery?: string;
   onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
 }) {
   if (egresses.length === 0) return null;
@@ -712,6 +740,7 @@ function EgressSection({
         <EgressFlowRow
           key={`${egress.namespace}/${egress.name}`}
           egress={egress}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
         />
       ))}
@@ -936,7 +965,7 @@ function UnmappedServicesCard({
 // Main Component
 // ---------------------------------------------------------------------------
 
-export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, onNavigateView }: TrafficFlowOverviewProps) {
+export function TrafficFlowOverview({ clusterId, namespace, searchQuery, onSelectResource, onNavigateView }: TrafficFlowOverviewProps) {
   const { data, isLoading, error, refetch, isFetching } = useBnkData(
     clusterId,
     namespace ? { namespace } : undefined,
@@ -1078,6 +1107,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
         <GatewayFlowRow
           key={`${flow.gateway.namespace}/${flow.gateway.name}`}
           flow={flow}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
           gatewayStatsMap={gatewayStatsMap}
           listenerStatsMap={listenerStatsMap}
@@ -1088,6 +1118,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
       {dataPlane && (
         <EgressSection
           egresses={dataPlane.egresses}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
         />
       )}
