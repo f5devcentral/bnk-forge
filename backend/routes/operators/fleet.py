@@ -6,7 +6,6 @@ bnk_data_service instead of relying on operator health reports.
 Operators are optional enrichment, not the data source.
 """
 import logging
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
