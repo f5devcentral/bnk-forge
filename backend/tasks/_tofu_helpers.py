@@ -11,6 +11,8 @@ on orchestration while helpers handle common patterns like:
 
 import logging
 import re
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from celery import Task
@@ -21,6 +23,67 @@ from models import Task as TaskModel
 from services.dependency_graph_service import DependencyGraphService
 
 logger = logging.getLogger(__name__)
+
+
+class TofuLogStreamer:
+    """Incrementally flush ``task.logs`` to the DB as a tofu step streams output.
+
+    Fixes the first defect in #195: OpenTofu task logs were buffered until the
+    task completed, so ``logs_full_size`` sat at 0 for the whole run and only
+    jumped to its final value at the end — a running module was opaque. The
+    ``run_*`` runtime methods now stream stdout line-by-line through an
+    ``on_output`` callback; this helper turns that callback into throttled
+    writes of ``task.logs`` so the task-detail endpoint's ``logs_full_size``
+    grows *during* the run.
+
+    Usage::
+
+        streamer = TofuLogStreamer(task, db)
+        ...
+        all_logs += header
+        code, logs = engine.run_plan(work_dir, env, on_output=streamer.begin(all_logs))
+        all_logs += logs                 # unchanged: final source of truth
+        task.logs = all_logs             # written + committed by the task as before
+
+    ``begin(base)`` snapshots the log accumulated before the step (section
+    headers + earlier steps) and returns the sink. During the step the sink
+    persists ``base + <lines streamed so far>``. The task still writes the
+    complete ``all_logs`` (built from each step's returned output) at the end,
+    so the final content and size are exactly what they were before — only the
+    *timing* of visibility changes. The sink runs on the task's own thread (the
+    runtime reads the pipe synchronously), so touching ``task``/``db`` here is
+    safe. Both the write and commit are best-effort: a log flush must never
+    fail the operation.
+    """
+
+    def __init__(self, task: TaskModel, db, *, interval: float = 2.0):
+        self._task = task
+        self._db = db
+        self._interval = interval
+        self._base = ""
+        self._buf: list[str] = []
+        self._last = 0.0
+
+    def begin(self, base: str) -> Callable[[str], None]:
+        """Start streaming a step whose output extends ``base``; return the sink."""
+        self._base = base
+        self._buf = []
+        self._last = 0.0  # force the first line to flush immediately
+        return self._sink
+
+    def _sink(self, line: str) -> None:
+        self._buf.append(line + "\n")
+        now = time.monotonic()
+        if now - self._last >= self._interval:
+            self._last = now
+            self._flush()
+
+    def _flush(self) -> None:
+        try:
+            self._task.logs = self._base + "".join(self._buf)
+            self._db.commit()
+        except Exception:  # noqa: BLE001 — a log flush must never fail the step
+            self._db.rollback()
 
 
 # ============================================================================

@@ -49,6 +49,58 @@ class TestTaskList:
             assert task["status"] == "completed"
 
 
+class TestTaskListLogFields:
+    """#195 (second defect): the list endpoint must expose logs_full_size so a
+    client enumerating a module's tasks can tell empty from populated. It used
+    to be omitted entirely (surfaced as null), while the detail endpoint had it."""
+
+    def test_list_includes_logs_full_size_matching_detail(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        from tests.factories import TaskFactory
+
+        log_body = "\n".join(f"[04:42:{i:02d}] line {i}" for i in range(20))
+        task = TaskFactory(
+            db, project=sample_project, task_type="plan",
+            status="completed", logs=log_body,
+        )
+        db.commit()
+
+        listed = client.get(
+            f"/api/tasks?project_id={sample_project.id}", headers=admin_headers
+        ).json()
+        row = next(t for t in listed["tasks"] if t["id"] == task.id)
+
+        # The field is present (not omitted) and equals the true log size.
+        assert "logs_full_size" in row
+        assert row["logs_full_size"] == len(log_body)
+        assert "logs_truncated" in row
+
+        # …and it matches what the detail endpoint reports for the same task.
+        detail = client.get(f"/api/tasks/{task.id}", headers=admin_headers).json()
+        assert detail["logs_full_size"] == row["logs_full_size"]
+
+    def test_list_reports_zero_for_task_without_logs(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        from tests.factories import TaskFactory
+
+        task = TaskFactory(
+            db, project=sample_project, task_type="plan", status="queued", logs=None
+        )
+        db.commit()
+
+        listed = client.get(
+            f"/api/tasks?project_id={sample_project.id}", headers=admin_headers
+        ).json()
+        row = next(t for t in listed["tasks"] if t["id"] == task.id)
+
+        # NULL logs → 0 (matching the detail endpoint), not null/omitted.
+        assert row["logs_full_size"] == 0
+        detail = client.get(f"/api/tasks/{task.id}", headers=admin_headers).json()
+        assert detail["logs_full_size"] == 0
+
+
 class TestTaskDetail:
     """GET /api/tasks/{id}."""
 
