@@ -9,9 +9,9 @@ in test_bnk_backends.py).
 import pytest
 
 from services.bnk.a2a_discovery import (
+    _candidate_probe_ports,
     _find_http_backend_services,
     _normalize_agent_card,
-    _pick_probe_port,
     discover_a2a_agents,
 )
 from services.bnk.helpers import build_route_ref_map
@@ -170,35 +170,39 @@ class TestFindHttpBackendServices:
 
 
 # ---------------------------------------------------------------------------
-# _pick_probe_port
+# _candidate_probe_ports
 # ---------------------------------------------------------------------------
 
 
-class TestPickProbePort:
-    def test_prefers_http_named_port(self):
-        ports = [
-            {"port": 9090, "name": "metrics", "protocol": "TCP"},
-            {"port": 8080, "name": "http", "protocol": "TCP"},
-        ]
-        assert _pick_probe_port(ports) == 8080
+class TestCandidateProbePorts:
+    def test_prefers_route_ref_port_first(self):
+        candidate = {
+            "routeRefs": [{"port": 8080}],
+            "ports": [
+                {"port": 9090, "name": "http", "protocol": "TCP"},
+                {"port": 8080, "name": "app", "protocol": "TCP"},
+            ],
+        }
+        ports = _candidate_probe_ports(candidate)
+        assert ports[0] == 8080
+        assert 9090 in ports
 
-    def test_prefers_a2a_named_port(self):
-        ports = [
-            {"port": 9090, "name": "grpc", "protocol": "TCP"},
-            {"port": 10001, "name": "a2a", "protocol": "TCP"},
-        ]
-        assert _pick_probe_port(ports) == 10001
+    def test_prefers_http_and_a2a_named_ports(self):
+        candidate = {
+            "routeRefs": [],
+            "ports": [
+                {"port": 9090, "name": "grpc", "protocol": "TCP"},
+                {"port": 10001, "name": "a2a", "protocol": "TCP"},
+                {"port": 8080, "name": "http", "protocol": "TCP"},
+            ],
+        }
+        ports = _candidate_probe_ports(candidate)
+        assert ports[:2] == [10001, 8080]
+        assert ports[2] == 9090
 
-    def test_falls_back_to_first(self):
-        ports = [{"port": 3000, "name": "custom", "protocol": "TCP"}]
-        assert _pick_probe_port(ports) == 3000
-
-    def test_empty_ports_returns_none(self):
-        assert _pick_probe_port([]) is None
-
-    def test_none_name_handled(self):
-        ports = [{"port": 80, "name": None, "protocol": "TCP"}]
-        assert _pick_probe_port(ports) == 80
+    def test_empty_ports_returns_empty_list(self):
+        candidate = {"routeRefs": [], "ports": []}
+        assert _candidate_probe_ports(candidate) == []
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +230,23 @@ class TestNormalizeAgentCard:
         assert result["capabilities"]["streaming"] is True
         assert len(result["skills"]) == 1
         assert result["iconUrl"] == "https://example.com/icon.png"
+
+    def test_vertex_mcp_string_skills_and_list_capabilities(self):
+        card = {
+            "agent_name": "vertex-finance-mcp",
+            "overview": "Financial analytics agent powered by Google Vertex AI",
+            "version": "1.0",
+            "capabilities": ["streaming", "push_notifications"],
+            "skills": ["get_stock_quote", "get_balance_sheet"],
+        }
+        result = _normalize_agent_card(card)
+        assert result["name"] == "vertex-finance-mcp"
+        assert result["description"] == "Financial analytics agent powered by Google Vertex AI"
+        assert result["capabilities"]["streaming"] is True
+        assert result["capabilities"]["pushNotifications"] is True
+        assert len(result["skills"]) == 2
+        assert result["skills"][0]["name"] == "get_stock_quote"
+        assert result["skills"][1]["name"] == "get_balance_sheet"
 
     def test_minimal_card(self):
         card = {"name": "Minimal"}

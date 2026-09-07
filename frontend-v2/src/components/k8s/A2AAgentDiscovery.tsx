@@ -104,11 +104,14 @@ function AgentCard({ agent }: { agent: A2AAgentCandidate }) {
             Skills ({card.skills.length})
           </p>
           <div className="flex flex-wrap gap-1">
-            {card.skills.slice(0, 5).map((skill, i) => (
-              <Badge key={i} variant="secondary" className="text-xs">
-                {skill.name}
-              </Badge>
-            ))}
+            {card.skills.slice(0, 5).map((skill, i) => {
+              const skillName = typeof skill === 'string' ? skill : (skill as { name?: string })?.name || String(skill);
+              return (
+                <Badge key={i} variant="secondary" className="text-xs">
+                  {skillName}
+                </Badge>
+              );
+            })}
             {card.skills.length > 5 && (
               <Badge variant="secondary" className="text-xs">
                 +{card.skills.length - 5} more

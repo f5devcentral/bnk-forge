@@ -115,6 +115,37 @@ def _find_http_backend_services(
 # ---------------------------------------------------------------------------
 
 
+def _candidate_probe_ports(candidate: dict) -> list[int]:
+    """
+    Return ordered list of ports to probe for an agent card.
+    Prioritizes HTTPRoute backendRef port, then named HTTP ports, then any service port.
+    """
+    ports_to_try: list[int] = []
+
+    # 1. Ports from routeRefs (what the HTTPRoute actually directs traffic to)
+    for ref in candidate.get("routeRefs", []):
+        p = ref.get("port")
+        if p and p not in ports_to_try:
+            ports_to_try.append(p)
+
+    # 2. Preferred named ports from service spec
+    preferred_names = {"http", "a2a", "api", "web", "mcp", "app"}
+    for p_info in candidate.get("ports", []):
+        port_num = p_info.get("port")
+        if not port_num or port_num in ports_to_try:
+            continue
+        if (p_info.get("name") or "").lower() in preferred_names:
+            ports_to_try.append(port_num)
+
+    # 3. All other service ports
+    for p_info in candidate.get("ports", []):
+        port_num = p_info.get("port")
+        if port_num and port_num not in ports_to_try:
+            ports_to_try.append(port_num)
+
+    return ports_to_try
+
+
 def _probe_agent_cards(
     candidates: list[dict],
     api_client: Any,
@@ -127,6 +158,7 @@ def _probe_agent_cards(
 
     Mutates candidates in-place, setting ``agentCard`` and ``probeStatus``.
     """
+    import json
     from kubernetes import client as k8s_client
 
     core_v1 = k8s_client.CoreV1Api(api_client)
@@ -134,29 +166,40 @@ def _probe_agent_cards(
     def probe_one(candidate: dict) -> None:
         svc_name = candidate["name"]
         svc_ns = candidate["namespace"]
+        ports_to_try = _candidate_probe_ports(candidate)
 
-        # Pick the first HTTP-ish port (prefer named "http"/"a2a", then first port)
-        port = _pick_probe_port(candidate["ports"])
-        if port is None:
+        if not ports_to_try:
             candidate["probeStatus"] = "skipped"
             return
 
-        proxy_name = f"{svc_name}:{port}"
-        try:
-            # K8s service proxy: GET /api/v1/namespaces/{ns}/services/{name}:{port}/proxy/{path}
-            resp = core_v1.connect_get_namespaced_service_proxy_with_path(
-                name=proxy_name,
-                namespace=svc_ns,
-                path=".well-known/agent-card.json",
-            )
-            # resp is a JSON string when content-type is application/json
-            import json
-            card = json.loads(resp) if isinstance(resp, str) else resp
-            candidate["agentCard"] = _normalize_agent_card(card)
+        card_found = None
+        for port in ports_to_try:
+            proxy_targets = [f"{svc_name}:{port}"]
+            for proxy_name in proxy_targets:
+                for path in [".well-known/agent-card.json", "/.well-known/agent-card.json"]:
+                    try:
+                        resp = core_v1.connect_get_namespaced_service_proxy_with_path(
+                            name=proxy_name,
+                            namespace=svc_ns,
+                            path=path,
+                            _request_timeout=5,
+                        )
+                        card = json.loads(resp) if isinstance(resp, str) else resp
+                        normalized = _normalize_agent_card(card)
+                        if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
+                            card_found = normalized
+                            break
+                    except Exception as exc:
+                        logger.debug("A2A probe %s/%s via %s (%s) — %s", svc_ns, svc_name, proxy_name, path, exc)
+                if card_found:
+                    break
+            if card_found:
+                break
+
+        if card_found:
+            candidate["agentCard"] = card_found
             candidate["probeStatus"] = "success"
-        except Exception as exc:
-            # Expected for non-A2A services — not an error, just not an agent
-            logger.debug("A2A probe %s/%s:%s — %s", svc_ns, svc_name, port, exc)
+        else:
             candidate["probeStatus"] = "error"
 
     # Probe in parallel (max 10 concurrent to avoid overwhelming the API server)
@@ -164,20 +207,7 @@ def _probe_agent_cards(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(probe_one, c): c for c in candidates}
         for future in as_completed(futures):
-            future.result()  # propagate exceptions (shouldn't happen — caught inside)
-
-
-def _pick_probe_port(ports: list[dict]) -> int | None:
-    """Pick the best port to probe for an agent card."""
-    if not ports:
-        return None
-    # Prefer ports named "http", "a2a", "api", "web"
-    preferred = {"http", "a2a", "api", "web"}
-    for p in ports:
-        if (p.get("name") or "").lower() in preferred:
-            return p["port"]
-    # Fall back to first port
-    return ports[0]["port"]
+            future.result()  # propagate exceptions (caught inside)
 
 
 def _normalize_agent_card(card: Any) -> dict | None:
@@ -194,16 +224,59 @@ def _normalize_agent_card(card: Any) -> dict | None:
     """
     if not isinstance(card, dict):
         return None
+
+    name = card.get("name") or card.get("agent_name") or card.get("title") or card.get("id") or ""
+    description = card.get("description") or card.get("overview") or card.get("summary") or ""
+    version = str(card.get("version") or "")
+
+    # Normalize capabilities (list or dict)
+    raw_caps = card.get("capabilities")
+    if isinstance(raw_caps, list):
+        caps_set = {str(c).lower().replace("_", "").replace("-", "") for c in raw_caps}
+        capabilities = {
+            "streaming": "streaming" in caps_set,
+            "pushNotifications": any(k in caps_set for k in ("push", "pushnotifications", "notifications")),
+        }
+    elif isinstance(raw_caps, dict):
+        capabilities = {
+            "streaming": bool(raw_caps.get("streaming")),
+            "pushNotifications": bool(
+                raw_caps.get("pushNotifications")
+                or raw_caps.get("push_notifications")
+                or raw_caps.get("push")
+            ),
+        }
+    else:
+        capabilities = {}
+
+    # Normalize skills / tools
+    raw_skills = card.get("skills") or card.get("tools") or card.get("methods") or []
+    normalized_skills: list[dict] = []
+    if isinstance(raw_skills, list):
+        for s in raw_skills:
+            if isinstance(s, dict):
+                normalized_skills.append({
+                    "id": str(s.get("id") or s.get("name") or ""),
+                    "name": str(s.get("name") or s.get("id") or s.get("title") or ""),
+                    "description": str(s.get("description") or s.get("desc") or ""),
+                })
+            elif isinstance(s, str) and s.strip():
+                normalized_skills.append({
+                    "id": s.strip(),
+                    "name": s.strip(),
+                    "description": "",
+                })
+
     return {
-        "name": card.get("name", ""),
-        "description": card.get("description", ""),
-        "version": card.get("version", ""),
-        "url": card.get("url", ""),
-        "capabilities": card.get("capabilities", {}),
-        "skills": card.get("skills", []),
-        "defaultInputModes": card.get("defaultInputModes", []),
-        "defaultOutputModes": card.get("defaultOutputModes", []),
-        "provider": card.get("provider", {}),
-        "securitySchemes": card.get("securitySchemes", {}),
-        "iconUrl": card.get("iconUrl"),
+        "name": str(name),
+        "description": str(description),
+        "version": version,
+        "url": str(card.get("url") or ""),
+        "capabilities": capabilities,
+        "skills": normalized_skills,
+        "defaultInputModes": card.get("defaultInputModes") or card.get("default_input_modes") or [],
+        "defaultOutputModes": card.get("defaultOutputModes") or card.get("default_output_modes") or [],
+        "provider": card.get("provider", {}) if isinstance(card.get("provider"), dict) else {},
+        "securitySchemes": card.get("securitySchemes") or card.get("security_schemes") or {},
+        "iconUrl": card.get("iconUrl") or card.get("icon_url"),
     }
