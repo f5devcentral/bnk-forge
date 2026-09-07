@@ -11,13 +11,25 @@ SQL-driven (conditional UPDATE, status aggregation) and a MagicMock would not
 exercise the race-closing behavior the fixes depend on.
 """
 
-from models.benchmark import BenchmarkRun, BenchmarkRunGroup
+from models.benchmark import BenchmarkAgent, BenchmarkRun, BenchmarkRunGroup
 from models.enums import BenchmarkRunStatus
 from services.benchmark_service import BenchmarkService
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _agent(db, name="test-agent"):
+    agent = BenchmarkAgent(
+        name=name,
+        status="connected",
+        managed=False,
+    )
+    db.add(agent)
+    db.commit()
+    db.refresh(agent)
+    return agent
+
 
 def _group(db, **overrides):
     group = BenchmarkRunGroup(
@@ -275,23 +287,26 @@ class TestClaimPendingRun:
 
 class TestGetFirstPendingRunForAgent:
     def test_returns_none_if_no_pending_runs(self, db):
+        agent = _agent(db, name="agent-no-runs")
         svc = BenchmarkService(db)
-        assert svc.get_first_pending_run_for_agent(42) is None
+        assert svc.get_first_pending_run_for_agent(agent.id) is None
 
     def test_returns_first_pending_run(self, db):
+        agent = _agent(db, name="agent-first-pending")
         group = _group(db, status="running", total_runs=2)
-        child1 = _child(db, group.id, "pending", agent_id=42, variant_label="c1")
-        child2 = _child(db, group.id, "pending", agent_id=42, variant_label="c2")
+        child1 = _child(db, group.id, "pending", agent_id=agent.id, variant_label="c1")
+        _child(db, group.id, "pending", agent_id=agent.id, variant_label="c2")
 
         svc = BenchmarkService(db)
-        found = svc.get_first_pending_run_for_agent(42)
+        found = svc.get_first_pending_run_for_agent(agent.id)
         assert found is not None
         assert found.id == child1.id
 
     def test_returns_none_if_another_run_already_running_for_agent(self, db):
+        agent = _agent(db, name="agent-already-running")
         group = _group(db, status="running", total_runs=2)
-        _child(db, group.id, "running", agent_id=42, variant_label="c1")
-        _child(db, group.id, "pending", agent_id=42, variant_label="c2")
+        _child(db, group.id, "running", agent_id=agent.id, variant_label="c1")
+        _child(db, group.id, "pending", agent_id=agent.id, variant_label="c2")
 
         svc = BenchmarkService(db)
-        assert svc.get_first_pending_run_for_agent(42) is None
+        assert svc.get_first_pending_run_for_agent(agent.id) is None
