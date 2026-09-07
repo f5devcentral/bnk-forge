@@ -376,3 +376,129 @@ class TestFilterData:
         out = svc.filterdata(cluster_id=1, range_="1h")
         assert out["available"] is False
         assert "502" in out["reason"]
+
+
+# ---------------------------------------------------------------------------
+# multi-cluster aggregation & latency breakdown
+# ---------------------------------------------------------------------------
+
+
+class TestMultiClusterObservability:
+    def test_multi_cluster_histogram_latency_returns_per_cluster_series(self):
+        def _router(sub, query, params):
+            # Canned latency response with avg series
+            return _matrix(
+                _series({"__name__": "avg"}, (1700000000, 120.0), (1700000060, 140.0))
+            )
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east-cluster"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west-cluster"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.histogram(cluster_id=None, range_="1h", metric="latency")
+        assert out["available"] is True
+        assert out["metric"] == "latency"
+        assert len(out["series"]) == 2
+        names = [s["name"] for s in out["series"]]
+        assert "us-east-cluster" in names
+        assert "eu-west-cluster" in names
+        east = next(s for s in out["series"] if s["name"] == "us-east-cluster")
+        assert len(east["points"]) == 2
+        assert east["points"][0]["value"] == 120.0
+
+    def test_multi_cluster_histogram_requests_sums_clusters(self):
+        def _router(sub, query, params):
+            if 'status=~"2.."' in query:
+                return _matrix(_series({}, (1700000000, 10.0)))
+            return _matrix(_series({}, (1700000000, 2.0)))
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.histogram(cluster_id=None, range_="1h", metric="requests")
+        assert out["available"] is True
+        success = next(s for s in out["series"] if s["name"] == "success")
+        error = next(s for s in out["series"] if s["name"] == "error")
+        # 10 + 10 = 20
+        assert success["points"][0]["value"] == 20.0
+        # 2 + 2 = 4
+        assert error["points"][0]["value"] == 4.0
+
+    def test_multi_cluster_provider_usage_latency_calculates_exact_mean(self):
+        call_count = 0
+
+        def _router(sub, query, params):
+            nonlocal call_count
+            call_count += 1
+            # cluster 1 returns 100ms, cluster 2 returns 300ms for openai
+            val = 100.0 if call_count % 2 == 1 else 300.0
+            return _matrix(_series({"model": "gpt-4o"}, (1700000000, val)))
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.provider_usage(cluster_id=None, range_="1h", metric="latency")
+        assert out["available"] is True
+        openai = next(s for s in out["series"] if s["name"] == "openai")
+        # (100 + 300) / 2 = 200
+        assert openai["points"][0]["value"] == pytest.approx(200.0)
+
+    def test_multi_cluster_logs_merges_sorts_and_annotates_clusters(self):
+        lines_c1 = (
+            (1700000002000000000, {"model": "gpt-4o", "userq": "q from c1", "status": "200",
+                                   "latency_ms": 100, "prompt_tk": 5, "comp_tk": 10,
+                                   "total_tk": 15, "cost": 0.01, "req_body": "{}", "resp_body": "{}"}),
+        )
+        lines_c2 = (
+            (1700000003000000000, {"model": "claude-3", "userq": "q from c2", "status": "200",
+                                   "latency_ms": 150, "prompt_tk": 8, "comp_tk": 12,
+                                   "total_tk": 20, "cost": 0.02, "req_body": "{}", "resp_body": "{}"}),
+        )
+
+        def _router(sub, query, params):
+            # sub path proxy contains cluster id via the api_client proxy call
+            # Or we inspect which client is calling
+            return _streams(*(lines_c1 if "c1" not in query else lines_c2))
+
+        svc, fake = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+        svc._k8s.get_cluster = lambda cid: c1 if cid == 1 else c2
+        # Mock client per cluster
+        fake1 = _FakeApiClient(lambda s, q, p: _streams(*lines_c1))
+        fake2 = _FakeApiClient(lambda s, q, p: _streams(*lines_c2))
+        svc._client = lambda cid: fake1 if cid == 1 else fake2
+
+        out = svc.logs(cluster_id=None, range_="1h", limit=10)
+        assert out["available"] is True
+        assert len(out["rows"]) == 2
+        # newest first (c2 timestamp is 1700000003... > c1 timestamp 1700000002...)
+        assert out["rows"][0]["message"] == "q from c2"
+        assert out["rows"][0]["cluster_name"] == "eu-west"
+        assert out["rows"][0]["cluster_id"] == 2
+        assert out["rows"][1]["message"] == "q from c1"
+        assert out["rows"][1]["cluster_name"] == "us-east"
+        assert out["rows"][1]["cluster_id"] == 1
+

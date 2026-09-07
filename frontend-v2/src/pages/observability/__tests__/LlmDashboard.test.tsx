@@ -59,6 +59,31 @@ beforeEach(() => {
   vi.restoreAllMocks();
   histogramRequests = [];
   server.use(
+    http.get('*/api/k8s/llm-observability/histogram', ({ request }) => {
+      const url = new URL(request.url);
+      histogramRequests.push(url);
+      const metric = url.searchParams.get('metric');
+      if (metric === 'latency') {
+        return HttpResponse.json({
+          available: true,
+          endpoint: 'fleet',
+          updated_at: '2026-07-01T12:00:00Z',
+          metric: 'latency',
+          step_s: 60,
+          series: [
+            { name: 'Cluster Alpha', points: [{ ts: '2026-07-01T11:00:00Z', value: 120 }] },
+            { name: 'Cluster Beta', points: [{ ts: '2026-07-01T11:00:00Z', value: 240 }] },
+          ],
+          errors: {},
+        });
+      }
+      return HttpResponse.json(histogram(metric ?? 'requests'));
+    }),
+    http.get('*/api/k8s/llm-observability/rankings', () => HttpResponse.json(rankings)),
+    http.get('*/api/k8s/llm-observability/provider-usage', ({ request }) =>
+      HttpResponse.json(histogram(new URL(request.url).searchParams.get('metric') ?? 'cost')),
+    ),
+    http.get('*/api/k8s/llm-observability/filterdata', () => HttpResponse.json(filterData)),
     http.get('*/api/k8s/clusters/:id/llm-observability/histogram', ({ request }) => {
       const url = new URL(request.url);
       histogramRequests.push(url);
@@ -99,5 +124,14 @@ describe('LlmDashboard', () => {
 
     await waitFor(() => expect(histogramRequests.length).toBeGreaterThan(0));
     expect(histogramRequests.every((u) => u.searchParams.get('model') === 'gpt-4o')).toBe(true);
+  });
+
+  it('renders multi-cluster latency series when All Clusters is selected', async () => {
+    render(<LlmDashboard />, {
+      initialRoute: '/observability/ai-gateway?cluster=all',
+    });
+
+    await waitFor(() => expect(screen.getByText('Cluster Alpha')).toBeInTheDocument());
+    expect(screen.getByText('Cluster Beta')).toBeInTheDocument();
   });
 });
