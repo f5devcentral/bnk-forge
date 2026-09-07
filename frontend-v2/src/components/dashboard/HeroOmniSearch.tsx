@@ -173,15 +173,43 @@ export function HeroOmniSearch({
   const totalResultsCount =
     filteredIngresses.length + filteredClusters.length + filteredProjects.length;
 
+  const isBnkResource = (kind?: string): boolean => {
+    const k = (kind || '').toLowerCase().replace(/[-_]/g, '');
+    return [
+      'egress',
+      'f5spkegress',
+      'f5egress',
+      'snatpool',
+      'f5spksnatpool',
+      'bnkgateway',
+      'f5bnkgateway',
+      'bnksecpolicy',
+      'bnknetpolicy',
+      'f5bigfwpolicy',
+      'f5bigfwrulelist',
+      'f5bigddosglobal',
+      'f5bigcneirule',
+      'f5bigloghslpub',
+      'f5biglogprofile',
+      'f5bigcneaddresslist',
+      'f5bigcneportlist',
+      'f5aianalyzer',
+      'cneinstance',
+      'ipamrange',
+      'vlan',
+    ].some((prefix) => k.includes(prefix));
+  };
+
   const mapKindToResourceParam = (kind?: string): string => {
     const k = (kind || '').toLowerCase();
     if (k === 'ingress' || k === 'ingresses') return 'ingress';
     if (k === 'service' || k === 'services') return 'service';
     if (k === 'httproute' || k === 'httproutes') return 'httproute';
     if (k === 'virtualserver' || k === 'virtualservers') return 'virtualserver';
-    if (k === 'egress' || k === 'f5-spk-egress' || k === 'f5-spk-egresses') return 'f5-spk-egress';
+    if (k === 'egress' || k === 'f5-spk-egress' || k === 'f5-spk-egresses' || k === 'f5spkegress') return 'f5spkegress';
+    if (k === 'snatpool' || k === 'f5-spk-snatpools' || k === 'f5spksnatpool') return 'f5spksnatpool';
     if (k === 'gateway' || k === 'gateways') return 'gateway';
-    if (k === 'bnkgateway' || k === 'f5-bnkgateways' || k === 'f5-bnkgateway') return 'bnkgateway';
+    if (k === 'bnkgateway' || k === 'f5-bnkgateways' || k === 'f5-bnkgateway' || k === 'f5bnkgateway') return 'f5bnkgateway';
     if (k === 'l4route' || k === 'l4routes') return 'l4route';
     if (k === 'deployment' || k === 'deployments') return 'deployment';
     if (k === 'pod' || k === 'pods') return 'pod';
@@ -190,6 +218,30 @@ export function HeroOmniSearch({
 
   const handleSelectIngress = (clusterId: number, namespace: string, name: string, kind?: string) => {
     setIsOpen(false);
+    const k = (kind || '').toLowerCase().replace(/[-_]/g, '');
+
+    // Egress resources route directly to F5 BNK Traffic Flow Pipeline
+    if (k === 'egress' || k === 'f5spkegress' || k === 'f5egress') {
+      navigate(
+        `/bnk?cluster=${clusterId}&view=traffic-flow&namespace=${encodeURIComponent(
+          namespace
+        )}&name=${encodeURIComponent(name)}`
+      );
+      return;
+    }
+
+    // Other F5 BNK resources route to F5 BNK page with appropriate resource selected
+    if (isBnkResource(kind)) {
+      const resource = mapKindToResourceParam(kind);
+      navigate(
+        `/bnk?cluster=${clusterId}&namespace=${encodeURIComponent(
+          namespace
+        )}&resource=${encodeURIComponent(resource)}&name=${encodeURIComponent(name)}`
+      );
+      return;
+    }
+
+    // Standard Kubernetes resources route to Kubernetes Advanced view
     const resource = mapKindToResourceParam(kind);
     navigate(
       `/kubernetes?cluster=${clusterId}&namespace=${encodeURIComponent(

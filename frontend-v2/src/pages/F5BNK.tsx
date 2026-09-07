@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -149,12 +149,13 @@ function DiagnosticsView({ clusterId, descClass }: { clusterId: number; descClas
 interface SpecialViewProps {
   clusterId: number;
   namespace: string | undefined;
+  searchQuery?: string;
   onTopologySelect?: (selection: TopologyResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
   onRedirectToFleetDpf?: (clusterId: number) => void;
 }
 
-function renderSpecialView(viewType: string, { clusterId, namespace, onTopologySelect, onNavigateView, onRedirectToFleetDpf }: SpecialViewProps) {
+function renderSpecialView(viewType: string, { clusterId, namespace, searchQuery, onTopologySelect, onNavigateView, onRedirectToFleetDpf }: SpecialViewProps) {
   const descClass = 'text-sm text-muted-foreground';
 
   switch (viewType) {
@@ -168,6 +169,7 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
           <TrafficFlowOverview
             clusterId={clusterId}
             namespace={namespace}
+            searchQuery={searchQuery}
             onSelectResource={onTopologySelect}
             onNavigateView={onNavigateView}
           />
@@ -341,10 +343,50 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
 // Main Component
 // ---------------------------------------------------------------------------
 
+function mapParamToViewOrResource(param?: string | null): string | null {
+  if (!param) return null;
+  const p = param.toLowerCase().trim();
+  if (p === 'topology' || p === 'view-topology') return VIEW_TOPOLOGY;
+  if (p === 'traffic-flow' || p === 'trafficflow' || p === 'view-traffic-flow' || p === 'pipeline') return VIEW_TRAFFIC_FLOW;
+  if (p === 'health' || p === 'view-health' || p === 'dashboard' || p === 'health-dashboard') return VIEW_HEALTH;
+  if (p === 'policy-map' || p === 'policymap' || p === 'view-policy-map' || p === 'matrix') return VIEW_POLICY_MAP;
+  if (p === 'diagnostics' || p === 'view-diagnostics' || p === 'qkview') return VIEW_DIAGNOSTICS;
+  if (p === 'upgrade' || p === 'view-upgrade' || p === 'releases') return VIEW_UPGRADE;
+  if (p === 'backends' || p === 'view-backends') return VIEW_BACKENDS;
+  if (p === 'policy-builder' || p === 'policybuilder' || p === 'view-policy-builder') return VIEW_POLICY_BUILDER;
+  if (p === 'config-builder' || p === 'configbuilder' || p === 'view-config-builder') return VIEW_CONFIG_BUILDER;
+  if (p === 'a2a' || p === 'a2a-discovery' || p === 'view-a2a-discovery' || p === 'agent-discovery') return VIEW_A2A_DISCOVERY;
+  if (p === 'a2a-templates' || p === 'view-a2a-templates' || p === 'templates') return VIEW_A2A_TEMPLATES;
+  if (p === 'a2a-irule-library' || p === 'view-a2a-irule-library' || p === 'a2a-irules') return VIEW_A2A_IRULE_LIBRARY;
+  if (p === 'a2a-reference' || p === 'view-a2a-reference' || p === 'protocol-reference') return VIEW_A2A_REFERENCE;
+  if (p === 'ai-analyzers' || p === 'aianalyzers' || p === 'view-ai-analyzers' || p === 'f5biganalyzer') return VIEW_AI_ANALYZERS;
+
+  // CRD aliases
+  if (p === 'egress' || p === 'f5-spk-egress' || p === 'f5spkegress' || p === 'f5-spk-egresses') return 'f5spkegress';
+  if (p === 'snatpool' || p === 'f5spksnatpool' || p === 'f5-spk-snatpools') return 'f5spksnatpool';
+  if (p === 'gateway' || p === 'gateways') return 'gateway';
+  if (p === 'gatewayclass' || p === 'gatewayclasses') return 'gatewayclass';
+  if (p === 'httproute' || p === 'httproutes') return 'httproute';
+  if (p === 'grpcroute' || p === 'grpcroutes') return 'grpcroute';
+  if (p === 'tcproute' || p === 'tcproutes') return 'tcproute';
+  if (p === 'udproute' || p === 'udproutes') return 'udproute';
+  if (p === 'tlsroute' || p === 'tlsroutes') return 'tlsroute';
+  if (p === 'l4route' || p === 'l4routes') return 'l4route';
+  if (p === 'bnkgateway' || p === 'f5bnkgateway' || p === 'f5-bnkgateways' || p === 'f5-bnkgateway') return 'f5bnkgateway';
+  if (p === 'bnksecpolicy' || p === 'securitypolicy') return 'bnksecpolicy';
+  if (p === 'bnknetpolicy' || p === 'networkpolicy') return 'bnknetpolicy';
+  if (p === 'f5bigfwpolicy' || p === 'firewallpolicy') return 'f5bigfwpolicy';
+  if (p === 'f5bigfwrulelist' || p === 'firewallrules') return 'f5bigfwrulelist';
+  if (p === 'f5bigcneirule' || p === 'irules' || p === 'irule') return 'f5bigcneirule';
+
+  return p;
+}
+
 export default function F5BNK() {
   const borderDefault = 'border-border';
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const redirectToFleetDpf = useCallback((clusterId: number) => {
     navigate(`/fleet?tab=dpf&cluster=${clusterId}`, { replace: true });
   }, [navigate]);
@@ -355,10 +397,20 @@ export default function F5BNK() {
   const allClusters = allClustersResponse?.clusters ?? [];
 
   const [selectedProject, setSelectedProject] = useState<number | null>(() => {
+    const fromUrl = searchParams.get('project');
+    if (fromUrl) {
+      const parsed = parseInt(fromUrl);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.BNK_PROJECT);
     return stored ? parseInt(stored) : null;
   });
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
+    const fromUrl = searchParams.get('cluster');
+    if (fromUrl) {
+      const parsed = parseInt(fromUrl);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.BNK_CLUSTER);
     return stored ? parseInt(stored) : null;
   });
@@ -395,12 +447,22 @@ export default function F5BNK() {
 
   // Resource type & sidebar state
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
+    const fromUrl = mapParamToViewOrResource(
+      searchParams.get('view') || searchParams.get('resource') || searchParams.get('tab')
+    );
+    if (fromUrl) {
+      if (fromUrl === VIEW_DPF_INFRA) {
+        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        return VIEW_TOPOLOGY;
+      }
+      return fromUrl;
+    }
+
     const initialView = localStorage.getItem('bnk-forge-bnk-initial-view');
     if (initialView) {
       localStorage.removeItem('bnk-forge-bnk-initial-view');
       // DPF moved to Fleet — redirect if deep-link targets it
       if (initialView === VIEW_DPF_INFRA) {
-        // Navigate after mount via useEffect (can't call navigate in useState initializer)
         setTimeout(() => navigate('/fleet?tab=dpf'), 0);
         return VIEW_TOPOLOGY;
       }
@@ -408,9 +470,38 @@ export default function F5BNK() {
     }
     return VIEW_TOPOLOGY;
   });
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    return searchParams.get('name') || searchParams.get('search') || '';
+  });
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_MS.SEARCH);
-  const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
+  const [selectedNamespace, setSelectedNamespace] = useState<string>(() => {
+    return searchParams.get('namespace') || 'all';
+  });
+
+  // Sync state when URL searchParams change
+  useEffect(() => {
+    const urlCluster = searchParams.get('cluster');
+    if (urlCluster) {
+      const parsed = parseInt(urlCluster);
+      if (!Number.isNaN(parsed) && parsed !== selectedCluster) {
+        setSelectedCluster(parsed);
+      }
+    }
+    const targetViewOrResource = mapParamToViewOrResource(
+      searchParams.get('view') || searchParams.get('resource') || searchParams.get('tab')
+    );
+    if (targetViewOrResource && targetViewOrResource !== selectedResourceType) {
+      setSelectedResourceType(targetViewOrResource);
+    }
+    const urlNs = searchParams.get('namespace');
+    if (urlNs && urlNs !== selectedNamespace) {
+      setSelectedNamespace(urlNs);
+    }
+    const urlName = searchParams.get('name') || searchParams.get('search');
+    if (urlName !== null && urlName !== undefined && urlName !== searchQuery) {
+      setSearchQuery(urlName);
+    }
+  }, [searchParams]);
 
   // Selected resource for detail panel
   const [selectedResource, setSelectedResource] = useState<K8sResource | null>(null);
@@ -929,7 +1020,7 @@ export default function F5BNK() {
                 }}
               >
                 {isSpecialView(selectedResourceType)
-                  ? renderSpecialView(selectedResourceType, { clusterId: selectedCluster, namespace: resolvedNamespace, onTopologySelect: handleTopologySelect, onNavigateView: handleNavigateView, onRedirectToFleetDpf: redirectToFleetDpf })
+                  ? renderSpecialView(selectedResourceType, { clusterId: selectedCluster, namespace: resolvedNamespace, searchQuery: debouncedSearch, onTopologySelect: handleTopologySelect, onNavigateView: handleNavigateView, onRedirectToFleetDpf: redirectToFleetDpf })
                   : renderResourceListContent()
                 }
               </ConnectivityGate>

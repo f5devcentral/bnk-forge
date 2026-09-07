@@ -256,7 +256,68 @@ class TestNormalizeAgentCard:
         assert result["capabilities"] == {}
         assert result["iconUrl"] is None
 
+    def test_governance_field_preserved(self):
+        card = {
+            "name": "gke-vertex-finance-tool",
+            "governance": {
+                "gateway": "F5 BIG-IP Next for Kubernetes",
+                "cloud": "Google Cloud GKE",
+            },
+        }
+        result = _normalize_agent_card(card)
+        assert result["name"] == "gke-vertex-finance-tool"
+        assert result["governance"]["cloud"] == "Google Cloud GKE"
+
     def test_non_dict_returns_none(self):
         assert _normalize_agent_card("not a dict") is None
         assert _normalize_agent_card(None) is None
         assert _normalize_agent_card(42) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_json_or_python_dict & route deduplication
+# ---------------------------------------------------------------------------
+
+
+class TestParseJsonOrPythonDict:
+    def test_valid_json_string(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = '{"name": "agent-1", "skills": ["a", "b"]}'
+        result = _parse_json_or_python_dict(raw)
+        assert result == {"name": "agent-1", "skills": ["a", "b"]}
+
+    def test_single_quoted_python_dict_string(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = "{'name': 'gke-vertex-finance-tool', 'version': '1.0.0'}"
+        result = _parse_json_or_python_dict(raw)
+        assert result == {"name": "gke-vertex-finance-tool", "version": "1.0.0"}
+
+    def test_already_dict(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = {"name": "agent-dict"}
+        assert _parse_json_or_python_dict(raw) == raw
+
+    def test_invalid_input(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        assert _parse_json_or_python_dict("invalid not json") is None
+        assert _parse_json_or_python_dict("") is None
+        assert _parse_json_or_python_dict(None) is None
+        assert _parse_json_or_python_dict([1, 2, 3]) is None
+
+
+class TestRouteDeduplication:
+    def test_deduplicates_repeated_route_refs(self):
+        from services.bnk.a2a_discovery import _find_http_backend_services
+        services = [_service("vertex-finance-mcp")]
+        # Same route referenced across multiple listeners
+        route_ref_map = {
+            ("default", "vertex-finance-mcp"): [
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+            ]
+        }
+        candidates = _find_http_backend_services(services, route_ref_map)
+        assert len(candidates) == 1
+        assert len(candidates[0]["routeRefs"]) == 1
+
