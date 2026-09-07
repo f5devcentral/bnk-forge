@@ -12,6 +12,7 @@ import {
   getClusterLocationInfo,
   normalizeProvider,
   cleanNameForMatching,
+  formatAvailabilityZone,
 } from '../aws-regions';
 
 describe('AWS_REGIONS', () => {
@@ -267,4 +268,23 @@ describe('cleanNameForMatching()', () => {
   });
 });
 
->>>>>>> f517ed3 (refactor(frontend): centralize cloud provider normalization and deduplicate filter logic)
+describe('formatAvailabilityZone()', () => {
+  it('formats null, undefined, or empty values as --', () => {
+    expect(formatAvailabilityZone(null)).toBe('--');
+    expect(formatAvailabilityZone(undefined)).toBe('--');
+    expect(formatAvailabilityZone('')).toBe('--');
+    expect(formatAvailabilityZone('--')).toBe('--');
+  });
+
+  it('formats Azure non-zonal 0 and eastus-0 as Regional (Non-Zonal)', () => {
+    expect(formatAvailabilityZone('0')).toBe('Regional (Non-Zonal)');
+    expect(formatAvailabilityZone('eastus-0')).toBe('Regional (Non-Zonal)');
+    expect(formatAvailabilityZone('australiaeast-0')).toBe('Regional (Non-Zonal)');
+  });
+
+  it('preserves valid availability zone names', () => {
+    expect(formatAvailabilityZone('us-east-1a')).toBe('us-east-1a');
+    expect(formatAvailabilityZone('australiaeast-1')).toBe('australiaeast-1');
+    expect(formatAvailabilityZone('westeurope-2')).toBe('westeurope-2');
+  });
+});

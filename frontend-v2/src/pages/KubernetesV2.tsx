@@ -135,8 +135,41 @@ export default function KubernetesV2() {
     return stored ? parseInt(stored) : null;
   });
 
-  // Strip deep link searchParams once consumed
+  // Consume and sync deep link searchParams
   useEffect(() => {
+    const clusterParam = searchParams.get('cluster');
+    const projectParam = searchParams.get('project');
+    const resourceParam = searchParams.get('resource');
+    const namespaceParam = searchParams.get('namespace');
+    const nameParam = searchParams.get('name');
+    const viewParam = searchParams.get('view');
+
+    if (clusterParam) {
+      const parsed = parseInt(clusterParam);
+      if (!Number.isNaN(parsed)) setSelectedCluster(parsed);
+    }
+    if (projectParam) {
+      const parsed = parseInt(projectParam);
+      if (!Number.isNaN(parsed)) setSelectedProject(parsed);
+    }
+    if (resourceParam) {
+      const lower = resourceParam.toLowerCase();
+      if (lower === 'ingresses') setSelectedResourceType('ingress');
+      else if (lower === 'services') setSelectedResourceType('service');
+      else if (lower === 'httproutes') setSelectedResourceType('httproute');
+      else if (lower === 'virtualservers') setSelectedResourceType('virtualserver');
+      else setSelectedResourceType(lower);
+    }
+    if (namespaceParam) {
+      setSelectedNamespace(namespaceParam);
+    }
+    if (nameParam !== null && nameParam !== undefined) {
+      setSearchQuery(nameParam);
+    }
+    if (viewParam && ['advanced', 'migration', 'dashboard', 'crds'].includes(viewParam)) {
+      setViewMode(viewParam as 'dashboard' | 'advanced' | 'crds' | 'migration');
+    }
+
     const paramsToClean = ['project', 'cluster', 'namespace', 'resource', 'name', 'view'];
     const hasAny = paramsToClean.some((p) => searchParams.has(p));
     if (hasAny) {
@@ -144,8 +177,7 @@ export default function KubernetesV2() {
       paramsToClean.forEach((p) => next.delete(p));
       setSearchParams(next, { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
     const fromUrl = searchParams.get('cluster');

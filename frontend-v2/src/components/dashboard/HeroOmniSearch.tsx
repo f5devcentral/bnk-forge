@@ -173,12 +173,28 @@ export function HeroOmniSearch({
   const totalResultsCount =
     filteredIngresses.length + filteredClusters.length + filteredProjects.length;
 
-  const handleSelectIngress = (clusterId: number, namespace: string, name: string) => {
+  const mapKindToResourceParam = (kind?: string): string => {
+    const k = (kind || '').toLowerCase();
+    if (k === 'ingress' || k === 'ingresses') return 'ingress';
+    if (k === 'service' || k === 'services') return 'service';
+    if (k === 'httproute' || k === 'httproutes') return 'httproute';
+    if (k === 'virtualserver' || k === 'virtualservers') return 'virtualserver';
+    if (k === 'egress' || k === 'f5-spk-egress' || k === 'f5-spk-egresses') return 'f5-spk-egress';
+    if (k === 'gateway' || k === 'gateways') return 'gateway';
+    if (k === 'bnkgateway' || k === 'f5-bnkgateways' || k === 'f5-bnkgateway') return 'bnkgateway';
+    if (k === 'l4route' || k === 'l4routes') return 'l4route';
+    if (k === 'deployment' || k === 'deployments') return 'deployment';
+    if (k === 'pod' || k === 'pods') return 'pod';
+    return k || 'ingress';
+  };
+
+  const handleSelectIngress = (clusterId: number, namespace: string, name: string, kind?: string) => {
     setIsOpen(false);
+    const resource = mapKindToResourceParam(kind);
     navigate(
       `/kubernetes?cluster=${clusterId}&namespace=${encodeURIComponent(
         namespace
-      )}&resource=ingresses&name=${encodeURIComponent(name)}&view=advanced`
+      )}&resource=${encodeURIComponent(resource)}&name=${encodeURIComponent(name)}&view=advanced`
     );
   };
 
@@ -363,7 +379,7 @@ export function HeroOmniSearch({
                       return (
                         <div
                           key={`ing-${item.cluster_id}-${item.namespace}-${item.name}-${idx}`}
-                          onClick={() => handleSelectIngress(item.cluster_id, item.namespace, item.name)}
+                          onClick={() => handleSelectIngress(item.cluster_id, item.namespace, item.name, item.kind)}
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">

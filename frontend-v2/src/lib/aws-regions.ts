@@ -150,6 +150,7 @@ export {
   getClusterLocationInfo,
   normalizeProvider,
   cleanNameForMatching,
+  formatAvailabilityZone,
   type CloudProviderBadgeInfo,
   type NormalizedCloudProvider,
 } from './cloud-providers';

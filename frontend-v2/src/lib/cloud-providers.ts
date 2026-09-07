@@ -220,3 +220,18 @@ export function getClusterLocationInfo(
 
   return { flag: '🌐', label: `${providerPrefix}${reg}`, display: reg };
 }
+
+/**
+ * Format Kubernetes / cloud provider availability zone for user display.
+ * In Azure AKS, nodes in non-zonal or regional scale sets report zone "0" (or "<region>-0").
+ * This formats zone "0" nicely as "Regional (Non-Zonal)".
+ */
+export function formatAvailabilityZone(zone?: string | null): string {
+  if (!zone || zone === '--') return '--';
+  const trimmed = zone.trim();
+  if (trimmed === '0' || /^[a-z0-9]+-0$/i.test(trimmed)) {
+    return 'Regional (Non-Zonal)';
+  }
+  return trimmed;
+}
+
