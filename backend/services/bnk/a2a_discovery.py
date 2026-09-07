@@ -11,6 +11,7 @@ services behind HTTPRoutes that could be A2A agents. The optional
 probe phase (with I/O) attempts to fetch actual agent cards.
 """
 
+import ast
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -91,6 +92,21 @@ def _find_http_backend_services(
         if not http_refs:
             continue
 
+        # Deduplicate route refs while preserving uniqueness of (kind, namespace, name, port, gatewayName)
+        seen_refs: set[tuple[str, str, str, Any, str]] = set()
+        deduped_http_refs: list[dict] = []
+        for r in http_refs:
+            ref_key = (
+                r.get("kind", ""),
+                r.get("namespace", ""),
+                r.get("name", ""),
+                r.get("port"),
+                r.get("gatewayName", ""),
+            )
+            if ref_key not in seen_refs:
+                seen_refs.add(ref_key)
+                deduped_http_refs.append(r)
+
         ports = [
             {"port": p.get("port"), "name": p.get("name"), "protocol": p.get("protocol", "TCP")}
             for p in (spec.get("ports") or [])
@@ -101,8 +117,8 @@ def _find_http_backend_services(
             "namespace": svc_ns,
             "ports": ports,
             "clusterIP": spec.get("clusterIP"),
-            "routeRefs": http_refs,
-            "gateways": list({r["gatewayName"] for r in http_refs}),
+            "routeRefs": deduped_http_refs,
+            "gateways": sorted(list({r["gatewayName"] for r in deduped_http_refs if r.get("gatewayName")})),
             "agentCard": None,       # Populated by probe
             "probeStatus": "pending",  # pending | success | error | skipped
         })
@@ -114,6 +130,30 @@ def _find_http_backend_services(
 # ---------------------------------------------------------------------------
 # Live probing (I/O — K8s service proxy API)
 # ---------------------------------------------------------------------------
+
+
+def _parse_json_or_python_dict(resp: Any) -> dict | None:
+    """Safely parse a response payload that may be valid JSON, a Python dict, or str(dict)."""
+    if isinstance(resp, dict):
+        return resp
+    if not isinstance(resp, str):
+        return None
+    resp_str = resp.strip()
+    if not resp_str:
+        return None
+    try:
+        data = json.loads(resp_str)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    try:
+        data = ast.literal_eval(resp_str)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return None
 
 
 def _candidate_probe_ports(candidate: dict) -> list[int]:
@@ -154,14 +194,38 @@ def _probe_agent_cards(
     """
     Probe each candidate service for ``/.well-known/agent-card.json``.
 
-    Uses the K8s API server's service proxy endpoint:
+    Uses the K8s API server's service proxy endpoint first:
     ``GET /api/v1/namespaces/{ns}/services/{name}:{port}/proxy/.well-known/agent-card.json``
+    If service proxy fails (e.g. 503 Service Unavailable / no endpoints available
+    on VPC-native GKE clusters), falls back to direct pod proxy:
+    ``GET /api/v1/namespaces/{ns}/pods/{pod_name}:{port}/proxy/.well-known/agent-card.json``
 
     Mutates candidates in-place, setting ``agentCard`` and ``probeStatus``.
     """
     from kubernetes import client as k8s_client
 
     core_v1 = k8s_client.CoreV1Api(api_client)
+
+    paths = [
+        "/.well-known/agent-card.json",
+        ".well-known/agent-card.json",
+        "/.well-known/agent.json",
+        ".well-known/agent.json",
+        "/agent-card.json",
+        "agent-card.json",
+    ]
+
+    # Cache pods per namespace to avoid repeated list_namespaced_pod calls
+    pods_cache: dict[str, list[Any]] = {}
+
+    def get_namespace_pods(ns: str) -> list[Any]:
+        if ns not in pods_cache:
+            try:
+                pods_cache[ns] = core_v1.list_namespaced_pod(namespace=ns, _request_timeout=5).items or []
+            except Exception as e:
+                logger.debug("Failed to list pods in %s for A2A probe fallback: %s", ns, e)
+                pods_cache[ns] = []
+        return pods_cache[ns]
 
     def probe_one(candidate: dict) -> None:
         svc_name = candidate["name"]
@@ -173,10 +237,12 @@ def _probe_agent_cards(
             return
 
         card_found = None
+
+        # 1. First attempt: Service proxy
         for port in ports_to_try:
-            proxy_targets = [f"{svc_name}:{port}"]
+            proxy_targets = [f"{svc_name}:{port}", f"http:{svc_name}:{port}", svc_name]
             for proxy_name in proxy_targets:
-                for path in [".well-known/agent-card.json", "/.well-known/agent-card.json"]:
+                for path in paths:
                     try:
                         resp = core_v1.connect_get_namespaced_service_proxy_with_path(
                             name=proxy_name,
@@ -184,17 +250,52 @@ def _probe_agent_cards(
                             path=path,
                             _request_timeout=5,
                         )
-                        card = json.loads(resp) if isinstance(resp, str) else resp
+                        card = _parse_json_or_python_dict(resp)
                         normalized = _normalize_agent_card(card)
                         if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
                             card_found = normalized
                             break
                     except Exception as exc:
-                        logger.debug("A2A probe %s/%s via %s (%s) — %s", svc_ns, svc_name, proxy_name, path, exc)
+                        logger.debug("A2A service probe %s/%s via %s (%s) — %s", svc_ns, svc_name, proxy_name, path, exc)
                 if card_found:
                     break
             if card_found:
                 break
+
+        # 2. Second attempt: Pod proxy fallback (e.g. for GKE VPC-native clusters where service proxy 503s)
+        if not card_found:
+            ns_pods = get_namespace_pods(svc_ns)
+            matching_pods = [
+                p for p in ns_pods
+                if (
+                    (getattr(p.metadata, "name", "") or "").startswith(svc_name)
+                    or (getattr(p.metadata, "labels", None) and getattr(p.metadata, "labels", {}).get("app") == svc_name)
+                )
+                and getattr(p.status, "phase", "") == "Running"
+            ]
+
+            for pod in matching_pods:
+                pod_name = pod.metadata.name
+                for port in ports_to_try:
+                    for path in paths:
+                        try:
+                            resp = core_v1.connect_get_namespaced_pod_proxy_with_path(
+                                name=f"{pod_name}:{port}",
+                                namespace=svc_ns,
+                                path=path,
+                                _request_timeout=5,
+                            )
+                            card = _parse_json_or_python_dict(resp)
+                            normalized = _normalize_agent_card(card)
+                            if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
+                                card_found = normalized
+                                break
+                        except Exception as exc:
+                            logger.debug("A2A pod probe %s/%s via %s:%s (%s) — %s", svc_ns, svc_name, pod_name, port, path, exc)
+                    if card_found:
+                        break
+                if card_found:
+                    break
 
         if card_found:
             candidate["agentCard"] = card_found
@@ -221,6 +322,7 @@ def _normalize_agent_card(card: Any) -> dict | None:
     - defaultInputModes, defaultOutputModes
     - provider: {organization, url}
     - securitySchemes
+    - governance
     """
     if not isinstance(card, dict):
         return None
@@ -278,5 +380,7 @@ def _normalize_agent_card(card: Any) -> dict | None:
         "defaultOutputModes": card.get("defaultOutputModes") or card.get("default_output_modes") or [],
         "provider": card.get("provider", {}) if isinstance(card.get("provider"), dict) else {},
         "securitySchemes": card.get("securitySchemes") or card.get("security_schemes") or {},
+        "governance": card.get("governance") if isinstance(card.get("governance"), dict) else None,
         "iconUrl": card.get("iconUrl") or card.get("icon_url"),
     }
+
