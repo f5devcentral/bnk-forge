@@ -13,12 +13,38 @@ export interface CloudProviderBadgeInfo {
   badgeClass: string;
 }
 
+export type NormalizedCloudProvider = 'aws' | 'azure' | 'gke' | 'metal' | 'ibm' | 'other';
+
+/**
+ * Normalize a cloud provider or project type string into a canonical provider key.
+ */
+export function normalizeProvider(provider?: string | null): NormalizedCloudProvider {
+  const p = (provider || '').toLowerCase().trim();
+  if (p === 'aws' || p === 'eks' || p.includes('cloud-aws')) return 'aws';
+  if (p === 'azure' || p === 'aks' || p.includes('cloud-azure')) return 'azure';
+  if (p === 'gcp' || p === 'gke' || p === 'google' || p.includes('cloud-gcp')) return 'gke';
+  if (p === 'bare-metal' || p === 'on-prem' || p === 'metal' || p === 'kubernetes') return 'metal';
+  if (p === 'ibm' || p === 'roks' || p === 'ibmcloud' || p.includes('cloud-ibm')) return 'ibm';
+  return 'other';
+}
+
+/**
+ * Strip common provider prefixes (e.g., 'awsbnkctl-', 'azrbnkctl-', 'aws-') to match correlated resources.
+ */
+export function cleanNameForMatching(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^(aws|azr|gke|ibm|metal|gcp|k8s)bnkctl-/, '')
+    .replace(/^(aws|azr|gke|ibm|metal|gcp|k8s)-/, '')
+    .trim();
+}
+
 /**
  * Get display badge metadata for a cloud provider.
  */
 export function getCloudProviderBadgeInfo(provider?: string | null): CloudProviderBadgeInfo {
-  const p = (provider || '').toLowerCase().trim();
-  if (p === 'aws' || p === 'eks') {
+  const norm = normalizeProvider(provider);
+  if (norm === 'aws') {
     return {
       provider: 'aws',
       label: 'Amazon Web Services',
@@ -27,7 +53,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       badgeClass: 'border-warning/40 text-warning bg-warning/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
-  if (p === 'gcp' || p === 'gke' || p === 'google') {
+  if (norm === 'gke') {
     return {
       provider: 'gcp',
       label: 'Google Cloud Platform (GKE)',
@@ -36,7 +62,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       badgeClass: 'border-primary/40 text-primary bg-primary/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
-  if (p === 'azure' || p === 'aks') {
+  if (norm === 'azure') {
     return {
       provider: 'azure',
       label: 'Microsoft Azure (AKS)',
@@ -45,7 +71,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       badgeClass: 'border-accent/40 text-accent bg-accent/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
-  if (p === 'ibm' || p === 'roks' || p === 'ibmcloud') {
+  if (norm === 'ibm') {
     return {
       provider: 'ibm',
       label: 'IBM Cloud (ROKS)',
@@ -54,7 +80,7 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       badgeClass: 'border-secondary text-secondary-foreground bg-secondary/30 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
-  if (p === 'on-prem' || p === 'bare-metal' || p === 'metal') {
+  if (norm === 'metal') {
     return {
       provider: 'bare-metal',
       label: 'Bare-Metal / On-Premises',
@@ -63,10 +89,11 @@ export function getCloudProviderBadgeInfo(provider?: string | null): CloudProvid
       badgeClass: 'border-success/40 text-success bg-success/10 font-semibold text-[10px] px-1.5 py-0.5',
     };
   }
+  const raw = (provider || '').trim();
   return {
-    provider: p || 'k8s',
-    label: p ? p.toUpperCase() : 'Kubernetes',
-    shortLabel: p ? p.toUpperCase().slice(0, 4) : 'K8S',
+    provider: raw || 'k8s',
+    label: raw ? raw.toUpperCase() : 'Kubernetes',
+    shortLabel: raw ? raw.toUpperCase().slice(0, 4) : 'K8S',
     badgeVariant: 'secondary',
     badgeClass: 'font-semibold text-[10px] px-1.5 py-0.5',
   };

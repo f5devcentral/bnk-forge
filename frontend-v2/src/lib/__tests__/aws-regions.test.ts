@@ -8,6 +8,10 @@ import {
   CONTINENT_ORDER,
   getRegionInfo,
   getProjectLocationInfo,
+  getCloudProviderBadgeInfo,
+  getClusterLocationInfo,
+  normalizeProvider,
+  cleanNameForMatching,
 } from '../aws-regions';
 
 describe('AWS_REGIONS', () => {
@@ -142,3 +146,122 @@ describe('getProjectLocationInfo()', () => {
     expect(result!.display).toBe('xx-unknown-99');
   });
 });
+
+describe('getCloudProviderBadgeInfo()', () => {
+  it('returns AWS badge for aws and eks', () => {
+    expect(getCloudProviderBadgeInfo('aws').shortLabel).toBe('AWS');
+    expect(getCloudProviderBadgeInfo('eks').shortLabel).toBe('AWS');
+  });
+
+  it('returns GKE badge for gcp and gke', () => {
+    expect(getCloudProviderBadgeInfo('gcp').shortLabel).toBe('GKE');
+    expect(getCloudProviderBadgeInfo('gke').shortLabel).toBe('GKE');
+  });
+
+  it('returns AZR badge for azure and aks', () => {
+    expect(getCloudProviderBadgeInfo('azure').shortLabel).toBe('AZR');
+    expect(getCloudProviderBadgeInfo('aks').shortLabel).toBe('AZR');
+  });
+
+  it('returns IBM badge for ibm and roks', () => {
+    expect(getCloudProviderBadgeInfo('ibm').shortLabel).toBe('IBM');
+    expect(getCloudProviderBadgeInfo('roks').shortLabel).toBe('IBM');
+  });
+
+  it('returns METAL badge for on-prem and bare-metal', () => {
+    expect(getCloudProviderBadgeInfo('bare-metal').shortLabel).toBe('METAL');
+    expect(getCloudProviderBadgeInfo('on-prem').shortLabel).toBe('METAL');
+  });
+
+  it('returns K8S default for empty or generic provider', () => {
+    expect(getCloudProviderBadgeInfo(null).shortLabel).toBe('K8S');
+    expect(getCloudProviderBadgeInfo('').shortLabel).toBe('K8S');
+  });
+});
+
+describe('getClusterLocationInfo()', () => {
+  it('returns country flag for AWS regions', () => {
+    const res = getClusterLocationInfo('aws', 'us-east-1');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇺🇸');
+  });
+
+  it('returns country flag and label for Azure regions', () => {
+    const res = getClusterLocationInfo('azure', 'westeurope');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇳🇱');
+    expect(res!.label).toBe('Azure West Europe');
+  });
+
+  it('returns country flag for GCP regions', () => {
+    const res = getClusterLocationInfo('gcp', 'australia-southeast1');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇦🇺');
+    expect(res!.label).toBe('GCP australia-southeast1');
+  });
+
+  it('returns country flag for Azure East US 2', () => {
+    const res = getClusterLocationInfo('azure', 'eastus2');
+    expect(res).not.toBeNull();
+    expect(res!.flag).toBe('🇺🇸');
+    expect(res!.label).toBe('Azure East US 2');
+  });
+
+  it('returns on-prem for bare-metal clusters', () => {
+    const res = getClusterLocationInfo('bare-metal', null);
+    expect(res).not.toBeNull();
+    expect(res!.display).toBe('On-Prem');
+  });
+});
+
+describe('normalizeProvider()', () => {
+  it('normalizes AWS and EKS aliases to aws', () => {
+    expect(normalizeProvider('aws')).toBe('aws');
+    expect(normalizeProvider('eks')).toBe('aws');
+    expect(normalizeProvider('cloud-aws')).toBe('aws');
+    expect(normalizeProvider('AWS')).toBe('aws');
+  });
+
+  it('normalizes Azure and AKS aliases to azure', () => {
+    expect(normalizeProvider('azure')).toBe('azure');
+    expect(normalizeProvider('aks')).toBe('azure');
+    expect(normalizeProvider('cloud-azure')).toBe('azure');
+  });
+
+  it('normalizes GCP, GKE, and Google aliases to gke', () => {
+    expect(normalizeProvider('gcp')).toBe('gke');
+    expect(normalizeProvider('gke')).toBe('gke');
+    expect(normalizeProvider('google')).toBe('gke');
+    expect(normalizeProvider('cloud-gcp')).toBe('gke');
+  });
+
+  it('normalizes bare-metal, on-prem, and metal aliases to metal', () => {
+    expect(normalizeProvider('bare-metal')).toBe('metal');
+    expect(normalizeProvider('on-prem')).toBe('metal');
+    expect(normalizeProvider('metal')).toBe('metal');
+    expect(normalizeProvider('kubernetes')).toBe('metal');
+  });
+
+  it('normalizes IBM and ROKS aliases to ibm', () => {
+    expect(normalizeProvider('ibm')).toBe('ibm');
+    expect(normalizeProvider('roks')).toBe('ibm');
+    expect(normalizeProvider('ibmcloud')).toBe('ibm');
+  });
+
+  it('returns other for null, empty, or unknown strings', () => {
+    expect(normalizeProvider(null)).toBe('other');
+    expect(normalizeProvider('')).toBe('other');
+    expect(normalizeProvider('custom-unknown')).toBe('other');
+  });
+});
+
+describe('cleanNameForMatching()', () => {
+  it('strips bnkctl and standard provider prefixes', () => {
+    expect(cleanNameForMatching('awsbnkctl-prod-cluster')).toBe('prod-cluster');
+    expect(cleanNameForMatching('azrbnkctl-stage-cluster')).toBe('stage-cluster');
+    expect(cleanNameForMatching('gkebnkctl-demo')).toBe('demo');
+    expect(cleanNameForMatching('aws-my-app')).toBe('my-app');
+    expect(cleanNameForMatching('custom-service')).toBe('custom-service');
+  });
+});
+
