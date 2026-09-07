@@ -370,8 +370,7 @@ def get_gcp_service_account_info(project: Project | None, db=None) -> dict | Non
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.id == project.credential_template_id
             ).first()
-
-        if not template or template.provider != "gcp" or not template.gcp_credentials_encrypted:
+        elif not project or not getattr(project, "credential_template_id", None):
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "gcp",
                 CloudCredentialTemplate.is_default.is_(True),
@@ -411,8 +410,7 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.id == project.credential_template_id
             ).first()
-
-        if not template or template.provider != "azure":
+        elif not project or not getattr(project, "credential_template_id", None):
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "azure",
                 CloudCredentialTemplate.is_default.is_(True),
