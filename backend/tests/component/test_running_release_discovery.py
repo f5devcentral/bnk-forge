@@ -265,7 +265,7 @@ class TestScannerRunningReleaseWriteback:
             "crd_groups": set(),
             "cert_manager_pods": [],
             "helm_releases": [],
-            "kube_system_pods": [],
+            "kube_system_pods": [], "multus_pods": [],
             "daemonsets": [],
             "storage_classes": [],
             "gateways": [],
@@ -312,7 +312,7 @@ class TestScannerRunningReleaseWriteback:
              patch("services.scanner.fetch_scan_data", return_value={
                  "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
                  "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-                 "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+                 "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
                  "storage_classes": [], "gateways": [], "gatewayclasses": [],
                  "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
                  "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
@@ -361,7 +361,7 @@ class TestScannerRunningReleaseWriteback:
              patch("services.scanner.fetch_scan_data", return_value={
                  "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
                  "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-                 "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+                 "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
                  "storage_classes": [], "gateways": [], "gatewayclasses": [],
                  "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
                  "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
@@ -407,7 +407,7 @@ class TestScannerRunningReleaseWriteback:
         fetch_data = {
             "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
             "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-            "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+            "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
             "storage_classes": [], "gateways": [], "gatewayclasses": [],
             "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
             "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
@@ -463,7 +463,7 @@ class TestScannerRunningReleaseWriteback:
              patch("services.scanner.fetch_scan_data", return_value={
                  "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
                  "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-                 "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+                 "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
                  "storage_classes": [], "gateways": [], "gatewayclasses": [],
                  "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
                  "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
@@ -499,7 +499,7 @@ class TestScannerRunningReleaseWriteback:
 _EMPTY_FETCH_DATA = {
     "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
     "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-    "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+    "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
     "storage_classes": [], "gateways": [], "gatewayclasses": [],
     "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
     "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
