@@ -200,9 +200,26 @@ class LlmObservabilityService:
 
     # -- Loki proxy calls -------------------------------------------------
 
-    def _client(self, cluster_id: int) -> Any:
-        cluster = self._k8s.get_cluster(cluster_id)
-        return self._k8s.load_kubeconfig(cluster)
+    def _client(self, cluster_or_id: int | KubernetesCluster) -> Any:
+        if isinstance(cluster_or_id, int):
+            cluster = self._k8s.get_cluster(cluster_or_id)
+            return self._k8s.load_kubeconfig(cluster)
+        return self._k8s.load_kubeconfig(cluster_or_id)
+
+    def _resolve_active_clients(self) -> list[tuple[KubernetesCluster, Any]]:
+        clusters = self._active_clusters()
+        clients: list[tuple[KubernetesCluster, Any]] = []
+        for c in clusters:
+            try:
+                cid = getattr(c, "id", c)
+                if getattr(self._client, "__func__", None) is LlmObservabilityService._client:
+                    client = self._k8s.load_kubeconfig(c)
+                else:
+                    client = self._client(cid)
+                clients.append((c, client))
+            except Exception as e:
+                logger.warning("Failed to load kubeconfig for cluster %s: %s", getattr(c, "name", str(c)), e)
+        return clients
 
     def _call(
         self, api_client: Any, sub_path: str, params: list[tuple[str, str]]
@@ -270,15 +287,20 @@ class LlmObservabilityService:
     # -- endpoints --------------------------------------------------------
 
     def stats(
-        self, cluster_id: int | None, range_: str, model: str | None = None, status: str | None = None
+        self,
+        cluster_id: int | None,
+        range_: str,
+        model: str | None = None,
+        status: str | None = None,
+        _api_client: Any = None,
     ) -> dict[str, Any]:
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.stats(c.id, range_, model, status)
-                for c in clusters
+                lambda c=c, client=client: self.stats(c.id, range_, model, status, _api_client=client)
+                for c, client in cluster_clients
             ])
             valid = [r for r in results if r.get("available")]
             if not valid:
@@ -304,7 +326,7 @@ class LlmObservabilityService:
                 errors={},
             )
 
-        api_client = self._client(cluster_id)
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
         end_ns = time.time_ns()
         rng = f"{self._range_s(range_)}s"
         sel = self._selector(model, status)
@@ -355,14 +377,15 @@ class LlmObservabilityService:
         metric: str,
         model: str | None = None,
         status: str | None = None,
+        _api_client: Any = None,
     ) -> dict[str, Any]:
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: (c, self.histogram(c.id, range_, metric, model, status))
-                for c in clusters
+                lambda c=c, client=client: (c, self.histogram(c.id, range_, metric, model, status, _api_client=client))
+                for c, client in cluster_clients
             ])
             valid = [(c, r) for c, r in results if r.get("available")]
             if not valid:
@@ -400,7 +423,7 @@ class LlmObservabilityService:
                 merged_series.append({"name": s_name, "points": points})
             return self._ok(metric=metric, step_s=step_s, series=merged_series, errors={})
 
-        api_client = self._client(cluster_id)
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
         step_s = self._step_s(range_)
@@ -503,14 +526,15 @@ class LlmObservabilityService:
         metric: str,
         model: str | None = None,
         status: str | None = None,
+        _api_client: Any = None,
     ) -> dict[str, Any]:
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.provider_usage(c.id, range_, metric, model, status)
-                for c in clusters
+                lambda c=c, client=client: self.provider_usage(c.id, range_, metric, model, status, _api_client=client)
+                for c, client in cluster_clients
             ])
             valid = [r for r in results if r.get("available")]
             if not valid:
@@ -551,7 +575,7 @@ class LlmObservabilityService:
                 merged_series.append({"name": s_name, "points": points})
             return self._ok(metric=metric, step_s=step_s, series=merged_series, errors={})
 
-        api_client = self._client(cluster_id)
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
         step_s = self._step_s(range_)
@@ -581,15 +605,20 @@ class LlmObservabilityService:
         return self._ok(metric=metric, step_s=step_s, series=series, errors=errors)
 
     def rankings(
-        self, cluster_id: int | None, range_: str, model: str | None = None, status: str | None = None
+        self,
+        cluster_id: int | None,
+        range_: str,
+        model: str | None = None,
+        status: str | None = None,
+        _api_client: Any = None,
     ) -> dict[str, Any]:
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.rankings(c.id, range_, model, status)
-                for c in clusters
+                lambda c=c, client=client: self.rankings(c.id, range_, model, status, _api_client=client)
+                for c, client in cluster_clients
             ])
             valid = [r for r in results if r.get("available")]
             if not valid:
@@ -633,7 +662,7 @@ class LlmObservabilityService:
             rows.sort(key=lambda x: x["requests"], reverse=True)
             return self._ok(rows=rows, errors={})
 
-        api_client = self._client(cluster_id)
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
         rng_s = self._range_s(range_)
         rng = f"{rng_s}s"
         cur_ns = time.time_ns()
@@ -717,15 +746,19 @@ class LlmObservabilityService:
         limit: int = 50,
         content_search: str | None = None,
         end: int | None = None,
+        _api_client: Any = None,
+        _cluster: KubernetesCluster | None = None,
     ) -> dict[str, Any]:
         limit = max(1, min(limit, 1000))
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.logs(c.id, range_, model, status, limit, content_search, end)
-                for c in clusters
+                lambda c=c, client=client: self.logs(
+                    c.id, range_, model, status, limit, content_search, end, _api_client=client, _cluster=c
+                )
+                for c, client in cluster_clients
             ])
             valid = [r for r in results if r.get("available")]
             if not valid:
@@ -751,9 +784,12 @@ class LlmObservabilityService:
                     next_end = str(oldest_ns - 1)
             return self._ok(rows=trimmed, next_end=next_end, errors={})
 
-        api_client = self._client(cluster_id)
-        cluster = self._k8s.get_cluster(cluster_id)
-        cluster_name = cluster.name if cluster else f"cluster-{cluster_id}"
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
+        if _cluster is not None:
+            cluster_name = _cluster.name
+        else:
+            cluster = self._k8s.get_cluster(cluster_id)
+            cluster_name = cluster.name if cluster else f"cluster-{cluster_id}"
         end_ns = end if end else time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
 
@@ -822,14 +858,16 @@ class LlmObservabilityService:
         oldest_ns = entries[-1][0] if entries else None
         return rows, oldest_ns
 
-    def filterdata(self, cluster_id: int | None, range_: str) -> dict[str, Any]:
+    def filterdata(
+        self, cluster_id: int | None, range_: str, _api_client: Any = None
+    ) -> dict[str, Any]:
         if cluster_id is None:
-            clusters = self._active_clusters()
-            if not clusters:
+            cluster_clients = self._resolve_active_clients()
+            if not cluster_clients:
                 return self._unavailable("No active Kubernetes clusters available")
             results = _run_parallel([
-                lambda c=c: self.filterdata(c.id, range_)
-                for c in clusters
+                lambda c=c, client=client: self.filterdata(c.id, range_, _api_client=client)
+                for c, client in cluster_clients
             ])
             valid = [r for r in results if r.get("available")]
             if not valid:
@@ -839,7 +877,7 @@ class LlmObservabilityService:
             statuses = sorted(set(s for r in valid for s in r.get("statuses", [])))
             return self._ok(models=models, statuses=statuses, errors={})
 
-        api_client = self._client(cluster_id)
+        api_client = _api_client if _api_client is not None else self._client(cluster_id)
         end_ns = time.time_ns()
         start_ns = end_ns - self._range_s(range_) * 1_000_000_000
         bounds = [("start", str(start_ns)), ("end", str(end_ns))]
