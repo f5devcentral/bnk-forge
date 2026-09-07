@@ -65,9 +65,55 @@ const filterData: LlmFilterData = {
   errors: {},
 };
 
+const fleetLogs: LlmLogsType = {
+  available: true,
+  endpoint: 'fleet',
+  updated_at: '2026-07-01T12:00:00Z',
+  rows: [
+    {
+      ts: '2026-07-01T11:59:00Z',
+      type: 'chat',
+      message: 'Question from cluster alpha',
+      model: 'gpt-4o',
+      latency_ms: 640,
+      prompt_tk: 12,
+      comp_tk: 8,
+      total_tk: 20,
+      cost: 0.0012,
+      status: '200',
+      req_body: '{"messages":[{"role":"user","content":"alpha query"}]}',
+      resp_body: '{"choices":[{"message":{"role":"assistant","content":"alpha response"}}]}',
+      cluster_id: 1,
+      cluster_name: 'Cluster Alpha',
+    },
+    {
+      ts: '2026-07-01T11:58:00Z',
+      type: 'chat',
+      message: 'Question from cluster beta',
+      model: 'claude-3',
+      latency_ms: 420,
+      prompt_tk: 10,
+      comp_tk: 5,
+      total_tk: 15,
+      cost: 0.0008,
+      status: '200',
+      req_body: '{"messages":[{"role":"user","content":"beta query"}]}',
+      resp_body: '{"choices":[{"message":{"role":"assistant","content":"beta response"}}]}',
+      cluster_id: 2,
+      cluster_name: 'Cluster Beta',
+    },
+  ],
+  next_end: '1699999999000000000',
+  errors: {},
+};
+
 beforeEach(() => {
   vi.restoreAllMocks();
   server.use(
+    http.get('*/api/k8s/llm-observability/stats', () => HttpResponse.json(stats)),
+    http.get('*/api/k8s/llm-observability/histogram', () => HttpResponse.json(histogram)),
+    http.get('*/api/k8s/llm-observability/logs', () => HttpResponse.json(fleetLogs)),
+    http.get('*/api/k8s/llm-observability/filterdata', () => HttpResponse.json(filterData)),
     http.get('*/api/k8s/clusters/:id/llm-observability/stats', () => HttpResponse.json(stats)),
     http.get('*/api/k8s/clusters/:id/llm-observability/histogram', () => HttpResponse.json(histogram)),
     http.get('*/api/k8s/clusters/:id/llm-observability/logs', () => HttpResponse.json(logs)),
@@ -96,5 +142,22 @@ describe('LlmLogs', () => {
     await waitFor(() => expect(screen.getByText('capital of France?')).toBeInTheDocument());
     expect(screen.getByText('Paris.')).toBeInTheDocument();
     expect(screen.getByText('Transcript')).toBeInTheDocument();
+  });
+
+  it('renders multi-cluster logs with cluster badges and opens drawer with cluster metadata', async () => {
+    render(<LlmLogs />, { initialRoute: '/observability/ai-gateway/logs?cluster=all' });
+
+    await waitFor(() =>
+      expect(screen.getByText('Question from cluster alpha')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Question from cluster beta')).toBeInTheDocument();
+    expect(screen.getByText('Cluster Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Cluster Beta')).toBeInTheDocument();
+
+    const alphaCell = screen.getByText('Question from cluster alpha');
+    fireEvent.click(alphaCell);
+
+    await waitFor(() => expect(screen.getByText('alpha query')).toBeInTheDocument());
+    expect(screen.getByText('alpha response')).toBeInTheDocument();
   });
 });
