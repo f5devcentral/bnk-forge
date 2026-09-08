@@ -309,7 +309,14 @@ class LlmObservabilityService:
             total_requests = sum(v.get("total_requests", 0) for v in valid)
             total_tokens = sum(v.get("total_tokens", 0) for v in valid)
             total_cost = sum(v.get("total_cost", 0.0) for v in valid)
-            total_models = max((v.get("models", 0) for v in valid), default=0)
+            # Per-cluster `models` is already a COUNT of distinct models on that
+            # cluster, so a true distinct union across the fleet is not computable
+            # from these inputs (we'd need the model names, which stats does not
+            # return). Summing gives an upper bound of "models in use across the
+            # fleet" (overcounts when clusters share models); it matches the
+            # generic "Models" stat-tile far better than max(), which silently
+            # understated the fleet whenever clusters ran disjoint model sets.
+            total_models = sum(v.get("models", 0) for v in valid)
             if total_requests > 0:
                 success_rate = sum(v.get("success_rate", 0.0) * v.get("total_requests", 0) for v in valid) / total_requests
                 avg_latency_ms = sum(v.get("avg_latency_ms", 0.0) * v.get("total_requests", 0) for v in valid) / total_requests

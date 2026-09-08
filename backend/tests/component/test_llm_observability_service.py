@@ -460,6 +460,69 @@ class TestMultiClusterObservability:
         # (100 + 300) / 2 = 200
         assert openai["points"][0]["value"] == pytest.approx(200.0)
 
+    def test_multi_cluster_stats_sums_requests_and_models_across_fleet(self):
+        """Fleet stats sums per-cluster totals; `models` is an upper bound.
+
+        Per-cluster `models` is a COUNT of distinct models on that cluster, so
+        the fleet value is the SUM of those counts (an upper bound of models in
+        use across the fleet), NOT max() — which understated the fleet whenever
+        clusters ran disjoint model sets. c1 has 3 models / 100 reqs, c2 has 4
+        models / 50 reqs, so the fleet reports 7 models (3+4), not 4 (max).
+        """
+        def _router_for(models_count: int, requests: int, tokens: int, cost: float):
+            def _router(sub, query, params):
+                if "count by (model)" in query:
+                    return _instant(_vector(models_count))
+                if "unwrap latency_ms" in query:
+                    return _instant(_vector(200.0))
+                if "unwrap total_tk" in query:
+                    return _instant(_vector(tokens))
+                if "unwrap cost" in query:
+                    return _instant(_vector(cost))
+                if 'status=~"2.."' in query:
+                    return _instant(_vector(requests))  # all successful
+                return _instant(_vector(requests))  # total_requests
+            return _router
+
+        svc, _ = _make_service(_router_for(3, 100, 5000, 1.0))
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+        svc._k8s.get_cluster = lambda cid: c1 if cid == 1 else c2
+        fake1 = _FakeApiClient(_router_for(3, 100, 5000, 1.0))
+        fake2 = _FakeApiClient(_router_for(4, 50, 2000, 0.5))
+        svc._client = lambda cid: fake1 if cid == 1 else fake2
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        # SUM across the fleet — proves it is not max() (which would be 4) and
+        # not a single cluster (3).
+        assert out["models"] == 7
+        assert out["total_requests"] == 150
+        assert out["total_tokens"] == 7000
+        assert out["total_cost"] == pytest.approx(1.5)
+
+    def test_multi_cluster_stats_all_unavailable_degrades(self):
+        """When every cluster's Loki is unreachable, the fleet stat degrades."""
+        def _boom(sub, query, params):
+            raise ApiException(status=503, reason="Service Unavailable")
+
+        svc, _ = _make_service(_boom)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        svc._active_clusters = MagicMock(return_value=[c1])
+        svc._k8s.get_cluster = lambda cid: c1
+        svc._client = lambda cid: _FakeApiClient(_boom)
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is False
+        assert "503" in out["reason"]
+
     def test_multi_cluster_logs_merges_sorts_and_annotates_clusters(self):
         lines_c1 = (
             (1700000002000000000, {"model": "gpt-4o", "userq": "q from c1", "status": "200",
