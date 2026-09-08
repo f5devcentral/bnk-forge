@@ -12,10 +12,12 @@ from services.bnk.topology import (
     _build_data_plane,
     _build_egress,
     _build_vlan,
+    _coerce_weight,
     _match_analyzers,
     _match_net_policies,
     _match_routes_to_listener,
     _match_sec_policies,
+    _parse_service_settings,
     analyze_topology,
     resolve_list_refs,
 )
@@ -223,6 +225,87 @@ class TestMatchRoutesToListener:
         route = _httproute("r1", "other-gw", gw_ns="ns")
         result = _match_routes_to_listener([(route, "HTTPRoute")], [], "gw", "ns", "http")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# analyzer weights (#8) — k8s.f5.com/service-settings annotation
+# ---------------------------------------------------------------------------
+
+
+def _l4route_with_settings(name, gw_name, gw_ns, backends, settings_json=None):
+    r = _resource(name, gw_ns, spec={
+        "parentRefs": [{"name": gw_name, "namespace": gw_ns}],
+        "rules": [{"backendRefs": backends}],
+    })
+    if settings_json is not None:
+        r["metadata"]["annotations"] = {"k8s.f5.com/service-settings": settings_json}
+    return r
+
+
+class TestServiceSettingsParsing:
+    """Faithful, tolerant parse of k8s.f5.com/service-settings.
+
+    We surface the annotation as-is (pool-keyed, weights coerced), matching how
+    F5AIAnalyzerViewer already reads it. We deliberately do NOT collapse it into
+    a per-backend effectiveWeight here: the top-level key is a POOL (not
+    necessarily a Service), and whether the per-pod weights are a within-pool
+    distribution or a between-service share is unsettled without a real
+    multi-backend/multi-pod cluster sample (#8).
+    """
+
+    def test_parse_preserves_pool_keyed_structure(self):
+        # The F5-docs shape: top-level key is a pool, value is {pod_ip: weight}.
+        meta = {"name": "r", "annotations": {"k8s.f5.com/service-settings":
+                '{"pool-3": {"10.244.114.53": 33, "10.244.114.54": 34, "10.244.99.91": 33}}'}}
+        parsed = _parse_service_settings(meta)
+        assert parsed == {"pool-3": {"10.244.114.53": 33.0, "10.244.114.54": 34.0, "10.244.99.91": 33.0}}
+
+    def test_parse_missing_or_bad_annotation_is_empty(self):
+        assert _parse_service_settings({"name": "r"}) == {}
+        assert _parse_service_settings({"annotations": {"k8s.f5.com/service-settings": "not json"}}) == {}
+        assert _parse_service_settings({"annotations": {"k8s.f5.com/service-settings": "[1,2]"}}) == {}
+
+    def test_numeric_coercion_matches_the_existing_consumer(self):
+        # F5AIAnalyzerViewer accepts Number(w): int, float, and numeric strings.
+        # A stricter reader would silently drop these and fall back to the
+        # declared weight -- the exact invisible failure mode to avoid.
+        assert _coerce_weight(99) == 99.0
+        assert _coerce_weight(33.5) == 33.5
+        assert _coerce_weight("42") == 42.0
+        assert _coerce_weight("not-a-number") is None
+        assert _coerce_weight(True) is None           # bool is not a weight
+        assert _coerce_weight(None) is None
+
+    def test_parse_coerces_float_and_string_weights(self):
+        meta = {"name": "r", "annotations": {"k8s.f5.com/service-settings":
+                '{"pool-1": {"10.0.0.1": "50", "10.0.0.2": 50.0}}'}}
+        parsed = _parse_service_settings(meta)
+        assert parsed == {"pool-1": {"10.0.0.1": 50.0, "10.0.0.2": 50.0}}
+
+    def test_route_carries_raw_service_settings_end_to_end(self):
+        # The parsed annotation rides on the route as serviceSettings; backends
+        # keep the DECLARED weight (the on-screen collapse is deferred to cluster
+        # validation, so we do not overwrite it with a guess).
+        route = _l4route_with_settings(
+            "l4route-vlm-internal-gw1", "gw", "f5-bnk",
+            backends=[{"name": "vlm-vllm-agg-vlmfrontend", "port": 8000, "weight": 1}],
+            settings_json='{"pool-3": {"10.244.123.12": 99}}',
+        )
+        result = _match_routes_to_listener([(route, "L4Route")], [], "gw", "f5-bnk", "l4")
+        assert len(result) == 1
+        assert result[0]["serviceSettings"] == {"pool-3": {"10.244.123.12": 99.0}}
+        # Declared weight preserved; no guessed effectiveWeight on the backend.
+        backend = result[0]["backends"][0]
+        assert backend["weight"] == 1
+        assert "effectiveWeight" not in backend
+
+    def test_route_without_annotation_has_none_service_settings(self):
+        route = _l4route_with_settings(
+            "plain", "gw", "f5-bnk",
+            backends=[{"name": "svc", "port": 80, "weight": 50}],
+        )
+        result = _match_routes_to_listener([(route, "HTTPRoute")], [], "gw", "f5-bnk", "l4")
+        assert result[0]["serviceSettings"] is None
 
 
 # ---------------------------------------------------------------------------
