@@ -9,7 +9,6 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
-    text,
 )
 from sqlalchemy.sql import func
 
@@ -101,4 +100,4 @@ class WafIngestionCursor(Base):
     cluster_id    = Column(Integer, nullable=False)
     log_file      = Column(String(512), nullable=False)
     last_line_num = Column(Integer, nullable=False, server_default="0")
-    updated_at    = Column(DateTime(timezone=True), server_default=text("now()"))
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now())
