@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload
 
 
@@ -92,14 +92,22 @@ def get_tasks(
     # Order by creation time (newest first) and paginate
     # Eager load relationships to avoid N+1 queries
     # B3: load_only() — task list only needs project.name and library_module.name
-    tasks = query.options(
+    #
+    # #195: expose the log size on the list too. ``logs`` is a deferred Text
+    # column, so we compute its length in SQL (func.length) rather than loading
+    # every task's full log body just to measure it — this keeps the list cheap
+    # while giving clients the same ``logs_full_size`` the detail endpoint
+    # reports. The full ``logs`` body stays detail-only by design.
+    rows = query.options(
         joinedload(Task.project).load_only(Project.id, Project.name),
         joinedload(Task.module).joinedload(ProjectModule.library_module).load_only(ModuleLibrary.id, ModuleLibrary.name)
+    ).add_columns(
+        func.length(Task.logs).label("logs_full_size")
     ).order_by(desc(Task.created_at)).limit(limit).offset(offset).all()
 
     # Format response
     tasks_data = []
-    for task in tasks:
+    for task, logs_full_size in rows:
         task_dict = {
             "id": task.id,
             "celery_task_id": task.celery_task_id,
@@ -118,6 +126,12 @@ def get_tasks(
             "exit_code": task.exit_code,
             "error": task.error,
             "archived": task.archived,
+            # NULL logs → length is NULL → report 0, matching the detail
+            # endpoint's ``len(logs) if logs else 0``. ``logs_truncated`` is
+            # always False here: the list never returns a truncated body (it
+            # returns no body at all — fetch the detail endpoint for logs).
+            "logs_full_size": logs_full_size or 0,
+            "logs_truncated": False,
         }
         tasks_data.append(task_dict)
 
