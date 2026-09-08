@@ -175,7 +175,7 @@ class ClusterCreateResponse(BaseModel):
 
 
 class ClusterOperationResponse(BaseModel):
-    """Generic response for cluster mutations (delete)."""
+    """Response for DELETE /api/k8s/clusters/{id} (cluster delete)."""
     success: bool = True
     message: str | None = None
     cluster_id: int | None = None
