@@ -310,3 +310,224 @@ class TestGetFirstPendingRunForAgent:
 
         svc = BenchmarkService(db)
         assert svc.get_first_pending_run_for_agent(agent.id) is None
+
+
+# ---------------------------------------------------------------------------
+# MAJOR-2 — group-sequential guard on the atomic claim.
+#
+# claim_pending_run(run_id, group_id=...) must refuse to claim a child while ANY
+# sibling of that group is already RUNNING, so two children of one group can
+# never both be RUNNING even when the connect-drain and _dispatch_next_group_child
+# pick different sibling rows.
+# ---------------------------------------------------------------------------
+
+class TestGroupGuardedClaim:
+    def test_claim_withGroupGuard_failsWhenSiblingRunning(self, db):
+        group = _group(db, status="running", total_runs=2)
+        _child(db, group.id, "running", variant_label="s0")
+        s1 = _child(db, group.id, "pending", variant_label="s1")
+
+        svc = BenchmarkService(db)
+        won = svc.claim_pending_run(s1.id, group_id=group.id)
+        db.commit()
+        assert won is False
+        db.refresh(s1)
+        assert s1.status == BenchmarkRunStatus.PENDING  # untouched
+
+    def test_claim_withGroupGuard_succeedsWhenNoSiblingRunning(self, db):
+        group = _group(db, status="running", total_runs=2)
+        s1 = _child(db, group.id, "pending", variant_label="s1")
+
+        svc = BenchmarkService(db)
+        assert svc.claim_pending_run(s1.id, group_id=group.id) is True
+        db.commit()
+        db.refresh(s1)
+        assert s1.status == BenchmarkRunStatus.RUNNING
+
+    def test_claim_twoSiblings_cannotBothBeRunning(self, db):
+        # The MAJOR-2 invariant, proved at the state level: once one sibling wins
+        # the claim, a claim of the OTHER sibling (a different row — as the drain
+        # vs _dispatch_next_group_child race would pick) fails the NOT-EXISTS guard.
+        group = _group(db, status="running", total_runs=2)
+        s1 = _child(db, group.id, "pending", variant_label="s1")
+        s2 = _child(db, group.id, "pending", variant_label="s2")
+
+        svc = BenchmarkService(db)
+        first = svc.claim_pending_run(s1.id, group_id=group.id)
+        second = svc.claim_pending_run(s2.id, group_id=group.id)
+        db.commit()
+
+        assert first is True
+        assert second is False
+        db.refresh(s1)
+        db.refresh(s2)
+        running = [c for c in (s1, s2) if c.status == BenchmarkRunStatus.RUNNING]
+        assert len(running) == 1  # never two siblings RUNNING at once
+
+    def test_claim_groupGuard_onlyGuardsSameGroup(self, db):
+        # A RUNNING child in group A must not block claiming a child of group B.
+        group_a = _group(db, status="running", total_runs=1)
+        _child(db, group_a.id, "running", variant_label="a0")
+        group_b = _group(db, status="running", total_runs=1)
+        b0 = _child(db, group_b.id, "pending", variant_label="b0")
+
+        svc = BenchmarkService(db)
+        assert svc.claim_pending_run(b0.id, group_id=group_b.id) is True
+        db.commit()
+        db.refresh(b0)
+        assert b0.status == BenchmarkRunStatus.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# MAJOR-1 — the initial POST dispatch claims the first child ATOMICALLY (and
+# persists the claim) BEFORE the blocking dispatch round-trip, so a concurrent
+# connect-drain cannot win a second claim of the same row and double-dispatch.
+# ---------------------------------------------------------------------------
+
+class TestInitialDispatchVsDrainRace:
+    def test_initialClaim_blocksConcurrentDrainClaim_sameRow(self, db):
+        group = _group(db, status="pending", total_runs=1)
+        first = _child(db, group.id, "pending", variant_label="first")
+
+        svc = BenchmarkService(db)
+        # Initial POST dispatch claims + persists BEFORE its send round-trip.
+        initial = svc.claim_pending_run(first.id, group_id=group.id)
+        db.commit()
+        # A WS (re)connect fires during the dispatch window and tries to claim the
+        # same PENDING row via the drain — it must lose (row already RUNNING).
+        drain = svc.claim_pending_run(first.id, group_id=group.id)
+        db.commit()
+
+        assert initial is True
+        assert drain is False
+        db.refresh(first)
+        assert first.status == BenchmarkRunStatus.RUNNING  # claimed exactly once
+
+    def test_drainFindsNothing_afterInitialClaimPersisted(self, db):
+        # Once the initial dispatch has persisted its RUNNING claim, the drain's
+        # agent-wide precheck returns nothing — no second dispatch is attempted.
+        agent = _agent(db, name="agent-initial-vs-drain")
+        group = _group(db, status="pending", total_runs=2)
+        first = _child(db, group.id, "pending", agent_id=agent.id, variant_label="first")
+        _child(db, group.id, "pending", agent_id=agent.id, variant_label="second")
+
+        svc = BenchmarkService(db)
+        assert svc.claim_pending_run(first.id, group_id=group.id) is True
+        db.commit()
+        assert svc.get_first_pending_run_for_agent(agent.id) is None
+
+
+# ---------------------------------------------------------------------------
+# MINOR-3 — the connect-drain's shared dispatch path (_dispatch_next_group_child).
+#
+# The drain routes grouped runs through the SAME gated dispatcher the terminal WS
+# handlers use, so these cover the drain's actual claim→send→(group flip) path and
+# its release_claimed_run rollback on send failure. send_command_to_agent is
+# monkeypatched (no real WebSocket).
+# ---------------------------------------------------------------------------
+
+class TestDispatchNextGroupChildDrainPath:
+    async def test_dispatch_claimsAndSends_thenGroupFlipsRunning(self, db, monkeypatch):
+        import routes.benchmarks as bench_routes
+
+        sent = []
+
+        async def fake_send(agent_id, command):
+            sent.append((agent_id, command))
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", fake_send)
+
+        group = _group(db, status="pending", total_runs=1)
+        child = _child(
+            db, group.id, "pending", variant_label="only",
+            config_snapshot={"concurrency": 7},
+        )
+        svc = BenchmarkService(db)
+
+        await bench_routes._dispatch_next_group_child(svc, agent_id=42, group_id=group.id)
+        db.commit()
+
+        # claim → send happened exactly once, carrying the run_id + config.
+        assert len(sent) == 1
+        assert sent[0][0] == 42
+        assert sent[0][1]["run_id"] == child.id
+        assert sent[0][1]["config"] == {"concurrency": 7}
+        db.refresh(child)
+        assert child.status == BenchmarkRunStatus.RUNNING
+        # The drain's group PENDING→RUNNING transition condition holds: a child is
+        # now running, so the drain would flip the group.
+        assert svc.find_running_group_child(group.id) is not None
+
+    async def test_dispatch_revertsClaim_onSendFailure(self, db, monkeypatch):
+        import routes.benchmarks as bench_routes
+
+        async def fake_send(agent_id, command):
+            return False  # WS send failed
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", fake_send)
+
+        group = _group(db, status="pending", total_runs=1)
+        child = _child(db, group.id, "pending", variant_label="only")
+        svc = BenchmarkService(db)
+
+        await bench_routes._dispatch_next_group_child(svc, agent_id=1, group_id=group.id)
+        db.commit()
+
+        db.refresh(child)
+        # Winning claim was reverted so a later reconnect can re-dispatch it.
+        assert child.status == BenchmarkRunStatus.PENDING
+        assert child.started_at is None
+        # No running child → the drain leaves the group PENDING.
+        assert svc.find_running_group_child(group.id) is None
+
+    async def test_dispatch_skipsWhenSiblingAlreadyRunning(self, db, monkeypatch):
+        # MAJOR-2 deterministic: the drain races a run just having been dispatched
+        # to a sibling. get_next_pending_group_run picks the pending child, but the
+        # group-guarded claim refuses because a sibling is RUNNING → no send, and
+        # the second sibling never starts.
+        import routes.benchmarks as bench_routes
+
+        sent = []
+
+        async def fake_send(agent_id, command):
+            sent.append(command)
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", fake_send)
+
+        group = _group(db, status="running", total_runs=2)
+        _child(db, group.id, "running", variant_label="s0")
+        s1 = _child(db, group.id, "pending", variant_label="s1")
+        svc = BenchmarkService(db)
+
+        await bench_routes._dispatch_next_group_child(svc, agent_id=9, group_id=group.id)
+        db.commit()
+
+        assert sent == []  # nothing dispatched
+        db.refresh(s1)
+        assert s1.status == BenchmarkRunStatus.PENDING
+        # Still exactly one running child in the group.
+        running = [
+            c for c in svc.get_run_group(group.id).runs
+            if c.status == BenchmarkRunStatus.RUNNING
+        ]
+        assert len(running) == 1
+
+    async def test_dispatch_noPendingChild_isNoop(self, db, monkeypatch):
+        import routes.benchmarks as bench_routes
+
+        sent = []
+
+        async def fake_send(agent_id, command):
+            sent.append(command)
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", fake_send)
+
+        group = _group(db, status="completed", total_runs=1)
+        _child(db, group.id, "completed", variant_label="done", latency_p50=0.1)
+        svc = BenchmarkService(db)
+
+        await bench_routes._dispatch_next_group_child(svc, agent_id=3, group_id=group.id)
+        assert sent == []
