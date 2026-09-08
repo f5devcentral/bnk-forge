@@ -15,15 +15,16 @@ Delegated to other modules in the execution/ package:
 - Dependency checking → variable_assembler.can_execute()
 """
 
+import codecs
 import hashlib
 import json
 import logging
 import os
 import re
+import select
 import shutil
 import subprocess
 import tempfile
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -59,49 +60,118 @@ def _stream_subprocess(
     OpenTofu emits it, letting the caller persist progress (``task.logs`` /
     ``logs_full_size``) *during* a long run instead of only at completion.
     stderr is merged into stdout (``STDOUT``) so lines interleave in the order
-    they were produced. A watchdog timer kills the process at ``timeout``,
-    mirroring ``subprocess.run``'s timeout semantics.
+    they were produced.
+
+    This is a faithful, safe wrapper of ``subprocess.run``'s guarantees, not a
+    partial reimplementation. Two properties matter for correctness and are
+    handled exactly as CPython's ``subprocess.run`` handles them (its POSIX
+    ``_communicate`` reads the pipes with a ``selectors`` loop — which is what we
+    do here — never a plain ``for line in proc.stdout`` that a descendant can
+    wedge):
+
+    * **The timeout is really enforced.** The deadline cannot be honoured by the
+      naive "kill the direct child ⇒ the pipe reaches EOF" implication, because
+      that implication is *false* whenever any descendant (e.g. a ``local-exec``
+      / ``null_resource`` / ``data "external"`` grandchild) inherited the write
+      end of the stdout pipe: a blocking read would then hang forever and
+      ``TimeoutExpired`` would never fire, permanently locking the module. We
+      instead ``select`` on the pipe with the *remaining* time budget, so the
+      loop always terminates at the deadline regardless of who holds the pipe;
+      we then ``kill()`` the child and raise ``TimeoutExpired`` with the partial
+      output. Reading on this (the caller's) thread — rather than a helper
+      thread blocked in ``read()`` — is also what lets ``with Popen`` close the
+      pipe on exit without deadlocking on that thread's buffer lock.
+    * **The child is killed on ANY abrupt exit.** ``subprocess.run`` wraps its
+      read in ``except BaseException: process.kill(); raise`` precisely so that
+      a ``SoftTimeLimitExceeded`` (Celery raises it in this very thread, while it
+      is blocked in ``select``) / ``KeyboardInterrupt`` / ``UnicodeDecodeError``
+      (non-UTF-8 provider output) / ``OSError`` cannot leave a live ``tofu
+      apply`` orphaned — still mutating cloud state and ``.tfstate`` after the
+      task is marked failed and the workspace lock released. We do the same.
     """
-    proc = subprocess.Popen(
+    deadline = time.monotonic() + timeout
+    chunks: list[str] = []           # decoded text pieces == the combined output
+    # Incremental UTF-8 decoder: correctly reassembles multibyte characters that
+    # straddle two reads, and (strict) raises UnicodeDecodeError on genuinely
+    # invalid bytes — the same failure ``text=True`` would surface.
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    pending = ""                     # current partial line, not yet newline-terminated
+
+    def _deliver(line: str) -> None:
+        try:
+            on_output(line)
+        except Exception:  # noqa: BLE001 — a log sink must never break the run
+            logger.exception("on_output callback raised while streaming subprocess output")
+
+    def _emit(text: str, *, flush: bool = False) -> None:
+        nonlocal pending
+        pending += text
+        newline = pending.find("\n")
+        while newline != -1:
+            _deliver(pending[:newline])
+            pending = pending[newline + 1:]
+            newline = pending.find("\n")
+        if flush and pending:
+            _deliver(pending)
+            pending = ""
+
+    # ``with Popen(...)`` guarantees the pipes are closed on every exit path,
+    # exactly like the ``with Popen`` inside ``subprocess.run``. bufsize=0 keeps
+    # the parent side unbuffered so our ``os.read`` on the fd sees bytes as soon
+    # as the child writes them (line streaming, issue #195).
+    with subprocess.Popen(
         cmd,
         cwd=cwd,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # line-buffered so lines surface as they are produced
-    )
-
-    timed_out = threading.Event()
-
-    def _kill_on_timeout() -> None:
-        timed_out.set()
-        try:
-            proc.kill()
-        except Exception:  # noqa: BLE001 — process may have already exited
-            pass
-
-    timer = threading.Timer(timeout, _kill_on_timeout)
-    timer.start()
-
-    chunks: list[str] = []
-    try:
+        bufsize=0,
+    ) as proc:
         assert proc.stdout is not None
-        for line in proc.stdout:
-            chunks.append(line)
-            try:
-                on_output(line.rstrip("\n"))
-            except Exception:  # noqa: BLE001 — a log sink must never break the run
-                logger.exception("on_output callback raised while streaming subprocess output")
-        proc.wait()
-    finally:
-        timer.cancel()
+        fd = proc.stdout.fileno()
+        timed_out = False
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                # PEP 475: select retries automatically on EINTR, but a signal
+                # handler that *raises* (Celery's SoftTimeLimitExceeded) surfaces
+                # its exception here — handled by the kill-and-reraise below.
+                readable, _, _ = select.select([fd], [], [], remaining)
+                if not readable:
+                    timed_out = True  # deadline reached with no more output
+                    break
+                data = os.read(fd, 65536)
+                if not data:
+                    break  # EOF: all write ends (incl. any descendant's) closed
+                text = decoder.decode(data)  # may raise UnicodeDecodeError → killed below
+                chunks.append(text)
+                _emit(text)
 
-    output = "".join(chunks)
-    if timed_out.is_set():
-        # Match subprocess.run: surface a TimeoutExpired carrying what we read.
-        raise subprocess.TimeoutExpired(cmd, timeout, output=output)
-    return proc.returncode, output
+            # Flush any bytes buffered inside the incremental decoder plus the
+            # trailing line that had no terminating newline.
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                chunks.append(tail)
+            _emit(tail, flush=True)
+
+            if timed_out:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(chunks))
+            proc.wait()
+        except BaseException:
+            # Any abrupt exit — SoftTimeLimitExceeded, KeyboardInterrupt,
+            # UnicodeDecodeError, OSError, … — must not orphan a live child.
+            # Mirror CPython's ``subprocess.run``: kill, then re-raise.
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001 — process may have already exited
+                pass
+            raise
+
+    return proc.returncode, "".join(chunks)
 
 
 def _add_provider_lock_timeout_hint(output: str) -> str:

@@ -113,6 +113,121 @@ class TestStreamSubprocess:
         assert "before-hang" in (exc.value.output or "")
         assert seen == ["before-hang"]
 
+    def test_timeout_enforced_when_grandchild_holds_the_pipe(self, tmp_path):
+        """B-1 reproduction: a descendant inheriting stdout must not defeat the timeout.
+
+        The child spawns a grandchild that INHERITS the stdout pipe (no
+        ``stdout=`` redirect) and then the child exits. The grandchild lives far
+        longer than the timeout, so the stdout pipe never reaches EOF on the
+        "kill the direct child" path — ``for line in proc.stdout`` blocks on a
+        write end still held open by the grandchild. A correct implementation
+        must still enforce the deadline (kill + close the read end) and raise
+        ``TimeoutExpired`` at ~the deadline, NOT hang for the grandchild's whole
+        lifetime. Before the fix this returned ~6x over the deadline (or never).
+        """
+        import time
+
+        # Child exits immediately after spawning a grandchild that inherits fd 1
+        # (stdout) and sleeps FAR longer than the 2s timeout below, so the pipe
+        # stays open. The grandchild lifetime is bounded so a broken impl (which
+        # would block on it) still eventually frees CI rather than hanging.
+        script = (
+            "import subprocess, sys, time\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "print('child-exiting', flush=True)\n"
+            # child returns here; grandchild keeps the stdout write end open
+        )
+        seen: list[str] = []
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired) as exc:
+            _stream_subprocess(
+                [sys.executable, "-c", script],
+                cwd=str(tmp_path),
+                env=dict(os.environ),
+                timeout=2,
+                on_output=seen.append,
+            )
+        elapsed = time.monotonic() - started
+
+        # Enforced at ~the deadline, not at the grandchild's 30s lifetime.
+        assert elapsed < 6, f"took {elapsed:.1f}s — timeout not enforced past a grandchild-held pipe"
+        # Partial output streamed before the deadline is preserved on the exception.
+        assert "child-exiting" in (exc.value.output or "")
+        assert "child-exiting" in seen
+
+    def test_exception_in_read_path_kills_the_child(self, tmp_path, monkeypatch):
+        """B-2 reproduction: an exception raised in the read path must kill the child.
+
+        Celery delivers ``SoftTimeLimitExceeded`` by raising it in the worker's
+        main thread — which, mid-run, is blocked inside the pipe read (here,
+        ``select``). That is NOT an ``on_output`` error (those are guarded and
+        intentionally swallowed), so it escapes the read loop. If the helper does
+        not kill the child on that path, a live ``tofu apply`` is orphaned and
+        keeps mutating cloud state after the task is marked failed.
+
+        We reproduce it faithfully: a real long-lived child, and the exception
+        raised from ``select`` on the *second* wait — exactly where the signal
+        lands while the reader blocks waiting for more output — after the first
+        line has already streamed. The child must be *killed* (SIGKILL, promptly)
+        when it surfaces — not merely reaped 30s later by ``with Popen`` waiting
+        for it to finish sleeping, which is exactly the orphaned-tofu bug.
+        """
+        import time
+
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        real_select = otr.select.select
+        state = {"n": 0}
+
+        def flaky_select(rlist, wlist, xlist, timeout=None):
+            state["n"] += 1
+            if state["n"] == 1:
+                return real_select(rlist, wlist, xlist, timeout)  # deliver 'alive'
+            # Second wait: the child is now sleeping and the reader is blocked —
+            # exactly when Celery's soft-time-limit signal fires in this thread.
+            raise SoftTimeLimitExceeded("soft time limit exceeded")
+
+        monkeypatch.setattr(otr.select, "select", flaky_select)
+
+        procs: list[subprocess.Popen] = []
+        real_popen = subprocess.Popen
+
+        def spy_popen(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            procs.append(proc)
+            return proc
+
+        monkeypatch.setattr(otr.subprocess, "Popen", spy_popen)
+
+        # A real child that would live for 30s if left orphaned.
+        script = (
+            "import sys, time\n"
+            "print('alive', flush=True)\n"
+            "time.sleep(30)\n"
+        )
+        seen: list[str] = []
+        started = time.monotonic()
+        with pytest.raises(SoftTimeLimitExceeded):
+            _stream_subprocess(
+                [sys.executable, "-c", script],
+                cwd=str(tmp_path),
+                env=dict(os.environ),
+                timeout=30,  # long; the exception fires long before the deadline
+                on_output=seen.append,
+            )
+        elapsed = time.monotonic() - started
+
+        assert seen == ["alive"]  # first line streamed before the raise
+        assert procs, "Popen was not invoked"
+        proc = procs[0]
+        # The child must have been SIGKILLed, not left to finish its 30s sleep.
+        # A negative returncode is death-by-signal; without the kill the child
+        # would exit 0 (and only after ~30s), which the timing bound also catches.
+        assert proc.returncode is not None and proc.returncode < 0, (
+            f"child not killed by signal (returncode={proc.returncode}) — orphaned tofu"
+        )
+        assert elapsed < 5, f"took {elapsed:.1f}s — child was reaped, not killed"
+
 
 @pytest.mark.component
 class TestRunMethodsRouteThroughStreaming:
