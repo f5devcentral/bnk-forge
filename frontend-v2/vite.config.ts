@@ -30,7 +30,6 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
-
   server: {
     port: 5173,
     // WSL2 + Windows-mounted /mnt/* drives don't propagate inotify events,
