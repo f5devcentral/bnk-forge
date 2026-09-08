@@ -1014,3 +1014,42 @@ class TestAzureTemplateService:
         assert status_res["is_authenticated"] is True
         assert status_res["can_refresh"] is True
 
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_azure_sso_test_with_naive_past_expiry_returns_clean_expired(
+        self, mock_azure_cls, db
+    ):
+        """F1 regression: a naive (tz-unaware) past expiry — as SQLite/dev rounds
+        it back — must not raise TypeError comparing offset-naive vs -aware.
+        test_template should return a clean 'expired' result instead."""
+        from core.encryption import encrypt_value
+
+        mock_azure_cls.return_value = MagicMock()
+
+        data = _make_template_data(
+            name="azure-sso-naive-expiry",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-111",
+            azure_client_id="client-222",
+        )
+        svc = CredentialTemplateService(db)
+        created = svc.create_template(data)
+
+        # Simulate a naive past expiry read back from the DB (SQLite drops tzinfo).
+        template = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        template.azure_sso_access_token_encrypted = encrypt_value("stale-access-token")
+        template.azure_sso_refresh_token_encrypted = None
+        template.azure_sso_token_expiry = (
+            datetime.now(UTC) - timedelta(hours=1)
+        ).replace(tzinfo=None)
+        db.commit()
+
+        # Must not raise TypeError; returns a clean expired result.
+        res = svc.test_template(created["id"])
+        assert res["success"] is False
+        assert res["error"] == "Token expired"
+

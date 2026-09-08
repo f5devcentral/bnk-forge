@@ -130,7 +130,12 @@ def _test_azure_template(template: Any) -> dict[str, Any]:
         access_token = decrypt_value(template.azure_sso_access_token_encrypted)
         # Check if expired and can refresh
         now = datetime.now(UTC)
-        if template.azure_sso_token_expiry and now > template.azure_sso_token_expiry:
+        token_expiry = template.azure_sso_token_expiry
+        if token_expiry and token_expiry.tzinfo is None:
+            # Normalize naive expiries (SQLite/dev round-trip) to UTC before
+            # comparing — avoids TypeError on offset-naive vs offset-aware.
+            token_expiry = token_expiry.replace(tzinfo=UTC)
+        if token_expiry and now > token_expiry:
             if template.azure_sso_refresh_token_encrypted:
                 refresh_token = decrypt_value(template.azure_sso_refresh_token_encrypted)
                 try:
