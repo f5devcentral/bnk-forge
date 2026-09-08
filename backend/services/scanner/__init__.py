@@ -234,8 +234,19 @@ class ClusterScanner:
         # Every scan path (registration/PUT async task, the /scan endpoint,
         # upgrade pre-checks) flows through here, so this is the single place
         # that keeps last_synced_at honest. Flushed here; the caller commits.
-        cluster.last_synced_at = end_time
-        self.db.flush()
+        #
+        # CRITICAL: stamp ONLY when the scan genuinely reached the cluster's API
+        # server (data["reached"], derived from the version/namespace/API-group
+        # preflight in fetch_scan_data). Every fetcher swallows its exception and
+        # returns an empty default, so an expired-token / unreachable cluster
+        # otherwise produces a fully-shaped EMPTY dict and would stamp a fresh
+        # sync time over a panel with no data — the exact failure #194 reported,
+        # where a timestamp over an empty panel is strictly worse than NULL.
+        # A genuinely-empty-but-reachable cluster still stamps (reached is True);
+        # an unreachable / 401 one does not (reached is False) and stays NULL.
+        if data.get("reached"):
+            cluster.last_synced_at = end_time
+            self.db.flush()
 
         return {
             "cluster_id": cluster_id,
