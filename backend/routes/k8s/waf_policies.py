@@ -20,6 +20,14 @@ from core.errors import NotFoundError, handle_route_errors
 from database import get_db
 from models import User
 from routes.auth import require_cluster_owner, require_viewer
+from schemas.waf import (
+    WafLogConfListResponse,
+    WafOperationResponse,
+    WafPolicyListResponse,
+    WafRecompileResponse,
+    WafResource,
+    WafUserSigListResponse,
+)
 from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -104,6 +112,7 @@ def _find_by_name(resources: list[dict], name: str) -> dict | None:
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/policies",
     dependencies=[Depends(require_viewer)],
+    response_model=WafPolicyListResponse,
 )
 @handle_route_errors("list WAF policies")
 def list_waf_policies(cluster_id: int, namespace: str | None = None, db: Session = Depends(get_db)):
@@ -115,6 +124,7 @@ def list_waf_policies(cluster_id: int, namespace: str | None = None, db: Session
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/policies/{name}",
     dependencies=[Depends(require_viewer)],
+    response_model=WafResource,
 )
 @handle_route_errors("get WAF policy")
 def get_waf_policy(cluster_id: int, name: str, namespace: str, db: Session = Depends(get_db)):
@@ -128,6 +138,7 @@ def get_waf_policy(cluster_id: int, name: str, namespace: str, db: Session = Dep
 
 @router.post(
     "/k8s/clusters/{cluster_id}/waf/policies",
+    response_model=WafResource,
 )
 @handle_route_errors("create WAF policy")
 def create_waf_policy(
@@ -144,6 +155,7 @@ def create_waf_policy(
 
 @router.put(
     "/k8s/clusters/{cluster_id}/waf/policies/{name}",
+    response_model=WafResource,
 )
 @handle_route_errors("update WAF policy")
 def update_waf_policy(
@@ -165,6 +177,7 @@ def update_waf_policy(
 
 @router.delete(
     "/k8s/clusters/{cluster_id}/waf/policies/{name}",
+    response_model=WafOperationResponse,
 )
 @handle_route_errors("delete WAF policy")
 def delete_waf_policy(
@@ -185,6 +198,7 @@ def delete_waf_policy(
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/logconfs",
     dependencies=[Depends(require_viewer)],
+    response_model=WafLogConfListResponse,
 )
 @handle_route_errors("list WAF log profiles")
 def list_waf_logconfs(cluster_id: int, namespace: str | None = None, db: Session = Depends(get_db)):
@@ -195,6 +209,7 @@ def list_waf_logconfs(cluster_id: int, namespace: str | None = None, db: Session
 
 @router.post(
     "/k8s/clusters/{cluster_id}/waf/logconfs",
+    response_model=WafResource,
 )
 @handle_route_errors("create WAF log profile")
 def create_waf_logconf(
@@ -211,6 +226,7 @@ def create_waf_logconf(
 
 @router.put(
     "/k8s/clusters/{cluster_id}/waf/logconfs/{name}",
+    response_model=WafResource,
 )
 @handle_route_errors("update WAF log profile")
 def update_waf_logconf(
@@ -232,6 +248,7 @@ def update_waf_logconf(
 
 @router.delete(
     "/k8s/clusters/{cluster_id}/waf/logconfs/{name}",
+    response_model=WafOperationResponse,
 )
 @handle_route_errors("delete WAF log profile")
 def delete_waf_logconf(
@@ -252,6 +269,7 @@ def delete_waf_logconf(
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/signatures",
     dependencies=[Depends(require_viewer)],
+    response_model=WafResource | None,
 )
 @handle_route_errors("get WAF signatures")
 def get_waf_signatures(cluster_id: int, namespace: str, db: Session = Depends(get_db)):
@@ -262,6 +280,7 @@ def get_waf_signatures(cluster_id: int, namespace: str, db: Session = Depends(ge
 
 @router.put(
     "/k8s/clusters/{cluster_id}/waf/signatures",
+    response_model=WafResource,
 )
 @handle_route_errors("save WAF signatures")
 def upsert_waf_signatures(
@@ -290,6 +309,7 @@ def upsert_waf_signatures(
 
 @router.delete(
     "/k8s/clusters/{cluster_id}/waf/signatures",
+    response_model=WafOperationResponse,
 )
 @handle_route_errors("delete WAF signatures")
 def delete_waf_signatures(
@@ -304,6 +324,7 @@ def delete_waf_signatures(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/waf/policies/{name}/recompile",
+    response_model=WafRecompileResponse,
 )
 @handle_route_errors("force recompile WAF policy")
 def recompile_waf_policy(
@@ -333,6 +354,7 @@ def recompile_waf_policy(
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/usersigs",
     dependencies=[Depends(require_viewer)],
+    response_model=WafUserSigListResponse,
 )
 @handle_route_errors("list WAF user signatures")
 def list_waf_usersigs(cluster_id: int, namespace: str | None = None, db: Session = Depends(get_db)):
@@ -343,6 +365,7 @@ def list_waf_usersigs(cluster_id: int, namespace: str | None = None, db: Session
 
 @router.post(
     "/k8s/clusters/{cluster_id}/waf/usersigs",
+    response_model=WafResource,
 )
 @handle_route_errors("create WAF user signature")
 def create_waf_usersig(
@@ -359,6 +382,7 @@ def create_waf_usersig(
 
 @router.put(
     "/k8s/clusters/{cluster_id}/waf/usersigs/{name}",
+    response_model=WafResource,
 )
 @handle_route_errors("update WAF user signature")
 def update_waf_usersig(
@@ -380,6 +404,7 @@ def update_waf_usersig(
 
 @router.delete(
     "/k8s/clusters/{cluster_id}/waf/usersigs/{name}",
+    response_model=WafOperationResponse,
 )
 @handle_route_errors("delete WAF user signature")
 def delete_waf_usersig(

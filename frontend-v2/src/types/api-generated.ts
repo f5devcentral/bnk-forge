@@ -2127,6 +2127,601 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Status
+         * @description Return whether ClickHouse is reachable and has data for this cluster.
+         */
+        get: operations["dashboard_status_api_k8s_clusters__cluster_id__waf_dashboard_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Summary
+         * @description Return KPI numbers: total, rejected_pct, top_attack_type, unique_ips.
+         */
+        get: operations["dashboard_summary_api_k8s_clusters__cluster_id__waf_dashboard_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Trend
+         * @description Return time-bucketed event counts split by outcome.
+         *     Bucket size: 1h for ≤7d ranges, 6h for 30d.
+         *     Shape: [{ ts, REJECTED, PASSED, ALERTED }, ...]
+         */
+        get: operations["dashboard_trend_api_k8s_clusters__cluster_id__waf_dashboard_trend_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-attacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Attacks
+         * @description Top attack types by event count.
+         */
+        get: operations["dashboard_top_attacks_api_k8s_clusters__cluster_id__waf_dashboard_top_attacks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-ips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Ips
+         * @description Top source IPs by blocked event count.
+         */
+        get: operations["dashboard_top_ips_api_k8s_clusters__cluster_id__waf_dashboard_top_ips_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-uris": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Uris
+         * @description Top attacked URIs.
+         */
+        get: operations["dashboard_top_uris_api_k8s_clusters__cluster_id__waf_dashboard_top_uris_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Policies
+         * @description Top policies by hit count — mirrors NIM's 'Top WAF Policies' panel.
+         */
+        get: operations["dashboard_top_policies_api_k8s_clusters__cluster_id__waf_dashboard_top_policies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/request-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Request Methods
+         * @description HTTP method distribution — mirrors NIM's 'Request Methods' panel.
+         */
+        get: operations["dashboard_request_methods_api_k8s_clusters__cluster_id__waf_dashboard_request_methods_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/severity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Severity
+         * @description Violation-rating distribution — mirrors NIM's 'Severity' panel.
+         */
+        get: operations["dashboard_severity_api_k8s_clusters__cluster_id__waf_dashboard_severity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-signatures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Signatures
+         * @description Top triggered signature names — mirrors NIM's 'Top Signatures' panel.
+         */
+        get: operations["dashboard_top_signatures_api_k8s_clusters__cluster_id__waf_dashboard_top_signatures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Instances
+         * @description Top virtual servers (instances) by hit count — mirrors NIM's 'Top Attacked Instances' panel.
+         */
+        get: operations["dashboard_top_instances_api_k8s_clusters__cluster_id__waf_dashboard_top_instances_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-subviolations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Subviolations
+         * @description Top sub-violations parsed from NAP events (e.g. 'Host header contains IP address').
+         */
+        get: operations["dashboard_top_subviolations_api_k8s_clusters__cluster_id__waf_dashboard_top_subviolations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-geolocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Top Geolocations
+         * @description Top attacker geolocations with lat/lon for world-map rendering.
+         */
+        get: operations["dashboard_top_geolocations_api_k8s_clusters__cluster_id__waf_dashboard_top_geolocations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/support-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Support Id
+         * @description Look up a specific WAF event by support ID.
+         */
+        get: operations["dashboard_support_id_api_k8s_clusters__cluster_id__waf_dashboard_support_id_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/panels/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Templates
+         * @description Return all available query templates with descriptions.
+         */
+        get: operations["list_templates_api_k8s_clusters__cluster_id__waf_panels_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/panels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Panels */
+        get: operations["list_panels_api_k8s_clusters__cluster_id__waf_panels_get"];
+        put?: never;
+        /** Create Panel */
+        post: operations["create_panel_api_k8s_clusters__cluster_id__waf_panels_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/panels/{panel_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Panel */
+        put: operations["update_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__put"];
+        post?: never;
+        /** Delete Panel */
+        delete: operations["delete_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/panels/{panel_id}/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Panel Data
+         * @description Execute the panel's query template against ClickHouse and return chart data.
+         */
+        get: operations["panel_data_api_k8s_clusters__cluster_id__waf_panels__panel_id__data_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard-tabs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tabs */
+        get: operations["list_tabs_api_k8s_clusters__cluster_id__waf_dashboard_tabs_get"];
+        put?: never;
+        /** Create Tab */
+        post: operations["create_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard-tabs/{tab_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Tab */
+        delete: operations["delete_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Tab */
+        patch: operations["rename_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__patch"];
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Gateway Classes */
+        get: operations["list_gateway_classes_api_k8s_clusters__cluster_id__waf_gateway_classes_get"];
+        put?: never;
+        /** Create Gateway Class */
+        post: operations["create_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-classes/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Gateway Class */
+        delete: operations["delete_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/gateways": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Gateways */
+        get: operations["list_gateways_api_k8s_clusters__cluster_id__waf_gateways_get"];
+        put?: never;
+        /** Create Gateway */
+        post: operations["create_gateway_api_k8s_clusters__cluster_id__waf_gateways_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/gateways/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Gateway */
+        get: operations["get_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__get"];
+        /** Update Gateway */
+        put: operations["update_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__put"];
+        post?: never;
+        /** Delete Gateway */
+        delete: operations["delete_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/security-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Security Profiles */
+        get: operations["list_security_profiles_api_k8s_clusters__cluster_id__waf_security_profiles_get"];
+        put?: never;
+        /** Create Security Profile */
+        post: operations["create_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/security-profiles/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Security Profile */
+        get: operations["get_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__get"];
+        /** Update Security Profile */
+        put: operations["update_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__put"];
+        post?: never;
+        /** Delete Security Profile */
+        delete: operations["delete_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/httproutes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Httproutes */
+        get: operations["list_httproutes_api_k8s_clusters__cluster_id__waf_httproutes_get"];
+        put?: never;
+        /** Create Httproute */
+        post: operations["create_httproute_api_k8s_clusters__cluster_id__waf_httproutes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/httproutes/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Httproute */
+        get: operations["get_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__get"];
+        /** Update Httproute */
+        put: operations["update_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__put"];
+        post?: never;
+        /** Delete Httproute */
+        delete: operations["delete_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/reference-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Reference Grants */
+        get: operations["list_reference_grants_api_k8s_clusters__cluster_id__waf_reference_grants_get"];
+        put?: never;
+        /** Create Reference Grant */
+        post: operations["create_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/reference-grants/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Reference Grant */
+        delete: operations["delete_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-topology": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Gateway Topology
+         * @description Return all Gateway API + WAF resources together so the UI can build the binding graph.
+         */
+        get: operations["get_gateway_topology_api_k8s_clusters__cluster_id__waf_gateway_topology_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/bare-metal/hosts": {
         parameters: {
             query?: never;
@@ -12870,6 +13465,20 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** BackendRefModel */
+        BackendRefModel: {
+            /** Name */
+            name: string;
+            /** Port */
+            port: number;
+            /** Namespace */
+            namespace?: string | null;
+            /**
+             * Weight
+             * @default 1
+             */
+            weight: number;
+        };
         /**
          * BackupCreateRequest
          * @description Request to create a backup archive.
@@ -17617,6 +18226,76 @@ export interface components {
             /** Detected Platform Provider */
             detected_platform_provider?: string | null;
         };
+        /** GatewayClassCreateRequest */
+        GatewayClassCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Controller Name
+             * @default f5.com/default-f5-cne-controller
+             */
+            controller_name: string;
+            /**
+             * Description
+             * @default F5 BIG-IP Kubernetes Gateway
+             */
+            description: string;
+        };
+        /** GatewayCreateRequest */
+        GatewayCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /**
+             * Gateway Class Name
+             * @default f5-gatewayclass
+             */
+            gateway_class_name: string;
+            /** Listeners */
+            listeners: components["schemas"]["ListenerModel"][];
+            /**
+             * Addresses
+             * @default []
+             */
+            addresses: string[];
+            /** Waf Profile Name */
+            waf_profile_name?: string | null;
+            /**
+             * Annotations
+             * @default {}
+             */
+            annotations: {
+                [key: string]: string;
+            };
+        };
+        /** GatewayUpdateRequest */
+        GatewayUpdateRequest: {
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /** Listeners */
+            listeners: components["schemas"]["ListenerModel"][];
+            /**
+             * Addresses
+             * @default []
+             */
+            addresses: string[];
+            /** Waf Profile Name */
+            waf_profile_name?: string | null;
+            /**
+             * Annotations
+             * @default {}
+             */
+            annotations: {
+                [key: string]: string;
+            };
+        };
         /**
          * GitSourceValidation
          * @description Schema for git source validation
@@ -17629,6 +18308,67 @@ export interface components {
              * @default main
              */
             git_ref: string;
+        };
+        /** HTTPRouteCreateRequest */
+        HTTPRouteCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /** Parent Gateway Name */
+            parent_gateway_name: string;
+            /** Parent Gateway Namespace */
+            parent_gateway_namespace?: string | null;
+            /** Parent Gateway Section Name */
+            parent_gateway_section_name?: string | null;
+            /**
+             * Hostnames
+             * @default []
+             */
+            hostnames: string[];
+            /** Rules */
+            rules: components["schemas"]["HTTPRouteRuleModel"][];
+        };
+        /** HTTPRouteRuleModel */
+        HTTPRouteRuleModel: {
+            /**
+             * Matches
+             * @default []
+             */
+            matches: components["schemas"]["RouteMatchModel"][];
+            /** Backend Refs */
+            backend_refs: components["schemas"]["BackendRefModel"][];
+            /**
+             * Filters
+             * @default []
+             */
+            filters: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** HTTPRouteUpdateRequest */
+        HTTPRouteUpdateRequest: {
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /** Parent Gateway Name */
+            parent_gateway_name: string;
+            /** Parent Gateway Namespace */
+            parent_gateway_namespace?: string | null;
+            /** Parent Gateway Section Name */
+            parent_gateway_section_name?: string | null;
+            /**
+             * Hostnames
+             * @default []
+             */
+            hostnames: string[];
+            /** Rules */
+            rules: components["schemas"]["HTTPRouteRuleModel"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -18187,6 +18927,36 @@ export interface components {
         LinkClusterRequest: {
             /** Cluster Id */
             cluster_id: number;
+        };
+        /** ListenerModel */
+        ListenerModel: {
+            /** Name */
+            name: string;
+            /**
+             * Protocol
+             * @default HTTP
+             */
+            protocol: string;
+            /**
+             * Port
+             * @default 80
+             */
+            port: number;
+            /**
+             * Allowed Routes From
+             * @default Same
+             */
+            allowed_routes_from: string;
+            /** Allowed Routes Selector */
+            allowed_routes_selector?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tls Mode */
+            tls_mode?: string | null;
+            /** Tls Cert Ref Name */
+            tls_cert_ref_name?: string | null;
+            /** Tls Cert Ref Namespace */
+            tls_cert_ref_namespace?: string | null;
         };
         /** LlmFilterDataResponse */
         LlmFilterDataResponse: {
@@ -19096,6 +19866,60 @@ export interface components {
              * @default false
              */
             auto_approve: boolean;
+        };
+        /** PanelCreate */
+        PanelCreate: {
+            /** Title */
+            title: string;
+            /**
+             * Chart Type
+             * @default bar
+             */
+            chart_type: string;
+            /** Query Template */
+            query_template: string;
+            /**
+             * Time Range
+             * @default 7d
+             */
+            time_range: string;
+            /**
+             * Width
+             * @default full
+             */
+            width: string;
+            /**
+             * Panel Order
+             * @default 0
+             */
+            panel_order: number;
+            /** Tab Id */
+            tab_id?: number | null;
+            /** Extra Config */
+            extra_config?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** PanelUpdate */
+        PanelUpdate: {
+            /** Title */
+            title?: string | null;
+            /** Chart Type */
+            chart_type?: string | null;
+            /** Query Template */
+            query_template?: string | null;
+            /** Time Range */
+            time_range?: string | null;
+            /** Width */
+            width?: string | null;
+            /** Panel Order */
+            panel_order?: number | null;
+            /** Tab Id */
+            tab_id?: number | null;
+            /** Extra Config */
+            extra_config?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** PlatformCapabilities */
         PlatformCapabilities: {
@@ -20684,6 +21508,40 @@ export interface components {
             platform_healthy: boolean;
         };
         /**
+         * ReferenceGrantCreateRequest
+         * @description Allow cross-namespace references (e.g. HTTPRoute in ns-A referencing Service in ns-B).
+         */
+        ReferenceGrantCreateRequest: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /**
+             * From Group
+             * @default gateway.networking.k8s.io
+             */
+            from_group: string;
+            /**
+             * From Kind
+             * @default HTTPRoute
+             */
+            from_kind: string;
+            /** From Namespace */
+            from_namespace: string;
+            /**
+             * To Group
+             * @default
+             */
+            to_group: string;
+            /**
+             * To Kind
+             * @default Service
+             */
+            to_kind: string;
+            /** To Name */
+            to_name?: string | null;
+        };
+        /**
          * RegisterAllHostsResponse
          * @description Bulk register-all-hosts result. Counts let the UI render a useful toast.
          */
@@ -21264,6 +22122,33 @@ export interface components {
              * @default grey
              */
             ops_state: string;
+        };
+        /** RouteMatchModel */
+        RouteMatchModel: {
+            /**
+             * Path Type
+             * @default PathPrefix
+             */
+            path_type: string;
+            /**
+             * Path Value
+             * @default /
+             */
+            path_value: string;
+            /**
+             * Headers
+             * @default []
+             */
+            headers: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Query Params
+             * @default []
+             */
+            query_params: {
+                [key: string]: unknown;
+            }[];
         };
         /** RshimInstallQueuedResponse */
         RshimInstallQueuedResponse: {
@@ -22433,6 +23318,16 @@ export interface components {
              */
             directory: string;
         };
+        /** TabCreate */
+        TabCreate: {
+            /** Name */
+            name: string;
+        };
+        /** TabUpdate */
+        TabUpdate: {
+            /** Name */
+            name: string;
+        };
         /** TargetOut */
         TargetOut: {
             /** Id */
@@ -23233,6 +24128,31 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * WafLogConfListResponse
+         * @description GET /waf/logconfs — APLogConf list envelope.
+         */
+        WafLogConfListResponse: {
+            /** Log Confs */
+            log_confs: {
+                [key: string]: unknown;
+            }[];
+            /** Count */
+            count: number;
+        };
+        /**
+         * WafOperationResponse
+         * @description Delete responses from KubernetesService.delete_resource.
+         */
+        WafOperationResponse: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /** Message */
+            message: string;
+        };
         /** WafPolicyCreateRequest */
         WafPolicyCreateRequest: {
             /** Name */
@@ -23244,6 +24164,18 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * WafPolicyListResponse
+         * @description GET /waf/policies — APPolicy list envelope.
+         */
+        WafPolicyListResponse: {
+            /** Policies */
+            policies: {
+                [key: string]: unknown;
+            }[];
+            /** Count */
+            count: number;
+        };
         /** WafPolicyUpdateRequest */
         WafPolicyUpdateRequest: {
             /** Namespace */
@@ -23252,6 +24184,100 @@ export interface components {
             spec: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * WafRecompileResponse
+         * @description POST /waf/policies/{name}/recompile.
+         */
+        WafRecompileResponse: {
+            /** Message */
+            message: string;
+            /** Resource */
+            resource?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * WafResource
+         * @description A single appprotect.f5.com/v1 custom resource, returned verbatim from the cluster.
+         *
+         *     Extra keys are allowed so the raw Kubernetes object (arbitrary CRD spec/status
+         *     fields, managedFields, etc.) passes through the response model unchanged.
+         */
+        WafResource: {
+            /** Apiversion */
+            apiVersion?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WafSecurityLogsResponse
+         * @description GET /waf/security-logs — security log entries plus resolution metadata.
+         *
+         *     Covers all return branches (ClickHouse, resolved syslog endpoint, and the
+         *     no-endpoint / unparseable-endpoint fallbacks), so most metadata fields are
+         *     optional.
+         */
+        WafSecurityLogsResponse: {
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
+            /** Total */
+            total: number;
+            /** Source Endpoint */
+            source_endpoint?: string | null;
+            /** Cr Kind */
+            cr_kind?: string | null;
+            /** Cr Name */
+            cr_name?: string | null;
+            /** All Endpoints */
+            all_endpoints?: string[] | null;
+            /** Source */
+            source?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Warning */
+            warning?: string | null;
+        };
+        /**
+         * WafSecurityProfileCreateRequest
+         * @description Create an F5BigWebSecurityProfile bridging a named APPolicy to Gateway API.
+         */
+        WafSecurityProfileCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /** Policy Name */
+            policy_name: string;
+        };
+        /** WafSecurityProfileUpdateRequest */
+        WafSecurityProfileUpdateRequest: {
+            /**
+             * Namespace
+             * @default default
+             */
+            namespace: string;
+            /** Policy Name */
+            policy_name: string;
         };
         /** WafSignaturesUpdateRequest */
         WafSignaturesUpdateRequest: {
@@ -23272,6 +24298,18 @@ export interface components {
             spec: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * WafUserSigListResponse
+         * @description GET /waf/usersigs — APUserSig list envelope.
+         */
+        WafUserSigListResponse: {
+            /** User Sigs */
+            user_sigs: {
+                [key: string]: unknown;
+            }[];
+            /** Count */
+            count: number;
         };
         /** DiscoveryTriggerResponse */
         routes__bare_metal_hosts__DiscoveryTriggerResponse: {
@@ -26487,7 +27525,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafPolicyListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26522,7 +27560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26556,7 +27594,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26592,7 +27630,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26626,7 +27664,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafOperationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26659,7 +27697,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafLogConfListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26694,7 +27732,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26730,7 +27768,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26764,7 +27802,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafOperationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26797,7 +27835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"] | null;
                 };
             };
             /** @description Validation Error */
@@ -26832,7 +27870,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -26865,7 +27903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafOperationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26899,7 +27937,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafRecompileResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26932,7 +27970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafUserSigListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26967,7 +28005,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -27003,7 +28041,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafResource"];
                 };
             };
             /** @description Validation Error */
@@ -27037,7 +28075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WafOperationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27055,13 +28093,1689 @@ export interface operations {
         parameters: {
             query: {
                 namespace: string;
-                /** @description 'appolicy' or 'f5virtualserver' */
-                cr_kind: string;
-                cr_name: string;
+                /** @description 'appolicy' or 'f5virtualserver'; omit to query all policies */
+                cr_kind?: string | null;
+                cr_name?: string | null;
                 limit?: number;
                 outcome_filter?: string | null;
                 attack_type_filter?: string | null;
                 vs_name_filter?: string | null;
+                ip_filter?: string | null;
+                uri_filter?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WafSecurityLogsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_status_api_k8s_clusters__cluster_id__waf_dashboard_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_summary_api_k8s_clusters__cluster_id__waf_dashboard_summary_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_trend_api_k8s_clusters__cluster_id__waf_dashboard_trend_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_attacks_api_k8s_clusters__cluster_id__waf_dashboard_top_attacks_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_ips_api_k8s_clusters__cluster_id__waf_dashboard_top_ips_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_uris_api_k8s_clusters__cluster_id__waf_dashboard_top_uris_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_policies_api_k8s_clusters__cluster_id__waf_dashboard_top_policies_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_request_methods_api_k8s_clusters__cluster_id__waf_dashboard_request_methods_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_severity_api_k8s_clusters__cluster_id__waf_dashboard_severity_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_signatures_api_k8s_clusters__cluster_id__waf_dashboard_top_signatures_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_instances_api_k8s_clusters__cluster_id__waf_dashboard_top_instances_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+                limit?: number;
+                /** @description Filter by WAF outcome (REJECTED|ALERTED|PASSED) */
+                outcome?: string | null;
+                /** @description Filter by policy name (exact) */
+                policy_name?: string | null;
+                /** @description Filter by virtual server / instance name (exact) */
+                vs_name?: string | null;
+                /** @description Filter by client IP address (exact) */
+                ip_client?: string | null;
+                /** @description Filter by attack type (substring) */
+                attack_type?: string | null;
+                /** @description Filter by HTTP method (GET|POST|etc., case-insensitive) */
+                method?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_subviolations_api_k8s_clusters__cluster_id__waf_dashboard_top_subviolations_get: {
+        parameters: {
+            query: {
+                namespace: string;
+                hours?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_top_geolocations_api_k8s_clusters__cluster_id__waf_dashboard_top_geolocations_get: {
+        parameters: {
+            query: {
+                namespace: string;
+                hours?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_support_id_api_k8s_clusters__cluster_id__waf_dashboard_support_id_get: {
+        parameters: {
+            query: {
+                support_id: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_templates_api_k8s_clusters__cluster_id__waf_panels_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_panels_api_k8s_clusters__cluster_id__waf_panels_get: {
+        parameters: {
+            query?: {
+                tab_id?: number | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_panel_api_k8s_clusters__cluster_id__waf_panels_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PanelCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                panel_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PanelUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                panel_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    panel_data_api_k8s_clusters__cluster_id__waf_panels__panel_id__data_get: {
+        parameters: {
+            query?: {
+                time_range?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                panel_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tabs_api_k8s_clusters__cluster_id__waf_dashboard_tabs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TabCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                tab_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                tab_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TabUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_gateway_classes_api_k8s_clusters__cluster_id__waf_gateway_classes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayClassCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_gateways_api_k8s_clusters__cluster_id__waf_gateways_get: {
+        parameters: {
+            query?: {
+                namespace?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_gateway_api_k8s_clusters__cluster_id__waf_gateways_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__get: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__delete: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_security_profiles_api_k8s_clusters__cluster_id__waf_security_profiles_get: {
+        parameters: {
+            query?: {
+                namespace?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WafSecurityProfileCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__get: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WafSecurityProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__delete: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_httproutes_api_k8s_clusters__cluster_id__waf_httproutes_get: {
+        parameters: {
+            query?: {
+                namespace?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_httproute_api_k8s_clusters__cluster_id__waf_httproutes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HTTPRouteCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__get: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HTTPRouteUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__delete: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reference_grants_api_k8s_clusters__cluster_id__waf_reference_grants_get: {
+        parameters: {
+            query?: {
+                namespace?: string | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReferenceGrantCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants__name__delete: {
+        parameters: {
+            query?: {
+                namespace?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_gateway_topology_api_k8s_clusters__cluster_id__waf_gateway_topology_get: {
+        parameters: {
+            query?: {
+                namespace?: string | null;
             };
             header?: never;
             path: {

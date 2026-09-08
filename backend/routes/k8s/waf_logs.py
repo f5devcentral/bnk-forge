@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_viewer
-from services.clickhouse import CLICKHOUSE_DB as _CLICKHOUSE_DB, get_clickhouse
+from schemas.waf import WafSecurityLogsResponse
+from services.clickhouse import CLICKHOUSE_DB as _CLICKHOUSE_DB
+from services.clickhouse import get_clickhouse
 from services.kubernetes import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -361,6 +363,7 @@ def _read_logs_from_clickhouse(
 @router.get(
     "/k8s/clusters/{cluster_id}/waf/security-logs",
     dependencies=[Depends(require_viewer)],
+    response_model=WafSecurityLogsResponse,
 )
 @handle_route_errors("fetch WAF security logs")
 def get_waf_security_logs(

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -5304,7 +5304,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafPolicyListResponse"
+                }
               }
             }
           },
@@ -5352,7 +5354,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5410,7 +5414,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5467,7 +5473,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5523,7 +5531,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafOperationResponse"
+                }
               }
             }
           },
@@ -5579,7 +5589,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafLogConfListResponse"
+                }
               }
             }
           },
@@ -5627,7 +5639,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5686,7 +5700,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5742,7 +5758,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafOperationResponse"
+                }
               }
             }
           },
@@ -5791,7 +5809,17 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WafResource"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Waf Signatures Api K8S Clusters  Cluster Id  Waf Signatures Get"
+                }
               }
             }
           },
@@ -5839,7 +5867,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -5886,7 +5916,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafOperationResponse"
+                }
               }
             }
           },
@@ -5945,7 +5977,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafRecompileResponse"
+                }
               }
             }
           },
@@ -6001,7 +6035,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafUserSigListResponse"
+                }
               }
             }
           },
@@ -6049,7 +6085,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -6108,7 +6146,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafResource"
+                }
               }
             }
           },
@@ -6164,7 +6204,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WafOperationResponse"
+                }
               }
             }
           },
@@ -6208,20 +6250,34 @@
           {
             "name": "cr_kind",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
-              "description": "'appolicy' or 'f5virtualserver'",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "'appolicy' or 'f5virtualserver'; omit to query all policies",
               "title": "Cr Kind"
             },
-            "description": "'appolicy' or 'f5virtualserver'"
+            "description": "'appolicy' or 'f5virtualserver'; omit to query all policies"
           },
           {
             "name": "cr_name",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cr Name"
             }
           },
@@ -6283,6 +6339,3555 @@
                 }
               ],
               "title": "Vs Name Filter"
+            }
+          },
+          {
+            "name": "ip_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ip Filter"
+            }
+          },
+          {
+            "name": "uri_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uri Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WafSecurityLogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/status": {
+      "get": {
+        "summary": "Dashboard Status",
+        "description": "Return whether ClickHouse is reachable and has data for this cluster.",
+        "operationId": "dashboard_status_api_k8s_clusters__cluster_id__waf_dashboard_status_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/summary": {
+      "get": {
+        "summary": "Dashboard Summary",
+        "description": "Return KPI numbers: total, rejected_pct, top_attack_type, unique_ips.",
+        "operationId": "dashboard_summary_api_k8s_clusters__cluster_id__waf_dashboard_summary_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/trend": {
+      "get": {
+        "summary": "Dashboard Trend",
+        "description": "Return time-bucketed event counts split by outcome.\nBucket size: 1h for \u22647d ranges, 6h for 30d.\nShape: [{ ts, REJECTED, PASSED, ALERTED }, ...]",
+        "operationId": "dashboard_trend_api_k8s_clusters__cluster_id__waf_dashboard_trend_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-attacks": {
+      "get": {
+        "summary": "Dashboard Top Attacks",
+        "description": "Top attack types by event count.",
+        "operationId": "dashboard_top_attacks_api_k8s_clusters__cluster_id__waf_dashboard_top_attacks_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-ips": {
+      "get": {
+        "summary": "Dashboard Top Ips",
+        "description": "Top source IPs by blocked event count.",
+        "operationId": "dashboard_top_ips_api_k8s_clusters__cluster_id__waf_dashboard_top_ips_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-uris": {
+      "get": {
+        "summary": "Dashboard Top Uris",
+        "description": "Top attacked URIs.",
+        "operationId": "dashboard_top_uris_api_k8s_clusters__cluster_id__waf_dashboard_top_uris_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-policies": {
+      "get": {
+        "summary": "Dashboard Top Policies",
+        "description": "Top policies by hit count \u2014 mirrors NIM's 'Top WAF Policies' panel.",
+        "operationId": "dashboard_top_policies_api_k8s_clusters__cluster_id__waf_dashboard_top_policies_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/request-methods": {
+      "get": {
+        "summary": "Dashboard Request Methods",
+        "description": "HTTP method distribution \u2014 mirrors NIM's 'Request Methods' panel.",
+        "operationId": "dashboard_request_methods_api_k8s_clusters__cluster_id__waf_dashboard_request_methods_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/severity": {
+      "get": {
+        "summary": "Dashboard Severity",
+        "description": "Violation-rating distribution \u2014 mirrors NIM's 'Severity' panel.",
+        "operationId": "dashboard_severity_api_k8s_clusters__cluster_id__waf_dashboard_severity_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-signatures": {
+      "get": {
+        "summary": "Dashboard Top Signatures",
+        "description": "Top triggered signature names \u2014 mirrors NIM's 'Top Signatures' panel.",
+        "operationId": "dashboard_top_signatures_api_k8s_clusters__cluster_id__waf_dashboard_top_signatures_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-instances": {
+      "get": {
+        "summary": "Dashboard Top Instances",
+        "description": "Top virtual servers (instances) by hit count \u2014 mirrors NIM's 'Top Attacked Instances' panel.",
+        "operationId": "dashboard_top_instances_api_k8s_clusters__cluster_id__waf_dashboard_top_instances_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24h",
+              "title": "Time Range"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)",
+              "title": "Outcome"
+            },
+            "description": "Filter by WAF outcome (REJECTED|ALERTED|PASSED)"
+          },
+          {
+            "name": "policy_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by policy name (exact)",
+              "title": "Policy Name"
+            },
+            "description": "Filter by policy name (exact)"
+          },
+          {
+            "name": "vs_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by virtual server / instance name (exact)",
+              "title": "Vs Name"
+            },
+            "description": "Filter by virtual server / instance name (exact)"
+          },
+          {
+            "name": "ip_client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by client IP address (exact)",
+              "title": "Ip Client"
+            },
+            "description": "Filter by client IP address (exact)"
+          },
+          {
+            "name": "attack_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by attack type (substring)",
+              "title": "Attack Type"
+            },
+            "description": "Filter by attack type (substring)"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method (GET|POST|etc., case-insensitive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-subviolations": {
+      "get": {
+        "summary": "Dashboard Top Subviolations",
+        "description": "Top sub-violations parsed from NAP events (e.g. 'Host header contains IP address').",
+        "operationId": "dashboard_top_subviolations_api_k8s_clusters__cluster_id__waf_dashboard_top_subviolations_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 24,
+              "title": "Hours"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/top-geolocations": {
+      "get": {
+        "summary": "Dashboard Top Geolocations",
+        "description": "Top attacker geolocations with lat/lon for world-map rendering.",
+        "operationId": "dashboard_top_geolocations_api_k8s_clusters__cluster_id__waf_dashboard_top_geolocations_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 24,
+              "title": "Hours"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 15,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard/support-id": {
+      "get": {
+        "summary": "Dashboard Support Id",
+        "description": "Look up a specific WAF event by support ID.",
+        "operationId": "dashboard_support_id_api_k8s_clusters__cluster_id__waf_dashboard_support_id_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "support_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Support Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/panels/templates": {
+      "get": {
+        "summary": "List Templates",
+        "description": "Return all available query templates with descriptions.",
+        "operationId": "list_templates_api_k8s_clusters__cluster_id__waf_panels_templates_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/panels": {
+      "get": {
+        "summary": "List Panels",
+        "operationId": "list_panels_api_k8s_clusters__cluster_id__waf_panels_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Panel",
+        "operationId": "create_panel_api_k8s_clusters__cluster_id__waf_panels_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/panels/{panel_id}": {
+      "put": {
+        "summary": "Update Panel",
+        "operationId": "update_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "panel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Panel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanelUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Panel",
+        "operationId": "delete_panel_api_k8s_clusters__cluster_id__waf_panels__panel_id__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "panel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Panel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/panels/{panel_id}/data": {
+      "get": {
+        "summary": "Panel Data",
+        "description": "Execute the panel's query template against ClickHouse and return chart data.",
+        "operationId": "panel_data_api_k8s_clusters__cluster_id__waf_panels__panel_id__data_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "panel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Panel Id"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "7d",
+              "title": "Time Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard-tabs": {
+      "get": {
+        "summary": "List Tabs",
+        "operationId": "list_tabs_api_k8s_clusters__cluster_id__waf_dashboard_tabs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Tab",
+        "operationId": "create_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TabCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/dashboard-tabs/{tab_id}": {
+      "patch": {
+        "summary": "Rename Tab",
+        "operationId": "rename_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__patch",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TabUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Tab",
+        "operationId": "delete_tab_api_k8s_clusters__cluster_id__waf_dashboard_tabs__tab_id__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-classes": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "List Gateway Classes",
+        "operationId": "list_gateway_classes_api_k8s_clusters__cluster_id__waf_gateway_classes_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Create Gateway Class",
+        "operationId": "create_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewayClassCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-classes/{name}": {
+      "delete": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Delete Gateway Class",
+        "operationId": "delete_gateway_class_api_k8s_clusters__cluster_id__waf_gateway_classes__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/gateways": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "List Gateways",
+        "operationId": "list_gateways_api_k8s_clusters__cluster_id__waf_gateways_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Create Gateway",
+        "operationId": "create_gateway_api_k8s_clusters__cluster_id__waf_gateways_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewayCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/gateways/{name}": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Get Gateway",
+        "operationId": "get_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Update Gateway",
+        "operationId": "update_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewayUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Delete Gateway",
+        "operationId": "delete_gateway_api_k8s_clusters__cluster_id__waf_gateways__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/security-profiles": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "List Security Profiles",
+        "operationId": "list_security_profiles_api_k8s_clusters__cluster_id__waf_security_profiles_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Create Security Profile",
+        "operationId": "create_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafSecurityProfileCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/security-profiles/{name}": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Get Security Profile",
+        "operationId": "get_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Update Security Profile",
+        "operationId": "update_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WafSecurityProfileUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Delete Security Profile",
+        "operationId": "delete_security_profile_api_k8s_clusters__cluster_id__waf_security_profiles__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/httproutes": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "List Httproutes",
+        "operationId": "list_httproutes_api_k8s_clusters__cluster_id__waf_httproutes_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Create Httproute",
+        "operationId": "create_httproute_api_k8s_clusters__cluster_id__waf_httproutes_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HTTPRouteCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/httproutes/{name}": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Get Httproute",
+        "operationId": "get_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Update Httproute",
+        "operationId": "update_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HTTPRouteUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Delete Httproute",
+        "operationId": "delete_httproute_api_k8s_clusters__cluster_id__waf_httproutes__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/reference-grants": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "List Reference Grants",
+        "operationId": "list_reference_grants_api_k8s_clusters__cluster_id__waf_reference_grants_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Create Reference Grant",
+        "operationId": "create_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants_post",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceGrantCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/reference-grants/{name}": {
+      "delete": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Delete Reference Grant",
+        "operationId": "delete_reference_grant_api_k8s_clusters__cluster_id__waf_reference_grants__name__delete",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Namespace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/waf/gateway-topology": {
+      "get": {
+        "tags": [
+          "k8s-waf-gateway"
+        ],
+        "summary": "Get Gateway Topology",
+        "description": "Return all Gateway API + WAF resources together so the UI can build the binding graph.",
+        "operationId": "get_gateway_topology_api_k8s_clusters__cluster_id__waf_gateway_topology_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
             }
           }
         ],
@@ -32629,6 +36234,40 @@
         ],
         "title": "AssignedLabelsRequest"
       },
+      "BackendRefModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "weight": {
+            "type": "integer",
+            "title": "Weight",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "port"
+        ],
+        "title": "BackendRefModel"
+      },
       "BackupCreateRequest": {
         "properties": {
           "passphrase": {
@@ -47659,6 +51298,135 @@
         "title": "FleetOperatorHealth",
         "description": "Health summary for a single operator/cluster in the fleet view."
       },
+      "GatewayClassCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "controller_name": {
+            "type": "string",
+            "title": "Controller Name",
+            "default": "f5.com/default-f5-cne-controller"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "F5 BIG-IP Kubernetes Gateway"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "GatewayClassCreateRequest"
+      },
+      "GatewayCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "gateway_class_name": {
+            "type": "string",
+            "title": "Gateway Class Name",
+            "default": "f5-gatewayclass"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/ListenerModel"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses",
+            "default": []
+          },
+          "waf_profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waf Profile Name"
+          },
+          "annotations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Annotations",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "listeners"
+        ],
+        "title": "GatewayCreateRequest"
+      },
+      "GatewayUpdateRequest": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "listeners": {
+            "items": {
+              "$ref": "#/components/schemas/ListenerModel"
+            },
+            "type": "array",
+            "title": "Listeners"
+          },
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Addresses",
+            "default": []
+          },
+          "waf_profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waf Profile Name"
+          },
+          "annotations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Annotations",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "listeners"
+        ],
+        "title": "GatewayUpdateRequest"
+      },
       "GitSourceValidation": {
         "properties": {
           "git_url": {
@@ -47677,6 +51445,156 @@
         ],
         "title": "GitSourceValidation",
         "description": "Schema for git source validation"
+      },
+      "HTTPRouteCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "parent_gateway_name": {
+            "type": "string",
+            "title": "Parent Gateway Name"
+          },
+          "parent_gateway_namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Gateway Namespace"
+          },
+          "parent_gateway_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Gateway Section Name"
+          },
+          "hostnames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hostnames",
+            "default": []
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/HTTPRouteRuleModel"
+            },
+            "type": "array",
+            "title": "Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "parent_gateway_name",
+          "rules"
+        ],
+        "title": "HTTPRouteCreateRequest"
+      },
+      "HTTPRouteRuleModel": {
+        "properties": {
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/RouteMatchModel"
+            },
+            "type": "array",
+            "title": "Matches",
+            "default": []
+          },
+          "backend_refs": {
+            "items": {
+              "$ref": "#/components/schemas/BackendRefModel"
+            },
+            "type": "array",
+            "title": "Backend Refs"
+          },
+          "filters": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Filters",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "backend_refs"
+        ],
+        "title": "HTTPRouteRuleModel"
+      },
+      "HTTPRouteUpdateRequest": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "parent_gateway_name": {
+            "type": "string",
+            "title": "Parent Gateway Name"
+          },
+          "parent_gateway_namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Gateway Namespace"
+          },
+          "parent_gateway_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Gateway Section Name"
+          },
+          "hostnames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hostnames",
+            "default": []
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/HTTPRouteRuleModel"
+            },
+            "type": "array",
+            "title": "Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parent_gateway_name",
+          "rules"
+        ],
+        "title": "HTTPRouteUpdateRequest"
       },
       "HTTPValidationError": {
         "properties": {
@@ -48911,6 +52829,79 @@
           "cluster_id"
         ],
         "title": "LinkClusterRequest"
+      },
+      "ListenerModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "protocol": {
+            "type": "string",
+            "title": "Protocol",
+            "default": "HTTP"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port",
+            "default": 80
+          },
+          "allowed_routes_from": {
+            "type": "string",
+            "title": "Allowed Routes From",
+            "default": "Same"
+          },
+          "allowed_routes_selector": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Routes Selector"
+          },
+          "tls_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Mode"
+          },
+          "tls_cert_ref_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Cert Ref Name"
+          },
+          "tls_cert_ref_namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Cert Ref Namespace"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ListenerModel"
       },
       "LlmFilterDataResponse": {
         "properties": {
@@ -51545,6 +55536,162 @@
         "type": "object",
         "title": "OpenTofuActionRequest",
         "description": "Schema for OpenTofu actions"
+      },
+      "PanelCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "chart_type": {
+            "type": "string",
+            "title": "Chart Type",
+            "default": "bar"
+          },
+          "query_template": {
+            "type": "string",
+            "title": "Query Template"
+          },
+          "time_range": {
+            "type": "string",
+            "title": "Time Range",
+            "default": "7d"
+          },
+          "width": {
+            "type": "string",
+            "title": "Width",
+            "default": "full"
+          },
+          "panel_order": {
+            "type": "integer",
+            "title": "Panel Order",
+            "default": 0
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab Id"
+          },
+          "extra_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "query_template"
+        ],
+        "title": "PanelCreate"
+      },
+      "PanelUpdate": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "chart_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Type"
+          },
+          "query_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Template"
+          },
+          "time_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Range"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "panel_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Panel Order"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab Id"
+          },
+          "extra_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra Config"
+          }
+        },
+        "type": "object",
+        "title": "PanelUpdate"
       },
       "PlatformCapabilities": {
         "properties": {
@@ -56006,6 +60153,61 @@
         "title": "RecoveryStatusResponse",
         "description": "Pre-flight check \u2014 what needs recovery?"
       },
+      "ReferenceGrantCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "from_group": {
+            "type": "string",
+            "title": "From Group",
+            "default": "gateway.networking.k8s.io"
+          },
+          "from_kind": {
+            "type": "string",
+            "title": "From Kind",
+            "default": "HTTPRoute"
+          },
+          "from_namespace": {
+            "type": "string",
+            "title": "From Namespace"
+          },
+          "to_group": {
+            "type": "string",
+            "title": "To Group",
+            "default": ""
+          },
+          "to_kind": {
+            "type": "string",
+            "title": "To Kind",
+            "default": "Service"
+          },
+          "to_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "from_namespace"
+        ],
+        "title": "ReferenceGrantCreateRequest",
+        "description": "Allow cross-namespace references (e.g. HTTPRoute in ns-A referencing Service in ns-B)."
+      },
       "RegisterAllHostsResponse": {
         "properties": {
           "created": {
@@ -57458,6 +61660,40 @@
           "last_evaluated_at"
         ],
         "title": "RollupOut"
+      },
+      "RouteMatchModel": {
+        "properties": {
+          "path_type": {
+            "type": "string",
+            "title": "Path Type",
+            "default": "PathPrefix"
+          },
+          "path_value": {
+            "type": "string",
+            "title": "Path Value",
+            "default": "/"
+          },
+          "headers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Headers",
+            "default": []
+          },
+          "query_params": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Query Params",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "RouteMatchModel"
       },
       "RshimInstallQueuedResponse": {
         "properties": {
@@ -60892,6 +65128,32 @@
         "title": "TMMDebugTmctlRequest",
         "description": "Structured tmctl query \u2014 builds the command and parses tabular output."
       },
+      "TabCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TabCreate"
+      },
+      "TabUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TabUpdate"
+      },
       "TargetOut": {
         "properties": {
           "id": {
@@ -62782,6 +67044,48 @@
         ],
         "title": "WafLogConfCreateRequest"
       },
+      "WafLogConfListResponse": {
+        "properties": {
+          "log_confs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Log Confs"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "log_confs",
+          "count"
+        ],
+        "title": "WafLogConfListResponse",
+        "description": "GET /waf/logconfs \u2014 APLogConf list envelope."
+      },
+      "WafOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "WafOperationResponse",
+        "description": "Delete responses from KubernetesService.delete_resource."
+      },
       "WafPolicyCreateRequest": {
         "properties": {
           "name": {
@@ -62806,6 +67110,29 @@
         ],
         "title": "WafPolicyCreateRequest"
       },
+      "WafPolicyListResponse": {
+        "properties": {
+          "policies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Policies"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policies",
+          "count"
+        ],
+        "title": "WafPolicyListResponse",
+        "description": "GET /waf/policies \u2014 APPolicy list envelope."
+      },
       "WafPolicyUpdateRequest": {
         "properties": {
           "namespace": {
@@ -62824,6 +67151,222 @@
           "spec"
         ],
         "title": "WafPolicyUpdateRequest"
+      },
+      "WafRecompileResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "resource": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Resource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "WafRecompileResponse",
+        "description": "POST /waf/policies/{name}/recompile."
+      },
+      "WafResource": {
+        "properties": {
+          "apiVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apiversion"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "WafResource",
+        "description": "A single appprotect.f5.com/v1 custom resource, returned verbatim from the cluster.\n\nExtra keys are allowed so the raw Kubernetes object (arbitrary CRD spec/status\nfields, managedFields, etc.) passes through the response model unchanged."
+      },
+      "WafSecurityLogsResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "source_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Endpoint"
+          },
+          "cr_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cr Kind"
+          },
+          "cr_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cr Name"
+          },
+          "all_endpoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "All Endpoints"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entries",
+          "total"
+        ],
+        "title": "WafSecurityLogsResponse",
+        "description": "GET /waf/security-logs \u2014 security log entries plus resolution metadata.\n\nCovers all return branches (ClickHouse, resolved syslog endpoint, and the\nno-endpoint / unparseable-endpoint fallbacks), so most metadata fields are\noptional."
+      },
+      "WafSecurityProfileCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "policy_name": {
+            "type": "string",
+            "title": "Policy Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "policy_name"
+        ],
+        "title": "WafSecurityProfileCreateRequest",
+        "description": "Create an F5BigWebSecurityProfile bridging a named APPolicy to Gateway API."
+      },
+      "WafSecurityProfileUpdateRequest": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          },
+          "policy_name": {
+            "type": "string",
+            "title": "Policy Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_name"
+        ],
+        "title": "WafSecurityProfileUpdateRequest"
       },
       "WafSignaturesUpdateRequest": {
         "properties": {
@@ -62867,6 +67410,29 @@
           "spec"
         ],
         "title": "WafUserSigCreateRequest"
+      },
+      "WafUserSigListResponse": {
+        "properties": {
+          "user_sigs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "User Sigs"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_sigs",
+          "count"
+        ],
+        "title": "WafUserSigListResponse",
+        "description": "GET /waf/usersigs \u2014 APUserSig list envelope."
       },
       "routes__bare_metal_hosts__DiscoveryTriggerResponse": {
         "properties": {
