@@ -1,0 +1,155 @@
+---
+# NAP WAF policy - blocks common injection attacks
+apiVersion: appprotect.f5.com/v1beta1
+kind: APPolicy
+metadata:
+  name: waf-policy
+  namespace: default
+spec:
+  policy:
+    name: waf-policy
+    template:
+      name: POLICY_TEMPLATE_NGINX_BASE
+    applicationLanguage: utf-8
+    enforcementMode: blocking
+    signature-sets:
+    - name: All Signatures
+      alarm: true
+      block: true
+    blocking-settings:
+      violations:
+      - name: VIOL_RATING_THREAT
+        alarm: true
+        block: true
+      - name: VIOL_RATING_NEED_EXAMINATION
+        alarm: true
+        block: true
+      - name: VIOL_PARAMETER_VALUE_METACHAR
+        alarm: true
+        block: true
+      - name: VIOL_EVASION
+        alarm: true
+        block: true
+      - name: VIOL_ENCODING
+        alarm: true
+        block: true
+    server-technologies:
+    - serverTechnologyName: Python
+    - serverTechnologyName: Nginx
+---
+# Log everything - illegal requests only, default format
+apiVersion: appprotect.f5.com/v1beta1
+kind: APLogConf
+metadata:
+  name: waf-logconf
+  namespace: default
+spec:
+  content:
+    format: default
+    max_request_size: any
+    max_message_size: 64k
+  filter:
+    request_type: illegal
+---
+# HSL publisher pointing to OTel TCP syslog receiver
+apiVersion: k8s.f5net.com/v1
+kind: F5BigLogHslpub
+metadata:
+  name: waf-publisher
+  namespace: default
+spec:
+  pool:
+  - name: waf-syslog
+    endpoint:
+    - 10.101.0.3:30841
+    - 10.101.0.2:30841
+---
+# Log profile referencing the HSL publisher; nat.enabled creates security_log_profile in TMM
+apiVersion: k8s.f5net.com/v1
+kind: F5BigLogProfile
+metadata:
+  name: waf-log-profile
+  namespace: default
+spec:
+  publisher: waf-publisher
+  nat:
+    enabled: true
+---
+# Web security profile - links APPolicy to TMM
+apiVersion: k8s.f5net.com/v1
+kind: F5BigWebSecurityProfile
+metadata:
+  name: waf-web-security
+  namespace: default
+spec:
+  policyName: waf-policy
+---
+# Backend service for waf-server pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: waf-server-svc
+  namespace: default
+spec:
+  selector:
+    app: waf-server
+  ports:
+  - port: 9080
+    targetPort: 9080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: f5-gatewayclass
+spec:
+  controllerName: "f5.com/default-f5-cne-controller"
+  description: "F5 BIG-IP Kubernetes Gateway"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waf-gateway
+  namespace: default
+spec:
+  gatewayClassName: f5-gatewayclass
+  addresses:
+  - type: IPAddress
+    value: 11.11.11.201
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 9080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: waf-route
+  namespace: default
+spec:
+  parentRefs:
+  - name: waf-gateway
+    sectionName: http
+  rules:
+  - backendRefs:
+    - name: waf-server-svc
+      port: 9080
+---
+# Attach WAF policy + log profile to the Gateway (Gateway API direct policy attachment)
+apiVersion: gateway.k8s.f5.com/v1alpha1
+kind: SecPolicy
+metadata:
+  name: waf-secpolicy
+  namespace: default
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: waf-gateway
+  extensionRefs:
+  - group: k8s.f5net.com
+    kind: F5BigWebSecurityProfile
+    name: waf-web-security
+  - group: k8s.f5net.com
+    kind: F5BigLogProfile
+    name: waf-log-profile
+

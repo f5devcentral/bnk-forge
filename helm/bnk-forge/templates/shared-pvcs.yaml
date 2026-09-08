@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/component: shared-state
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ $.Values.global.sharedAccessMode | default "ReadWriteMany" }}
   resources:
     requests:
       storage: {{ $v.size }}

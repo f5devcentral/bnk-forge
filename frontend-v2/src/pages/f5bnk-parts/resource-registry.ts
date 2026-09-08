@@ -49,6 +49,7 @@ import { VIEW_POLICY_MAP, VIEW_AI_ANALYZERS } from './bnk-constants';
 /** A detail panel component accepts a single K8s resource */
 export interface DetailPanelProps {
   resource: K8sResource;
+  clusterId?: number;
 }
 
 /**

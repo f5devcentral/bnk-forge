@@ -70,3 +70,4 @@ export type {
   VersionDrift,
   DeployableRelease,
 } from './bare-metal';
+export * from './waf';

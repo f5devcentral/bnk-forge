@@ -3,9 +3,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Globe } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import type { K8sGatewayRef } from '@/types';
+import { SecurityLogsTab } from '@/components/k8s/waf/SecurityLogsTab';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
 
-export function SecurityPolicyDetail({ resource }: DetailPanelProps) {
+export function SecurityPolicyDetail({ resource, clusterId }: DetailPanelProps) {
   const spec = resource.spec || {};
   const status = resource.status || {};
   const conditions = status.conditions || [];
@@ -14,9 +15,10 @@ export function SecurityPolicyDetail({ resource }: DetailPanelProps) {
   return (
     <div className="space-y-4">
       <Tabs defaultValue="summary" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="status">Status</TabsTrigger>
+          <TabsTrigger value="logs">Security Logs</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="space-y-3">
@@ -65,6 +67,19 @@ export function SecurityPolicyDetail({ resource }: DetailPanelProps) {
 
         <TabsContent value="status">
           <ConditionsTab conditions={conditions} />
+        </TabsContent>
+
+        <TabsContent value="logs" className="p-0">
+          {clusterId ? (
+            <SecurityLogsTab
+              clusterId={clusterId}
+              namespace={resource.metadata?.namespace ?? 'default'}
+              crKind="f5virtualserver"
+              crName={resource.metadata?.name ?? ''}
+            />
+          ) : (
+            <p className="p-4 text-xs text-muted-foreground">Cluster context unavailable for log retrieval.</p>
+          )}
         </TabsContent>
       </Tabs>
     </div>

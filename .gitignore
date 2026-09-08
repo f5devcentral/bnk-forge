@@ -189,6 +189,8 @@ node_modules/
 # package-lock.json is intentionally TRACKED — `npm ci` and the CI setup-node
 # cache both require it. Ignoring it silently drops the lockfile from any export
 # built off the working tree, which breaks every frontend CI job.
+package-lock.json
+!frontend-v2/package-lock.json
 *.pyc
 # Environment
 # OpenCode

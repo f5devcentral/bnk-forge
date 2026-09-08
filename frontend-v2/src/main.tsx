@@ -23,6 +23,11 @@ import './styles.css'
 // Monaco Editor: use locally bundled package instead of CDN.
 // Without this, @monaco-editor/react fetches from jsDelivr which fails
 // in air-gapped environments or behind firewalls (dialog shows "Loading..." forever).
+//
+// The dedicated editor web worker is wired via MonacoEnvironment.getWorker so
+// language services run off the main thread; the ?worker import is Vite's
+// supported worker syntax and builds green in this repo's CI (P2 Build Frontend
+// on staging). Do not drop this without a deliberate replacement in vite.config.ts.
 // ---------------------------------------------------------------------------
 import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'

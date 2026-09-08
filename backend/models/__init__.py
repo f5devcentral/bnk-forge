@@ -227,6 +227,13 @@ from models.variable import (
     VariableMappingTemplate,
 )
 
+# --- WAF dashboard (panels, tabs, ClickHouse ingest cursors) ---
+from models.waf_panels import (
+    WafDashboardTab,
+    WafIngestionCursor,
+    WafPanel,
+)
+
 __all__ = [
     "Base",
     # enums
@@ -308,4 +315,6 @@ __all__ = [
     "PolicyEvaluation",
     # use-case artifacts (D-034 Phase 0 tracer)
     "UseCaseArtifact", "UseCaseArtifactVersion", "UseCaseApplication",
+    # WAF dashboard (panels, tabs, ClickHouse ingest cursors)
+    "WafPanel", "WafDashboardTab", "WafIngestionCursor",
 ]

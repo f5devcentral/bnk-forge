@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waf-syslog-receiver
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: waf-syslog-receiver
+  template:
+    metadata:
+      labels:
+        app: waf-syslog-receiver
+    spec:
+      containers:
+      - name: syslog
+        image: artifactory.f5net.com/f5-positron-docker/testing-utils:v0.6.0
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          python3 - <<'EOF'
+          import socket, datetime, threading, time
+
+          srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          srv.bind(("0.0.0.0", 5514))
+          srv.listen(16)
+          print("WAF syslog receiver listening on :5514", flush=True)
+
+          def handle(conn, addr):
+              print(f"[CONNECT] {addr}", flush=True)
+              conn.settimeout(2.0)
+              while True:
+                  try:
+                      data = conn.recv(65536)
+                      if not data:
+                          break
+                      ts = datetime.datetime.utcnow().isoformat()
+                      # Print both text (decoded) and hex for binary analysis
+                      text = data.decode(errors='replace')
+                      hexdump = data[:64].hex()
+                      print(f"[{ts}][{len(data)}b] text={text[:200]!r} hex={hexdump}", flush=True)
+                  except socket.timeout:
+                      pass
+              print(f"[DISCONNECT] {addr}", flush=True)
+              conn.close()
+
+          while True:
+              conn, addr = srv.accept()
+              threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
+          EOF
+        ports:
+        - containerPort: 5514
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waf-syslog-receiver
+  namespace: default
+spec:
+  selector:
+    app: waf-syslog-receiver
+  ports:
+  - port: 5514
+    targetPort: 5514
