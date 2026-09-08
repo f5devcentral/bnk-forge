@@ -364,13 +364,14 @@ def get_gcp_service_account_info(project: Project | None, db=None) -> dict | Non
     authenticate the Python kubernetes client to GKE without needing the
     ``gke-gcloud-auth-plugin`` binary inside the container.
     """
+    explicit_template = bool(project and getattr(project, "credential_template_id", None))
     template = None
     if db:
-        if project and getattr(project, "credential_template_id", None):
+        if explicit_template:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.id == project.credential_template_id
             ).first()
-        elif not project or not getattr(project, "credential_template_id", None):
+        else:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "gcp",
                 CloudCredentialTemplate.is_default.is_(True),
@@ -384,7 +385,15 @@ def get_gcp_service_account_info(project: Project | None, db=None) -> dict | Non
             except json.JSONDecodeError as e:
                 logger.error(f"GCP credentials for template '{template.name}' are not valid JSON: {e}")
 
-    # Fallback to environment variable
+    # Fail closed: when the project explicitly scopes a credential template, never
+    # fall back to ambient global env creds — even if that template is missing, is
+    # for a different provider, or its creds are unusable. Doing so would defeat the
+    # explicit scoping and silently hand back the ambient global identity.
+    if explicit_template:
+        return None
+
+    # Ambient env fallback ONLY when no credential template was scoped (intentional
+    # global-default path).
     gcp_sa_env = os.getenv("GCP_SERVICE_ACCOUNT_KEY") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if gcp_sa_env:
         try:
@@ -404,13 +413,14 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
     2. Global default Azure CloudCredentialTemplate (is_default=True)
     3. Environment variables (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)
     """
+    explicit_template = bool(project and getattr(project, "credential_template_id", None))
     template = None
     if db:
-        if project and getattr(project, "credential_template_id", None):
+        if explicit_template:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.id == project.credential_template_id
             ).first()
-        elif not project or not getattr(project, "credential_template_id", None):
+        else:
             template = db.query(CloudCredentialTemplate).filter(
                 CloudCredentialTemplate.provider == "azure",
                 CloudCredentialTemplate.is_default.is_(True),
@@ -436,7 +446,15 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
                 except json.JSONDecodeError as e:
                     logger.error(f"Azure credentials for template '{template.name}' are not valid JSON: {e}")
 
-    # Fallback to environment variables
+    # Fail closed: when the project explicitly scopes a credential template, never
+    # fall back to ambient global env creds — even if that template is missing, is
+    # for a different provider, or its creds are unusable. Doing so would defeat the
+    # explicit scoping and silently hand back the ambient global identity.
+    if explicit_template:
+        return None
+
+    # Ambient env fallback ONLY when no credential template was scoped (intentional
+    # global-default path).
     env_tenant = os.getenv("AZURE_TENANT_ID") or os.getenv("ARM_TENANT_ID")
     env_client_id = os.getenv("AZURE_CLIENT_ID") or os.getenv("ARM_CLIENT_ID")
     env_client_secret = os.getenv("AZURE_CLIENT_SECRET") or os.getenv("ARM_CLIENT_SECRET")

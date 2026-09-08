@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import requests
-
-logger = logging.getLogger(__name__)
 
 
 def request_azure_oauth_token(
