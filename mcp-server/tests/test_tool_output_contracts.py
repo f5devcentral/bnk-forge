@@ -359,6 +359,10 @@ async def test_create_project_returns_normalized_envelope_with_nested_project() 
     )
 
     assert parsed["success"] is True
+    # #66: the mutating-tool envelope exposes the same universal ok key, and it
+    # is meta -- it must not leak into the nested project entity.
+    assert parsed["ok"] is True
+    assert "ok" not in parsed["project"]
     assert "project" in parsed
     assert parsed["project"]["id"] == 39
     assert parsed["project"]["name"] == "my-project"

@@ -2,7 +2,42 @@
 
 from unittest.mock import MagicMock, call, patch
 
-from startup_steps import seed_defaults_step, sync_module_catalog_step
+import pytest
+
+from startup_steps import seed_auth_step, seed_defaults_step, sync_module_catalog_step
+
+
+@patch("database.get_db_context")
+@patch("services.auth_service.seed_admin_user")
+def test_seed_auth_step_fails_closed_on_unpersistable_credential(
+    mock_seed_admin, mock_get_db_context
+):
+    """#186 (bonnyr-f5 r4): when a generated credential can't be written to the
+    keys dir, seed_auth_step must REFUSE TO START (SystemExit) rather than fall
+    back to logging the plaintext. SystemExit (BaseException) escapes main.py's
+    best-effort `except Exception`, so the process actually halts — and the
+    error message must NOT contain the secret.
+    """
+    from services.auth_service import GeneratedCredentialPersistError
+
+    db = MagicMock()
+    ctx = MagicMock()
+    ctx.__enter__.return_value = db
+    ctx.__exit__.return_value = False
+    mock_get_db_context.return_value = ctx
+    # The seed path raised because /app/keys was unwritable. The exception
+    # carries NO plaintext (that is the whole point of the fail-closed design).
+    mock_seed_admin.side_effect = GeneratedCredentialPersistError(
+        "could not persist generated credential to /app/keys/initial_admin_password: "
+        "[Errno 13] Permission denied"
+    )
+
+    with pytest.raises(SystemExit) as ei:
+        seed_auth_step()
+
+    # SystemExit, not swallowed; and the message never carries a secret.
+    assert "Refusing to log" in str(ei.value)
+    assert "Permission denied" in str(ei.value)
 
 
 @patch("database.get_db_context")

@@ -10,13 +10,14 @@ import pytest
 from services.bnk.topology import (
     _build_cne_instance,
     _build_data_plane,
+    _build_egress,
     _build_vlan,
     _match_analyzers,
     _match_net_policies,
     _match_routes_to_listener,
     _match_sec_policies,
-    _resolve_list_refs,
     analyze_topology,
+    resolve_list_refs,
 )
 
 # ---------------------------------------------------------------------------
@@ -292,7 +293,7 @@ class TestMatchSecPolicies:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_list_refs
+# resolve_list_refs
 # ---------------------------------------------------------------------------
 
 
@@ -301,13 +302,13 @@ class TestResolveListRefs:
         al = _resource("allow-list", spec={"addresses": ["10.0.0.0/8", "192.168.0.0/16"]})
         from services.bnk.helpers import make_resource_map
         addr_map = make_resource_map([al])
-        result = _resolve_list_refs({"allow-list"}, addr_map, "f5-bnk", "addresses")
+        result = resolve_list_refs({"allow-list"}, addr_map, "f5-bnk", "addresses")
         assert len(result) == 1
         assert result[0]["name"] == "allow-list"
         assert result[0]["addresses"] == ["10.0.0.0/8", "192.168.0.0/16"]
 
     def test_missing_resource_returns_empty_list(self):
-        result = _resolve_list_refs({"nonexistent"}, {}, "f5-bnk", "addresses")
+        result = resolve_list_refs({"nonexistent"}, {}, "f5-bnk", "addresses")
         assert result[0]["addresses"] == []
 
 
@@ -354,6 +355,92 @@ class TestBuildCneInstance:
         assert result["phase"] == "Running"
 
 
+class TestBuildEgress:
+    def test_egress_with_full_spec(self):
+        eg = _resource("bnk-egress-demo", namespace="f5-cne-system", spec={
+            "snatType": "SRC_TRANS_AUTOMAP",
+            "egressSnatpool": "my-snatpool",
+            "firewallEnforcedPolicy": "egress-demo-fw",
+            "logProfile": "egress-log-profile",
+            "pseudoCNIConfig": {
+                "namespaces": ["bnk-egress-demo"],
+                "appPodInterface": "eth0",
+                "vxlan": {
+                    "create": True,
+                    "tmmInterfaceName": "ext-vlan",
+                    "nodeInterfaceName": "ens5",
+                    "ipv4Subnet": "192.168.0.0",
+                    "ipv4PrefixLen": 16,
+                },
+            },
+        }, status={
+            "conditions": [
+                {"type": "Accepted", "status": "True", "reason": "Accepted"},
+                {"type": "Programmed", "status": "True", "reason": "Programmed",
+                 "message": "CR config sent to all grpc endpoints"},
+            ],
+        })
+        result = _build_egress(eg)
+        assert result["name"] == "bnk-egress-demo"
+        assert result["namespace"] == "f5-cne-system"
+        assert result["snatType"] == "SRC_TRANS_AUTOMAP"
+        assert result["egressSnatpool"] == "my-snatpool"
+        assert result["firewallEnforcedPolicy"] == "egress-demo-fw"
+        assert result["logProfile"] == "egress-log-profile"
+        assert result["capturedNamespaces"] == ["bnk-egress-demo"]
+        assert result["vxlan"] == {"tmmInterfaceName": "ext-vlan", "nodeInterfaceName": "ens5"}
+        assert result["ready"] is True
+
+    def test_egress_with_missing_fields_uses_defaults(self):
+        eg = _resource("minimal-egress", spec={"snatType": "SRC_TRANS_NONE"})
+        result = _build_egress(eg)
+        assert result["snatType"] == "SRC_TRANS_NONE"
+        assert result["egressSnatpool"] is None
+        assert result["firewallEnforcedPolicy"] is None
+        assert result["logProfile"] is None
+        assert result["capturedNamespaces"] == []
+        assert result["vxlan"] is None
+        assert result["ready"] is False
+
+    def test_egress_with_cni_config_but_no_vxlan_returns_none(self):
+        eg = _resource("egress-no-vxlan", namespace="f5-cne-system", spec={
+            "snatType": "SRC_TRANS_AUTOMAP",
+            "pseudoCNIConfig": {
+                "namespaces": ["bnk-egress-demo"],
+                "appPodInterface": "eth0",
+            },
+        })
+        result = _build_egress(eg)
+        assert result["capturedNamespaces"] == ["bnk-egress-demo"]
+        assert result["vxlan"] is None
+
+    def test_egress_with_null_namespaces_returns_empty_list(self):
+        eg = _resource("egress-null-ns", namespace="f5-cne-system", spec={
+            "pseudoCNIConfig": {
+                "namespaces": None,
+            },
+        })
+        result = _build_egress(eg)
+        assert result["capturedNamespaces"] == []
+
+    def test_egress_with_null_or_empty_vxlan_returns_none(self):
+        eg_null = _resource("egress-null-vxlan", namespace="f5-cne-system", spec={
+            "pseudoCNIConfig": {
+                "namespaces": ["demo"],
+                "vxlan": None,
+            },
+        })
+        assert _build_egress(eg_null)["vxlan"] is None
+
+        eg_empty = _resource("egress-empty-vxlan", namespace="f5-cne-system", spec={
+            "pseudoCNIConfig": {
+                "namespaces": ["demo"],
+                "vxlan": {},
+            },
+        })
+        assert _build_egress(eg_empty)["vxlan"] is None
+
+
 # ---------------------------------------------------------------------------
 # _build_data_plane
 # ---------------------------------------------------------------------------
@@ -372,7 +459,7 @@ class TestBuildDataPlane:
         resources["cneinstance"] = [_resource("c1", spec={})]
         resources["f5spkstaticroute"] = [_resource("sr-1", spec={"destination": "10.0.0.0/8", "gateway": "10.1.1.1"})]
         resources["f5spksnatpool"] = [_resource("sp-1", spec={"addresses": ["10.2.0.1"]})]
-        resources["f5spkegress"] = [_resource("eg-1", spec={"sourceTranslation": {"type": "snat"}})]
+        resources["f5spkegress"] = [_resource("eg-1", spec={"snatType": "SRC_TRANS_AUTOMAP"})]
         resources["f5bigloghslpub"] = [_resource("hsl-1", spec={"pool": {"name": "pool-1"}, "protocol": "udp"})]
         resources["f5biglogprofile"] = [_resource("lp-1", spec={"publishers": ["pub-1"]})]
 

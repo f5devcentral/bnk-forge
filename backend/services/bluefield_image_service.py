@@ -2,6 +2,7 @@
 
 import logging
 
+import requests
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,42 @@ from schemas.dpu import (
 )
 
 logger = logging.getLogger(__name__)
+
+_HEAD_TIMEOUT = 10  # seconds
+
+
+def _head_check(url: str) -> str | None:
+    """HEAD url and return a warning string if non-200 or unreachable, else None."""
+    try:
+        resp = requests.head(url, timeout=_HEAD_TIMEOUT, allow_redirects=True)
+        if resp.status_code != 200:
+            return f"BFB URL returned HTTP {resp.status_code} (expected 200): {url}"
+    except requests.RequestException as exc:
+        return f"BFB URL check failed (network error): {url} — {exc!s}"
+    return None
+
+
+def _bfb_url_warnings(
+    base_url: str | None,
+    image_filename: str | None,
+    doca_host_url: str | None,
+) -> list[str]:
+    """Check reachability of BFB/DOCA artifact URLs via HEAD.
+
+    Returns a list of human-readable warning strings (never raises).
+    An empty list means all present URLs responded with HTTP 200.
+    """
+    warnings: list[str] = []
+    if base_url and image_filename:
+        composed = base_url.rstrip("/") + "/" + image_filename
+        w = _head_check(composed)
+        if w:
+            warnings.append(w)
+    if doca_host_url:
+        w = _head_check(doca_host_url)
+        if w:
+            warnings.append(w)
+    return warnings
 
 
 class BluefieldImageService:
@@ -66,6 +103,10 @@ class BluefieldImageService:
                 "doca_version",
                 f"DOCA release '{data.doca_version}' for {data.host_os} {data.host_os_version}/{data.host_arch} already exists",
             ) from exc
+        warnings = _bfb_url_warnings(img.base_url, img.image_filename, img.doca_host_url)
+        for w in warnings:
+            logger.warning("BluefieldSoftwareImage id=%s URL warning: %s", img.id, w)
+        img.url_warnings = warnings  # type: ignore[attr-defined]  # transient, serialised by response schema
         logger.info("Created Bluefield image %s (DOCA %s %s %s/%s)", img.id, img.doca_version, img.host_os, img.host_os_version, img.host_arch)
         return img
 
@@ -104,6 +145,10 @@ class BluefieldImageService:
                 f"DOCA release '{data.doca_version or img.doca_version}' for "
                 f"{data.host_os or img.host_os} {data.host_os_version or img.host_os_version}/{data.host_arch or img.host_arch} already exists",
             ) from exc
+        warnings = _bfb_url_warnings(img.base_url, img.image_filename, img.doca_host_url)
+        for w in warnings:
+            logger.warning("BluefieldSoftwareImage id=%s URL warning: %s", image_id, w)
+        img.url_warnings = warnings  # type: ignore[attr-defined]  # transient, serialised by response schema
         logger.info("Updated Bluefield image %s", image_id)
         return img
 

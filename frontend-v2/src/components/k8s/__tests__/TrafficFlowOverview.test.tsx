@@ -113,7 +113,13 @@ const populatedBnkData = {
     egresses: [{
       name: 'default-egress',
       namespace: 'bnk-demo',
-      sourceTranslation: { type: 'automap' },
+      snatType: 'SRC_TRANS_AUTOMAP',
+      egressSnatpool: null,
+      firewallEnforcedPolicy: 'egress-demo-fw',
+      logProfile: null,
+      capturedNamespaces: ['bnk-egress-demo'],
+      vxlan: { tmmInterfaceName: 'ext-vlan', nodeInterfaceName: 'ens5' },
+      ready: true,
     }],
     staticRoutes: [{
       name: 'backend-route',
@@ -245,6 +251,45 @@ describe('TrafficFlowOverview', () => {
       });
       const ruleMatches = screen.getAllByText(/1 rule/);
       expect(ruleMatches.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('Egress (outbound) lane', () => {
+    it('renders the egress section with captured namespaces, SNAT type, and VLAN', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json(populatedBnkData);
+        })
+      );
+
+      render(<TrafficFlowOverview clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Egress (outbound)')).toBeInTheDocument();
+      });
+      expect(screen.getByText('default-egress')).toBeInTheDocument();
+      expect(screen.getByText('bnk-egress-demo')).toBeInTheDocument();
+      expect(screen.getByText('TMM SNAT: SRC_TRANS_AUTOMAP')).toBeInTheDocument();
+      expect(screen.getByText(/fw: egress-demo-fw/)).toBeInTheDocument();
+      expect(screen.getByText('ext-vlan')).toBeInTheDocument();
+    });
+
+    it('does not render the egress section when there are no egresses', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json({
+            ...populatedBnkData,
+            dataPlane: { ...populatedBnkData.dataPlane, egresses: [] },
+          });
+        })
+      );
+
+      render(<TrafficFlowOverview clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-gateway')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Egress (outbound)')).not.toBeInTheDocument();
     });
   });
 
@@ -390,7 +435,7 @@ describe('TrafficFlowOverview', () => {
       });
     });
 
-    it('calls onSelectResource when clicking an egress in infrastructure', async () => {
+    it('calls onSelectResource when clicking an egress in the Egress section', async () => {
       server.use(
         http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
           return HttpResponse.json(populatedBnkData);
@@ -400,11 +445,6 @@ describe('TrafficFlowOverview', () => {
       const onSelect = vi.fn();
       render(<TrafficFlowOverview clusterId={1} onSelectResource={onSelect} />);
       const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText('Infrastructure & Data Plane')).toBeInTheDocument();
-      });
-      await user.click(screen.getByText('Infrastructure & Data Plane'));
 
       await waitFor(() => {
         expect(screen.getByText('default-egress')).toBeInTheDocument();

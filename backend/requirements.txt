@@ -18,13 +18,15 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 alembic==1.14.1
 
-# Security — cryptography 48.x fixes GHSA-537c-gmf6-5ccf (also CVE-2024-26130, CVE-2023-49083, CVE-2026-34073)
-cryptography==48.0.1
+# Security — cryptography 50.x fixes PYSEC-2026-3552/3553/3554 (48.0.1 was affected;
+# 3553/3554 need >=49, 3552 needs >=50). python-jose requires cryptography>=3.4.0 and
+# paramiko >=3.3, so neither constrains the upper bound.
+cryptography==50.0.0
 python-jose[cryptography]==3.5.0
 PyJWT==2.13.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.1
-pyasn1==0.6.3
+pyasn1==0.6.4
 
 # Task queue
 celery==5.4.0
@@ -36,7 +38,8 @@ croniter==5.0.1
 
 # Infrastructure tools
 python-hcl2==4.3.5
-gitpython==3.1.50
+# 3.1.58: GHSA-3f7w-8rr8-f37f needs >=3.1.57, GHSA-p538-c434-8v24 needs >=3.1.56.
+gitpython==3.1.58
 boto3==1.36.4
 google-auth==2.38.0
 paramiko==5.0.0

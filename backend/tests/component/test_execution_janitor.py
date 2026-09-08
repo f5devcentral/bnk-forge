@@ -38,6 +38,89 @@ class TestResetStaleTasks:
         assert task.id not in reset_ids
         assert task.status == "queued"
 
+    @pytest.mark.parametrize(
+        ("module_status", "expected"),
+        [
+            ("applying", "apply_failed"),
+            ("planning", "plan_failed"),
+            ("initializing", "init_failed"),
+        ],
+    )
+    def test_resets_module_stuck_in_transient_state(
+        self, db, make_task, make_project_module, module_status, expected
+    ):
+        """#6: a dead deploy worker must not leave the module transient forever.
+
+        Flipping only the Task row left the UI showing a perpetually-applying
+        module with no error and no Retry button (Retry only renders for *_failed),
+        recoverable only by a manual UPDATE against the DB.
+        """
+        module = make_project_module(status=module_status)
+        task = make_task(
+            status="in_progress",
+            task_type="apply",
+            module=module,
+            celery_task_id="dead-worker",
+        )
+
+        reset_ids = reset_stale_tasks(db, live_task_ids=set())
+        db.flush()
+
+        assert task.id in reset_ids
+        assert module.status == expected
+        assert "Worker no longer alive" in (module.deployment_error or "")
+
+    def test_live_task_leaves_module_alone(self, db, make_task, make_project_module):
+        """A running deploy must never be reset out from under itself."""
+        module = make_project_module(status="applying")
+        make_task(
+            status="in_progress",
+            task_type="apply",
+            module=module,
+            celery_task_id="live-task",
+        )
+
+        reset_stale_tasks(db, live_task_ids={"live-task"})
+        db.flush()
+
+        assert module.status == "applying"
+
+    def test_terminal_module_status_is_not_rewritten(
+        self, db, make_task, make_project_module
+    ):
+        """A module that already reached a terminal state keeps it."""
+        module = make_project_module(status="applied")
+        make_task(
+            status="in_progress",
+            task_type="apply",
+            module=module,
+            celery_task_id="dead-worker",
+        )
+
+        reset_stale_tasks(db, live_task_ids=set())
+        db.flush()
+
+        assert module.status == "applied"
+
+    def test_existing_deployment_error_is_preserved(
+        self, db, make_task, make_project_module
+    ):
+        """The real error, if one was recorded, must win over the janitor's note."""
+        module = make_project_module(status="applying")
+        module.deployment_error = "terraform: quota exceeded"
+        make_task(
+            status="in_progress",
+            task_type="apply",
+            module=module,
+            celery_task_id="dead-worker",
+        )
+
+        reset_stale_tasks(db, live_task_ids=set())
+        db.flush()
+
+        assert module.status == "apply_failed"
+        assert module.deployment_error == "terraform: quota exceeded"
+
     def test_skips_terminal_tasks(self, db, make_task):
         completed = make_task(status="completed", celery_task_id="x")
         failed = make_task(status="failed", celery_task_id="y")

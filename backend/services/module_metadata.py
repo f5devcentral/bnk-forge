@@ -398,6 +398,27 @@ class ModuleMetadataParser:
             self._cache.clear()
 
 
+def canonical_step_sets(manifest: dict) -> dict:
+    """The lifecycle step-sets that will ACTUALLY execute, from either location.
+
+    A manifest may carry lifecycle steps at top-level ``steps`` or at
+    ``execution.steps``. The engine preferred the latter and no validator read
+    it, so a manifest could show benign argv to review at ``steps`` while
+    ``execution.steps`` ran a shell — bypassing the denylist, the shell-token
+    check, the argv-strings check and the secret_files collision check, all at
+    once, in a step pod holding cloud credentials.
+
+    One resolver, imported by both the validator and the engine, so the two can
+    never again disagree about which steps are real. Declaring BOTH is rejected
+    at validation (see _validate_artifact_steps) rather than silently resolved.
+    """
+    execution = manifest.get("execution")
+    if isinstance(execution, dict) and isinstance(execution.get("steps"), dict):
+        return execution["steps"]
+    steps = manifest.get("steps")
+    return steps if isinstance(steps, dict) else {}
+
+
 class ModuleMetadataValidator:
     """
     Validates module metadata against schema
@@ -602,8 +623,111 @@ class ModuleMetadataValidator:
                 )
             seen_paths.add(normalized)
 
+        self._reject_secret_file_step_collisions(manifest, seen_paths)
+
+    @staticmethod
+    def _reject_secret_file_step_collisions(manifest: dict, secret_paths: set[str]) -> None:
+        """Reject a secret_files path whose parent a step also wants to CREATE.
+
+        Materialization runs before any step and creates each secret file's
+        parent directories. A step that then tries to create one of those
+        directories fails on its first run — and it is not recoverable by retry,
+        because materialization recreates the directory ahead of every attempt.
+        With ``run_once`` on the failing step, a retry skips it entirely and
+        fails further downstream, pointing the operator at the wrong step
+        (issue #102).
+
+        The general form is undecidable — step args are opaque argv. The common
+        case is not: both fields template off the same input, so the secret
+        path's FIRST SEGMENT equals a bare argv token of a step. That is what
+        this catches. It is deliberately narrow: a false positive here would
+        block a legitimate manifest, so anything less certain is left alone.
+        """
+        if not secret_paths:
+            return
+
+        first_segments = {p.split(os.sep)[0] for p in secret_paths if p and p != "."}
+        first_segments.discard("")
+        if not first_segments:
+            return
+
+        # Both step-sets: materialize_secret_files runs on the action path too,
+        # so the same unrecoverable first-run failure recurs verbatim there.
+        step_sets: list = []
+        steps_block = canonical_step_sets(manifest)
+        if isinstance(steps_block, dict):
+            step_sets.extend(steps_block.items())
+        actions_block = manifest.get("actions")
+        if isinstance(actions_block, dict):
+            for action_name, definition in actions_block.items():
+                if isinstance(definition, dict):
+                    step_sets.append((f"actions.{action_name}", definition.get("steps")))
+
+        for phase, steps in step_sets:
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                args = step.get("args")
+                if not isinstance(args, list):
+                    continue
+                previous_was_flag = False
+                for token in args:
+                    if not isinstance(token, str):
+                        previous_was_flag = False
+                        continue
+                    bare = token.strip()
+                    if bare.startswith("-"):
+                        # `--name=poc` carries its value inline, so it consumes
+                        # nothing; `--name poc` consumes the next token.
+                        previous_was_flag = "=" not in bare
+                        continue
+                    # The token AFTER a flag is that flag's value, not a
+                    # positional the step creates a directory from. Treating it
+                    # as one rejected `["init", "--name", "poc"]` — a false
+                    # positive the docstring below explicitly disclaims.
+                    if previous_was_flag:
+                        previous_was_flag = False
+                        continue
+                    # Only bare positionals: a path-like value is not a
+                    # directory the step is about to create in the workspace.
+                    if not bare or "/" in bare:
+                        continue
+                    if bare in first_segments:
+                        name = step.get("name") or "<unnamed>"
+                        raise InvalidMetadataSchemaError(
+                            f"secret_files[].path starts with '{bare}', which step "
+                            f"'{name}' (steps.{phase}) also passes as a bare argument. "
+                            "Materializing the secret creates that directory before the "
+                            "step runs, so the step will fail with an 'already exists' "
+                            "error that no retry can clear. Give the secret a different "
+                            "parent directory, or have the step adopt an existing one."
+                        )
+
     def _validate_artifact_steps(self, manifest: dict, kind: str) -> None:
-        steps = manifest.get("steps")
+        # Reject a manifest that declares lifecycle steps in BOTH locations
+        # rather than silently resolving one. Two declared step-sets is how a
+        # reviewed manifest becomes a decoy for an executed one.
+        execution = manifest.get("execution")
+        has_execution_steps = (
+            isinstance(execution, dict) and isinstance(execution.get("steps"), dict)
+        )
+        if has_execution_steps and isinstance(manifest.get("steps"), dict):
+            raise InvalidMetadataSchemaError(
+                "lifecycle steps are declared in both 'steps' and "
+                "'execution.steps'; declare exactly one — the engine executes "
+                "'execution.steps' and a second set would never run while still "
+                "being what a reviewer reads"
+            )
+
+        # Validate whatever will actually execute, resolved the same way the
+        # engine resolves it.
+        # Preserve the declared-but-empty vs not-declared distinction: {} must
+        # still reach the per-phase checks so the error names steps.apply rather
+        # than degrading to a generic "requires a 'steps' object".
+        declared_steps = has_execution_steps or isinstance(manifest.get("steps"), dict)
+        steps = canonical_step_sets(manifest) if declared_steps else None
         is_procedural = kind in PROCEDURAL_ARTIFACT_KINDS
         lifecycle = manifest.get("lifecycle") if isinstance(manifest.get("lifecycle"), dict) else {}
 

@@ -115,6 +115,41 @@ export interface K8sCluster {
   ssh_host_override?: string | null;
   /** Per-cluster prereq selection — null means use defaults; locked entries (multus) are always included on read */
   enabled_prerequisites?: string[] | null;
+  /** ADR-424: Side-table BNK cluster configuration summary */
+  bnk_config?: BnkClusterConfigSummary | null;
+}
+
+export interface BnkClusterConfigSummary {
+  id: number;
+  cluster_id: number;
+  tmfifo_pool_cidr: string;
+  join_transport: string;
+  control_plane_host_id?: number | null;
+  /** ADR-424 #4: IDs of hosts/DPUs currently bound to this cluster — the member
+   *  dialog seeds its selection from these instead of re-applying the B-all default. */
+  host_ids?: number[];
+  dpu_ids?: number[];
+}
+
+export interface BnkClusterConfigCreateRequest {
+  tmfifo_pool_cidr?: string;
+  join_transport?: string;
+  control_plane_host_id?: number | null;
+}
+
+export interface BnkClusterMemberAssignRequest {
+  control_plane_host_id: number;
+  host_ids?: number[];
+  dpu_ids?: number[];
+  tmfifo_pool_cidr?: string;
+}
+
+export interface BnkClusterMemberAssignResponse {
+  cluster_id: number;
+  control_plane_host_id: number;
+  host_ids: number[];
+  assigned_dpus: Array<Record<string, unknown>>;
+  bnk_config: BnkClusterConfigSummary;
 }
 
 export interface K8sClusterCreateRequest {
@@ -313,14 +348,6 @@ export interface K8sResourceRelationship {
   name: string;
   namespace?: string;
 }
-
-/** Egress route entry (string or object) */
-export type K8sEgressRoute = string | {
-  destination?: string;
-  network?: string;
-  gateway?: string;
-  gw?: string;
-};
 
 /** Port list entry (string, number, or object) */
 export type K8sPortEntry = string | number | {

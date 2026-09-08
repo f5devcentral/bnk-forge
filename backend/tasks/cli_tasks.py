@@ -247,8 +247,16 @@ def _render_awsbnkctl_cluster_yaml(
 
 # ── Context builder ──────────────────────────────────────────────────────────
 
-def _build_cli_context(db, module: ProjectModule) -> ModuleContext:
+def _build_cli_context(
+    db, module: ProjectModule, *, for_destroy: bool = False
+) -> ModuleContext:
     """Build ModuleContext with cloud credentials for BnkctlEngine.
+
+    `for_destroy` suppresses the cluster.yaml render. Destroy must run against
+    the config that was applied -- the workspace file written at apply time,
+    beside the tool's own state -- not a fresh render of the current project
+    form. See #82: editing cluster_name after apply made `down` target a
+    cluster that never existed, leaving the real EKS cluster live and orphaned.
 
     Credentials are resolved from the project credential template and injected
     into credentials_env.  They live only in memory for the duration of task
@@ -292,6 +300,9 @@ def _build_cli_context(db, module: ProjectModule) -> ModuleContext:
         module_path.startswith("cli-bnkctl/")
         and "cluster_yaml" not in variables
         and variables.get("bnkctl_action") != "demo-usecases"
+        # Never re-render on the destroy path -- the engine reads the applied
+        # cluster.yaml straight from the workspace instead (#82).
+        and not for_destroy
     )
     if is_cluster_module:
         # Materialize file-secrets into the workspace before rendering cluster.yaml.
@@ -775,7 +786,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             _notify_task_started(task)
 
             with module_lock(db, module.id, task_id=task_db_id) as lock:
-                ctx = _build_cli_context(db, module)
+                ctx = _build_cli_context(db, module, for_destroy=True)
                 output_lines: list[str] = []
 
                 def _on_destroy_output(line: str) -> None:
@@ -841,7 +852,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
 
                 create_deployment_record(db, task, module, "destroy", task.logs)
                 _update_stack_status_if_needed(module, db)
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             return {"success": result.success, "exit_code": task.exit_code}
 
@@ -858,7 +869,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI ModuleLockError: %s", trigger_err,
@@ -878,7 +889,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI ModuleLockLostError: %s", trigger_err,
@@ -892,7 +903,7 @@ def run_cli_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning(
                     "_trigger_next_destroy_module failed after CLI generic exception: %s", trigger_err,

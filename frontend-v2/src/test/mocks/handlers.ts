@@ -1541,4 +1541,41 @@ export const handlers = [
   http.get('*/api/licensing/:clusterId/status', () => {
     return HttpResponse.json({ success: true });
   }),
+
+  // ========================================================================
+  // Release Sources (ADR-494)
+  // ========================================================================
+
+  http.get('*/api/bare-metal/release-sources', () => {
+    return HttpResponse.json([
+      {
+        id: 1,
+        name: 'repo.f5.com',
+        kind: 'oci',
+        url: 'oci://repo.f5.com/release/f5-bigip-k8s-manifest',
+        has_credential: false,
+        is_active: true,
+        auto_sync: false,
+        sync_interval_hours: null,
+        last_synced_at: null,
+        sync_status: 'idle',
+        sync_error: null,
+        release_count: 0,
+        description: null,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+      },
+    ]);
+  }),
+
+  // GET /{id}/tags — default: empty list (tests override as needed)
+  http.get('*/api/bare-metal/release-sources/:id/tags', () => {
+    return HttpResponse.json({ tags: [], list_error: null });
+  }),
+
+  // POST /{id}/tags:pull — default: empty summary (tests override as needed)
+  // Note: MSW pattern preserves the literal colon in the path.
+  http.post('*/api/bare-metal/release-sources/:id/tags\\:pull', () => {
+    return HttpResponse.json({ added: [], skipped: [], failed: [] });
+  }),
 ];

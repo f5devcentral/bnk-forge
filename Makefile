@@ -83,14 +83,15 @@ AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
         test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
-        test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
-        lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
+        test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
+        lint lint-backend lint-frontend shellcheck coverage quick-check version-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
-        build build-backend build-frontend build-worker build-agent build-all \
+        build build-retry build-backend build-frontend build-worker build-agent build-all \
         fetch-awsbnkctl \
         up down restart deploy deploy-backend deploy-frontend upgrade-safe \
         clean clean-docker check-disk setup-cleanup-cron check-migrations \
+        commit-lint script-selftests ci-gates secret-scan artifact-network-selftest \
         test-upgrade dist push-images push-customer-build buildx-setup publish-signed help
 
 # ─── Quick Start Commands ────────────────────────────────────────────────────
@@ -158,7 +159,7 @@ _install-start: ensure-artifact-network
 	@echo ""
 	@echo "Fixing volume permissions..."
 	@PROJECT=$$(basename "$(CURDIR)"); \
-	for v in bnk-forge-data bnk-forge-keys state_data helm_cache helm_config helm_charts workspace_data; do \
+	for v in bnk-forge-data bnk-forge-keys bnk-forge-agent-token state_data helm_cache helm_config helm_charts workspace_data; do \
 	  docker volume create \
 	    --label com.docker.compose.project=$${PROJECT} \
 	    --label com.docker.compose.volume=$${v} \
@@ -167,15 +168,16 @@ _install-start: ensure-artifact-network
 	docker run --rm \
 	  -v "$${PROJECT}_bnk-forge-data:/app/projects" \
 	  -v "$${PROJECT}_bnk-forge-keys:/app/keys" \
+	  -v "$${PROJECT}_bnk-forge-agent-token:/app/agent-token" \
 	  -v "$${PROJECT}_state_data:/app/state" \
 	  -v "$${PROJECT}_helm_cache:/home/bnkforge/.cache/helm" \
 	  -v "$${PROJECT}_helm_config:/home/bnkforge/.config/helm" \
 	  -v "$${PROJECT}_helm_charts:/app/helm_charts" \
 	  -v "$${PROJECT}_workspace_data:/app/workspaces" \
 	  alpine:latest sh -c " \
-	    mkdir -p /app/projects /app/keys /app/state /app/helm_charts /app/workspaces \
+	    mkdir -p /app/projects /app/keys /app/agent-token /app/state /app/helm_charts /app/workspaces \
 	      /home/bnkforge/.cache/helm /home/bnkforge/.config/helm && \
-	    chown -R 1000:1000 /app/projects /app/keys /app/state /app/helm_charts \
+	    chown -R 1000:1000 /app/projects /app/keys /app/agent-token /app/state /app/helm_charts \
 	      /app/workspaces /home/bnkforge" \
 	  2>/dev/null && echo "  ✓ Volume permissions configured" \
 	  || echo "  ⚠  Could not pre-configure permissions"
@@ -205,7 +207,7 @@ _install-info:
 	  echo "        (accept the self-signed certificate warning)"; \
 	fi; \
 	echo ""; \
-	echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme' — change on first login)"; \
+	echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password — change on first login)"; \
 	echo ""; \
 	echo "  Next steps:"; \
 	echo "    1. Change your password on first login"; \
@@ -257,18 +259,33 @@ build:
 	@echo "  Build complete (cached)"
 	@echo "========================================="
 
+# Same as `build`, but retries on transient download failures. Use this for
+# from-scratch builds on DLP-managed workstations: the github.com tool
+# downloads use Docker `ADD` (see docs/adr/D-035), which has no built-in retry,
+# so a transient CDN/TLS blip aborts the whole build. BuildKit's layer cache
+# makes each retry cheap (only the failed layer re-runs). Tune with
+# RETRY_ATTEMPTS / RETRY_DELAY, e.g. `make build-retry RETRY_ATTEMPTS=5`.
+build-retry:
+	@echo ""
+	@echo "=== Building all app images (parallel, with retry) ==="
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 ./scripts/retry.sh -- docker compose build backend celery-worker celery-beat frontend forge-agent
+	@echo ""
+	@echo "========================================="
+	@echo "  Build complete (cached)"
+	@echo "========================================="
+
 # Build just the API image (backend code changes)
 build-backend:
 	@echo ""
 	@echo "=== Building backend (API) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build backend
 	@echo "  ✓ Backend image built"
 
 # Build just the frontend image
 build-frontend:
 	@echo ""
 	@echo "=== Building frontend ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build frontend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build frontend
 	@echo "  ✓ Frontend image built"
 
 # Fetch the pinned awsbnkctl release binary (linux/amd64) for the worker mount.
@@ -410,7 +427,7 @@ deploy: build ensure-artifact-network
 	@echo ""
 ifeq ($(UNAME_S),Darwin)
 	@echo "  Open:  https://localhost"
-	@echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme'; change on first login)"
+	@echo "  Login: admin  (password: DEFAULT_ADMIN_PASSWORD if set, else the generated one at /app/keys/initial_admin_password; change on first login)"
 endif
 	@echo "  Recommended next step: make mcp-readiness"
 	@echo "========================================="
@@ -448,7 +465,138 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh
+	@# bonnyr-f5 #182: drive from git ls-files so the WHOLE corpus is gated
+	@# (the hardcoded globs missed 14 tracked scripts incl. dist/install.sh).
+	@# bonnyr-f5 #182 r2: include the (extensionless) git hooks, and fail on an
+	@# EMPTY list -- `xargs shellcheck` with no files exits 0 on BSD (blind).
+	@files="$$(git ls-files '*.sh' .githooks/pre-commit .githooks/pre-push 2>/dev/null)"; \
+	  n=$$(printf '%s\n' "$$files" | grep -c .); \
+	  [ "$$n" -ge 1 ] || { echo "::error::shellcheck found no files to lint"; exit 1; }; \
+	  printf '%s\n' "$$files" | xargs shellcheck --severity=warning
+
+# ── CI-parity gates (bonnyr-f5 #182 r3, Major) ──────────────────────────────
+# The four gates ci.yml added were not runnable locally: `make pre-push` ran
+# none of them and `make shellcheck` had no dependents, yet ci.yml's header
+# claims `make pre-push` == CI. #166: "a local gate that does not run the CI
+# command is not a gate." These targets ARE the CI command (ci.yml calls the
+# same `make` targets / same scripts), and `pre-push` now depends on `ci-gates`.
+.PHONY: ci-gates secret-scan commit-lint script-selftests
+
+# NOTE: `version-check` is defined once, in the "Version-artifact consistency"
+# section below (near quick-check, which depends on it). A duplicate recipe used
+# to sit here; `make` silently discarded one and warned "overriding commands for
+# target" on every invocation, so any future divergence between the two copies
+# would have been invisible (bonnyr-f5 #193 minor). ci-gates references the single
+# surviving target by name.
+
+# gitleaks range-aware secret scan + assertion backstop (single source of truth,
+# shared with ci.yml's secret-scan job and the scheduled baseline workflow).
+# Honours RANGE from the environment; unset => scan since the upstream merge-base.
+secret-scan:
+	@echo ""
+	@echo "=== Secret scan (gitleaks) ==="
+	@bash scripts/secret-scan.sh
+
+# Commit-message marker enforcement (shared with ci.yml's commit-lint job and
+# .githooks/pre-push). Honours RANGE; unset => @{upstream}..HEAD.
+commit-lint:
+	@echo ""
+	@echo "=== Commit message marker lint ==="
+	@bash scripts/lint-commit-markers.sh
+
+# The paired self-test harnesses ci.yml's script-selftests job runs.
+# ci.yml's compute step has FOUR anti-vacuity assertions and this target must
+# mirror ALL of them, or a broken harness passes locally while CI goes red
+# (bonnyr-f5 #182 r4/r5, Major-3: a local gate that diverges from the CI command
+# is not a gate). The four (in ci.yml order):
+#   1. non-zero exit               -> the harness itself errored
+#   2. a "FAIL:" line (rc still 0) -> an assertion failed but exit was swallowed
+#   3. NO "PASS:" line             -> the guard was silenced / renamed: green with
+#                                     zero assertions actually run
+#   4. NO "=== END SELF-TEST ==="  -> the harness exited early (deleted END marker
+#                                     or an early `exit 0`) with assertions unrun
+# r5 landed 3+4 here; r4 had only 1+2, so the "silenced guard" and "early exit"
+# harness-break modes were CI-red but `make`-GREEN.
+script-selftests:
+	@echo ""
+	@echo "=== Script self-tests ==="
+	@set +e; out="$$(SELF_TEST=1 bash scripts/compute_version_bump.sh 2>&1)"; rc=$$?; \
+	  echo "$$out"; \
+	  if [ "$$rc" -ne 0 ]; then echo "::error::compute_version_bump self-test exited $$rc"; exit "$$rc"; fi; \
+	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
+	    echo "::error::compute_version_bump self-test reported FAIL: but exited 0"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])PASS:'; then \
+	    echo "::error::self-test produced no PASS lines -- the harness did not run"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
+	    echo "::error::self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
+	  fi
+	@# extract-breaking-changes.sh self-test, run UNCONDITIONALLY with the same
+	@# anti-vacuity assertions as compute's (ok lines + END marker). Do NOT gate on
+	@# `grep -- '--self-test' <the script>`: the code under test must not decide
+	@# whether it is tested — deleting the flag would silence ~28 assertions with
+	@# the gate staying green (bonnyr-f5 #193 M6).
+	@set +e; out="$$(bash scripts/extract-breaking-changes.sh --self-test 2>&1)"; rc=$$?; \
+	  echo "$$out"; \
+	  if [ "$$rc" -ne 0 ]; then echo "::error::extract-breaking-changes self-test exited $$rc"; exit "$$rc"; fi; \
+	  if printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])FAIL:'; then \
+	    echo "::error::extract self-test reported FAIL: but exited 0"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '(^|[[:space:]])ok:'; then \
+	    echo "::error::extract self-test produced no ok: lines -- the harness did not run"; exit 1; \
+	  fi; \
+	  if ! printf '%s\n' "$$out" | grep -qE '=== END SELF-TEST ==='; then \
+	    echo "::error::extract self-test did not reach its END marker -- it exited early with assertions unrun"; exit 1; \
+	  fi
+	@# B5 + M5 + M4: enumerate and run EVERY scripts/tests/*.test.sh from the
+	@# filesystem, applying the SAME anti-vacuity discipline as the two inline
+	@# self-tests above (bonnyr-f5 #193 r4 M-4: the old loop checked ONLY a non-empty
+	@# enumeration and each file's exit 0, so a test gutted to `exit 0` passed and
+	@# deleting 7 of 8 files left n=1 and stayed green). Each file must now:
+	@#   1. EXIT 0;
+	@#   2. emit at least one PASS line   (the harness actually ran assertions);
+	@#   3. emit NO `FAIL` line           (a failure whose exit was swallowed);
+	@#   4. reach its `ALL PASS` terminal  (a gutted/early-exiting file never prints it).
+	@# PLUS a count floor DERIVED from the tests present, cross-checked against git's
+	@# tracked set: a test file deleted in the working tree makes the on-disk count fall
+	@# below the tracked count and is caught, instead of silently lowering a literal
+	@# floor. ci.yml's script-selftests job runs the SAME enumeration so local == CI.
+	@set -e; \
+	  tests="$$(ls scripts/tests/*.test.sh 2>/dev/null || true)"; \
+	  n=$$(printf '%s\n' "$$tests" | grep -c . || true); \
+	  tracked=$$(git ls-files 'scripts/tests/*.test.sh' 2>/dev/null | grep -c . || true); \
+	  if [ "$$n" -lt 1 ]; then echo "::error::no scripts/tests/*.test.sh found -- the self-test enumeration is empty"; exit 1; fi; \
+	  if [ "$$tracked" -gt 0 ] && [ "$$n" -lt "$$tracked" ]; then \
+	    echo "::error::self-test enumeration found $$n file(s) on disk but git tracks $$tracked -- a *.test.sh was removed from the working tree; refusing to run a shrunken suite"; exit 1; \
+	  fi; \
+	  echo "  running $$n filesystem self-test(s) (git tracks $$tracked):"; \
+	  for t in $$tests; do \
+	    echo "--- $$t ---"; \
+	    set +e; out="$$(bash "$$t" 2>&1)"; rc=$$?; set -e; \
+	    printf '%s\n' "$$out"; \
+	    if [ "$$rc" -ne 0 ]; then echo "::error::$$t exited $$rc"; exit 1; fi; \
+	    if printf '%s\n' "$$out" | grep -qE '^FAIL'; then echo "::error::$$t printed a FAIL line but exited 0 -- a swallowed assertion failure"; exit 1; fi; \
+	    if ! printf '%s\n' "$$out" | grep -qE '^PASS'; then echo "::error::$$t produced no PASS line -- the harness did not run (gutted to a no-op?)"; exit 1; fi; \
+	    if ! printf '%s\n' "$$out" | grep -q 'ALL PASS'; then echo "::error::$$t did not reach its 'ALL PASS' terminal marker -- it exited early with assertions unrun"; exit 1; fi; \
+	  done
+
+# Mirror of ci.yml's "P1 · Artifact Network Self-Test" job (bonnyr-f5 #193 minor:
+# `make pre-push` ≡ CI was false — this job had no local target). Pure-logic, no
+# Docker/network.
+artifact-network-selftest:
+	@echo ""
+	@echo "=== Artifact network self-test (mirror of ci.yml artifact-network-self-test) ==="
+	@bash scripts/artifact_network.sh --self-test
+
+# Aggregate: every CI gate that is not already covered by quick-check/tests.
+# bonnyr-f5 #193 minor (`make pre-push` ≡ CI): artifact-network-selftest is wired
+# in here, and ci.yml's "migration-collision-check" job runs `make check-migrations`
+# — already pulled in by quick-check (a pre-push prerequisite) — so both formerly
+# unmirrored CI jobs are now reachable from `make pre-push`.
+ci-gates: shellcheck version-check commit-lint script-selftests secret-scan artifact-network-selftest
+	@echo ""
+	@echo "=== CI-parity gates passed ==="
 
 # Convenience: start/stop/restart all (platform-aware)
 up: ensure-artifact-network
@@ -508,7 +656,7 @@ smoke-mcp-live:
 	@echo ""
 	@echo "=== MCP Live Smoke Validation ==="
 	@echo "  NOTE: ping/tools-list reachability != runtime readiness; tool calls require valid MCP backend credentials."
-	@echo "  Configure MCP_USERNAME/MCP_PASSWORD if backend admin password was rotated."
+	@echo "  Configure MCP_SERVICE_PASSWORD (compose maps it to the container's BNK_FORGE_PASSWORD and the backend's MCP_SERVICE_PASSWORD) — the dedicated MCP service account, never the admin login (#187). MCP_USERNAME is not read; do not set it."
 	@python3 scripts/mcp_live_smoke.py --mcp-url "$${MCP_SMOKE_URL:-http://localhost:8081/mcp}" $${MCP_SMOKE_INSECURE_TLS:+--insecure-tls}
 
 mcp-readiness:
@@ -532,7 +680,7 @@ mcp-readiness:
 mcp-recreate:
 	@echo ""
 	@echo "=== Recreate MCP service ==="
-	@echo "  Use after MCP_USERNAME/MCP_PASSWORD changes so MCP picks up new credentials."
+	@echo "  Use after MCP_SERVICE_PASSWORD changes so MCP picks up new credentials."
 	@$(COMPOSE) up -d --force-recreate --no-deps mcp
 	@$(COMPOSE) ps mcp
 
@@ -564,7 +712,21 @@ test-contracts: $(BACKEND_PREREQ)
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/contract/ -v --tb=short $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
-test-integration-full: SUITE = integration
+# Exact complement of test-integration-full: together they cover every test in
+# tests/integration/. The selector is spelled out rather than inherited from
+# pyproject's addopts (-m 'not full') on purpose -- that implicit coupling is
+# what let the two targets stop being complements without anyone noticing
+# (#130). Change one selector, change the other.
+test-integration: SUITE = integration
+test-integration: $(BACKEND_PREREQ)
+	@echo ""
+	@echo "=== Integration Tests (non-full marker set) ==="
+	@cd backend && $(BACKEND_VENV) \
+	  $(PYTEST_BASE) tests/integration/ -m 'not full' --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
+
+# SUITE is integration-full, not integration: the artifact filenames are derived
+# from it, and CI now runs both targets in one job.
+test-integration-full: SUITE = integration-full
 test-integration-full: $(BACKEND_PREREQ)
 	@echo ""
 	@echo "=== Full-Mode Integration Tests (requires running Docker stack) ==="
@@ -640,6 +802,7 @@ test-backend-legacy: $(BACKEND_PREREQ)
 	    --ignore=tests/component \
 	    --ignore=tests/integration \
 	    --ignore=tests/contract \
+	    --ignore=tests/migrations \
 	    --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
 build-frontend-check: $(FRONTEND_PREREQ)
@@ -653,9 +816,19 @@ check-migrations:
 	@echo "=== Migration Chain Validator ==="
 	@python3 scripts/check-migrations.py
 
+# ── Version-artifact consistency ─────────────────────────────────────────────
+# Mirror of CI's "P1 · Version Consistency" job. ci.yml promises `make pre-push`
+# ≡ CI, so the gate must be reachable from the documented local target or drift
+# is undetectable until the release job dies (bonnyr-f5 #180 r5, F3). Pulled in
+# by quick-check (a pre-push prerequisite).
+version-check:
+	@echo ""
+	@echo "=== Version Artifact Consistency (Helm tag/appVersion, frontend, operator) ==="
+	@bash scripts/sync-version-artifacts.sh --check
+
 # ── Quick check (~15s): lint + types + contracts ────────────────────────────
 # Run before every commit. Catches most CI failures instantly.
-quick-check: lint typecheck-backend openapi-types-check check-migrations
+quick-check: lint typecheck-backend openapi-types-check check-migrations version-check
 	@echo ""
 	@echo "========================================="
 	@echo "  Quick check passed (~15s)"
@@ -663,8 +836,10 @@ quick-check: lint typecheck-backend openapi-types-check check-migrations
 
 # ── Pre-push (~90s parallel): mirrors ALL CI jobs ───────────────────────────
 # Run once before git push. Runs test suites in parallel for speed.
-# Prerequisite: quick-check runs first (sequential), then tests fan out.
-pre-push: quick-check
+# Prerequisite: quick-check runs first (sequential), then the CI-parity gates
+# (shellcheck / version-check / commit-lint / script-selftests / secret-scan --
+# bonnyr-f5 #182 r3, so `make pre-push` genuinely == CI), then tests fan out.
+pre-push: quick-check ci-gates
 	@echo ""
 	@echo "=== Running all test suites in parallel... ==="
 	@failed=""; \
@@ -746,11 +921,13 @@ test-docker: lint-backend-docker test-backend-docker test-frontend-docker test-o
 
 build-test-images: .stamp/backend-test-image .stamp/operator-test-image
 
-.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt
+# VERSION is a prerequisite because the image now COPYs it — without this a
+# version bump leaves a stale test image reporting the old number.
+.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt VERSION
 	@mkdir -p .stamp
 	@echo ""
 	@echo "=== Building backend test image ($(BACKEND_TEST_IMAGE)) ==="
-	docker build --target test -t $(BACKEND_TEST_IMAGE) backend/
+	docker build --target test -f backend/Dockerfile -t $(BACKEND_TEST_IMAGE) .
 	@touch $@
 
 .stamp/operator-test-image: bnk-operator/Dockerfile bnk-operator/requirements.txt bnk-operator/requirements-dev.txt
@@ -925,6 +1102,7 @@ help:
 	@echo "  make test-operator         Run operator tests only (pytest)"
 	@echo "  make test-contracts        Run golden contract tests (response shape verification)"
 	@echo "  make test-db               Run DB migration validation tests"
+	@echo "  make test-integration    Run integration tests (default marker set)"
 	@echo "  make test-integration-full Run full-mode integration tests (requires Docker stack)"
 	@echo "  make test-e2e              Run Tier 1 E2E tests (requires running stack)"
 	@echo "  make test-e2e-tier2        Run Tier 2 E2E tests (requires stack + AWS creds)"
@@ -977,6 +1155,17 @@ help:
 #   make push-images   — tag + push all images to BNK_FORGE_REGISTRY
 #
 
+# Files that `make dist` generates into dist/ but git does NOT track. The
+# tarball manifest is `git ls-files dist/` plus this list, so packaging inherits
+# the tracked set by definition -- dist/.gitignore stays the single source of
+# truth -- while still shipping generated artifacts. Anything else sitting in a
+# builder's dist/ (real secrets, .env, logs) is never copied. See #133.
+#
+# Note: git supplies the file NAMES only; contents are copied from the working
+# tree, so the tracked files this target regenerates in place (VERSION, the two
+# nginx confs) ship with their fresh content, not their committed content.
+DIST_GENERATED := install-guide.html
+
 # Build distributable install package (no source code needed by end users)
 # No 'build' prerequisite: the tarball bundles no images (recipients pull from
 # the registry), so rebuilding images here would be wasted work.
@@ -991,16 +1180,32 @@ dist:
 	echo "=== Updating dist/VERSION ==="; \
 	cp VERSION dist/VERSION; \
 	echo "=== Updating dist/nginx configs ==="; \
+	: "Adding a conf here? dist/.gitignore lists the tracked ones by name;"; \
+	: "a file not listed there stays untracked and misses a fresh clone."; \
 	cp proxy/nginx.local.conf dist/nginx/proxy.local.conf; \
 	cp frontend-v2/nginx.local.conf dist/nginx/frontend.local.conf; \
 	echo "=== Bundling install guide ==="; \
 	cp user-pack/install-guide.html dist/install-guide.html; \
-	echo "=== Creating tarball ==="; \
+	echo "=== Creating tarball (tracked files + generated artifacts only) ==="; \
 	TMPDIR=$$(mktemp -d); \
-	cp -R dist "$$TMPDIR/bnk-forge-$${VERSION}"; \
-	rm -f "$$TMPDIR/bnk-forge-$${VERSION}/bnk-forge-"*.tar.gz; \
+	STAGE="$$TMPDIR/bnk-forge-$${VERSION}"; \
+	mkdir -p "$$STAGE"; \
+	{ git ls-files -z -- dist/; \
+	  for g in $(DIST_GENERATED); do printf 'dist/%s\0' "$$g"; done; } \
+	  | sort -zu \
+	  | while IFS= read -r -d '' f; do \
+	      if [ ! -f "$$f" ]; then \
+	        echo "  ✗ manifest lists a file that is not in the working tree: $$f" >&2; \
+	        exit 1; \
+	      fi; \
+	      rel="$${f#dist/}"; \
+	      mkdir -p "$$STAGE/$$(dirname "$$rel")"; \
+	      cp "$$f" "$$STAGE/$$rel"; \
+	    done || { rm -rf "$$TMPDIR"; exit 1; }; \
 	tar -czf "dist/bnk-forge-$${VERSION}.tar.gz" -C "$$TMPDIR" "bnk-forge-$${VERSION}"; \
 	rm -rf "$$TMPDIR"; \
+	DIST_GENERATED="$(DIST_GENERATED)" scripts/check-dist-contents.sh \
+	  "dist/bnk-forge-$${VERSION}.tar.gz" || exit 1; \
 	echo ""; \
 	echo "  ✓ Created: dist/bnk-forge-$${VERSION}.tar.gz"; \
 	echo ""; \
@@ -1074,6 +1279,18 @@ buildx-setup:
 
 # Push multi-arch images to a container registry
 # Usage: make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
+#
+# TWO INDEPENDENT guards, TWO independent override knobs (bonnyr-f5 #193 r3 minor —
+# they used to share FORCE_LATEST, so overriding the ':latest recency' guard also
+# silently disarmed the immutable-tag overwrite protection):
+#   FORCE_LATEST=1    overrides ONLY the recency guard (this stale tree would move
+#                     the rolling ':latest' tag backward). It does NOT touch the
+#                     overwrite guard.
+#   FORCE_OVERWRITE=1 overrides ONLY the immutable-:VERSION overwrite guard, and
+#                     ONLY for an already-published tag you intend to overwrite
+#                     (orphaning its attestations). It does NOT rescue a tooling
+#                     failure (missing docker/buildx/jq) — that is fail-closed by
+#                     design; install the tooling instead.
 push-images:
 	@echo ""
 	@echo "========================================="
@@ -1099,6 +1316,32 @@ push-images:
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo "  Builder:   $(BUILDX_BUILDER)"; \
 	echo ""; \
+	HIGHEST_TAG=$$(git tag -l 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -1); \
+	if [ -n "$$HIGHEST_TAG" ] && [ "$${FORCE_LATEST:-}" != "1" ]; then \
+	  HIGHEST=$$(printf '%s\n%s\n' "$${HIGHEST_TAG#v}" "$$VERSION" | sort -V | tail -1); \
+	  if [ "$$VERSION" != "$$HIGHEST" ]; then \
+	    echo "ERROR: local VERSION $$VERSION is older than the highest released tag $$HIGHEST_TAG."; \
+	    echo "  bake pushes the rolling ':latest' tag, so this stale tree would move :latest backward"; \
+	    echo "  (release.yml's recency guard covers the CI path; this covers the operator path)."; \
+	    echo "  Check out the latest release first, or re-run with FORCE_LATEST=1 to override deliberately."; \
+	    exit 1; \
+	  fi; \
+	fi; \
+	if [ "$${FORCE_OVERWRITE:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
+	echo "  Probing the registry via the single-sourced scripts/registry-overwrite-guard.sh so this push"; \
+	echo "  can't silently overwrite an already-published immutable :$$VERSION tag..."; \
+	REGISTRY=$$REGISTRY VERSION=$$VERSION FORCE=$$GUARD_FORCE \
+	  bash scripts/registry-overwrite-guard.sh || { \
+	    echo "  Remediation depends on WHY it failed (read the ::error:: line above):"; \
+	    echo "    - missing docker/buildx/jq, or an unparseable bake file -> a TOOLING problem."; \
+	    echo "      Install the tooling and re-run. FORCE_* does NOT rescue this (the guard"; \
+	    echo "      refuses to guess the image count, by design)."; \
+	    echo "    - registry unreachable / auth -> export REGISTRY_USERNAME/REGISTRY_PASSWORD and re-run."; \
+	    echo "    - the immutable :$$VERSION tag genuinely already exists -> re-run with"; \
+	    echo "      FORCE_OVERWRITE=1 ONLY if you intend to overwrite it (this orphans its"; \
+	    echo "      cosign/SBOM/SLSA attestations). FORCE_LATEST=1 does NOT override this guard."; \
+	    exit 1; \
+	  }; \
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \
@@ -1143,13 +1386,28 @@ push-customer-build:
 	echo "  Rolling tag:   customer-build"; \
 	echo "  Platforms:     $(CB_PLATFORMS)"; \
 	echo ""; \
+	if [ "$${FORCE_OVERWRITE:-}" = "1" ]; then GUARD_FORCE=true; else GUARD_FORCE=; fi; \
+	echo "  Probing the registry via the single-sourced scripts/registry-overwrite-guard.sh"; \
+	echo "  so this push can't silently overwrite the already-published IMMUTABLE :$$FULLTAG"; \
+	echo "  tag and orphan its cosign/SBOM/SLSA attestations (INV-24 — the only push path"; \
+	echo "  that was still unguarded, bonnyr-f5 #193 r4)..."; \
+	REGISTRY=$$REGISTRY VERSION=$$FULLTAG FORCE=$$GUARD_FORCE \
+	  bash scripts/registry-overwrite-guard.sh || { \
+	    echo "  Remediation depends on WHY it failed (read the ::error:: line above):"; \
+	    echo "    - missing docker/buildx/jq or an unparseable bake file -> a TOOLING problem"; \
+	    echo "      (FORCE_OVERWRITE does NOT rescue this, by design)."; \
+	    echo "    - registry unreachable / auth -> export REGISTRY_USERNAME/REGISTRY_PASSWORD."; \
+	    echo "    - the immutable :$$FULLTAG tag genuinely already exists -> re-run with"; \
+	    echo "      FORCE_OVERWRITE=1 ONLY if you intend to overwrite it (orphans its attestations)."; \
+	    exit 1; \
+	  }; \
 	echo "=== Building + pushing customer-build images (docker buildx bake) ==="; \
 	REGISTRY=$$REGISTRY VERSION=$$FULLTAG ROLLING_TAG=customer-build PLATFORMS=$(CB_PLATFORMS) \
 	  docker buildx bake --builder $(CB_BUILDER) --push && \
 	echo ""; \
 	echo "========================================="; \
 	echo "  ✅ Pushed to $$REGISTRY"; \
-	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp)"; \
+	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp/operator)"; \
 	echo "    Rolling:   $${REGISTRY}/bnk-forge-api:customer-build"; \
 	echo "    Platforms: $(CB_PLATFORMS)"; \
 	echo ""; \
@@ -1195,6 +1453,22 @@ publish-signed:
 docker-verify:
 	@echo ""
 	@echo "=== Docker Image Verification ==="
+	@echo ""
+	@echo "--- Version baked into the image ---"
+	@expected=$$(cat VERSION); \
+	failed=0; \
+	for img in bnk-forge-api bnk-forge-worker bnk-forge-beat; do \
+	  actual=$$(docker run --rm --entrypoint "" $$img:latest cat /app/VERSION 2>/dev/null || echo ""); \
+	  if [ "$$actual" = "$$expected" ]; then \
+	    echo "  OK    $$img reports $$actual"; \
+	  else \
+	    echo "  FAIL  $$img reports '$$actual', expected '$$expected'"; \
+	    echo "        settings.VERSION falls back to 0.0.0 when /app/VERSION is absent,"; \
+	    echo "        which surfaces on /api, the OpenAPI title and X-BNK-Forge-Version."; \
+	    failed=1; \
+	  fi; \
+	done; \
+	[ $$failed -eq 0 ] || exit 1
 	@echo ""
 	@echo "--- Worker CLI tools ---"
 	@failed=0; \
@@ -1269,8 +1543,8 @@ docker-check:
 	@echo "=== Docker Check (BuildKit lint) ==="
 	@failed=0; \
 	  for target_spec in \
-	    "backend/Dockerfile:backend" \
-	    "frontend-v2/Dockerfile:frontend-v2" \
+	    "backend/Dockerfile:." \
+	    "frontend-v2/Dockerfile:." \
 	    "proxy/Dockerfile:proxy" \
 	    "mcp-server/Dockerfile:mcp-server" \
 	    "bnk-operator/Dockerfile:bnk-operator"; do \

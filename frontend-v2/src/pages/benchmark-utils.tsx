@@ -11,6 +11,9 @@ import {
   AlertCircle,
   XCircle,
   Server,
+  Anchor,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import type { BenchmarkRunStatus } from '@/types';
 
@@ -87,6 +90,77 @@ export function ProxyBadge({ proxy }: { proxy: string }) {
     <Badge variant="outline" className="gap-1" style={{ borderColor: color, color }}>
       <Server className="h-3 w-3" />
       {label}
+    </Badge>
+  );
+}
+
+// ============================================================================
+// Baseline / Regression — shared threshold + pure classifier
+// ============================================================================
+
+/** A run regresses when latency_p99 is this much WORSE, or overall_rps this much
+ * LOWER, than its context's baseline. Shared between Runs list, Run Detail, and
+ * the vitest coverage in benchmark-utils.test.ts. */
+export const REGRESSION_THRESHOLD_PCT = 10;
+
+export type RegressionStatus = 'baseline' | 'regression' | 'improvement' | 'neutral' | null;
+
+interface RegressionInput {
+  is_baseline?: boolean;
+  latency_p99?: number | null;
+  overall_rps?: number | null;
+  baseline_latency_p99?: number | null;
+  baseline_overall_rps?: number | null;
+}
+
+/**
+ * Classify a completed run against its (target, scenario/config) baseline.
+ * Returns null when the run has no baseline context to compare against —
+ * callers must render no badge in that case (never a false "neutral").
+ */
+export function getRegressionStatus(run: RegressionInput): RegressionStatus {
+  if (run.is_baseline) return 'baseline';
+
+  const hasLatency = run.baseline_latency_p99 != null && run.latency_p99 != null;
+  const hasRps = run.baseline_overall_rps != null && run.overall_rps != null;
+  if (!hasLatency && !hasRps) return null;
+
+  const factor = REGRESSION_THRESHOLD_PCT / 100;
+  const latencyWorse = hasLatency && run.latency_p99! > run.baseline_latency_p99! * (1 + factor);
+  const rpsWorse = hasRps && run.overall_rps! < run.baseline_overall_rps! * (1 - factor);
+  if (latencyWorse || rpsWorse) return 'regression';
+
+  const latencyBetter = hasLatency && run.latency_p99! < run.baseline_latency_p99! * (1 - factor);
+  const rpsBetter = hasRps && run.overall_rps! > run.baseline_overall_rps! * (1 + factor);
+  if (latencyBetter || rpsBetter) return 'improvement';
+
+  return 'neutral';
+}
+
+export function RegressionBadge({ run }: { run: RegressionInput }) {
+  const status = getRegressionStatus(run);
+  if (!status || status === 'neutral') return null;
+
+  if (status === 'baseline') {
+    return (
+      <Badge variant="info" className="gap-1">
+        <Anchor className="h-3 w-3" />
+        Baseline
+      </Badge>
+    );
+  }
+  if (status === 'regression') {
+    return (
+      <Badge variant="destructive" className="gap-1">
+        <TrendingDown className="h-3 w-3" />
+        Regression
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="success" className="gap-1">
+      <TrendingUp className="h-3 w-3" />
+      Improved
     </Badge>
   );
 }

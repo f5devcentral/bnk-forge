@@ -83,6 +83,29 @@ def engine():
     eng.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _reset_reachability_breakers():
+    """Isolate the reachability circuit-breaker registry between tests (#55).
+
+    Autouse -- NOT tied to the ``db`` fixture -- because a unit test can trip a
+    breaker without touching the database, and the next test would inherit it.
+    The registry is a process-global singleton keyed by (target_type,
+    target_id); a breaker tripped OPEN by one test otherwise short-circuits
+    every later test reusing that id with BreakerOpenError. Order-dependent
+    failures that only appear in a monolithic ``pytest tests/`` run, never in
+    CI's per-suite processes -- which is exactly why they went unnoticed.
+
+    Reset before AND after: before, so a test never inherits state from a
+    predecessor that failed mid-way; after, so a test's own trips don't
+    outlive it even if a later fixture errors.
+    """
+    from services.reachability.registry import registry
+
+    registry.reset_breaker_state()
+    yield
+    registry.reset_breaker_state()
+
+
 @pytest.fixture()
 def db(engine):
     """

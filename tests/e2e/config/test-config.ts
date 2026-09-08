@@ -12,7 +12,7 @@ export const TEST_CONFIG = {
 
   // Default credentials
   credentials: {
-    admin: { username: 'admin', password: 'changeme' },
+    admin: { username: 'admin', password: 'e2e-Admin-Pass-1' },
     // operator and viewer roles — created by system admin tests or pre-seeded
     operator: { username: 'e2e-operator', password: 'changeme' },
     viewer: { username: 'e2e-viewer', password: 'changeme' },

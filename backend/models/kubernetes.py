@@ -1,6 +1,18 @@
 """Kubernetes cluster and F5 BNK networking models."""
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -13,7 +25,10 @@ class KubernetesCluster(Base):
     __tablename__ = "kubernetes_clusters"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, nullable=False, index=True)
+    # Unique per PROJECT, not globally -- see __table_args__ and v2_153 (#113).
+    # A global unique let project A's "prod" block project B's "prod" and leak
+    # A's cluster name to B via the 409.
+    name = Column(String(255), nullable=False, index=True)
     context = Column(String(255), nullable=False)  # kubectl context name
     api_server = Column(String(500))
     version = Column(String(50))
@@ -56,6 +71,10 @@ class KubernetesCluster(Base):
     ssh_host_override = Column(String(255), nullable=True)
     # Legacy: kept for backward compatibility during migration
     ssh_credential_template_id = Column(Integer, ForeignKey("cloud_credential_templates.id"), nullable=True)
+    # ADR-478 P1b: BNK release this cluster was built with (stamped at Phase-2 link seam).
+    deployable_release_id = Column(Integer, ForeignKey("bnk_deployable_release.id", ondelete="SET NULL"), nullable=True)
+    # ADR-494 Phase B: BNK release line currently running on this cluster (set by discovery/scan).
+    running_release_id = Column(Integer, ForeignKey("bnk_releases.id", ondelete="SET NULL"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -66,6 +85,99 @@ class KubernetesCluster(Base):
     ssh_credential_template = relationship("CloudCredentialTemplate", foreign_keys=[ssh_credential_template_id])
     gateways = relationship("K8sGateway", back_populates="cluster", cascade="all, delete-orphan")
     firewall_policies = relationship("FirewallPolicy", back_populates="cluster", cascade="all, delete-orphan")
+    bnk_config = relationship(
+        "BnkClusterConfig", back_populates="cluster", uselist=False, cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        # Name is unique within a project, not across the instance (#113). NULL
+        # project_id rows (hand-registered / global clusters) are distinct from
+        # each other under the SQL standard's NULL semantics, which is intended:
+        # a cluster with no project has no tenant to collide within.
+        UniqueConstraint("project_id", "name", name="uq_kubernetes_clusters_project_name"),
+    )
+
+
+@event.listens_for(KubernetesCluster, "before_delete")
+def _release_cluster_tmfifo_ips(mapper, connection, target: "KubernetesCluster") -> None:
+    """Clear host_tmfifo_ip and dpu_tmfifo_ip on all DPUs before cluster deletion.
+
+    The DB ondelete=SET NULL cascade clears kubernetes_cluster_id at the database
+    level; these plain columns have no cascade and must be cleared explicitly so
+    a subsequent re-flash does not bake a stale /30 into /etc/netplan.
+
+    Also clears bare_metal_hosts.is_control_plane, which has no cascade and would
+    otherwise leave a former CP host with kubernetes_cluster_id=NULL but
+    is_control_plane=True (same orphan class as the DPU tmfifo columns above).
+
+    Registered on the mapper so every db.delete(cluster) path fires this —
+    ClusterManagementService, cluster_auto_registration_service, eks_service, and
+    roks_service — without per-caller wiring (ADR-424 finding B).
+
+    Uses a core-level SQL UPDATE via `connection` (not the ORM session) to avoid
+    the re-entrancy issue: mapper events fire inside the flush cycle, and calling
+    session.add() / session.flush() there produces "attribute history events
+    accumulated ... will not result in database updates" warnings and data loss.
+    The core connection is on the same transaction as the session flush and is
+    committed / rolled back together with it.
+
+    Note: deleting a Project triggers this listener via the ORM-level cascade —
+    models/project.py declares k8s_clusters with cascade="all, delete-orphan"
+    and no passive_deletes, so SQLAlchemy loads each cluster and issues a
+    per-row ORM delete, which fires this before_delete event.  The outcome is
+    safe (tmfifo IPs are cleared before the cluster row is removed).
+
+    Warning: this listener fires only for ORM session.delete() calls.  A bulk
+    db.query(KubernetesCluster).filter(...).delete() bypasses it entirely.
+    Since delete_cluster no longer performs the tmfifo release itself, this
+    listener is now the ONLY thing clearing tmfifo IPs and is_control_plane on
+    cluster deletion — a bulk-delete caller would silently leave stale IPAM
+    state.  No production bulk-delete path exists today; the only known caller
+    is tests/component/test_snapshot_service.py:517.
+    """
+    from sqlalchemy import text
+
+    # Raw SQL bypasses the ORM identity map — safe only if member Dpu rows are
+    # not loaded into this session before cluster deletion; a future caller that
+    # loads them first could re-persist a stale in-memory tmfifo IP on flush.
+    connection.execute(
+        text(
+            "UPDATE dpus "
+            "SET kubernetes_cluster_id = NULL, host_tmfifo_ip = NULL, dpu_tmfifo_ip = NULL "
+            "WHERE kubernetes_cluster_id = :cluster_id"
+        ),
+        {"cluster_id": target.id},
+    )
+    connection.execute(
+        text(
+            "UPDATE bare_metal_hosts "
+            "SET is_control_plane = false "
+            "WHERE kubernetes_cluster_id = :cluster_id"
+        ),
+        {"cluster_id": target.id},
+    )
+
+
+class BnkClusterConfig(Base):
+    """BNK-specific configuration for a bare-metal Kubernetes cluster."""
+    __tablename__ = "bnk_cluster_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cluster_id = Column(
+        Integer, ForeignKey("kubernetes_clusters.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    tmfifo_pool_cidr = Column(String(64), nullable=False, default="192.168.100.0/22")
+    join_transport = Column(String(32), nullable=False, default="rshim")
+    control_plane_host_id = Column(
+        Integer, ForeignKey("bare_metal_hosts.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    cluster = relationship("KubernetesCluster", back_populates="bnk_config")
+    control_plane_host = relationship("BareMetalHost", foreign_keys=[control_plane_host_id])
 
 
 class K8sGateway(Base):

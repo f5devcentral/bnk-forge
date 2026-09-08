@@ -78,6 +78,10 @@ class BenchmarkRun(Base):
     scenario_key = Column(String(100), nullable=True, index=True)  # e.g. "prefix-cache"
     variant_label = Column(String(100), nullable=True)  # e.g. "cfg1-c100", "warmup", "trace"
 
+    # Baseline flag — marks the reference run for its (target_id, scenario_key, config_id, proxy, variant_label)
+    # context. Only one baseline per context; enforced in BenchmarkService.set_baseline.
+    is_baseline = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+
     # Status lifecycle
     status = Column(String(50), default=BenchmarkRunStatus.PENDING, nullable=False, index=True)
     error_message = Column(Text, nullable=True)

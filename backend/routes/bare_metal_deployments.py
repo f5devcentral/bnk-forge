@@ -57,12 +57,16 @@ def create_deployment(
     """
     from services.bare_metal.orchestrator import BareMetalDeploymentService
     svc = BareMetalDeploymentService(db)
+
     deployment = svc.create_deployment(
+        # data.host_id is guaranteed non-None by BareMetalDeploymentCreate._validate_host_ids
         host_id=data.host_id,
         project_id=project_id,
+        worker_host_ids=data.worker_host_ids,
         resume_from_step=data.resume_from_step,
         selected_phases=data.selected_phases,
         selected_steps=data.selected_steps,
+        deployable_release_id=data.deployable_release_id,
     )
     db.commit()
 

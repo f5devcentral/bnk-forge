@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+from routes.blueprint_catalog import BlueprintSourceResponse
+
 
 def _source_response(**overrides):
     base = {
@@ -17,11 +19,17 @@ def _source_response(**overrides):
         "last_synced_at": None,
         "release_count": 0,
         "is_active": True,
+        # Computed by BlueprintCatalogService via is_default_blueprint_source()
+        # rather than stored on the model; required by BlueprintSourceResponse.
+        "is_default": False,
         "description": "Blueprint source",
         "created_at": datetime.now(UTC).isoformat(),
         "updated_at": datetime.now(UTC).isoformat(),
     }
     base.update(overrides)
+    # See #130: this helper feeds a fully-mocked service, so a field missing
+    # here only surfaces as a response-validation 500. Validate up front.
+    BlueprintSourceResponse.model_validate(base)
     return base
 
 

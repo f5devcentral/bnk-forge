@@ -655,6 +655,13 @@ class TestWorkerDeathBackstop:
             module_id=mod.id,
             celery_task_id="dead-worker-task-id",
             created_at=datetime.now(UTC),
+            # run_handle is what _dispatch_first_destroy_wave stamps on every
+            # row of a project run, and create_task (single-module) never does.
+            # It is now the discriminator for an UNSTAMPED row: no run_handle
+            # means a single-module destroy, which must not chain. Without it
+            # this fixture described a row a project destroy cannot produce.
+            run_handle="run-worker-death",
+            meta_data={"destroy_scope": "project"},
         )
         db.add(stuck_task)
         db.commit()
@@ -1631,3 +1638,296 @@ class TestForceDestroyBehavior:
 
         # infra_mod dispatched (became a leaf after bnk pre-marked)
         assert infra_mod.id in dispatched_ids
+
+
+# ---------------------------------------------------------------------------
+# Module-scope destroy — issue #525
+# ---------------------------------------------------------------------------
+
+class TestModuleScopeDestroyDoesNotCascade:
+    """A single-module destroy must not tear down the modules it depends on.
+
+    Reported as issue #525: destroying `bnk-install` in a two-module blueprint
+    cascaded into `cluster-create` and deleted the ROKS cluster (plus its VPC and
+    Transit Gateway) that BNK had been installed on. The chain is correct for a
+    project/stack teardown and wrong for one named module.
+    """
+
+    def _two_module_stack(self, db, make_project, make_project_module, make_module_library,
+                          make_stack_template, make_stack_instance):
+        """cluster-create <- bnk-install, both applied, inside a stack instance.
+
+        The stack matters: with no destroy_scope stamp the chain falls back to the
+        stack_instance_id heuristic, which is the path that produced the cascade.
+        """
+        project = make_project()
+        lib_cluster = make_module_library(name="cluster-create", path="bnk/cluster-create")
+        lib_bnk = make_module_library(name="bnk-install", path="bnk/bnk-install")
+        template = make_stack_template()
+        stack = make_stack_instance(project=project, template=template, status="deployed")
+
+        cluster_mod = make_project_module(
+            project=project, library_module=lib_cluster, status="applied",
+            stack_instance_id=stack.id,
+        )
+        bnk_mod = make_project_module(
+            project=project, library_module=lib_bnk, status="destroyed",
+            dependencies=[cluster_mod.id], stack_instance_id=stack.id,
+        )
+        stack.deployed_modules = [cluster_mod.id, bnk_mod.id]
+        db.flush()
+        return project, cluster_mod, bnk_mod
+
+    def _run_trigger(self, db, completed_mod, dependency_mod):
+        """Run the post-destroy trigger, returning the module ids it dispatched."""
+        from tasks._tofu_helpers import _trigger_next_destroy_module
+
+        dispatched = []
+
+        def capture_dispatch(task_id, module):
+            dispatched.append(module.id)
+            mock = MagicMock()
+            mock.apply_async.return_value.id = f"celery-{module.id}"
+            return mock
+
+        with patch("tasks._tofu_helpers.DependencyGraphService") as mock_gs, \
+             patch("services.execution.task_dispatch.dispatch_destroy_signature",
+                   side_effect=capture_dispatch), \
+             patch("tasks._tofu_helpers._run_terminal_detection"):
+            mock_graph = MagicMock()
+            mock_graph.get_reverse_dependencies.return_value = [completed_mod]
+            mock_gs.return_value = mock_graph
+
+            _trigger_next_destroy_module(completed_mod, db)
+
+        return dispatched
+
+    def test_module_scope_destroy_does_not_queue_its_dependency(
+        self, db, make_project, make_project_module, make_module_library,
+        make_stack_template, make_stack_instance, make_task,
+    ):
+        """destroy_scope=module stops the chain — the dependency survives."""
+        project, cluster_mod, bnk_mod = self._two_module_stack(
+            db, make_project, make_project_module, make_module_library,
+            make_stack_template, make_stack_instance,
+        )
+
+        # This is what submit_destroy stamps for a single-module destroy.
+        make_task(
+            project=project, module=bnk_mod, task_type="destroy", status="completed",
+            meta_data={"destroy_scope": "module"},
+        )
+
+        dispatched = self._run_trigger(db, bnk_mod, cluster_mod)
+
+        assert cluster_mod.id not in dispatched, (
+            "destroying bnk-install cascaded into cluster-create — the ROKS cluster "
+            "the user asked to keep would be deleted (issue #525)"
+        )
+        assert dispatched == []
+
+    def test_project_scope_destroy_still_queues_the_dependency(
+        self, db, make_project, make_project_module, make_module_library,
+        make_stack_template, make_stack_instance, make_task,
+    ):
+        """The guard is scope-specific: a real teardown must still walk the DAG.
+
+        Without this, 'nothing was dispatched' above would also pass if the chain
+        were broken outright.
+        """
+        project, cluster_mod, bnk_mod = self._two_module_stack(
+            db, make_project, make_project_module, make_module_library,
+            make_stack_template, make_stack_instance,
+        )
+
+        make_task(
+            project=project, module=bnk_mod, task_type="destroy", status="completed",
+            meta_data={"destroy_scope": "project"},
+        )
+
+        dispatched = self._run_trigger(db, bnk_mod, cluster_mod)
+
+        assert cluster_mod.id in dispatched, (
+            "project-scope destroy must still tear down dependencies"
+        )
+
+    def test_submit_destroy_stamps_module_scope(
+        self, db, make_project, make_project_module, make_module_library,
+    ):
+        """submit_destroy is what puts the scope on the Task row.
+
+        Ties the service to the trigger guard above — if this stamp regresses,
+        the cascade comes back even though the guard still works.
+        """
+        from models import Task as TaskModel
+        from services.project_module_service import ProjectModuleService
+
+        project = make_project()
+        lib = make_module_library(name="bnk-install", path="bnk/bnk-install")
+        module = make_project_module(project=project, library_module=lib, status="applied")
+
+        with patch("services.execution.task_dispatch.dispatch_destroy") as mock_dispatch, \
+             patch.object(ProjectModuleService, "_create_snapshot"):
+            mock_dispatch.return_value = MagicMock(id="celery-destroy-1")
+            ProjectModuleService(db).submit_destroy(module.id, triggered_by="tester")
+
+        task = (
+            db.query(TaskModel)
+            .filter(TaskModel.module_id == module.id, TaskModel.task_type == "destroy")
+            .order_by(TaskModel.id.desc())
+            .first()
+        )
+        assert task is not None
+        assert (task.meta_data or {}).get("destroy_scope") == "module"
+
+
+# ---------------------------------------------------------------------------
+# Disabled modules are not dispatched by the deploy chain — issue #527
+# ---------------------------------------------------------------------------
+
+class TestDisabledModuleNotDispatchedByChain:
+    """The dependency chain must skip a disabled module.
+
+    This is the exact path from issue #527: module 166 was set `enabled: false`,
+    module 165 was applied on its own, and the moment 165 completed the chain
+    dispatched 166 anyway.
+    """
+
+    def test_trigger_next_stack_module_skips_disabled(
+        self, db, make_project, make_project_module, make_module_library,
+        make_stack_template, make_stack_instance,
+    ):
+        from tasks._tofu_helpers import _trigger_next_stack_module
+
+        project = make_project()
+        lib_a = make_module_library(name="cluster-create", path="bnk/cluster-create")
+        lib_b = make_module_library(name="bnk-install", path="bnk/bnk-install")
+        template = make_stack_template()
+        stack = make_stack_instance(project=project, template=template, status="deploying")
+
+        done = make_project_module(
+            project=project, library_module=lib_a, status="applied",
+            stack_instance_id=stack.id,
+        )
+        disabled = make_project_module(
+            project=project, library_module=lib_b, status="initialized",
+            dependencies=[done.id], stack_instance_id=stack.id, enabled=False,
+        )
+        stack.deployed_modules = [done.id, disabled.id]
+        db.flush()
+
+        with patch("services.execution.task_dispatch.dispatch_apply") as mock_apply, \
+             patch("services.execution.task_dispatch.dispatch_init") as mock_init:
+            _trigger_next_stack_module(stack, done, db)
+
+        mock_apply.assert_not_called()
+        mock_init.assert_not_called()
+        db.refresh(disabled)
+        assert disabled.status == "initialized", (
+            f"disabled module was dispatched anyway (status={disabled.status}) — "
+            "there is no way to deploy only part of a blueprint (issue #527)"
+        )
+
+    def test_trigger_next_stack_module_still_dispatches_enabled(
+        self, db, make_project, make_project_module, make_module_library,
+        make_stack_template, make_stack_instance,
+    ):
+        """Contrast: the same wiring with enabled=True does dispatch.
+
+        Proves the skip above comes from the enabled flag, not from the chain
+        being inert in this fixture.
+        """
+        from tasks._tofu_helpers import _trigger_next_stack_module
+
+        project = make_project()
+        lib_a = make_module_library(name="cluster-create", path="bnk/cluster-create")
+        lib_b = make_module_library(name="bnk-install", path="bnk/bnk-install")
+        template = make_stack_template()
+        stack = make_stack_instance(project=project, template=template, status="deploying")
+
+        done = make_project_module(
+            project=project, library_module=lib_a, status="applied",
+            stack_instance_id=stack.id,
+        )
+        enabled = make_project_module(
+            project=project, library_module=lib_b, status="initialized",
+            dependencies=[done.id], stack_instance_id=stack.id, enabled=True,
+        )
+        stack.deployed_modules = [done.id, enabled.id]
+        db.flush()
+
+        with patch("services.execution.task_dispatch.dispatch_apply") as mock_apply:
+            mock_apply.return_value = MagicMock(id="celery-apply-1")
+            _trigger_next_stack_module(stack, done, db)
+
+        assert mock_apply.called, "enabled module should still be dispatched"
+
+    def test_first_wave_skips_disabled(
+        self, db, make_project, make_project_module, make_module_library,
+    ):
+        """The project-scope wave (blueprint-imported projects) skips it too."""
+        from services.parallel_execution_service import ParallelExecutionService
+
+        project = make_project()
+        lib = make_module_library(name="bnk-install", path="bnk/bnk-install")
+        disabled = make_project_module(
+            project=project, library_module=lib, status="initialized", enabled=False,
+        )
+        db.flush()
+
+        with patch("services.execution.task_dispatch.dispatch_apply") as mock_apply, \
+             patch("services.execution.task_dispatch.dispatch_init") as mock_init, \
+             patch("services.workspace_manager.WorkspaceManager"):
+            ParallelExecutionService(db)._dispatch_first_wave(project.id, run_handle="h1")
+
+        mock_apply.assert_not_called()
+        mock_init.assert_not_called()
+        db.refresh(disabled)
+        assert disabled.status == "initialized"
+
+
+class TestDestroyWaveIgnoresEnabled:
+    """A project teardown must destroy DISABLED modules too.
+
+    The deploy paths gained an `enabled` gate (issue #527). The destroy wave
+    deliberately did NOT, and that asymmetry is easy to "tidy up" later into a
+    data-loss bug: a disabled module can still hold live infrastructure, so
+    skipping it in a project destroy strands whatever it already built, with no
+    UI affordance left to reach it.
+
+    Pinning the invariant so the omission reads as intentional.
+    """
+
+    def test_disabled_module_is_still_dispatched_by_the_destroy_wave(
+        self, db, make_project, make_project_module, make_module_library,
+    ):
+        from services.parallel_execution_service import ParallelExecutionService
+
+        project = make_project()
+        lib = make_module_library(name="vpc", path="bnk/vpc")
+        disabled = make_project_module(
+            project=project, library_module=lib, status="applied", enabled=False,
+        )
+        db.flush()
+
+        dispatched = []
+
+        def capture(task_id, module):
+            dispatched.append(module.id)
+            mock = MagicMock()
+            mock.apply_async.return_value.id = f"celery-{module.id}"
+            return mock
+
+        with patch("tasks._tofu_helpers.DependencyGraphService") as mock_gs, \
+             patch("services.execution.task_dispatch.dispatch_destroy_signature", side_effect=capture):
+            graph = MagicMock()
+            graph.get_reverse_dependencies.return_value = []
+            mock_gs.return_value = graph
+            ParallelExecutionService(db)._dispatch_first_destroy_wave(
+                project.id, run_handle="h-destroy", force_destroy=True
+            )
+
+        assert disabled.id in dispatched, (
+            "a disabled module was skipped by the project destroy wave — its "
+            "infrastructure would be stranded with no way to reach it"
+        )

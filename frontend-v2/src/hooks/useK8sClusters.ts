@@ -3,7 +3,12 @@
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { K8sClusterCreateRequest, K8sClusterUpdateRequest } from '@/types';
+import type {
+  K8sClusterCreateRequest,
+  K8sClusterUpdateRequest,
+  BnkClusterConfigCreateRequest,
+  BnkClusterMemberAssignRequest,
+} from '@/types';
 import { QUERY_STALE_TIME } from '@/lib/constants';
 import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/queryKeys';
@@ -140,5 +145,39 @@ export function useRefreshClusterKubeconfig() {
         { category: 'cluster' },
       );
     },
+  });
+}
+
+export function useConfigureBnkCluster(options?: { silent?: boolean }) {
+  const queryClient = useQueryClient();
+
+  return useAppMutation({
+    mutationFn: ({ clusterId, data }: { clusterId: number; data: BnkClusterConfigCreateRequest }) =>
+      api.configureBnkCluster(clusterId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
+      if (!options?.silent) {
+        notify.success('BNK cluster configuration updated', undefined, { category: 'cluster' });
+      }
+    },
+    silent: options?.silent,
+  });
+}
+
+export function useAssignBnkClusterMembers(options?: { silent?: boolean }) {
+  const queryClient = useQueryClient();
+
+  return useAppMutation({
+    mutationFn: ({ clusterId, data }: { clusterId: number; data: BnkClusterMemberAssignRequest }) =>
+      api.assignBnkClusterMembers(clusterId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.bareMetal.hosts.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dpuProvisioning.all });
+      if (!options?.silent) {
+        notify.success('BNK cluster members assigned successfully', undefined, { category: 'cluster' });
+      }
+    },
+    silent: options?.silent,
   });
 }

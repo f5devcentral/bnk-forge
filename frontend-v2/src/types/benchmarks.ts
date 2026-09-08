@@ -73,8 +73,16 @@ export interface BenchmarkRun {
   tags: Record<string, string> | null;
   config_id: number | null;
   agent_id: number | null;
+  target_id?: number | null;
+  proxy_deployment_id?: number | null;
+  scenario_key?: string | null;
   status: BenchmarkRunStatus;
   error_message: string | null;
+  is_baseline?: boolean;
+  // Baseline reference for this run's (target, scenario/config) context — set only
+  // when a different run holds the baseline. See getRegressionStatus in benchmark-utils.
+  baseline_latency_p99?: number | null;
+  baseline_overall_rps?: number | null;
 
   // Denormalized metrics
   duration_seconds: number | null;
@@ -152,6 +160,8 @@ export interface BenchmarkCompareRunMetrics {
   model: string;
   tool: string;
   run_label: string | null;
+  config_id?: number | null;
+  scenario_key?: string | null;
   status: BenchmarkRunStatus;
   total_requests: number | null;
   success_rate_pct: number | null;
@@ -173,6 +183,39 @@ export interface BenchmarkCompareRunMetrics {
 export interface BenchmarkCompareResponse {
   runs: BenchmarkCompareRunMetrics[];
   winners: Record<string, number>;  // metric → winning run_id
+  // True when the compared runs don't share the same config_id/scenario_key.
+  context_mismatch?: boolean;
+}
+
+// =============================================================================
+// Trends — time-series + baseline for a (target, proxy, scenario/config) context
+// =============================================================================
+
+export interface BenchmarkTrendPoint {
+  id: number;
+  run_label: string | null;
+  created_at: string;
+  is_baseline: boolean;
+  latency_p50: number | null;
+  latency_p99: number | null;
+  overall_rps: number | null;
+  peak_rps: number | null;
+  success_rate_pct: number | null;
+  tokens_per_sec: number | null;
+  total_output_tokens: number | null;
+}
+
+export interface BenchmarkTrendsResponse {
+  points: BenchmarkTrendPoint[];
+  baseline_run_id: number | null;
+}
+
+export interface BenchmarkTrendsParams {
+  target_id?: number;
+  proxy?: string;
+  scenario_key?: string;
+  config_id?: number;
+  limit?: number;
 }
 
 // =============================================================================

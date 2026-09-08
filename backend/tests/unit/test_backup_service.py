@@ -334,3 +334,33 @@ class TestGetBackupStatusDuringMaintenance:
         assert result["operation"] == "restore"
         assert result["started_at"] == fake_status["started_at"]
         assert result["message"] == fake_status["message"]
+
+
+class TestReplaceEncryptionKeyProvenance:
+    """bonnyr-f5 #193 B-3 (r4 self-review): a restored at-rest key must be marked
+    `.operator` so the next boot classifies it operator-provisioned (passes
+    validate_production) and core.config never treats it as a clobberable auto-gen.
+    Without the marker the restored key would fail the production fail-fast gate."""
+
+    def test_replace_encryption_key_writes_operator_marker(self, tmp_path, monkeypatch):
+        import json as _json
+
+        from cryptography.fernet import Fernet
+
+        import core.encryption as enc_mod
+        import services.backup_service as bs_mod
+        from core.encryption import wrap_fernet_key
+
+        key_file = tmp_path / "encryption.key"
+        monkeypatch.setattr(enc_mod, "ENCRYPTION_KEY_FILE", str(key_file))
+        monkeypatch.setattr(bs_mod, "ENCRYPTION_KEY_FILE", str(key_file))
+
+        raw = Fernet.generate_key()
+        passphrase = "correct horse battery staple"
+        wrapped_path = tmp_path / "wrapped_key.enc"
+        wrapped_path.write_text(_json.dumps(wrap_fernet_key(raw, passphrase)))
+
+        _make_service()._replace_encryption_key(str(wrapped_path), passphrase)
+
+        assert key_file.read_bytes() == raw  # restored key survives on disk
+        assert (tmp_path / "encryption.key.operator").is_file()  # marked operator

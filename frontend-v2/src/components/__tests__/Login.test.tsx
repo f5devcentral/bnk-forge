@@ -85,16 +85,18 @@ describe('Login', () => {
   });
 
   it('shows loading state during login', async () => {
-    // Delay the response to check loading state
+    // Hold the response open for the life of the test WITHOUT a live timer.
+    // The previous 200 ms setTimeout could outlive the test: it asserted the
+    // loading state and returned, vitest tore jsdom down, and ~200 ms later
+    // msw delivered the response via `new ProgressEvent(...)` -- which no
+    // longer existed. "ReferenceError: ProgressEvent is not defined" as an
+    // unhandled rejection, failing the whole run intermittently (it took
+    // down CI on #158, a PR that touches no frontend code at all). Same
+    // class as #153 / the SSOAuthDialog fix in #152: async completion racing
+    // environment teardown. A never-settling promise holds the request open
+    // with nothing left to fire after the test ends.
     server.use(
-      http.post('*/api/auth/login', async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        return HttpResponse.json({
-          token: 'mock-jwt-token',
-          user: { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin', is_active: true, must_change_password: false, last_login_at: null, created_at: '2026-01-01T00:00:00Z' },
-          must_change_password: false,
-        });
-      })
+      http.post('*/api/auth/login', () => new Promise<never>(() => {}))
     );
 
     const user = userEvent.setup();

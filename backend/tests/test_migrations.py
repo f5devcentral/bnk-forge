@@ -534,3 +534,112 @@ class TestMigrationExecution:
         finally:
             engine.dispose()
             os.unlink(db_path)
+
+    def test_v2_155_backfills_only_the_legacy_mcp_service_row(self):
+        """bonnyr-f5 #188 r4 (INV-7): the backfill lives in a NEW revision v2_155,
+        NOT appended to the already-shipped v2_154.
+
+        v2_154 (shipped in earlier RCs) only adds the column with server_default
+        false — appending a backfill there would never run for an install already
+        stamped v2_154 (an applied revision is immutable), i.e. exactly the existing
+        installs the backfill must fix. v2_155 chains from v2_154 and does the
+        backfill, so any install at v2_154 applies it on the next upgrade.
+
+        This test drives the two revisions in sequence and asserts v2_155 flips
+        ONLY the row with the legacy creation fingerprint (username 'mcp' + the
+        synthesised email 'mcp@bnk-forge.local'), never a human — including a human
+        named 'admin', a normal human, or a human who merely happens to be named
+        'mcp' with a real email. It also proves the exact BLOCKER-2 scenario: a DB
+        already at v2_154 with the mcp row still False gets it backfilled by v2_155.
+        """
+        import importlib.util
+
+        import sqlalchemy as sa
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy import create_engine, inspect, text
+        from sqlalchemy.pool import StaticPool
+
+        def _load(basename, modname):
+            path = os.path.join(backend_path, "alembic", "versions", basename)
+            spec = importlib.util.spec_from_file_location(modname, path)
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+
+        v2_154 = _load("v2_154_user_is_service_account.py", "migration_v2_154")
+        v2_155 = _load("v2_155_backfill_is_service_account.py", "migration_v2_155")
+
+        # v2_155 must chain directly from v2_154 (single linear head).
+        assert v2_155.down_revision == "v2_154"
+        assert v2_154.down_revision == "v2_153"
+
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        # users table in the pre-v2_154 shape (no is_service_account column).
+        metadata = sa.MetaData()
+        sa.Table(
+            "users", metadata,
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("username", sa.String(255), unique=True, nullable=False),
+            sa.Column("email", sa.String(255), unique=True, nullable=False),
+            sa.Column("hashed_password", sa.String(255), nullable=False),
+            sa.Column("role", sa.String(50), nullable=False, server_default="operator"),
+            sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
+            sa.Column("must_change_password", sa.Boolean, nullable=False, server_default=sa.false()),
+        )
+        metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO users (username,email,hashed_password,role,is_active,must_change_password) VALUES "
+                "('mcp','mcp@bnk-forge.local','x','admin',1,0),"        # legacy service acct
+                "('admin','admin@corp.com','y','admin',1,0),"          # human admin
+                "('alice','alice@corp.com','z','operator',1,0),"        # ordinary human
+                "('mcp2','mcp@real-human.com','w','operator',1,0)"      # human named 'mcp' w/ real email
+            ))
+
+        def flags(conn):
+            return {
+                r._mapping["username"]: r._mapping["is_service_account"]
+                for r in conn.execute(text("SELECT username, is_service_account FROM users"))
+            }
+
+        with engine.begin() as connection:
+            migration_context = MigrationContext.configure(connection)
+            ops = Operations(migration_context)
+
+            # v2_154 adds the column only — every pre-existing row is False. This is
+            # the exact state of an install stamped v2_154 at the earlier commit.
+            v2_154.op = ops
+            v2_154.upgrade()
+            f0 = flags(connection)
+            assert all(v in (0, False) for v in f0.values()), (
+                "v2_154 must NOT backfill — that would resurrect the immutable-migration hole"
+            )
+
+            # v2_155 backfills exactly the legacy mcp row (the BLOCKER-2 fix path).
+            v2_155.op = ops
+            v2_155.upgrade()
+            f = flags(connection)
+            assert f["mcp"] in (1, True), "legacy mcp service row must be backfilled True by v2_155"
+            assert f["admin"] in (0, False), "human admin must NOT be reclassified"
+            assert f["alice"] in (0, False), "ordinary human must NOT be reclassified"
+            assert f["mcp2"] in (0, False), "human named 'mcp' with a real email must NOT be reclassified"
+
+            # Round-trip: v2_155 down clears only the flag; v2_154 down drops the column.
+            v2_155.downgrade()
+            assert flags(connection)["mcp"] in (0, False), "v2_155 downgrade must clear the flag"
+            v2_154.downgrade()
+            cols = {c["name"] for c in inspect(connection).get_columns("users")}
+            assert "is_service_account" not in cols
+
+            # Idempotent re-apply (CI round-trip gate).
+            v2_154.upgrade()
+            v2_155.upgrade()
+            assert flags(connection)["mcp"] in (1, True)
+
+        engine.dispose()

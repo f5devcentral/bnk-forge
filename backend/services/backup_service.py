@@ -38,7 +38,7 @@ METADATA_TABLES = [
     "users",
     "bare_metal_hosts",
     "bare_metal_deployments",
-    "bnk_version_profiles",
+    "bnk_deployable_release",
     "helm_charts",
     "stack_templates",
     "stack_instances",
@@ -566,6 +566,19 @@ class BackupService:
 
         with open(key_path, "wb") as f:
             f.write(raw_key)
+
+        # bonnyr-f5 #193 B-3 (r4 self-review): a restored key is operator-provisioned
+        # (the caller supplied the wrapping passphrase). Drop the `.operator` provenance
+        # marker beside it so the next boot classifies it operator-provided and
+        # validate_production passes -- without it, the restored (marker-less) key would
+        # be treated as auto-generated and fail the production gate. config.Settings
+        # never overwrites this file, so the restored key survives and stays decryptable.
+        marker_path = key_path + ".operator"
+        try:
+            with open(marker_path, "w") as mf:
+                mf.write("")
+        except OSError as e:
+            logger.warning("Could not write provenance marker %s: %s", marker_path, e)
 
         logger.info("Encryption key replaced at %s", key_path)
 

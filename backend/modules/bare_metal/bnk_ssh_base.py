@@ -252,12 +252,15 @@ class BnkSSHModule(SSHModule):
                     f"Deployment {name} not Available within timeout: {r.stderr[:300]}"
                 )
 
-    # Transient admission-webhook transport failure: the API server could not
-    # *reach* the webhook backend (Pod still cold-starting), distinct from an
-    # admission *denial* ("admission webhook ... denied the request"). Safe to
-    # retry since ``kubectl apply`` is idempotent. Belt to the deployment gate's
-    # braces — closes the sub-second gap between Pod-Ready and endpoint routing.
+    # Transient admission errors safe to retry (``kubectl apply`` is idempotent):
+    #   WEBHOOK: API server could not *reach* the webhook backend (Pod cold-starting),
+    #     distinct from an admission *denial*. Belt to the deployment gate's braces —
+    #     closes the sub-second gap between Pod-Ready and endpoint routing.
+    #   QUOTA: ResourceQuota controller has not yet initialized .status.used for a
+    #     custom resource type (e.g. f5-single-license-quota in BNK 2.3.1). Clears
+    #     within seconds once the quota controller reconciles.
     WEBHOOK_RETRY_MARKER = "failed calling webhook"
+    QUOTA_STATUS_RETRY_MARKER = "status unknown for quota"
     WEBHOOK_RETRY_ATTEMPTS = 4
     WEBHOOK_RETRY_SLEEP = 15
 
@@ -305,10 +308,12 @@ class BnkSSHModule(SSHModule):
         """Apply manifests via ``sudo kubectl apply -f <file>``.
 
         Manifests are expected to be self-contained (namespaced resources carry
-        their own metadata.namespace), matching the catalog render. Retries on a
-        transient admission-webhook transport error (see ``WEBHOOK_RETRY_MARKER``).
-        The manifest is written to a private temp file first — see
-        ``_write_remote_tmp`` for why we don't pipe a heredoc into ``sudo``.
+        their own metadata.namespace), matching the catalog render. Retries on
+        transient admission errors: webhook transport failure
+        (``WEBHOOK_RETRY_MARKER``) and ResourceQuota status not yet initialized
+        (``QUOTA_STATUS_RETRY_MARKER``). The manifest is written to a private
+        temp file first — see ``_write_remote_tmp`` for why we don't pipe a
+        heredoc into ``sudo``.
         """
         docs = manifests_to_yaml(manifests)
         tag = f"[{self.path.split('/')[-1]}]"
@@ -320,9 +325,12 @@ class BnkSSHModule(SSHModule):
                 r = session.execute(cmd, timeout=self.timeout)
                 if r.exit_code == 0:
                     break
-                if self.WEBHOOK_RETRY_MARKER in r.stderr and attempt < self.WEBHOOK_RETRY_ATTEMPTS:
+                if (
+                    any(m in r.stderr for m in (self.WEBHOOK_RETRY_MARKER, self.QUOTA_STATUS_RETRY_MARKER))
+                    and attempt < self.WEBHOOK_RETRY_ATTEMPTS
+                ):
                     on_output(
-                        f"{tag} admission webhook not reachable yet "
+                        f"{tag} transient admission error (webhook/quota not ready yet) "
                         f"(attempt {attempt}/{self.WEBHOOK_RETRY_ATTEMPTS}); "
                         f"retrying in {self.WEBHOOK_RETRY_SLEEP}s..."
                     )

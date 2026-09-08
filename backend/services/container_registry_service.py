@@ -27,6 +27,7 @@ import gzip
 import io
 import json
 import logging
+import re
 import tarfile
 from datetime import UTC, datetime
 from typing import Any
@@ -218,6 +219,28 @@ class ContainerRegistryService:
         self.db.refresh(reg)
         return self.serialize(reg)
 
+    @staticmethod
+    def canonical_host(value: str | None) -> str:
+        """Canonical form of a registry host, for COMPARISON.
+
+        Every consumer already canonicalizes before matching —
+        container_run_secrets and supply_chain both `.strip().lower()` — so a
+        raw string comparison here made the guard more sensitive than any real
+        behaviour. "harbor.internal" -> "Harbor.Internal" is a no-op for
+        matching, for DNS and for the https://{host}/v2/ URL, yet it tripped the
+        clearing and destroyed write-only credentials that cannot be re-obtained.
+
+        That was reachable from the UI, not theoretical: the edit dialog's type
+        dropdown writes DEFAULT_HOSTS[type], which is '' for artifactory/harbor/
+        distribution/oci, and '' is not nullish so the ?? fallback does not fire.
+        """
+        host = (value or "").strip().lower().rstrip("/")
+        # A default port is not a different host.
+        for scheme_port in (":443", ":80"):
+            if host.endswith(scheme_port):
+                host = host[: -len(scheme_port)]
+        return host
+
     def update_registry(self, registry_id: int, data) -> dict:
         reg = self._get_registry(registry_id)
 
@@ -243,9 +266,57 @@ class ContainerRegistryService:
         credential_template_id = update_data.pop("credential_template_id", "__unset__")
 
         old_type = reg.type
+        old_host = reg.registry_host
         for key, value in update_data.items():
             if hasattr(reg, key):
                 setattr(reg, key, value)
+
+        # Repointing a registry at a different host INVALIDATES every stored
+        # credential (issue #79, item 3).
+        #
+        # Registries are global and `require_operator` is the only gate on the
+        # PUT, so any operator reaches any other operator's registry. Without
+        # this, operator A changes registry_host on a registry operator B
+        # configured and presses Test: `_test_basic_v2` decrypts B's token,
+        # `_test_far` base64s B's service account, `_test_derived` mints a live
+        # ECR token — each sent to A's host.
+        #
+        # UNCONDITIONAL on host change, deliberately. A previous version gated
+        # this on "did the caller supply a new credential", which was a
+        # disjunction over all three families and therefore bypassable by
+        # supplying an OFF-family value: a `far_service_account: "{}"` (which
+        # _normalize_far_service_account accepts, since any parseable JSON
+        # passes) preserved a harbor record's token; replaying the record's own
+        # credential_template_id — serialized to every viewer — preserved a
+        # derived record's template. The clearing must not depend on what the
+        # caller sent.
+        #
+        # The re-apply blocks below then put back only what WAS supplied in this
+        # same request, which is the legitimate "move the registry and give it
+        # new credentials" flow.
+        #
+        # Explicit None comparison rather than a truthiness test: registry_host
+        # has no min_length at create, so an empty-string host is reachable and
+        # `"" -> "attacker.example.com"` must still clear.
+        host_changed = self.canonical_host(old_host) != self.canonical_host(reg.registry_host)
+        if host_changed:
+            reg.username = None
+            reg.token_encrypted = None
+            reg.far_service_account_encrypted = None
+            reg.credential_template_id = None
+            # Clear the whole cached verdict — leaving last_test_at behind
+            # renders a stale success timestamp beside a null status.
+            reg.last_test_status = None
+            reg.last_test_at = None
+            reg.last_test_message = (
+                "Credentials cleared because the registry host changed; supply "
+                "credentials for the new host before testing."
+            )
+            logger.warning(
+                "Registry %s host changed %r -> %r; all stored credentials "
+                "cleared to prevent them being sent to the new host.",
+                reg.id, old_host, reg.registry_host,
+            )
 
         # A type switch crosses credential families (basic-auth / far / derived).
         # Drop the previous family's credential so no stale secret survives under
@@ -260,6 +331,20 @@ class ContainerRegistryService:
                 self._normalize_far_service_account(far_service_account)
             )
         if credential_template_id != "__unset__":
+            # Re-applied even on a host change, deliberately.
+            #
+            # A template id is a public reference rather than a secret, so at
+            # first glance honouring it here lets an attacker re-attach the
+            # victim's credentials to their own host. But `create_registry`
+            # already accepts ANY template id on a NEW registry at ANY host
+            # (:212, no ownership check), so refusing it here buys nothing —
+            # the same outcome is one POST away — while making a derived
+            # registry's host impossible to change at all, since the
+            # derived-type invariant below then rejects the update.
+            #
+            # The real gap is that credential templates carry no per-operator
+            # authorisation on either path. That is a separate, pre-existing
+            # issue and is filed as such; it is NOT closed by this change.
             self._apply_derived_template(reg, credential_template_id, required=False)
 
         # Switching to a derived type without a template leaves a registry that
@@ -380,7 +465,10 @@ class ContainerRegistryService:
         url = f"https://{reg.registry_host}/v2/"
         auth = (reg.username or "", token)
         try:
-            resp = requests.get(url, auth=auth, timeout=15)
+            # allow_redirects=False: a 302 off the vetted host would carry the
+            # Authorization header to wherever it points, re-opening the exfil
+            # path the allowlist just closed.
+            resp = requests.get(url, auth=auth, timeout=15, allow_redirects=False)
         except requests.RequestException as exc:
             return {"success": False, "error": f"Connection to {reg.registry_host} failed: {exc}"}
 
@@ -458,6 +546,48 @@ class ContainerRegistryService:
             "error": f"Unexpected response from FAR {reg.registry_host} (HTTP {resp.status_code}).",
         }
 
+    # Derived registries mint a LIVE cloud credential at test time, so their
+    # host must look like the provider's. Unlike a standalone Harbor or
+    # Artifactory — which is legitimately self-hosted on any name, and is why a
+    # general host allowlist was rejected earlier — ECR and ICR hosts are
+    # provider-shaped and therefore constrainable.
+    _DERIVED_HOST_PATTERNS = {
+        # ecr-fips is a real endpoint family (govcloud/regulated), public.ecr.aws
+        # is ECR Public, and IBM exposes private.<region>.icr.io — all legitimate
+        # and all refused by a first pass that was too tight. A false positive
+        # here blocks a working registry, which is the same mistake as the
+        # allowlist that would have broken self-hosted Harbor.
+        "ecr": re.compile(
+            r"^(\d+\.dkr\.ecr(-fips)?\.[a-z0-9-]+\.amazonaws\.com(\.cn)?|public\.ecr\.aws)$"
+        ),
+        "icr": re.compile(r"^([a-z0-9-]+\.)*icr\.io$"),
+    }
+
+    def _assert_derived_host_matches_provider(self, reg: ContainerRegistry) -> None:
+        """Refuse to mint a cloud token for a host that is not the provider's.
+
+        credential_template_id is a PUBLIC reference — it is serialized to every
+        viewer — so an operator can repoint a derived registry at a host they
+        control, replay the id, press Test, and receive a live ECR
+        authorization token minted from someone else's AWS keys. Clearing on
+        host change does not stop it, because the replayed id re-attaches the
+        template in the same request; and templates carry no per-operator
+        authorisation (a separate, wider gap).
+
+        Constraining the DESTINATION is what actually closes the exfil: the
+        token can only ever be sent to the cloud provider it came from.
+        """
+        pattern = self._DERIVED_HOST_PATTERNS.get(reg.type)
+        if not pattern:
+            return
+        host = self.canonical_host(reg.registry_host)
+        if not pattern.match(host):
+            raise BadRequestError(
+                f"registry_host '{reg.registry_host}' is not a valid {reg.type.upper()} "
+                f"endpoint. A derived registry mints a live cloud credential when "
+                f"tested, so it may only point at its own provider."
+            )
+
     def _test_derived(self, reg: ContainerRegistry) -> dict[str, Any]:
         """Connectivity test for derived registry types (icr, ecr).
 
@@ -465,6 +595,8 @@ class ContainerRegistryService:
         CloudCredentialTemplate, then probes the registry v2 API with the
         exchanged credential.
         """
+        self._assert_derived_host_matches_provider(reg)
+
         try:
             username, password = self.resolve_pull_credentials(reg)
         except DerivedTokenExchangeError as exc:
@@ -472,7 +604,12 @@ class ContainerRegistryService:
 
         url = f"https://{reg.registry_host}/v2/"
         try:
-            resp = requests.get(url, auth=(username, password), timeout=15)
+            # allow_redirects=False on every test path, not just basic-auth: a
+            # 302 lets the server steer the probe, and this one carries a live
+            # minted cloud token.
+            resp = requests.get(
+                url, auth=(username, password), timeout=15, allow_redirects=False
+            )
         except requests.RequestException as exc:
             return {"success": False, "error": f"Connection to {reg.registry_host} failed: {exc}"}
 

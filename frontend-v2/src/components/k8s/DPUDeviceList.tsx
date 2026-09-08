@@ -26,7 +26,8 @@ import {
   ChevronRight,
   Server,
 } from 'lucide-react';
-import type { DpfDpuDevice, DpfK8sCondition } from '@/types';
+import type { DpfDpuDevice } from '@/types';
+import { deviceStage } from '@/lib/dpu-device-status';
 
 // ── Props ─────────────────────────────────────────────────────────────────
 
@@ -36,14 +37,6 @@ interface DPUDeviceListProps {
 }
 
 // ── Condition Helpers ─────────────────────────────────────────────────────
-
-/** Ordered lifecycle conditions for DPUDevice. */
-const DEVICE_CONDITIONS = [
-  'DpuDeviceDiscovered',
-  'DpuDeviceNodeAttached',
-  'DpuDeviceInitialized',
-  'DpuDeviceReady',
-] as const;
 
 type ConditionStatus = 'True' | 'False' | 'Unknown' | undefined;
 
@@ -61,22 +54,6 @@ function conditionColor(status: ConditionStatus) {
     case 'False': return 'text-destructive';
     default:      return 'text-muted-foreground';
   }
-}
-
-/** Get the highest reached lifecycle stage. */
-function deviceStage(conditions: DpfK8sCondition[] | undefined): string {
-  if (!conditions?.length) return 'Unknown';
-  for (let i = DEVICE_CONDITIONS.length - 1; i >= 0; i--) {
-    const c = conditions.find((cond) => cond.type === DEVICE_CONDITIONS[i]);
-    if (c?.status === 'True') {
-      // Return friendly name
-      return DEVICE_CONDITIONS[i].replace('DpuDevice', '');
-    }
-  }
-  // Check for error
-  const errCond = conditions.find((c) => c.type === 'DpuDeviceError');
-  if (errCond?.status === 'True') return 'Error';
-  return 'Pending';
 }
 
 type StageBadgeVariant = 'success' | 'info' | 'warning' | 'destructive' | 'muted';

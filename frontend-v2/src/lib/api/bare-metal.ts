@@ -12,7 +12,7 @@ import type {
   BareMetalDiscoveryRequest,
   BareMetalDiscoveryResponse,
   DiscoveryTriggerResponse,
-  BnkVersionProfile,
+  DeployableRelease,
   DeploymentPlanPreview,
 } from '@/types/bare-metal';
 
@@ -165,19 +165,34 @@ export const bareMetalDeploymentsApi = {
   },
 };
 
-// --- Version Profiles ---
+// --- Deployable Releases ---
 
-export const bareMetalProfilesApi = {
-  listProfiles: async (): Promise<BnkVersionProfile[]> => {
-    const resp = await apiClient.get<{ profiles: BnkVersionProfile[] }>(
-      '/api/bare-metal/version-profiles'
+export const deployableReleasesApi = {
+  listReleases: async (): Promise<DeployableRelease[]> => {
+    const resp = await apiClient.get<{ releases: DeployableRelease[] }>(
+      '/api/bare-metal/deployable-releases'
     );
-    return resp.data.profiles;
+    return resp.data.releases;
   },
 
-  getProfile: async (profileId: number): Promise<BnkVersionProfile> => {
-    const resp = await apiClient.get<BnkVersionProfile>(
-      `/api/bare-metal/version-profiles/${profileId}`
+  getRelease: async (releaseId: number): Promise<DeployableRelease> => {
+    const resp = await apiClient.get<DeployableRelease>(
+      `/api/bare-metal/deployable-releases/${releaseId}`
+    );
+    return resp.data;
+  },
+
+  activate: async (releaseId: number, isActive: boolean): Promise<DeployableRelease> => {
+    const resp = await apiClient.post<DeployableRelease>(
+      `/api/bare-metal/deployable-releases/${releaseId}/activate`,
+      { is_active: isActive }
+    );
+    return resp.data;
+  },
+
+  setDefault: async (releaseId: number): Promise<DeployableRelease> => {
+    const resp = await apiClient.post<DeployableRelease>(
+      `/api/bare-metal/deployable-releases/${releaseId}/set-default`
     );
     return resp.data;
   },

@@ -129,6 +129,7 @@ class ModuleSyncService:
             'manifest_sync_used': False,
             'pack_manifests_discovered': 0,
             'stale_modules_inactivated': 0,
+            'pinned_versions_inactivated': [],
             'pack_errors': [],
             'version_conflicts': [],
         }
@@ -189,10 +190,15 @@ class ModuleSyncService:
                             error=e,
                         )
 
-                results['stale_modules_inactivated'] = self._inactivate_stale_manifest_modules(
+                stale_count, pinned_warnings = self._inactivate_stale_manifest_modules(
                     source_id=source.id,
                     discovered_pack_paths=set(pack_paths),
                 )
+                results['stale_modules_inactivated'] = stale_count
+                # Prominent, per-module, naming the projects (#91). A distinct
+                # key, not folded into 'errors': the sync SUCCEEDED; this is a
+                # consequence the operator must see, not a failure.
+                results['pinned_versions_inactivated'] = pinned_warnings
             else:
                 # Legacy fallback: only when no manifests exist in source.
                 modules = self._find_terraform_modules(temp_dir)
@@ -732,15 +738,12 @@ class ModuleSyncService:
         The result is never None, so the validator never skips the host check
         on artifact ingest.
         """
-        from services.defaults_service import SYSTEM_DEFAULTS, get_default
+        # One resolver shared with the runtime pull-auth path
+        # (supply_chain.enforce_host_allowlist), so ingest and runtime can never
+        # again disagree on what an empty allowlist means (#79).
+        from services.execution.supply_chain import resolve_registry_host_allowlist
 
-        try:
-            raw = get_default(self.db, "container.registry_host_allowlist")
-        except Exception:
-            raw = None
-        if not raw:
-            raw = SYSTEM_DEFAULTS["container.registry_host_allowlist"]["value"]
-        return [host.strip() for host in str(raw).split(",") if host.strip()]
+        return sorted(resolve_registry_host_allowlist(self.db))
 
     def _parse_terraform_module(self, module_path: str, repo_path: str) -> dict | None:
         """
@@ -1240,12 +1243,25 @@ class ModuleSyncService:
             'message': error_text,
         })
 
-    def _inactivate_stale_manifest_modules(self, source_id: int, discovered_pack_paths: set[str]) -> int:
+    def _inactivate_stale_manifest_modules(
+        self, source_id: int, discovered_pack_paths: set[str]
+    ) -> tuple[int, list[dict]]:
         """
         Mark missing manifest-backed source modules inactive after successful manifest sync.
 
         Legacy Terraform-only imports are intentionally excluded from this reconciliation.
+
+        Returns ``(stale_count, pinned_warnings)``. A version row still
+        referenced by project modules is deactivated anyway -- the FK keeps
+        deployments working and the destroy hazard stays fixed -- but it
+        disappears from every active-filtered surface (catalog list,
+        available_module_versions, re-pin targets) with no signal. ADR D-033
+        Decision 4 promised a guard or a loud warning here and neither existed
+        (#91). Each such row is reported with the projects that pin it, so the
+        sync result says exactly what was taken out from under whom.
         """
+        from models import Project, ProjectModule
+
         stale_count = 0
         source_rows = self.db.query(ModuleLibrary).filter(
             ModuleLibrary.module_source_id == source_id,
@@ -1253,12 +1269,39 @@ class ModuleSyncService:
         ).all()
 
         stale_paths: set[str] = set()
+        pinned_warnings: list[dict] = []
         for module in source_rows:
             if not self._is_manifest_backed_module(module):
                 continue
             module_identity = module.source_path if module.source_path is not None else (module.path or '')
             if module_identity in discovered_pack_paths:
                 continue
+
+            pinning = (
+                self.db.query(ProjectModule.project_id, Project.name)
+                .join(Project, Project.id == ProjectModule.project_id)
+                .filter(ProjectModule.module_library_id == module.id)
+                .distinct()
+                .all()
+            )
+            if pinning:
+                warning = {
+                    "module_id": module.id,
+                    "path": module.path,
+                    "version": module.version,
+                    "pinned_by": [
+                        {"project_id": pid, "project_name": pname} for pid, pname in pinning
+                    ],
+                    "message": (
+                        f"Deactivated {module.path}@{module.version}: no longer published by "
+                        f"the source but still pinned by {len(pinning)} project(s). Existing "
+                        f"deployments keep working; the version is hidden from catalog and re-pin "
+                        f"surfaces. Re-publish it, or change those modules' version."
+                    ),
+                }
+                pinned_warnings.append(warning)
+                logger.warning("module_sync: %s", warning["message"])
+
             module.is_active = False
             stale_count += 1
             if module.path:
@@ -1270,7 +1313,7 @@ class ModuleSyncService:
         for path in stale_paths:
             recompute_is_latest(self.db, source_id, path)
 
-        return stale_count
+        return stale_count, pinned_warnings
 
     def _is_manifest_backed_module(self, module: ModuleLibrary) -> bool:
         """Return True when module row represents manifest-backed import data."""

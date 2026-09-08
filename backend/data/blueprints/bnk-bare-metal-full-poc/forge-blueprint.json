@@ -3,8 +3,8 @@
   "blueprint": {
     "id": "bnk-bare-metal-full-poc",
     "version": "1.0.0",
-    "name": "DPU + BNK 2.2 Full PoC (All-in-One)",
-    "description": "End-to-end: DPU flash \u2192 K8s cluster \u2192 BNK 2.2 platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately."
+    "name": "DPU + BNK Full PoC (All-in-One)",
+    "description": "End-to-end: DPU flash \u2192 K8s cluster \u2192 BNK platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately."
   },
   "category": "bare-metal",
   "cloud_provider": null,

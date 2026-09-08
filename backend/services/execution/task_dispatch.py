@@ -64,6 +64,30 @@ def _get_explicit_execution_engine(module) -> str | None:
     return None
 
 
+def _assert_module_runnable(module, operation: str) -> None:
+    """Refuse to dispatch work for a DISABLED module.
+
+    Enforced HERE because this is the chokepoint every deploy path crosses.
+    Gating at the callers missed several: stack_service.run_deploy (Deploy All
+    for a stack — and _apply_topology_module_filter is the tree's main producer
+    of disabled modules, so that path is the one that matters most),
+    submit_init, and the worker auto-apply chains in container_tasks /
+    opentofu_tasks, which gate only on can_execute() — a dependency check that
+    never looks at `enabled`.
+
+    Destroy is deliberately NOT gated: a disabled module can still hold live
+    infrastructure, and refusing to tear it down would strand it with no UI
+    affordance left to reach it.
+    """
+    if operation == "destroy":
+        return
+    if getattr(module, "enabled", True) is False:
+        raise ValueError(
+            f"Module {getattr(module, 'id', '?')} is disabled; refusing to "
+            f"dispatch {operation}. Enable it first."
+        )
+
+
 def _resolve_dispatch_engine(module) -> str:
     """Resolve dispatch family: ansible | kubernetes | opentofu."""
     explicit_execution_engine = _get_explicit_execution_engine(module)
@@ -93,6 +117,7 @@ def dispatch_init(task_id: int, module, auto_apply: bool = False, force_reinit: 
 
     Returns the Celery AsyncResult (same as .delay() would return).
     """
+    _assert_module_runnable(module, "init")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -139,6 +164,7 @@ def dispatch_init(task_id: int, module, auto_apply: bool = False, force_reinit: 
 
 def dispatch_plan(task_id: int, module):
     """Dispatch a plan operation to the correct engine."""
+    _assert_module_runnable(module, "plan")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -192,8 +218,8 @@ def _safe_int(value, default: int) -> int:
         return default
 
 
-def _derive_container_apply_time_limits(module) -> dict:
-    """Per-module Celery time limits derived from a container module's apply budget.
+def _derive_container_time_limits(module, phase: str = "apply", action: str | None = None) -> dict:
+    """Per-module Celery time limits derived from a container module's step budget.
 
     The global ``task_time_limit`` assumes a worst case that a manifest can legitimately
     exceed once per-step retry/backoff is declared (e.g. a long cluster build that
@@ -203,13 +229,35 @@ def _derive_container_apply_time_limits(module) -> dict:
     ``visibility_timeout`` so a long task is never redelivered (double-executed) by the
     broker; a manifest needing more than the ceiling is logged, not silently truncated.
 
+    ``phase`` selects the step-set: "apply", "destroy", or "action" (with the
+    action name). A destroy or a long e2e/scenario action can outlive the global
+    limit exactly as an apply can — and being hard-killed mid-run leaves the
+    module lock behind for the reclaim sweep, so all three need the same
+    treatment (issue #463 F5).
+
     Returns ``apply_async`` kwargs, or ``{}`` to use the global defaults.
     """
     lib = getattr(module, "library_module", None)
     manifest = getattr(lib, "pack_manifest", None)
     if not isinstance(manifest, dict):
         return {}
-    steps = (manifest.get("steps") or {}).get("apply")
+    if phase == "action":
+        # Actions live under manifest["actions"][name]["steps"] -- a shape
+        # canonical_step_sets does not cover, so read it directly.
+        declared = (manifest.get("actions") or {})
+        block = declared.get(action) if isinstance(declared, dict) else None
+        steps = (block or {}).get("steps") if isinstance(block, dict) else None
+    else:
+        # Resolve lifecycle steps through the SAME resolver the engine and the
+        # validator use. A manifest may declare them at top-level ``steps`` or
+        # at ``execution.steps`` (canonical since #123; declaring both is
+        # rejected). Reading ``manifest["steps"]`` here meant an
+        # ``execution.steps`` manifest derived an empty budget and silently
+        # fell back to the global limit -- so the long cluster build this
+        # function exists to protect was hard-killed mid-run anyway (#127).
+        from services.module_metadata import canonical_step_sets
+
+        steps = canonical_step_sets(manifest).get(phase)
     if not isinstance(steps, list):
         return {}
 
@@ -235,9 +283,9 @@ def _derive_container_apply_time_limits(module) -> dict:
     ceiling = vis_timeout - 600
     if hard > ceiling:
         logger.warning(
-            "Module %s apply budget (%ss) exceeds the safe ceiling (%ss) below the broker "
+            "Module %s %s budget (%ss) exceeds the safe ceiling (%ss) below the broker "
             "visibility_timeout (%ss); capping. Reduce step retries or raise visibility_timeout.",
-            module.id, hard, ceiling, vis_timeout,
+            module.id, phase, hard, ceiling, vis_timeout,
         )
         hard = ceiling
     return {"time_limit": hard, "soft_time_limit": max(global_hard, hard - 300)}
@@ -258,6 +306,7 @@ def dispatch_apply(task_id: int, module, force_new_plan: bool = False, auto_appr
 
     Returns the Celery AsyncResult.
     """
+    _assert_module_runnable(module, "apply")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -287,7 +336,7 @@ def dispatch_apply(task_id: int, module, force_new_plan: bool = False, auto_appr
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_apply
 
-        limits = _derive_container_apply_time_limits(module)
+        limits = _derive_container_time_limits(module, "apply")
         logger.info(
             f"Dispatching apply for module {module.id} → Container engine (metadata)"
             + (f" with derived time limits {limits}" if limits else "")
@@ -342,8 +391,12 @@ def dispatch_destroy(task_id: int, module):
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_destroy
 
-        logger.info(f"Dispatching destroy for module {module.id} → Container engine (metadata)")
-        return run_container_destroy.delay(task_id, module.id)
+        limits = _derive_container_time_limits(module, "destroy")
+        logger.info(
+            f"Dispatching destroy for module {module.id} → Container engine (metadata)"
+            + (f" with derived time limits {limits}" if limits else "")
+        )
+        return run_container_destroy.apply_async((task_id, module.id), **limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_destroy
@@ -363,6 +416,7 @@ def dispatch_container_action(task_id: int, module, action: str, action_inputs: 
     Actions are a container-engine-only contract; any other engine is a
     caller error surfaced loudly rather than silently routed elsewhere.
     """
+    _assert_module_runnable(module, "action")
     dispatch_engine = _resolve_dispatch_engine(module)
     if dispatch_engine != "container":
         raise ValueError(
@@ -372,8 +426,14 @@ def dispatch_container_action(task_id: int, module, action: str, action_inputs: 
 
     from tasks.container_tasks import run_container_action
 
-    logger.info(f"Dispatching action '{action}' for module {module.id} → Container engine")
-    return run_container_action.delay(task_id, module.id, action, action_inputs=action_inputs)
+    limits = _derive_container_time_limits(module, "action", action)
+    logger.info(
+        f"Dispatching action '{action}' for module {module.id} → Container engine"
+        + (f" with derived time limits {limits}" if limits else "")
+    )
+    return run_container_action.apply_async(
+        (task_id, module.id, action), {"action_inputs": action_inputs}, **limits
+    )
 
 
 def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False, auto_approve: bool = False):
@@ -390,6 +450,7 @@ def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False,
         auto_approve: Accepted for API compatibility but not used to force a new plan
                       (see dispatch_apply docstring).
     """
+    _assert_module_runnable(module, "apply")
     dispatch_engine = _resolve_dispatch_engine(module)
 
     if dispatch_engine == "ssh":
@@ -419,8 +480,9 @@ def dispatch_apply_signature(task_id: int, module, force_new_plan: bool = False,
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_apply
 
+        limits = _derive_container_time_limits(module, "apply")
         logger.info(f"Creating apply signature for module {module.id} → Container engine (metadata)")
-        return run_container_apply.s(task_id, module.id)
+        return run_container_apply.s(task_id, module.id).set(**limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_apply
@@ -470,8 +532,9 @@ def dispatch_destroy_signature(task_id: int, module):
     if dispatch_engine == "container":
         from tasks.container_tasks import run_container_destroy
 
+        limits = _derive_container_time_limits(module, "destroy")
         logger.info(f"Creating destroy signature for module {module.id} → Container engine (metadata)")
-        return run_container_destroy.s(task_id, module.id)
+        return run_container_destroy.s(task_id, module.id).set(**limits)
 
     if dispatch_engine == "kubernetes":
         from tasks.kubernetes_tasks import run_k8s_destroy

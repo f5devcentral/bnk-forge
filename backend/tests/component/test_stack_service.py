@@ -728,6 +728,99 @@ class TestDeployStack:
         assert result["message"] == "Deployment started"
         mock_deploy.assert_called_once()
 
+    @patch("services.system_service.SystemService.is_upgrade_in_progress", return_value=False)
+    @patch("services.stack_deployment_service.StackDeploymentService.deploy_stack", return_value=(True, "ok"))
+    def test_deploy_stack_stamps_host_version_profile_id(
+        self, _mock_deploy, _mock_upgrade, db, make_project, make_stack_template, make_stack_instance,
+    ):
+        """ADR-478 P1b: deploy_stack stamps host.version_profile_id from deployable_release_id."""
+        from models.bare_metal import BareMetalHost
+        from models.bnk_deployable_release import BnkDeployableRelease
+
+        p = make_project()
+        t = make_stack_template()
+
+        release = BnkDeployableRelease(
+            name="bnk-2.2-test",
+            display_name="BNK 2.2 Test",
+            description="test",
+            is_default=True,
+            is_active=True,
+            source_type="manual",
+            bnk_manifest_version="2.2.1-3.2226.0-0.0.511",
+            bnk_cr_kind="CNEInstance",
+            flo_version="2.17.2",
+            k8s_version="1.29.8",
+            doca_version="2.6.0",
+            containerd_version="1.7.22",
+            runc_version="1.1.14",
+            calico_version="3.27.3",
+            cert_manager_version="v1.16.1",
+            gateway_api_version="v1.1.0",
+            multus_version="4.0.2",
+            sriov_version="1.5.1",
+            storage_class_type="local-path",
+            storage_provisioner="rancher.io/local-path",
+        )
+        db.add(release)
+        db.flush()
+
+        host = BareMetalHost(
+            project_id=p.id,
+            name="test-host",
+            host_ip="10.0.0.1",
+        )
+        db.add(host)
+        db.flush()
+
+        # Stack variables use module-scoped nesting (matches StackDetailDialog.handleDeploy)
+        si = make_stack_instance(
+            project=p,
+            template=t,
+            variables={"bare-metal/bnk-infra": {"bare_metal_host_id": str(host.id)}},
+        )
+
+        svc = StackService(db)
+        svc.deploy_stack(p.id, si.id, deployable_release_id=release.id)
+
+        db.refresh(host)
+        assert host.version_profile_id == release.id, (
+            "host.version_profile_id must be stamped with the chosen deployable_release_id"
+        )
+
+    @patch("services.system_service.SystemService.is_upgrade_in_progress", return_value=False)
+    @patch("services.stack_deployment_service.StackDeploymentService.deploy_stack", return_value=(True, "ok"))
+    def test_deploy_stack_noop_without_release_id(
+        self, _mock_deploy, _mock_upgrade, db, make_project, make_stack_template, make_stack_instance,
+    ):
+        """ADR-478 P1b: deploy_stack without deployable_release_id leaves host unchanged."""
+        from models.bare_metal import BareMetalHost
+
+        p = make_project()
+        t = make_stack_template()
+
+        host = BareMetalHost(
+            project_id=p.id,
+            name="test-host-no-stamp",
+            host_ip="10.0.0.2",
+        )
+        db.add(host)
+        db.flush()
+
+        si = make_stack_instance(
+            project=p,
+            template=t,
+            variables={"bare-metal/bnk-infra": {"bare_metal_host_id": str(host.id)}},
+        )
+
+        svc = StackService(db)
+        svc.deploy_stack(p.id, si.id)  # no deployable_release_id
+
+        db.refresh(host)
+        assert host.version_profile_id is None, (
+            "host.version_profile_id must remain unchanged when no release_id is passed"
+        )
+
 
 class TestRunDeploy:
     """run_deploy orchestration safety checks."""

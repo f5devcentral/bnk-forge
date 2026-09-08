@@ -470,10 +470,60 @@ class ParallelExecutionService:
                 ]),
             ).first()
             if existing:
-                logger.info(
-                    "First destroy wave: skipping module %s — task %s already %s",
-                    module.id, existing.id, existing.status,
-                )
+                # ADOPT the in-flight task into this run rather than merely
+                # skipping it.
+                #
+                # Skipping left a module-scoped destroy (from
+                # POST /project-modules/{id}/destroy) as the newest — and only —
+                # destroy task for the module. When its worker finished, the
+                # chain guard read destroy_scope="module" off that very row and
+                # returned before chaining AND before terminal detection: the
+                # module's dependencies were never queued (live cloud infra
+                # stranded) and the stack/project sat in DESTROYING forever,
+                # because "applied" is not a terminal destroy status.
+                #
+                # Restamping makes the executing task a member of this run, so
+                # the guard resolves "project" and the chain proceeds. Scope
+                # belongs to the teardown run, not to whichever request happened
+                # to create the row.
+                meta = dict(existing.meta_data or {})
+                if meta.get("destroy_scope") != "project" or not existing.run_handle:
+                    meta["destroy_scope"] = "project"
+                    existing.meta_data = meta
+                    existing.run_handle = existing.run_handle or run_handle
+                    self.db.flush()
+                    logger.info(
+                        "First destroy wave: adopted in-flight task %s for module %s "
+                        "into run %s (was %s)",
+                        existing.id, module.id, run_handle,
+                        (existing.meta_data or {}).get("destroy_scope"),
+                    )
+                else:
+                    logger.info(
+                        "First destroy wave: skipping module %s — task %s already %s "
+                        "and already in this run",
+                        module.id, existing.id, existing.status,
+                    )
+                    # RESIDUAL RACE, deliberately not mitigated here.
+                    #
+                    # If the worker completes between the SELECT above and this
+                    # flush, its trigger has already run under the old "module"
+                    # scope and returned before chaining — the module's
+                    # dependencies stay unqueued and the entity stays DESTROYING.
+                    # The janitor does NOT recover it: reset_stale_tasks only
+                    # touches NON-TERMINAL tasks, and this one is terminal.
+                    #
+                    # I tried a commit-refresh-and-re-trigger here and could not
+                    # demonstrate it firing under test, so it is not shipped: an
+                    # unverified mitigation inside a destroy path is worse than a
+                    # documented window. Closing it properly wants an atomic
+                    # conditional UPDATE (adopt only while still non-terminal,
+                    # and re-trigger when it matches zero rows), which is a
+                    # change to how the wave claims work rather than a patch
+                    # here. Tracked separately.
+                    #
+                    # The window is microseconds and the adoption above covers
+                    # every other ordering.
                 if first_task_id is None:
                     first_task_id = existing.celery_task_id
                 continue
@@ -565,6 +615,16 @@ class ParallelExecutionService:
         modules_by_id = {m.id: m for m in modules}
 
         for module in modules:
+            # A disabled module is not runnable (issue #527). _check_missing_variables
+            # already skips these, so dispatching one here also meant deploying a
+            # module whose required variables were never validated.
+            if not module.enabled:
+                logger.info(
+                    "Skipping first-wave dispatch for module %s — module is disabled",
+                    module.id,
+                )
+                continue
+
             if module.status == ModuleStatus.APPLIED and not workspace.vars_changed(module):
                 continue
 

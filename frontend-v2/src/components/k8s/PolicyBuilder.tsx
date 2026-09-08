@@ -649,10 +649,10 @@ export function PolicyBuilder({ clusterId, namespace }: PolicyBuilderProps) {
   const duplicateWarning = useMemo(() => {
     if (!state.targetGateway || !state.name) return null;
     const existing = existingPolicies.find(
-      p => p.gateway_name === state.targetGateway &&
+      p => p.kind !== 'egress' && p.gateway_name === state.targetGateway &&
            (state.targetListener === '' || p.listener_name === state.targetListener)
     );
-    if (existing) {
+    if (existing && existing.kind !== 'egress') {
       return `Gateway "${state.targetGateway}" listener "${state.targetListener || 'all'}" already has policy "${existing.bnk_policy_name}" attached.`;
     }
     return null;

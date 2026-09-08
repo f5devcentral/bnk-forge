@@ -1,7 +1,13 @@
-# Root .dockerignore — reduces build context for frontend Dockerfile
-# (which uses context: . to access VERSION file from repo root)
+# Root .dockerignore — governs every image built with context: . , which is now
+# the frontend AND the backend targets (api/worker/beat). Both need the repo-root
+# VERSION file, which cannot be reached from a context rooted inside their own
+# directory.
 #
-# The backend/ and bnk-operator/ have their own .dockerignore files.
+# backend/.dockerignore no longer takes effect for those builds — Docker only
+# reads the ignore file at the context root — so the backend-specific exclusions
+# that still matter are reproduced below with a backend/ prefix.
+#
+# bnk-operator/ still builds with its own context and its own .dockerignore.
 
 # Version control
 .git/
@@ -31,16 +37,33 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 backend/.venv/
+backend/venv/
+backend/env/
 backend/tests/
 bnk-operator/tests/
+
+# Local runtime data under backend/ — mounted as volumes in production, never
+# part of an image. Previously excluded by backend/.dockerignore.
+backend/projects/
+backend/keys/
+backend/state/
+backend/workspaces/
+backend/helm_charts/
 
 # Node artifacts (frontend has its own context via COPY)
 frontend-v2/node_modules/
 frontend-v2/dist/
 
 # Environment files (secrets!)
+# OPS-004: exclude ALL .env files so they never enter a build context. These
+# patterns have no path prefix, so they match <root>/.env only — they do NOT
+# descend into backend/. The backend/ forms below carry over the rules from the
+# deleted backend/.dockerignore, which is the one set that did not come across
+# with the venvs and runtime dirs.
 .env
 .env.*
+backend/.env
+backend/.env.*
 secrets/
 
 # Test artifacts

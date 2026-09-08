@@ -1,15 +1,14 @@
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Route } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
-import type { K8sEgressRoute } from '@/types';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
 
 export function EgressDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
   const status = resource.status || {};
   const conditions = status.conditions || [];
-  const routes: K8sEgressRoute[] = spec.routes || [];
-  const snatPoolRef = spec.snatPoolRef || spec.snatPool;
+  const capturedNamespaces: string[] = spec.pseudoCNIConfig?.namespaces || [];
+  const vxlan = spec.pseudoCNIConfig?.vxlan;
 
   return (
     <div className="space-y-4">
@@ -21,23 +20,30 @@ export function EgressDetail({ resource }: DetailPanelProps) {
 
         <TabsContent value="summary" className="space-y-3">
           <Section title="Egress Config">
+            <InfoRow label="SNAT Type" value={spec.snatType} mono />
+            <InfoRow label="SNAT Pool" value={spec.egressSnatpool} mono />
+            <InfoRow label="Firewall Policy" value={spec.firewallEnforcedPolicy} mono />
+            <InfoRow label="Log Profile" value={spec.logProfile} mono />
             <InfoRow label="Namespace" value={resource.metadata?.namespace} mono />
             <InfoRow label="Age" value={formatAge(resource.metadata?.creationTimestamp)} />
-            {snatPoolRef && (
-              <InfoRow label="SNAT Pool" value={typeof snatPoolRef === 'string' ? snatPoolRef : snatPoolRef.name} mono />
-            )}
           </Section>
 
-          {routes.length > 0 && (
-            <Section title="Routes">
-              {routes.map((route: K8sEgressRoute, idx: number) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <Route className="h-3 w-3 text-info" />
-                  <code className="font-mono text-foreground/80">
-                    {typeof route === 'string' ? route : `${route.destination || route.network || 'N/A'} → ${route.gateway || route.gw || 'N/A'}`}
-                  </code>
-                </div>
-              ))}
+          {capturedNamespaces.length > 0 && (
+            <Section title="Captured Namespaces">
+              <div className="flex flex-wrap gap-1.5">
+                {capturedNamespaces.map((ns: string) => (
+                  <Badge key={ns} variant="secondary" className="text-[10px] py-0 font-mono">
+                    {ns}
+                  </Badge>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {vxlan && (
+            <Section title="VXLAN">
+              <InfoRow label="TMM Interface" value={vxlan.tmmInterfaceName} mono />
+              <InfoRow label="Node Interface" value={vxlan.nodeInterfaceName} mono />
             </Section>
           )}
         </TabsContent>

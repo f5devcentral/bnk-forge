@@ -431,22 +431,51 @@ describe('StaticRouteDetail', () => {
 
 describe('EgressDetail', () => {
   const resource = makeResource({
-    kind: 'F5BigCneEgress',
+    kind: 'F5SPKEgress',
+    namespace: 'f5-cne-system',
     spec: {
-      snatPoolRef: 'my-snat-pool',
-      routes: [{ destination: '0.0.0.0/0', gateway: '10.0.0.1' }],
+      snatType: 'SRC_TRANS_AUTOMAP',
+      egressSnatpool: 'my-snatpool',
+      firewallEnforcedPolicy: 'egress-demo-fw',
+      logProfile: 'egress-log-profile',
+      pseudoCNIConfig: {
+        namespaces: ['bnk-egress-demo'],
+        appPodInterface: 'eth0',
+        vxlan: {
+          tmmInterfaceName: 'ext-vlan',
+          nodeInterfaceName: 'ens5',
+        },
+      },
     },
   });
 
-  it('renders egress config with SNAT pool', () => {
+  it('renders egress config fields', () => {
     render(<EgressDetail resource={resource} />);
     expect(screen.getByText('Egress Config')).toBeInTheDocument();
-    expect(screen.getByText('my-snat-pool')).toBeInTheDocument();
+    expect(screen.getByText('SRC_TRANS_AUTOMAP')).toBeInTheDocument();
+    expect(screen.getByText('my-snatpool')).toBeInTheDocument();
+    expect(screen.getByText('egress-demo-fw')).toBeInTheDocument();
+    expect(screen.getByText('egress-log-profile')).toBeInTheDocument();
   });
 
-  it('renders routes section', () => {
+  it('renders captured namespaces', () => {
     render(<EgressDetail resource={resource} />);
-    expect(screen.getByText('Routes')).toBeInTheDocument();
+    expect(screen.getByText('Captured Namespaces')).toBeInTheDocument();
+    expect(screen.getByText('bnk-egress-demo')).toBeInTheDocument();
+  });
+
+  it('renders VXLAN interfaces', () => {
+    render(<EgressDetail resource={resource} />);
+    expect(screen.getByText('VXLAN')).toBeInTheDocument();
+    expect(screen.getByText('ext-vlan')).toBeInTheDocument();
+    expect(screen.getByText('ens5')).toBeInTheDocument();
+  });
+
+  it('omits captured namespaces and VXLAN sections when absent', () => {
+    const minimal = makeResource({ kind: 'F5SPKEgress', spec: { snatType: 'SRC_TRANS_NONE' } });
+    render(<EgressDetail resource={minimal} />);
+    expect(screen.queryByText('Captured Namespaces')).not.toBeInTheDocument();
+    expect(screen.queryByText('VXLAN')).not.toBeInTheDocument();
   });
 });
 

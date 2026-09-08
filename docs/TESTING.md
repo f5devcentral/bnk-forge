@@ -77,7 +77,8 @@ make coverage                # Backend + frontend coverage reports
 | `make test-proxy` | ~5s | `pytest tests/test_proxy_config.py` |
 | `make test-operator` | ~5s | `pytest` in `bnk-operator/` (skips if no venv) |
 | `make test-db` | ~5s | `pytest tests/test_migrations.py` |
-| `make test-integration-full` | ~5m | Full-stack integration (requires running Docker) |
+| `make test-integration` | ~4m | Integration tests, default marker set (everything except `full`) |
+| `make test-integration-full` | ~5m | Full-stack integration (`-m full`) |
 | `make test-e2e` | ~5m | Playwright E2E tier 1 |
 | `make test-e2e-tier2` | ~60m | Playwright E2E tier 2 (requires AWS) |
 | `make coverage` | ~2m | Coverage reports for backend + frontend |

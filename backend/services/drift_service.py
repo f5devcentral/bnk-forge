@@ -400,6 +400,53 @@ class DriftService(BaseService):
         cache.set(cache_key, result, ttl_seconds=120)
         return result
 
+    def _compute_release_drift(self, cluster) -> dict:
+        """
+        Compute deployed-vs-running release-line drift (ADR-494 Phase B).
+
+        Both sides are compared as BnkRelease.id (registry-row-id), never as
+        version strings.  Granularity is the VERSION LINE (e.g. BNK 2.3),
+        not an exact build (2.3.1) — discovery resolves FLO chart versions to
+        a whole release line via flo_version_prefix matching.
+
+        Fast path: if BnkDeployableRelease.bnk_release_id is already set use
+        it directly; otherwise resolve via flo_version through resolve_ga().
+
+        The running side is always loaded FK-direct (cluster.running_release_id)
+        because observed rows are is_active=False and would not re-match
+        resolve_ga().
+        """
+        from models.bnk_deployable_release import BnkDeployableRelease
+        from services.release_registry_service import ReleaseRegistryService
+
+        running_id: int | None = getattr(cluster, "running_release_id", None)
+        deployable_id: int | None = getattr(cluster, "deployable_release_id", None)
+
+        if deployable_id is None:
+            return {"status": "not_forge_deployed", "deployed_release_id": None, "running_release_id": running_id}
+
+        deployable = self.db.query(BnkDeployableRelease).filter(
+            BnkDeployableRelease.id == deployable_id
+        ).first()
+        if deployable is None:
+            return {"status": "not_forge_deployed", "deployed_release_id": None, "running_release_id": running_id}
+
+        # Fast path: pre-linked GA row.
+        deployed_row_id: int | None = deployable.bnk_release_id
+        if deployed_row_id is None:
+            ga = ReleaseRegistryService(self.db).resolve_ga(flo_version=deployable.flo_version)
+            deployed_row_id = ga.release_id if ga is not None else None
+
+        if deployed_row_id is None:
+            # Cluster IS Forge-deployed but the FLO version cannot be resolved to a known release line.
+            return {"status": "deployed_unresolved", "deployed_release_id": None, "running_release_id": running_id}
+
+        if running_id is None:
+            return {"status": "undiscovered", "deployed_release_id": deployed_row_id, "running_release_id": None}
+
+        status = "in_sync" if deployed_row_id == running_id else "drifted"
+        return {"status": status, "deployed_release_id": deployed_row_id, "running_release_id": running_id}
+
     @with_breaker("cluster", target_id_arg="cluster_id")
     def get_cluster_drift_status(self, cluster_id: int) -> dict:
         """Get drift status for all modules deployed to a cluster's project."""
@@ -434,6 +481,7 @@ class DriftService(BaseService):
                 "modules_unchecked": 0,
                 "overall_status": "unchecked",
                 "module_statuses": [],
+                "release_drift": self._compute_release_drift(cluster),
             }
 
         settings = self.db.query(DriftSettings).filter(
@@ -514,6 +562,7 @@ class DriftService(BaseService):
             "modules_unchecked": unchecked_count,
             "overall_status": overall_status,
             "module_statuses": module_statuses,
+            "release_drift": self._compute_release_drift(cluster),
         }
 
     def get_recent_drifted(self, limit: int = 20) -> list[dict]:

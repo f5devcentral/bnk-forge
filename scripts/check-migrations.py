@@ -8,6 +8,7 @@ Exit 0 = clean chain. Exit 1 = errors found (printed to stderr).
 """
 import ast
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,12 +16,14 @@ VERSIONS_DIR = Path(__file__).parent.parent / "backend" / "alembic" / "versions"
 FILENAME_PATTERN = re.compile(r"^v2_(\d{3})_.*\.py$")
 
 
-def extract_revision_metadata(filepath: Path) -> dict | None:
-    """Parse revision and down_revision from a migration file using AST."""
-    source = filepath.read_text()
-    tree = ast.parse(source, filename=str(filepath))
+def _parse_revision_from_source(source: str, filename: str) -> dict | None:
+    """Parse revision/down_revision from Python source text using AST."""
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return None
 
-    meta: dict = {"file": filepath.name, "path": filepath}
+    meta: dict = {"file": filename}
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -39,9 +42,21 @@ def extract_revision_metadata(filepath: Path) -> dict | None:
     return meta
 
 
-def check_chain(versions_dir: Path) -> list[str]:
-    """Run all chain integrity checks. Returns list of error messages."""
+def extract_revision_metadata(filepath: Path) -> dict | None:
+    """Parse revision and down_revision from a migration file using AST."""
+    meta = _parse_revision_from_source(filepath.read_text(), filepath.name)
+    if meta is not None:
+        meta["path"] = filepath
+    return meta
+
+
+def check_chain(versions_dir: Path) -> tuple[list[str], list[str]]:
+    """Run all chain integrity checks. Returns (errors, warnings).
+
+    Errors are fatal (exit 1).  Warnings are informational (exit 0).
+    """
     errors: list[str] = []
+    warnings: list[str] = []
 
     # Parse all files
     migrations: list[dict] = []
@@ -53,7 +68,7 @@ def check_chain(versions_dir: Path) -> list[str]:
             migrations.append(meta)
 
     if not migrations:
-        return ["No migration files found"]
+        return ["No migration files found"], []
 
     rev_to_meta: dict = {}
     down_rev_to_children: dict[str, list[str]] = {}
@@ -158,7 +173,11 @@ def check_chain(versions_dir: Path) -> list[str]:
                 f"— rename to v2_{seq}_*.py for consistency"
             )
 
-    # Check 6: Sequence is contiguous (no gaps in v2_NNN numbers)
+    # Check 6: Numeric contiguity (non-fatal warning).
+    # Gaps are expected when two branches independently parent the same revision
+    # and one is merged first — the second branch's migrations are renumbered to
+    # follow the merged head, leaving a hole in the numeric sequence.  Alembic
+    # only requires graph connectivity (Checks 1-5); gaps here are informational.
     seq_numbers: list[tuple[int, str]] = []
     for m in migrations:
         rev = m["revision"]
@@ -175,11 +194,130 @@ def check_chain(versions_dir: Path) -> list[str]:
             prev_num, prev_file = seq_numbers[i - 1]
             curr_num, curr_file = seq_numbers[i]
             if curr_num != prev_num + 1:
-                errors.append(
+                warnings.append(
                     f"SEQUENCE GAP: v2_{prev_num:03d} -> v2_{curr_num:03d} "
-                    f"(missing v2_{prev_num + 1:03d}). "
+                    f"(missing v2_{prev_num + 1:03d}) — expected after parallel-branch merge. "
                     f"Files: {prev_file} -> {curr_file}"
                 )
+
+    return errors, warnings
+
+
+def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    return subprocess.run(args, capture_output=True, text=True, **kwargs)
+
+
+def check_staging_collision(versions_dir: Path, base_ref: str = "origin/staging") -> list[str]:
+    """Check for revision-id collisions and multi-head between this branch and base_ref.
+
+    Returns a list of fatal error strings (empty = clean).  Skips gracefully
+    (returns []) when the ref is unavailable or HEAD already contains it.
+    """
+    errors: list[str] = []
+
+    # --- Guard 1: attempt a quiet fetch so CI shallow clones have the ref ----
+    _run(["git", "fetch", "--no-tags", "--depth=200", "origin", "staging"],
+         timeout=30)  # best-effort; ignore return code
+
+    # --- Guard 2: verify the ref actually exists now -------------------------
+    if _run(["git", "rev-parse", "--verify", base_ref]).returncode != 0:
+        print(f"  (skip staging collision check: {base_ref} not available locally)")
+        return []
+
+    # --- Guard 3: skip if HEAD already contains base_ref (merged branch) -----
+    if _run(["git", "merge-base", "--is-ancestor", base_ref, "HEAD"]).returncode == 0:
+        print(f"  (skip staging collision check: HEAD already contains {base_ref})")
+        return []
+
+    # --- Guard 4: skip if we ARE on staging ----------------------------------
+    head_ref = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    if head_ref == "staging":
+        print("  (skip staging collision check: running on staging)")
+        return []
+
+    # --- Read staging's migration set via git ls-tree + git show -------------
+    rel_versions = str(versions_dir.relative_to(
+        Path(_run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
+    ))
+    ls = _run(["git", "ls-tree", "-r", "--name-only", base_ref])
+    if ls.returncode != 0:
+        print(f"  (skip staging collision check: cannot list {base_ref} tree)")
+        return []
+
+    staging_migrations: list[dict] = []
+    for path_str in ls.stdout.splitlines():
+        if not path_str.startswith(rel_versions + "/"):
+            continue
+        fname = path_str.split("/")[-1]
+        if not fname.endswith(".py") or fname.startswith("__"):
+            continue
+        show = _run(["git", "show", f"{base_ref}:{path_str}"])
+        if show.returncode != 0:
+            continue
+        meta = _parse_revision_from_source(show.stdout, fname)
+        if meta:
+            staging_migrations.append(meta)
+
+    if not staging_migrations:
+        return []  # nothing to compare
+
+    # --- Build the union of staging + branch revision maps -------------------
+    # Branch migrations (already parsed by check_chain; re-parse here for independence)
+    branch_migrations: list[dict] = []
+    for f in sorted(versions_dir.iterdir()):
+        if not f.name.endswith(".py") or f.name.startswith("__"):
+            continue
+        meta = extract_revision_metadata(f)
+        if meta:
+            branch_migrations.append(meta)
+
+    # Map: revision_id -> (down_revision, source_label)
+    staging_rev_map: dict[str, tuple] = {
+        m["revision"]: (m.get("down_revision"), f"staging:{m['file']}")
+        for m in staging_migrations
+    }
+    branch_rev_map: dict[str, tuple] = {
+        m["revision"]: (m.get("down_revision"), f"branch:{m['file']}")
+        for m in branch_migrations
+    }
+
+    # Shared revisions (same id, same down_revision) are common ancestors — OK.
+    # A collision is: same revision id, different down_revision OR different file.
+    for rev_id, (b_down, b_label) in branch_rev_map.items():
+        if rev_id not in staging_rev_map:
+            continue
+        s_down, s_label = staging_rev_map[rev_id]
+        if b_down != s_down:
+            errors.append(
+                f"DUPLICATE REVISION across {base_ref}: '{rev_id}' has "
+                f"down_revision='{s_down}' in {s_label} but "
+                f"down_revision='{b_down}' in {b_label} — "
+                f"rename your migration to a unique revision id"
+            )
+
+    # Build combined revision graph and count heads
+    union_rev_map: dict[str, str | tuple | None] = {**{
+        m["revision"]: m.get("down_revision") for m in staging_migrations
+    }, **{
+        m["revision"]: m.get("down_revision") for m in branch_migrations
+    }}
+    all_revs = set(union_rev_map.keys())
+    referenced_as_parent: set[str] = set()
+    for down in union_rev_map.values():
+        if down is None:
+            continue
+        targets = (down,) if isinstance(down, str) else down
+        for t in targets:
+            referenced_as_parent.add(t)
+    heads = [r for r in all_revs if r not in referenced_as_parent]
+
+    if len(heads) > 1:
+        heads_sorted = sorted(heads)
+        errors.append(
+            f"MULTIPLE HEADS in union with {base_ref}: {heads_sorted}. "
+            f"Fix: merge {base_ref} into your branch and renumber your migrations "
+            f"to append after {base_ref}'s head (do not reparent {base_ref}'s migrations)."
+        )
 
     return errors
 
@@ -190,7 +328,12 @@ def main() -> int:
         print(f"ERROR: {versions_dir} not found", file=sys.stderr)
         return 1
 
-    errors = check_chain(versions_dir)
+    errors, warnings = check_chain(versions_dir)
+    errors += check_staging_collision(versions_dir)
+
+    if warnings:
+        for w in warnings:
+            print(f"  WARNING: {w}")
 
     if errors:
         print(f"\n{'=' * 60}", file=sys.stderr)

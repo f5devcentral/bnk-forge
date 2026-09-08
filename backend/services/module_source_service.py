@@ -591,14 +591,57 @@ class ModuleSourceService:
         self.db.refresh(source)
 
         if source.source_type == 'git':
+            # The initial sync is best-effort: a bad manifest or an unreachable
+            # remote must not lose the source row the caller just created.
+            #
+            # Catching the exception unwinds the Python stack but does NOT reset
+            # the SQLAlchemy session. _auto_sync_blueprints_for_git_source flushes
+            # BlueprintRelease rows on this same session, so a failed insert left
+            # it in PendingRollback -- and the route's db.commit() then raised
+            # PendingRollbackError, which surfaced as a 500 that masked the real
+            # cause (logged only at WARNING). See #9.
+            #
+            # A SAVEPOINT scopes the damage: rolling it back discards the failed
+            # sync writes and leaves the outer transaction -- including the
+            # ModuleSource insert above -- valid and committable.
+            savepoint = self.db.begin_nested()
             try:
                 from services.module_sync_service import ModuleSyncService
 
                 ModuleSyncService(self.db).sync_git_source(source)
                 self._auto_sync_blueprints_for_git_source(source)
+                # ModuleSyncService.sync_git_source commits internally (it owns
+                # its own sync_status bookkeeping), and Session.commit() commits
+                # the OUTERMOST transaction -- which closes this savepoint.
+                # Committing a closed savepoint raises ResourceClosedError, and
+                # that would land in the except below and mark a perfectly
+                # successful sync as failed. Only commit one we still own.
+                if savepoint.is_active:
+                    savepoint.commit()
                 self.db.refresh(source)
             except Exception as exc:
-                logger.warning("Initial sync failed for new module source %s: %s", source.name, exc)
+                # Always roll back to the SAVEPOINT, never straight to the
+                # session. After a failed flush SQLAlchemy reports the nested
+                # transaction as not is_active, but rollback() is still the
+                # correct recovery -- checking is_active first and falling
+                # through to self.db.rollback() would discard the ModuleSource
+                # insert as well, which is the row we are trying to keep. The
+                # outer rollback stays only as a last resort for the case where
+                # an inner commit released the savepoint out from under us; the
+                # source is already durable by then, because sync_git_source
+                # commits before it can fail.
+                try:
+                    savepoint.rollback()
+                except Exception:
+                    self.db.rollback()
+                # Record the cause where the caller can actually see it. The
+                # source is still created; sync_status/sync_error say why it is
+                # empty, instead of the client getting an opaque 500.
+                logger.exception(
+                    "Initial sync failed for new module source %s: %s", source.name, exc
+                )
+                source.sync_status = 'failed'
+                source.sync_error = f"Initial sync failed: {exc}"[:2000]
 
         logger.info(f"Created module source: {source.name} ({source.source_type})")
         return self._serialize_source(source)
@@ -1465,6 +1508,24 @@ class ModuleSourceService:
             return None
 
         blueprint_source, created = self._get_or_create_linked_blueprint_source(module_source)
+        # Mirror of the guard blueprint_sync_service._auto_sync_modules_for_git_source
+        # gained in #404, for the symmetric direction (#87). Without it a module
+        # sync re-synced -- and the sync path re-activates -- a twin blueprint
+        # source an operator had deliberately deactivated. Skip and say so,
+        # with the same sync_status marker the other direction uses.
+        if not blueprint_source.is_active:
+            logger.info(
+                "Skipping blueprint auto-sync for module source %s: linked blueprint source %s is inactive",
+                module_source.name,
+                blueprint_source.name,
+            )
+            return {
+                "source_id": blueprint_source.id,
+                "source_name": blueprint_source.name,
+                "created": created,
+                "sync_status": "skipped_inactive",
+                "results": None,
+            }
         results = BlueprintSyncService(self.db).sync_git_source(blueprint_source, sync_related_modules=False)
         self.db.refresh(blueprint_source)
         return {

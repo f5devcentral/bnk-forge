@@ -7,6 +7,7 @@ and error mapping. All MCP tools delegate to this client.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -21,9 +22,23 @@ logger = logging.getLogger(__name__)
 class APIError(Exception):
     """Raised when the BNK-Forge API returns an error."""
 
-    def __init__(self, status_code: int, detail: str, url: str = ""):
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        url: str = "",
+        *,
+        code: str | None = None,
+        details: Any = None,
+    ):
         self.status_code = status_code
+        # Always a human-readable STRING -- backward compatible for every
+        # consumer that reads error.detail as text. The structured pieces of a
+        # backend error body ride alongside as first-class fields rather than
+        # being trapped inside a str(dict) (#67).
         self.detail = detail
+        self.code = code
+        self.details = details
         self.url = url
         self.error_class = self._classify_error(status_code)
         self.retryable = status_code in {408, 429, 502, 503, 504}
@@ -47,6 +62,13 @@ class APIError(Exception):
         return {
             "status_code": self.status_code,
             "detail": self.detail,
+            # Machine-readable backend error code (e.g. PROJECT_NOT_FOUND) and
+            # its structured details, parsed from the JSON body. Previously the
+            # whole dict was str()'d into `detail` -- a single-quoted Python
+            # repr an agent cannot JSON.parse -- so the precise failure code was
+            # lost to automation (#67, D-017 structured-error contract).
+            "code": self.code,
+            "details": self.details,
             "error_class": self.error_class,
             "retryable": self.retryable,
             "url": self.url,
@@ -104,21 +126,72 @@ class BNKForgeClient:
 
     @staticmethod
     def _extract_error_detail(resp: httpx.Response) -> str:
-        """Extract the most helpful error message from an API response."""
-        detail = resp.text
+        """Extract the most helpful human-readable error message.
+
+        Backward-compatible wrapper: callers that only want text keep getting
+        text. Use _parse_error_body for the structured pieces.
+        """
+        return BNKForgeClient._parse_error_body(resp)["detail"]
+
+    @staticmethod
+    def _parse_error_body(resp: httpx.Response) -> dict[str, Any]:
+        """Split a backend error response into {detail, code, details}.
+
+        The backend's structured error shape (core.errors) is
+        ``{code, message, details, path, request_id}`` -- sometimes nested one
+        level under ``detail`` by FastAPI's HTTPException. ``detail`` here is
+        always a plain string for humans; ``code``/``details`` carry the
+        machine-readable parts as real values. Before this, a dict body was
+        returned via str(value), i.e. a Python repr with single quotes that
+        no JSON parser accepts (#67).
+        """
+        text = resp.text
         try:
             body = resp.json()
         except Exception:
-            return detail
+            return {"detail": text, "code": None, "details": None}
 
-        if isinstance(body, dict):
-            for key in ("detail", "message", "error"):
-                value = body.get(key)
-                if value:
-                    return str(value)
-            return str(body)
+        if not isinstance(body, dict):
+            return {"detail": str(body), "code": None, "details": None}
 
-        return str(body)
+        # The backend's own handler (core.errors.format_error_response) nests
+        # the structured dict under "error"; FastAPI's HTTPException handler
+        # nests under "detail". Unwrap one level from either, preferring the
+        # backend's shape. This is exactly the dict the old code str()'d --
+        # the issue's evidence came from the "error" key.
+        inner = None
+        for wrapper in ("error", "detail"):
+            candidate = body.get(wrapper)
+            if isinstance(candidate, dict):
+                inner = candidate
+                break
+        structured = inner if inner is not None else body
+        if inner is None:
+            inner = body.get("detail")
+
+        code = structured.get("code")
+        details = structured.get("details")
+        message = None
+        for key in ("message", "detail", "error"):
+            value = structured.get(key)
+            if isinstance(value, str) and value:
+                message = value
+                break
+        if message is None and isinstance(inner, str) and inner:
+            message = inner
+        if message is None:
+            # No human string anywhere -- fall back to a JSON rendering, never
+            # a Python repr.
+            try:
+                message = json.dumps(structured, sort_keys=True)
+            except Exception:
+                message = text
+
+        return {
+            "detail": message,
+            "code": str(code) if code is not None else None,
+            "details": details,
+        }
 
     @staticmethod
     def _next_action_for(error_class: str) -> str:
@@ -166,6 +239,40 @@ class BNKForgeClient:
             status_code,
         )
 
+    @staticmethod
+    def _mark_ok(result: Any) -> Any:
+        """Stamp a single, universal outcome key on every success body.
+
+        The error path returns ``{"ok": False, ...}`` (``_error_payload``), but
+        success bodies came straight from the backend in whatever shape it chose
+        -- some carried ``success: true``, some nothing, and mutating tools
+        returned flat ``{message, project_id}`` (#66). An agent had no one field
+        to check across tools. Stamping ``ok: True`` here -- the single choke
+        point every get/post/put/patch/delete flows through -- gives all 151
+        tools the same outcome key an agent can branch on (``ok`` present and not
+        False == success), without rewriting each tool's return.
+
+        Additive and non-breaking: existing keys are left untouched, and a body
+        that already set ``ok`` (a structured passthrough) is not overridden.
+        Non-dict bodies (list/scalar collections) can't carry a key; they are
+        unambiguously not the error envelope, so success is signalled by the
+        absence of ``ok: False`` rather than the presence of ``ok: True``.
+
+        Crucially, ``ok`` is derived from an explicit ``success`` when present.
+        Several backend routes return HTTP 200 with ``{"success": false, ...}``
+        -- a Celery task that failed or is still pending -- and ``_request``
+        only raises on non-2xx, so those bodies reach here. Stamping an
+        unconditional ``ok: True`` would attach an authoritative-looking key
+        that contradicts the body it's on, which is worse than no key: it
+        removes the agent's reason to look further. Deferring to ``success``
+        (the same way we defer to an existing ``ok``) makes those land on
+        ``ok: False``, which is the truth. Bodies with no ``success`` key -- the
+        common case -- still get ``ok: True``.
+        """
+        if isinstance(result, dict):
+            result.setdefault("ok", bool(result.get("success", True)))
+        return result
+
     async def _request_with_error_envelope(self, method: str, path: str, **kwargs: Any) -> Any:
         """Return API result or a structured MCP-friendly error envelope."""
         start = time.perf_counter()
@@ -173,7 +280,7 @@ class BNKForgeClient:
             result = await self._request(method, path, **kwargs)
             duration_ms = int((time.perf_counter() - start) * 1000)
             self._log_client_event(method=method, path=path, duration_ms=duration_ms, success=True)
-            return result
+            return self._mark_ok(result)
         except APIError as err:
             logger.warning("API request failed: %s %s -> %s", method, path, err)
             duration_ms = int((time.perf_counter() - start) * 1000)
@@ -216,7 +323,11 @@ class BNKForgeClient:
             )
 
         if resp.status_code >= 400:
-            raise APIError(resp.status_code, self._extract_error_detail(resp), path)
+            parsed = self._parse_error_body(resp)
+            raise APIError(
+                resp.status_code, parsed["detail"], path,
+                code=parsed["code"], details=parsed["details"],
+            )
 
         # 204 No Content
         if resp.status_code == 204:

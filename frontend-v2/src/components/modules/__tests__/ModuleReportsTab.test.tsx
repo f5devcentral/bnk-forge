@@ -103,6 +103,40 @@ describe('ModuleReportsTab', () => {
     });
   });
 
+  it('renders hostile report markup as literal text, never as HTML (escaping regression guard)', async () => {
+    // Report content is untrusted vendor-CLI output from the workspace. The
+    // hand-rolled markdown renderer is exactly where an "improvement" could
+    // introduce innerHTML. Lock in the auto-escaped rendering: the markup must
+    // appear as TEXT and must not create elements (#99).
+    const hostile = [
+      '# Run <script>window.__pwned = 1</script> report',
+      '<img src=x onerror="window.__pwned = 2">',
+      'Deployment PASSED <b>bold</b>',
+    ].join('\n');
+    server.use(
+      reportsHandler(),
+      http.get('*/api/project-modules/:moduleId/reports/content', () =>
+        HttpResponse.json({ path: 'run-poc.md', kind: 'md', size: 99, content: hostile })
+      ),
+    );
+    render(<ModuleReportsTab moduleId={7} />);
+
+    await userEvent.click(await screen.findByText('run-poc.md'));
+    await waitFor(() => {
+      expect(screen.getByText(/Deployment PASSED/)).toBeInTheDocument();
+    });
+
+    // The tags are visible as literal characters...
+    expect(screen.getByText(/<script>window\.__pwned = 1<\/script>/)).toBeInTheDocument();
+    expect(screen.getByText(/<img src=x onerror=/)).toBeInTheDocument();
+    expect(screen.getByText(/<b>bold<\/b>/)).toBeInTheDocument();
+    // ...and were NOT turned into elements.
+    expect(document.querySelector('script')).toBeNull();
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+    expect(document.querySelector('b')).toBeNull();
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+  });
+
   it('shows an empty state when there are no reports', async () => {
     server.use(
       http.get('*/api/project-modules/:moduleId/reports', () =>

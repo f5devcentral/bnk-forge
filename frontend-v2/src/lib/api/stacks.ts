@@ -59,15 +59,17 @@ export const stacksApi = {
   fetchStackInstance: (projectId: number, stackId: number) =>
     apiClient.get<StackInstance>(`/api/stacks/projects/${projectId}/stacks/${stackId}`).then((res) => res.data),
 
-  deployStack: (projectId: number, stackId: number) =>
+  deployStack: (projectId: number, stackId: number, body?: { deployable_release_id?: number }) =>
     apiClient.post<{ status: string; message: string; current_step: number; total_steps: number; deployed_modules: number[] }>(
-      `/api/stacks/projects/${projectId}/stacks/${stackId}/deploy`
+      `/api/stacks/projects/${projectId}/stacks/${stackId}/deploy`,
+      body ?? {},
     ).then((res) => res.data),
 
   // Run deployment (init + apply) on stack modules
-  runStackDeployment: (projectId: number, stackId: number) =>
+  runStackDeployment: (projectId: number, stackId: number, body?: { deployable_release_id?: number }) =>
     apiClient.post<{ status: string; message: string; queued_modules: number; total_modules: number }>(
-      `/api/stacks/projects/${projectId}/stacks/${stackId}/run-deploy`
+      `/api/stacks/projects/${projectId}/stacks/${stackId}/run-deploy`,
+      body ?? {},
     ).then((res) => res.data),
 
   fetchStackStatus: (projectId: number, stackId: number) =>

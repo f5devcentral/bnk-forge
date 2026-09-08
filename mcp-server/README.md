@@ -56,10 +56,13 @@ readiness verification explicit and repeatable.
 
 - `ping` + `tools/list` pass, but `system_version`/`list_clusters` fail with `auth_error`:
   MCP transport is up, but runtime auth/bootstrap is not ready.
-- Typical cause: MCP container credentials do not match current backend credentials
-  (for example after rotating admin password).
-- Action: set `MCP_USERNAME` / `MCP_PASSWORD` for the MCP service and recreate the
-  `mcp` container, then rerun smoke.
+- Typical cause: the MCP service-account password drifted from the backend's seeded
+  value (e.g. `MCP_SERVICE_PASSWORD` changed on one side only). MCP uses its own
+  dedicated `mcp` service account, never the human admin login (#187).
+- Action: set `MCP_SERVICE_PASSWORD` in `.env` (compose maps it to the container's
+  `BNK_FORGE_PASSWORD` and the backend's `MCP_SERVICE_PASSWORD`) and recreate the `mcp`
+  container, then rerun smoke. Do NOT set `MCP_USERNAME` — it is not read by either
+  process; the service username is fixed to the dedicated `mcp` account.
 
 ### Scope boundaries (intentional)
 
@@ -94,17 +97,29 @@ pytest tests/
 - MCP runtime is healthy only when **both** conditions are true:
   1. MCP JSON-RPC endpoint responds (`ping`)
   2. MCP can authenticate to backend and execute governed read-only tools
-- If backend admin password is changed (recommended), MCP credentials must be
-  updated too (`MCP_USERNAME` / `MCP_PASSWORD` or `BNK_FORGE_TOKEN`).
+- The MCP container process reads **only** `BNK_FORGE_*` (see the table above):
+  its login password comes from `BNK_FORGE_PASSWORD`. In the shipped compose
+  files the operator sets a single `.env` value, `MCP_SERVICE_PASSWORD`, which
+  compose maps to `BNK_FORGE_PASSWORD` for this container **and** to
+  `MCP_SERVICE_PASSWORD` for the backend — so the two always agree. That value
+  must match what the backend seeded, or supply `BNK_FORGE_TOKEN` instead. It is
+  decoupled from the human admin password (#187). (bonnyr-f5 #193 M7: earlier
+  text named `MCP_PASSWORD` here — nothing in this process reads that name; it is
+  only a legacy compose-level alias for the password `.env` value.)
 - Without this alignment, the MCP container may look healthy at protocol level
   while tool execution fails with backend login 401.
 
 ### Credential rotation runbook (bounded)
 
-When backend admin password is rotated:
+When the MCP service-account password (`MCP_SERVICE_PASSWORD`) is rotated:
 
-1. Update MCP runtime credentials in environment (`MCP_USERNAME`, `MCP_PASSWORD`)
-2. Recreate MCP so new env values are applied:
+1. Set the new password in the compose `.env` as `MCP_SERVICE_PASSWORD` (bonnyr-f5
+   #193 M7/B1: this is the ONLY var to set — compose maps it to the container's
+   `BNK_FORGE_PASSWORD` and the backend's `MCP_SERVICE_PASSWORD`. Do NOT set
+   `MCP_USERNAME`: it is not read by either process, and the username is fixed to
+   the dedicated `mcp` service account; the password's legacy alias `MCP_PASSWORD`
+   still works but prefer the canonical name.)
+2. Recreate MCP so the new env value is applied:
 
 ```bash
 # server/default compose
@@ -331,12 +346,46 @@ verification, not full dependency introspection).
 MCP now emits structured invocation logs at two layers:
 
 1. **Tool boundary** (`bnk_forge_mcp.observability`):
-   - `event`: `tool_invocation_start` / `tool_invocation_result`
+   - `event`: `tool_invocation_start` / `tool_invocation_result` /
+     `tool_invocation_blocked`
    - `invocation_id`
    - `tool_name`, `module`
    - catalog context when available: `risk_class`, `auth_expectation`,
      `backend_method`, `backend_path`
    - `success`, `duration_ms`, `error_class` (on failure)
+   - `reason` (on `tool_invocation_blocked`)
+
+### Destructive-tool confirmation gate
+
+Tools catalogued `risk_class: destructive` are enforced at runtime, not only
+logged. Each one carries an extra `confirm: bool = False` argument, and calling
+it without `confirm=true` returns a `CONFIRMATION_REQUIRED` refusal without
+touching the backend:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "error_class": "confirmation_required",
+    "code": "CONFIRMATION_REQUIRED",
+    "retryable": false,
+    "next_action": "Verify this is the intended target, then re-invoke with confirm=true..."
+  }
+}
+```
+
+This matters because the `mcp` service account is `role=admin`: without a gate,
+one tool call from an autonomous agent deletes a real project or cluster with no
+second factor. The gate is applied where tools are registered, so it follows the
+catalog — mark a new tool `destructive` and it is gated automatically.
+
+`confirm` is distinct from a tool's own `force` argument. `force` bypasses
+*backend* safety checks (e.g. deleting an active project); `confirm` asserts
+*intent* to run a destructive operation at all.
+
+Set `BNK_FORGE_MCP_REQUIRE_CONFIRMATION=false` to disable the gate for trusted
+non-interactive teardown (CI tearing down its own fixtures). It is read per
+call, and defaults to enabled.
 
 2. **HTTP client boundary** (`bnk_forge_mcp.client`):
    - `method`, `path`

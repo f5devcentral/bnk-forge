@@ -74,6 +74,9 @@ class BnkFloSSHModule(BnkSSHModule):
             "imagePullSecrets": [{"name": far}],
             "serviceAccount": {"create": True, "name": "flo-controller"},
             "license": {
+                # NOTE: FLO helm license.* values are the 2.2 licensing mechanism.
+                # In 2.3.1 CWC requires a separate License CR (bare-metal/bnk-license,
+                # ADR-478) — these helm values do NOT create it in 2.3.1.
                 "operationMode": str(v.get("license_mode", "connected")),
                 "jwt": str(v.get("jwt_token", "")),
                 **FLO_LICENSE_STATIC,

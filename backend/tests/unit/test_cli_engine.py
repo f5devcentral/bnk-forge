@@ -210,6 +210,18 @@ def test_destroy_passes_yes_flag(tmp_path):
     engine = _make_engine_with_stub(str(cfg_echo_stub), workspace_root)
     ctx = _make_ctx()
 
+    # Seed the applied cluster.yaml. Since #82 destroy runs against the config
+    # written at apply time and refuses when it is absent, rather than rendering
+    # one from the current form variables (which could target the wrong cluster
+    # and orphan the live one). A real destroy always follows an apply, so this
+    # is the state the test means to exercise; this test asserts the --yes flag
+    # contract, not the missing-config path.
+    workspace = Path(workspace_root) / str(ctx.project_id) / "awsbnkctl"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "cluster.yaml").write_text(
+        "metadata:\n  name: test-cluster\n"
+    )
+
     received: list[str] = []
     result = engine.destroy(ctx, on_output=received.append)
 

@@ -22,6 +22,7 @@ class UserInfo(BaseModel):
     email: str
     role: str
     is_active: bool
+    is_service_account: bool = False  # bonnyr-f5 #188: service-account provenance
     must_change_password: bool
     last_login_at: str | None = None
     created_at: str | None = None
@@ -59,6 +60,11 @@ class UserResponse(BaseModel):
     email: str
     role: str
     is_active: bool
+    # bonnyr-f5 #188: expose provenance so the UI can tell a service account from a
+    # human one. Re-enabling a service account that still holds a shipped default is
+    # refused (PUT /api/auth/users/{id} -> 400), so the toggle must be able to
+    # render it disabled/annotated instead of 400ing blind.
+    is_service_account: bool = False
     must_change_password: bool
     last_login_at: str | None = None
     created_at: str | None = None
@@ -100,6 +106,7 @@ class UserWithProjectCount(BaseModel):
     email: str
     role: str
     is_active: bool
+    is_service_account: bool = False  # bonnyr-f5 #188: provenance for the users listing (UI toggle guard)
     must_change_password: bool
     last_login_at: str | None = None
     created_at: str | None = None

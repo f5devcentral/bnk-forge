@@ -63,7 +63,7 @@ export class LoginPage {
    * Login via API and inject token into localStorage.
    * Much faster than UI login — use for tests that don't test the login flow itself.
    */
-  async loginViaApi(username: string = 'admin', password: string = 'changeme') {
+  async loginViaApi(username: string = 'admin', password: string = 'e2e-Admin-Pass-1') {
     // Call the login API directly
     const response = await this.page.request.post(`${TEST_CONFIG.apiUrl}/api/auth/login`, {
       data: { username, password },

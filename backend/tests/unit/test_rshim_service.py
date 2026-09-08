@@ -598,6 +598,369 @@ class TestEnsureHostTmfifoIps:
         # Files we don't know about must NOT be touched.
         assert "tmfifo_net1:" not in body
 
+    # ── ADR-424 cluster-scoped IPAM overrides ─────────────────────────────
+
+    def test_netplan_body_uses_ip_override_for_index(self):
+        # When IPAM assigns .5 to the host end on rshim0, the override
+        # must replace the formula 192.168.100.1.
+        body = _build_host_tmfifo_netplan({0, 1}, ip_overrides={1: "192.168.100.5"})
+        assert "192.168.100.1/30" in body      # rshim0: formula (no override)
+        assert "192.168.100.5/30" in body      # rshim1: persisted IPAM address
+        assert "192.168.101.1/30" not in body  # formula for rshim1 must NOT appear
+
+    def test_single_rshim_with_nondefault_host_ip_writes_netplan(self):
+        # Multi-host cluster, 1 DPU per host. The 2nd host has rshim0 but
+        # IPAM allocated .5 (not the kernel default .1). Early-return must
+        # NOT fire — netplan must be written.
+        client = FakeSSHClient([
+            (0, "", ""),   # cat → no existing file
+            (0, "", ""),   # tee + chmod
+            (0, "", ""),   # netplan apply
+        ])
+        dpu = SimpleNamespace(
+            pci_address="0000:0d:00.0",
+            rshim_device="rshim0",
+            host_tmfifo_ip="192.168.100.5",
+            kubernetes_cluster_id=1,
+        )
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=dpu,
+        )
+        assert len(client.commands) == 3, (
+            "single-DPU host with non-default host_tmfifo_ip must write netplan"
+        )
+        assert "50-bnk-forge-tmfifo.yaml" in client.commands[1]
+
+    def test_single_rshim_no_host_ip_still_skipped(self):
+        # A single-DPU host with no IPAM override must not touch netplan —
+        # the kernel auto-assigns 192.168.100.1/30 on tmfifo_net0.
+        client = FakeSSHClient([])
+        dpu = SimpleNamespace(
+            pci_address="0000:0d:00.0",
+            rshim_device="rshim0",
+            host_tmfifo_ip=None,
+        )
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=dpu,
+        )
+        assert client.commands == []
+
+    def test_nondefault_host_ip_renders_correct_cidr_in_netplan(self):
+        # Verify the netplan written for a single-DPU host with a
+        # cluster-allocated host_tmfifo_ip contains the right CIDR.
+        existing_content = ""  # no existing file
+        client = FakeSSHClient([
+            (0, existing_content, ""),  # cat
+            (0, "", ""),                # tee + chmod
+            (0, "", ""),                # netplan apply
+        ])
+        dpu = SimpleNamespace(
+            pci_address="0000:0d:00.0",
+            rshim_device="rshim0",
+            host_tmfifo_ip="192.168.100.5",
+            kubernetes_cluster_id=1,
+        )
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=dpu,
+        )
+        # The tee command base64-encodes the netplan YAML — decode and verify.
+        import base64 as _b64
+        import re as _re
+        tee_cmd = client.commands[1]
+        m = _re.search(r"printf '%s' '([A-Za-z0-9+/=]+)'", tee_cmd)
+        assert m, f"expected base64 payload in tee cmd: {tee_cmd!r}"
+        rendered = _b64.b64decode(m.group(1)).decode()
+        # The addresses: entry must use the persisted IP (- 192.168.100.5/30),
+        # not the formula (- 192.168.100.1/30). The comment section of the
+        # template mentions 192.168.100.1/30 so we check the address line.
+        assert "        - 192.168.100.5/30" in rendered, (
+            f"persisted host_tmfifo_ip must appear in netplan addresses, got:\n{rendered}"
+        )
+        assert "        - 192.168.100.1/30" not in rendered, (
+            "formula address entry must not appear in addresses when override is present"
+        )
+
+    def test_idempotent_with_correct_override_file_already_present(self):
+        # No write when the existing netplan already matches the override.
+        dpu = SimpleNamespace(
+            pci_address="0000:0d:00.0",
+            rshim_device="rshim0",
+            host_tmfifo_ip="192.168.100.5",
+            kubernetes_cluster_id=1,
+        )
+        target = _build_host_tmfifo_netplan({0}, {0: "192.168.100.5"})
+        client = FakeSSHClient([(0, target, "")])
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=dpu,
+        )
+        assert len(client.commands) == 1, "only cat — no write when file already matches"
+
+    def test_multi_dpu_per_host_pins_both_interfaces_from_db(self, db: Session, project):
+        """Probing either DPU on a 2-DPU host must pin BOTH tmfifo interfaces.
+
+        Without a DB query of sibling DPUs, probing DPU-B with its own
+        host_tmfifo_ip would write tmfifo_net0=formula, clobbering DPU-A's
+        IPAM-allocated address.  With the DB query the netplan gets both
+        overrides so neither DPU loses connectivity after the other is probed.
+        """
+        # Two DPUs on the same host with distinct rshim indexes and IPAM IPs.
+        # Both must be assigned to the same cluster so the isnot(None) guard
+        # in the DB query allows them to contribute (ADR-424 finding A fix).
+        dpu_a = _make_inband_dpu(
+            db, project,
+            host_node_ip="10.0.0.42",
+            pci_address="0000:0d:00.0",
+        )
+        dpu_a.host_tmfifo_ip = "192.168.100.5"   # IPAM-allocated, rshim0
+        dpu_a.rshim_device = "rshim0"
+        dpu_a.kubernetes_cluster_id = 42
+        db.commit()
+
+        dpu_b = _make_inband_dpu(
+            db, project,
+            host_node_ip="10.0.0.42",
+            pci_address="0001:0d:00.0",
+        )
+        dpu_b.host_tmfifo_ip = "192.168.101.5"   # IPAM-allocated, rshim1
+        dpu_b.rshim_device = "rshim1"
+        dpu_b.kubernetes_cluster_id = 42
+        db.commit()
+
+        rshim_map = {
+            "0000:0d:00.0": "rshim0",
+            "0001:0d:00.0": "rshim1",
+        }
+        client = FakeSSHClient([
+            (0, "", ""),   # cat → no existing file
+            (0, "", ""),   # tee + chmod
+            (0, "", ""),   # netplan apply
+        ])
+
+        # Probe DPU-B — the function must still pin DPU-A's interface too.
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client, rshim_map, dpu=dpu_b, db=db,
+        )
+
+        import base64 as _b64
+        import re as _re
+        tee_cmd = client.commands[1]
+        m = _re.search(r"printf '%s' '([A-Za-z0-9+/=]+)'", tee_cmd)
+        assert m, f"no base64 payload in tee cmd: {tee_cmd!r}"
+        rendered = _b64.b64decode(m.group(1)).decode()
+
+        assert "        - 192.168.100.5/30" in rendered, (
+            f"DPU-A's IPAM address must be in netplan:\n{rendered}"
+        )
+        assert "        - 192.168.101.5/30" in rendered, (
+            f"DPU-B's IPAM address must be in netplan:\n{rendered}"
+        )
+        # Formula addresses must NOT appear as the address entries.
+        assert "        - 192.168.100.1/30" not in rendered, (
+            "rshim0 formula must not appear when IPAM override exists"
+        )
+        assert "        - 192.168.101.1/30" not in rendered, (
+            "rshim1 formula must not appear when IPAM override exists"
+        )
+
+    def test_ignores_sibling_dpu_in_other_project(self, db: Session, project):
+        """A DPU sharing host_node_ip but owned by ANOTHER project must not
+        pin an address into this host's netplan (host_node_ip is unique only
+        per (project_id, host_node_ip, pci_address))."""
+        probed = _make_inband_dpu(db, project, host_node_ip="10.0.0.99", pci_address="0000:0d:00.0")
+        probed.host_tmfifo_ip = "192.168.100.5"
+        probed.rshim_device = "rshim0"
+        probed.kubernetes_cluster_id = 1
+        db.commit()
+
+        other_project = Project(name="p-other", description="")
+        db.add(other_project)
+        db.commit()
+        foreign = _make_inband_dpu(db, other_project, host_node_ip="10.0.0.99", pci_address="0001:0d:00.0")
+        foreign.host_tmfifo_ip = "192.168.101.5"
+        foreign.rshim_device = "rshim1"
+        foreign.kubernetes_cluster_id = 2
+        db.commit()
+
+        client = FakeSSHClient([(0, "", ""), (0, "", ""), (0, "", "")])
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0", "0001:0d:00.0": "rshim1"},
+            dpu=probed, db=db,
+        )
+
+        import base64 as _b64
+        import re as _re
+        m = _re.search(r"printf '%s' '([A-Za-z0-9+/=]+)'", client.commands[1])
+        assert m
+        rendered = _b64.b64decode(m.group(1)).decode()
+        assert "        - 192.168.100.5/30" in rendered, "probed DPU's IPAM address must appear"
+        assert "        - 192.168.101.5/30" not in rendered, (
+            "foreign-project DPU's address must NOT leak into this host's netplan"
+        )
+
+    def test_sibling_dpu_in_other_cluster_on_same_host_contributes(self, db: Session, project):
+        """A sibling DPU on the same host joined to a DIFFERENT cluster MUST
+        contribute its persisted host_tmfifo_ip — a host belongs to one cluster,
+        so scoping to the host (not the probe subject's cluster_id) is correct.
+        The old cluster-equality filter would clobber a sibling's IPAM address
+        when the probe subject was in a different cluster (B1 fix)."""
+        probed = _make_inband_dpu(db, project, host_node_ip="10.0.0.77", pci_address="0000:0d:00.0")
+        probed.host_tmfifo_ip = "192.168.100.5"
+        probed.rshim_device = "rshim0"
+        probed.kubernetes_cluster_id = 10
+        db.commit()
+
+        sibling = _make_inband_dpu(db, project, host_node_ip="10.0.0.77", pci_address="0001:0d:00.0")
+        sibling.host_tmfifo_ip = "192.168.101.5"
+        sibling.rshim_device = "rshim1"
+        sibling.kubernetes_cluster_id = 20  # different cluster, same project
+        db.commit()
+
+        client = FakeSSHClient([(0, "", ""), (0, "", ""), (0, "", "")])
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0", "0001:0d:00.0": "rshim1"},
+            dpu=probed, db=db,
+        )
+
+        import base64 as _b64
+        import re as _re
+        m = _re.search(r"printf '%s' '([A-Za-z0-9+/=]+)'", client.commands[1])
+        assert m
+        rendered = _b64.b64decode(m.group(1)).decode()
+        assert "        - 192.168.100.5/30" in rendered, (
+            "probed DPU's IPAM address must appear"
+        )
+        # The sibling is on the same host — its address must also be pinned.
+        assert "        - 192.168.101.5/30" in rendered, (
+            "sibling DPU's IPAM address must appear; scoping to host not cluster (B1)"
+        )
+
+    def test_orphan_probe_subject_db_branch_writes_nothing(self, db: Session, project):
+        """When the PROBED DPU is itself an orphan (kubernetes_cluster_id=None),
+        the db-branch filter must produce no results, so no host_tmfifo_ip is
+        written to netplan (ADR-424 finding A).
+
+        Without the isnot(None) guard: kubernetes_cluster_id IS NULL matches
+        every other orphan, pinning a stale host_tmfifo_ip while
+        derive_tmfifo_dpu_ip returns the rshim formula → dead tmfifo link.
+        """
+        orphan = _make_inband_dpu(db, project, host_node_ip="10.0.0.55", pci_address="0000:0d:00.0")
+        orphan.host_tmfifo_ip = "192.168.100.5"  # stale persisted IP
+        orphan.rshim_device = "rshim0"
+        orphan.kubernetes_cluster_id = None  # unregistered / orphan
+        db.commit()
+
+        client = FakeSSHClient([(0, "", ""), (0, "", ""), (0, "", "")])
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=orphan, db=db,
+        )
+
+        # Single-rshim host with no IPAM override → early return, no SSH commands.
+        assert client.commands == [], (
+            "Orphan probe subject must not trigger netplan write; "
+            f"got {len(client.commands)} SSH command(s)"
+        )
+
+    def test_orphan_probe_survives_clustered_sibling_ipam(self, db: Session, project):
+        """B1 regression: probing an orphan DPU on a two-rshim host must NOT
+        clobber the clustered sibling DPU's persisted host_tmfifo_ip.
+
+        Pre-fix: the DB query filtered by probe_subject.kubernetes_cluster_id.
+        For an orphan, that clause became (IS NOT NULL AND = NULL) → empty
+        result → ip_overrides empty → sibling's rshim interface got the
+        formula address, breaking its tmfifo link.
+
+        Post-fix: scope to host_node_ip only (no cluster_id equality); the
+        isnot(None) guard still keeps orphans from contributing.
+        """
+        dpu_a = _make_inband_dpu(
+            db, project,
+            host_node_ip="10.0.0.66",
+            pci_address="0000:0d:00.0",
+        )
+        dpu_a.host_tmfifo_ip = "192.168.100.5"   # IPAM-allocated, rshim0
+        dpu_a.rshim_device = "rshim0"
+        dpu_a.kubernetes_cluster_id = 42           # cluster member
+        db.commit()
+
+        dpu_b = _make_inband_dpu(
+            db, project,
+            host_node_ip="10.0.0.66",
+            pci_address="0001:0d:00.0",
+        )
+        dpu_b.host_tmfifo_ip = None                # no IPAM yet
+        dpu_b.rshim_device = "rshim1"
+        dpu_b.kubernetes_cluster_id = None         # orphan — not yet joined
+        db.commit()
+
+        rshim_map = {
+            "0000:0d:00.0": "rshim0",
+            "0001:0d:00.0": "rshim1",
+        }
+        client = FakeSSHClient([
+            (0, "", ""),   # cat → no existing file
+            (0, "", ""),   # tee + chmod
+            (0, "", ""),   # netplan apply
+        ])
+
+        # Probe DPU-B (orphan). DPU-A's persisted IP must survive.
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client, rshim_map, dpu=dpu_b, db=db,
+        )
+
+        import base64 as _b64
+        import re as _re
+        tee_cmd = client.commands[1]
+        m = _re.search(r"printf '%s' '([A-Za-z0-9+/=]+)'", tee_cmd)
+        assert m, f"expected base64 payload in tee cmd: {tee_cmd!r}"
+        rendered = _b64.b64decode(m.group(1)).decode()
+
+        assert "        - 192.168.100.5/30" in rendered, (
+            f"DPU-A's persisted IPAM address must survive an orphan-DPU probe:\n{rendered}"
+        )
+        # DPU-B has no IPAM IP and is orphan — formula applies for rshim1.
+        assert "        - 192.168.101.1/30" in rendered, (
+            f"DPU-B's rshim1 interface must get the formula address:\n{rendered}"
+        )
+        # rshim0 must NOT fall back to its formula.
+        assert "        - 192.168.100.1/30" not in rendered, (
+            "rshim0 formula must not appear when DPU-A has an IPAM override"
+        )
+
+    def test_orphan_probe_subject_no_db_branch_writes_nothing(self):
+        """No-db branch: orphan probe subject (kubernetes_cluster_id=None) must
+        not contribute its stale host_tmfifo_ip (ADR-424 finding A)."""
+        orphan = SimpleNamespace(
+            pci_address="0000:0d:00.0",
+            rshim_device="rshim0",
+            host_tmfifo_ip="192.168.100.5",  # stale persisted IP
+            kubernetes_cluster_id=None,       # orphan
+            host_node_ip="10.0.0.55",
+            id=99,
+        )
+        client = FakeSSHClient([(0, "", ""), (0, "", ""), (0, "", "")])
+        _ensure_host_tmfifo_ips(  # type: ignore[arg-type]
+            client,
+            {"0000:0d:00.0": "rshim0"},
+            dpu=orphan,
+        )
+
+        # ip_overrides is empty → single-rshim early return → no SSH commands.
+        assert client.commands == [], (
+            "Orphan probe subject (no-db branch) must not trigger netplan write"
+        )
+
 
 class TestShortBdfForMst:
     """`mst status -v` always prints short BDFs even on multi-domain hosts.

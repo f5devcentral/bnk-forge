@@ -49,8 +49,14 @@ def helm_release_lock(db, cluster_id: int, release_name: str):
     pg_advisory_xact_lock would hold an idle-in-transaction connection for the full
     duration of `helm install/upgrade` (potentially 5–30 min), causing lock bloat;
     session-level locks are released explicitly when the context exits regardless of
-    transaction state.  The try/finally guarantees pg_advisory_unlock is always called
-    even on exception, preventing lock leaks.
+    transaction state.
+
+    The release is defensive because try/finally alone was not enough (#83). If SQL
+    inside the body failed, the transaction was left aborted and the
+    pg_advisory_unlock in the finally raised InFailedSqlTransaction itself -- so the
+    lock was never released and the pooled connection kept holding it until
+    pool_recycle (~1h), wedging every later helm operation on that release. On that
+    path we roll back to clear the abort, then release.
 
     On SQLite (tests): no-op; SQLite is single-process and has no advisory locks.
     """
@@ -75,13 +81,46 @@ def helm_release_lock(db, cluster_id: int, release_name: str):
     try:
         yield
     finally:
-        db.execute(sa.text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-        logger.debug(
-            "helm_release_lock: released advisory lock key=%d cluster=%d release=%s",
-            key,
-            cluster_id,
-            release_name,
+        _release_helm_lock(db, key, cluster_id, release_name)
+
+
+def _release_helm_lock(db, key: int, cluster_id: int, release_name: str) -> None:
+    """Release the advisory lock, surviving an aborted transaction.
+
+    A failed statement inside the lock body leaves the transaction aborted, and
+    Postgres then rejects *every* statement on that connection -- including the
+    unlock -- with InFailedSqlTransaction. Rolling back first clears the abort so
+    the release can actually run. Never leave the loop without trying: a leaked
+    session-level lock outlives the task and is only reclaimed on pool_recycle.
+    """
+    unlock = sa.text("SELECT pg_advisory_unlock(:key)")
+    try:
+        db.execute(unlock, {"key": key})
+    except Exception as exc:
+        logger.warning(
+            "helm_release_lock: unlock failed (%s) for key=%d cluster=%d release=%s — "
+            "rolling back the aborted transaction and retrying the release",
+            exc, key, cluster_id, release_name,
         )
+        try:
+            db.rollback()
+            db.execute(unlock, {"key": key})
+        except Exception:
+            # Nothing further we can do here; make the leak loud rather than
+            # silent, since the symptom (helm wedged for an hour) is otherwise
+            # very hard to trace back to this.
+            logger.exception(
+                "helm_release_lock: LEAKED advisory lock key=%d cluster=%d release=%s — "
+                "held until the connection is recycled",
+                key, cluster_id, release_name,
+            )
+            return
+    logger.debug(
+        "helm_release_lock: released advisory lock key=%d cluster=%d release=%s",
+        key,
+        cluster_id,
+        release_name,
+    )
 
 
 # ── Read tasks (fast ops, short-poll from route) ────────────────────────────

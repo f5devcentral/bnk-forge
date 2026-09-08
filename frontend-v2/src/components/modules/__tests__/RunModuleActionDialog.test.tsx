@@ -219,6 +219,66 @@ describe('RunModuleActionDialog', () => {
     expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled();
   });
 
+  it('renders a hostile manifest cleanup_note as literal text (escaping regression guard)', async () => {
+    // cleanup_note is authored in the artifact manifest -- untrusted content.
+    // It must render as text, never as HTML (#99).
+    const hostile = 'Remove the PoC dir <img src=x onerror="window.__pwned = 3"> <b>now</b>';
+    server.use(
+      http.get('*/api/project-modules/:moduleId/actions', () =>
+        HttpResponse.json({
+          module_id: 7,
+          actions: [{ name: 'cleanup', title: 'Clean up', description: 'Clean up the PoC',
+                      rating: 'green', inputs: [], cleanup_note: hostile }],
+        })
+      ),
+      http.post('*/api/project-modules/:moduleId/actions/:actionName', () =>
+        HttpResponse.json({ task_id: 901, message: 'queued' })
+      ),
+      http.get('*/api/tasks/901', () =>
+        HttpResponse.json({ id: 901, celery_task_id: 'c901', task_type: 'action',
+                            status: 'completed', project_id: 1, module_id: 7,
+                            created_at: '2026-07-18T00:00:00Z' })
+      ),
+    );
+    const user = userEvent.setup();
+    render(<RunModuleActionDialog {...defaultProps} />);
+
+    await selectAction(user, 'Clean up');
+    await user.click(screen.getByRole('button', { name: 'Run' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Remove the PoC dir/)).toBeInTheDocument();
+    });
+    // Markup is visible as literal characters, and created no elements.
+    expect(screen.getByText(/<img src=x onerror=/)).toBeInTheDocument();
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+    expect(document.querySelector('b')).toBeNull();
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+  });
+
+  it('ignores a second submit while the first is still in flight (re-guard)', async () => {
+    let posts = 0;
+    server.use(
+      http.post('*/api/project-modules/:moduleId/actions/:actionName', async () => {
+        posts += 1;
+        await new Promise((r) => setTimeout(r, 150)); // hold the first request open
+        return HttpResponse.json(submitResponse('scenario-run'));
+      })
+    );
+    const user = userEvent.setup();
+    render(<RunModuleActionDialog {...defaultProps} />);
+
+    await selectAction(user, 'Run scenario');
+    const run = screen.getByRole('button', { name: 'Run' });
+    // Two clicks inside the window before isPending disables the button.
+    await Promise.all([user.click(run), user.click(run)]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Action task #42/)).toBeInTheDocument();
+    });
+    expect(posts).toBe(1);
+  });
+
   it('shows a message and keeps Run disabled when no actions are declared', async () => {
     server.use(
       http.get('*/api/project-modules/:moduleId/actions', () => {

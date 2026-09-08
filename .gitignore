@@ -158,7 +158,11 @@ screenshots/
 .agent/
 .opencode
 .opencode/
+.claude
 .claude/
+.gemini
+.gemini/
+.cursor
 .cursor/
 .aider*
 # CLAUDE.md go ahead and share
@@ -182,6 +186,9 @@ nohup.out
 # Editor
 # Node
 node_modules/
+# package-lock.json is intentionally TRACKED — `npm ci` and the CI setup-node
+# cache both require it. Ignoring it silently drops the lockfile from any export
+# built off the working tree, which breaks every frontend CI job.
 package-lock.json
 !frontend-v2/package-lock.json
 *.pyc
@@ -253,7 +260,12 @@ cli/go/
 *.tar.gz
 *.bnk
 .ssh/
-secrets/
+# Anchored to the repo root on purpose: an unanchored `secrets/` also matches
+# frontend-v2/src/components/secrets/, which silently removed a shipped component.
+# `/secrets/*` rather than `/secrets/`: git will not descend into an excluded
+# directory, so the tracked placeholder README could not be negated otherwise.
+/secrets/*
+!/secrets/README.md
 .agent/
 .agent-prev/
 .agent-local/
@@ -268,3 +280,9 @@ next-session-prompt
 agent-selection
 handoffs/
 *.code-workspace
+
+# Transient sed backup files from scripts/sync-version-artifacts.sh --write
+# (removed on success; gitignored so an interrupted run leaves no tracked litter)
+*.syncbak
+# Generated secret material (JWT/encryption keys, initial admin password)
+backend/keys/

@@ -118,8 +118,13 @@ class TestAgentAuthFlagOn:
         assert resp.status_code == 400
         assert "AGENT_AUTH_INVALID" in resp.text
 
-    def test_register_accepts_valid_token(self, client, admin_headers):
-        """Flag on + valid JWT → accepted (not a 400/401)."""
+    def test_register_accepts_valid_token(self, client, sample_user, admin_headers):
+        """Flag on + valid JWT for a real, live admin → accepted (not a 400/401).
+
+        #186 (bonnyr-f5): the gate fails CLOSED on a token that resolves to no
+        live User, so the token must correspond to a real row (sample_user is
+        'testadmin', which admin_headers is issued for) -- as any human token
+        does, since a token is only minted after that user logs in."""
         with patch("routes.benchmarks.settings") as mock_settings:
             mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
             resp = client.post(
@@ -128,6 +133,118 @@ class TestAgentAuthFlagOn:
                 headers=admin_headers,
             )
         assert resp.status_code not in (400, 401)
+
+    def _headers_for(self, **claims) -> dict:
+        from services.auth_service import create_access_token
+        return {"Authorization": f"Bearer {create_access_token(claims)}"}
+
+    def test_register_rejects_viewer_token(self, client):
+        """#148: authentication is not write intent. A viewer token decodes fine
+        but grants no right to register agents or push results."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="viewer-user", role="viewer"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_register_accepts_agent_role_token(self, client):
+        """The bootstrap token: role=agent, NO agent_id. Must be able to register."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="forge-builtin-agent", role="agent"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_accepts_operator_token(self, client, db):
+        """The documented human curl flow keeps working with an operator token.
+
+        #186 (bonnyr-f5): the token must resolve to a real, live operator -- the
+        gate fails CLOSED on a token for a user that does not exist or is
+        disabled. A real curl operator always has a row (that is how they got the
+        token), so create one, unlike a forged token for a phantom user."""
+        from services.auth_service import create_user
+        create_user(db, "op", "op@t.com", "pw-op-123",
+                    role="operator", must_change_password=False)
+        db.commit()
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="op", role="operator"),
+                )
+        assert resp.status_code in (200, 201), resp.text
+
+    def test_register_refuses_a_must_change_user(self, client, db):
+        """#186 r2 (bonnyr-f5): a real must-change admin/operator was able to
+        create an agent (201) because this path never gated must_change. A token
+        that resolves to a real user owing a password change must be refused."""
+        from services.auth_service import create_access_token, create_user
+        create_user(db, "mc-admin", "mc-admin@t.com", "pw",
+                    role="admin", must_change_password=True)
+        db.commit()
+        token = create_access_token({"sub": "mc-admin", "role": "admin"})
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "AGENT_AUTH_PASSWORD_CHANGE_REQUIRED"
+
+    def test_register_rejects_nonexistent_user_token(self, client):
+        """#186 (bonnyr-f5): INV-20 fail-open. A validly-signed admin/operator
+        token that resolves to NO live User (deleted/disabled row, or a phantom
+        subject) must be refused -- token_user_state's contract is fail CLOSED.
+        Previously the `if agent_user is not None:` had no else, so None skipped
+        the gate and this returned 201."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="phantom-admin", role="admin"),
+                )
+        assert resp.status_code == 400, resp.text
+        assert "AGENT_AUTH_INVALID" in resp.text
+
+    def test_register_rejects_token_with_no_role(self, client):
+        """A token with no role claim must fail closed, not fall through."""
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=_register_payload(),
+                    headers=self._headers_for(sub="roleless"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def test_default_is_secure(self):
+        """#148: a default deployment must not accept unauthenticated writes."""
+        from core.config import Settings
+        assert Settings().BENCHMARK_AGENT_AUTH_REQUIRED is True
 
     def test_ingest_rejects_missing_bearer(self, client):
         """Flag on + no Authorization → 400 AGENT_AUTH_REQUIRED.
@@ -198,14 +315,105 @@ class TestWSTokenValidationLogic:
         # WS handler logic: int(token_agent_id) != path_agent_id → reject
         assert int(token_agent_id) != path_agent_id
 
-    def test_no_agent_id_claim_is_accepted(self):
-        """Token without agent_id claim → no restriction (any agent allowed)."""
-        from services.auth_service import create_access_token, decode_token
+    def test_no_agent_id_claim_is_rejected(self):
+        """Token without agent_id claim → rejected when agent auth is required (#41 F5).
+
+        This previously asserted the opposite: a claimless token skipped the
+        binding check, so any valid token -- a viewer's included -- could connect
+        as any agent_id. Authentication is not identity.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
 
         token = create_access_token(data={"sub": "agent", "role": "admin"})
-        payload = decode_token(token)
-        # None means skip the agent_id check in the WS handler
-        assert payload.get("agent_id") is None
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_matching_agent_id_claim_authorizes_through_helper(self):
+        """The bound case still connects — the gate must not be a blanket deny."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 7})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 7) is None
+
+    def test_mismatched_agent_id_claim_rejected_through_helper(self):
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": 99})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_non_numeric_agent_id_claim_rejected(self):
+        """A claim that cannot be compared must fail closed, not raise."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(
+            data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"}
+        )
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(ws, 5) == 4401
+
+    def test_flag_off_still_admits_a_claimless_token(self):
+        """Regression guard: the built-in agent must keep working.
+
+        The stricter claim requirement is Layer 1 only. With
+        BENCHMARK_AGENT_AUTH_REQUIRED off, the built-in forge-agent -- which
+        ships with an empty AGENT_TOKEN and registers before it has an agent_id
+        -- must still connect, or this fix breaks every default install.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent", "role": "admin"})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
+
+    def test_flag_off_still_admits_no_token_at_all(self):
+        """The built-in agent's default: AGENT_TOKEN empty."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+
+        ws = MagicMock()
+        ws.query_params = {}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", False),
+        ):
+            assert _agent_ws_authorized(ws, 5) is None
 
     def test_matching_agent_id_passes(self):
         """Token with agent_id=7 and path agent_id=7 → accepted."""
@@ -216,3 +424,87 @@ class TestWSTokenValidationLogic:
         token_agent_id = payload.get("agent_id")
         path_agent_id = 7
         assert int(token_agent_id) == path_agent_id
+
+
+class TestAgentWSLayer2MustChangeGate:
+    """#186 (bonnyr-f5 r4, INV-10): the agent WS Layer-2 (global JWT) branch
+    must enforce the must-change gate the other five JWT entry points enforce.
+
+    token_user_state opens its own DB session, so these unit tests patch it to
+    isolate the gate LOGIC in _agent_ws_authorized (DB-backed behavior is
+    covered by token_user_state's own component tests).
+    """
+
+    def _ws(self, token):
+        from unittest.mock import MagicMock
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+        return ws
+
+    def test_rejects_must_change_human_admin(self):
+        # The reproduced bug: a valid admin token owing a password change was
+        # admitted (returned None). It must now close 4001.
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "admin", "role": "admin"})
+        must_change_user = MagicMock(must_change_password=True)
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=must_change_user),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) == 4001
+
+    def test_admits_settled_human_admin(self):
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "admin", "role": "admin"})
+        settled_user = MagicMock(must_change_password=False)
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=settled_user),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) is None
+
+    def test_rejects_human_token_resolving_to_no_user(self):
+        # Fail closed: a signed token whose subject no longer resolves (deleted/
+        # disabled) must be refused, not waved through.
+        from unittest.mock import patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "ghost", "role": "admin"})
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", return_value=None),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) == 4001
+
+    def test_agent_role_token_admitted_without_user_lookup(self):
+        # Agent tokens carry no User row; they must still connect on this path
+        # (agent auth off, global JWT on) and must NOT be gated via token_user_state.
+        from unittest.mock import patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "forge-agent", "role": "agent"})
+
+        def _boom(*_a, **_k):  # token_user_state must not be consulted for agents
+            raise AssertionError("token_user_state should not be called for an agent token")
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("services.auth_service.token_user_state", _boom),
+        ):
+            assert _agent_ws_authorized(self._ws(token), 5) is None

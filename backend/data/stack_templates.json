@@ -1298,9 +1298,9 @@
     "forked_from": null
   },
   {
-    "name": "DPU + BNK 2.2 Full PoC (All-in-One)",
+    "name": "DPU + BNK Full PoC (All-in-One)",
     "slug": "bnk-bare-metal-full-poc",
-    "description": "End-to-end: DPU flash → K8s cluster → BNK 2.2 platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately.",
+    "description": "End-to-end: DPU flash → K8s cluster → BNK platform in one blueprint. For step-by-step control, use DPU Infrastructure + BNK Platform separately.",
     "category": "bare-metal",
     "cloud_provider": null,
     "icon": "cpu",
@@ -1589,9 +1589,9 @@
     "forked_from": null
   },
   {
-    "name": "DPU + BNK 2.2 Full PoC (SSH BNK layer)",
+    "name": "DPU + BNK Full PoC (SSH BNK layer)",
     "slug": "bnk-bare-metal-full-poc-ssh",
-    "description": "End-to-end DPU + BNK 2.2 PoC where the BNK layer (modules 18-25) runs over SSH (on-host sudo kubectl/helm) instead of kubernetes-direct/operator/OpenTofu. For constrained bare-metal DPU servers with no routable cluster API. ADR-204.",
+    "description": "End-to-end DPU + BNK PoC where the BNK layer (modules 18-25) runs over SSH (on-host sudo kubectl/helm) instead of kubernetes-direct/operator/OpenTofu. For constrained bare-metal DPU servers with no routable cluster API. ADR-204.",
     "category": "bare-metal",
     "cloud_provider": null,
     "icon": "cpu",
@@ -1773,6 +1773,13 @@
           "deployment_size": "Large",
           "instance_namespace": "f5-bnk"
         }
+      },
+      {
+        "path": "bare-metal/bnk-license",
+        "name": "BNK License CR [SSH]",
+        "required": true,
+        "description": "Creates License CR for CWC (BNK 2.3+); no-op for 2.2 — FLO helm path (ADR-478)",
+        "variables": {}
       },
       {
         "path": "bare-metal/bnk-vlans",

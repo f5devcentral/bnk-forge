@@ -199,31 +199,208 @@ def seed_cli_bnkctl_modules_step():
         logger.info("  cli-bnkctl modules up to date")
 
 
+def seed_deployable_releases_step():
+    """Seed BNK deployable releases into the catalog if not already present."""
+    from database import get_db_context
+    from services.bare_metal.version_profiles import BnkDeployableReleaseService
+    with get_db_context() as db:
+        seeded_count = BnkDeployableReleaseService(db).seed_profiles()
+        db.commit()
+    if seeded_count > 0:
+        logger.info(f"  Seeded {seeded_count} BNK deployable release(s)")
+    else:
+        logger.info("  BNK deployable releases already configured")
+
+
 def seed_auth_step():
     """Seed default admin user if no users exist; always reconcile MCP service account."""
     from database import get_db_context
-    from services.auth_service import ensure_service_user, seed_admin_user
-    with get_db_context() as db:
-        admin = seed_admin_user(db)
-    if admin:
-        logger.info("  Created default admin user — change password on first login")
-        logger.info("  See docs/INSTALLATION.md for first-login instructions")
-    else:
-        logger.info("  Users already exist")
+    from services.auth_service import (
+        GeneratedCredentialPersistError,
+        ensure_service_user,
+        seed_admin_user,
+    )
+    try:
+        with get_db_context() as db:
+            admin = seed_admin_user(db)
+        if admin:
+            logger.info("  Created default admin user — change password on first login")
+            logger.info("  See docs/INSTALLATION.md for first-login instructions")
+        else:
+            logger.info("  Users already exist")
 
-    # Unconditional: ensure MCP service account exists and its password hash matches
-    # current MCP_SERVICE_PASSWORD — prevents auth drift when the env var is rotated.
-    with get_db_context() as db:
-        ensure_service_user(
-            db,
-            username=settings.MCP_SERVICE_USERNAME,
-            password=settings.MCP_SERVICE_PASSWORD,
-        )
+
+        # bonnyr-f5 #188: treat a shipped known default (changeme) as "unset" so a
+        # dist/IBM upgrade doesn't re-seed the mcp account to a known password.
+        from core.config import MCP_KNOWN_DEFAULT_PASSWORDS
+        _mcp_pw_usable = bool(settings.MCP_SERVICE_PASSWORD) and settings.MCP_SERVICE_PASSWORD not in MCP_KNOWN_DEFAULT_PASSWORDS
+
+        # bonnyr-f5 #188 round 5 (BLOCKER-1): disable stale service accounts
+        # UNCONDITIONALLY, before any reconcile — never only on the no-password
+        # path. The reconcile below touches ONLY the row whose name matches
+        # MCP_SERVICE_USERNAME; on the diligent-operator upgrade path that name
+        # resolves from a legacy .env to 'admin', so ensure_service_user raises a
+        # reserved-name ValueError and returns WITHOUT disabling the legacy 'mcp'
+        # row — leaving it active with the shipped default even though the operator
+        # did the right thing. Running the provenance-keyed disable first (round 4,
+        # INV-11: keyed on is_service_account, not the configured username) neutralises
+        # every stale default; the reconcile then re-activates the one account whose
+        # credentials we actually manage.
+        # bonnyr-f5 #193 M2: when a usable password IS configured, skip the row we
+        # are about to reconcile so we never commit an inactive window for the live
+        # MCP account (a rolling restart would otherwise 401 live MCP traffic), and
+        # suppress the misleading "no usable MCP_SERVICE_PASSWORD is set" warning
+        # that used to fire on every boot of a correctly-configured install.
+        from services.auth_service import disable_stale_service_user
+        with get_db_context() as db:
+            disable_stale_service_user(
+                db,
+                skip_username=settings.MCP_SERVICE_USERNAME if _mcp_pw_usable else None,
+                password_configured=_mcp_pw_usable,
+            )
+
+        # #187/#188: only reconcile when a real password is configured; never seed
+        # the account with a shipped default. When unset, MCP is simply unavailable
+        # (the stale default row was already disabled above) until an operator sets
+        # MCP_SERVICE_PASSWORD (and gives the MCP server the same value). When it IS
+        # set, ensure_service_user reconciles the stored hash to it — preventing auth
+        # drift when the env var is rotated.
+        # bonnyr-f5 #193 M1 (DECISION): this is a deliberate consolidation — #188's
+        # "unset MCP_SERVICE_PASSWORD -> account disabled" is chosen over #186's
+        # "unset -> generate a retrievable secret". The generate path is intentionally
+        # NOT restored: an MCP secret is a shared secret the MCP *client* must also
+        # hold, so a backend-only generated value cannot be surfaced to it. Do not
+        # re-add a generate-on-unset fallback here without re-opening that decision.
+        if _mcp_pw_usable:
+            try:
+                with get_db_context() as db:
+                    ensure_service_user(
+                        db,
+                        username=settings.MCP_SERVICE_USERNAME,
+                        password=settings.MCP_SERVICE_PASSWORD,
+                    )
+            except ValueError as exc:
+                # Reserved-username refusal (e.g. MCP_USERNAME still 'admin'): loud,
+                # not fatal — MCP stays down but the human admin is not taken over,
+                # and the stale default row was already disabled above.
+                logger.error("  MCP service account NOT seeded: %s", exc)
+        else:
+            logger.warning(
+                "  MCP_SERVICE_PASSWORD is not set — MCP service account not seeded; "
+                "the MCP server will be unable to authenticate until you set it"
+            )
+    except GeneratedCredentialPersistError as exc:
+        # #186 (bonnyr-f5): a generated admin/service credential could not be
+        # written to the keys dir. We refuse to fall back to LOGGING the plaintext
+        # (a real secret-into-logs leak). Fail closed instead: SystemExit escapes
+        # the best-effort step handler in main.py (which only catches Exception),
+        # so the process refuses to start rather than run with an unretrievable
+        # generated credential — no plaintext ever reaches the logs. The operator
+        # makes the keys volume (KEYS_DIR, default /app/keys) writable, or sets an
+        # explicit DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD (which skips
+        # generation entirely), then restarts.
+        raise SystemExit(
+            f"Cannot start: {exc}. Refusing to log the generated plaintext secret. "
+            "Make the keys volume (KEYS_DIR, default /app/keys) writable, or set "
+            "DEFAULT_ADMIN_PASSWORD / MCP_SERVICE_PASSWORD, then restart."
+        ) from exc
 
     if settings.REQUIRE_AUTH:
         logger.info("  Authentication ENABLED (REQUIRE_AUTH=true)")
     else:
         logger.warning("  Authentication DISABLED (REQUIRE_AUTH=false)")
+
+
+def mint_builtin_agent_token_step():
+    """Write a bootstrap token for the built-in forge-agent (#148).
+
+    Agent-facing endpoints require an agent-class bearer token, so the built-in
+    agent -- which ships in docker-compose.yml with no operator-provisioned
+    token -- needs one it can find. It registers BEFORE it has an agent_id, so
+    an agent_id-bound token from _mint_agent_token cannot exist yet; this
+    token deliberately carries role=agent and NO agent_id. That lets it
+    register and connect the WS as a claimless agent, and nothing more.
+
+    Written to its OWN VOLUME (AGENT_TOKEN_DIR, default /app/agent-token) --
+    not into the keys volume beside jwt_secret.key. That is what lets
+    docker-compose.yml hand the agent container this one file and nothing
+    else, and it works on a cold first boot: a volume `subpath` mount fails
+    container creation if the path does not exist yet, and on first boot the
+    backend has not written anything when the agent container is created.
+    A dedicated named volume is created empty by Docker and needs no
+    ordering. The file is stable across restarts: reissued only when
+    missing, no longer valid for the current JWT_SECRET_KEY, or close to
+    expiry -- so a running agent keeps working across backend restarts.
+
+    Only meaningful when BENCHMARK_AGENT_AUTH_REQUIRED is on; when it is off,
+    the endpoints are open and the file is harmless.
+    """
+    import os
+    from datetime import UTC, datetime, timedelta
+
+    from core.errors import UnauthorizedError
+    from services.auth_service import create_access_token, decode_token
+
+    token_dir = os.environ.get("AGENT_TOKEN_DIR", "/app/agent-token")
+    path = os.path.join(token_dir, "builtin_agent.token")
+    lifetime = timedelta(days=365)
+    # Reissue while there is still comfortably more life left than the gap
+    # between backend restarts. A token that merely "decodes today" is not
+    # good enough: if it expires under a running agent, every heartbeat starts
+    # 4401ing and nothing reissues until the NEXT restart -- a silent lockout,
+    # which is the one thing a bootstrap credential must never do.
+    renew_before = timedelta(days=30)
+
+    existing = None
+    try:
+        with open(path) as f:
+            existing = f.read().strip() or None
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("  Could not read %s: %s", path, exc)
+
+    if existing:
+        try:
+            payload = decode_token(existing)
+            exp = payload.get("exp")
+            remaining = (
+                datetime.fromtimestamp(int(exp), tz=UTC) - datetime.now(UTC)
+                if exp is not None else timedelta(0)
+            )
+            if remaining > renew_before:
+                logger.info("  Built-in agent bootstrap token present and valid")
+                return
+            logger.info(
+                "  Built-in agent bootstrap token expires in %s — reissuing early", remaining
+            )
+        except UnauthorizedError:
+            logger.info("  Built-in agent bootstrap token stale (secret rotated?) — reissuing")
+
+    token = create_access_token(
+        {"sub": "forge-builtin-agent", "role": "agent"},
+        expires_delta=lifetime,
+    )
+    try:
+        os.makedirs(token_dir, exist_ok=True)
+        with open(path, "w") as f:
+            f.write(token)
+        # 0644, not 0600: the agent container runs as uid 1001 (Dockerfile.agent)
+        # and the backend as another uid, and the file crosses between them via
+        # the compose mount. World-read is the mechanism, not an accident -- the
+        # token is deliberately narrow (role=agent, no agent_id) so this exposure
+        # buys register + claimless WS and nothing else. Never widen its claims.
+        # chmod AFTER write, not via an opener: an opener's mode applies only on
+        # create, so a rewrite of an existing 0600 file would keep it 0600 and
+        # the agent could not read the reissued token.
+        os.chmod(path, 0o644)
+        logger.info("  Wrote built-in agent bootstrap token to %s", path)
+    except OSError as exc:
+        logger.warning(
+            "  Could not write built-in agent bootstrap token (%s); the built-in "
+            "agent will fail to register while BENCHMARK_AGENT_AUTH_REQUIRED is on",
+            exc,
+        )
 
 
 def assert_lock_columns_step():

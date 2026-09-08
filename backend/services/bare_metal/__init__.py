@@ -14,13 +14,13 @@ from services.bare_metal.orchestrator import (
     get_steps_for_topology,
 )
 from services.bare_metal.ssh_session import RemoteSSHSession, SSHResult, SSHSession
-from services.bare_metal.version_profiles import BnkVersionProfileService
+from services.bare_metal.version_profiles import BnkDeployableReleaseService
 
 __all__ = [
     "RemoteSSHSession",
     "SSHSession",
     "SSHResult",
-    "BnkVersionProfileService",
+    "BnkDeployableReleaseService",
     "BareMetalDeploymentService",
     "StepDefinition",
     "TOPOLOGY_STEPS",

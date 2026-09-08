@@ -294,11 +294,19 @@ class Dpu(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Kubernetes Cluster membership & persisted tmfifo link allocation (ADR-424)
+    kubernetes_cluster_id = Column(
+        Integer, ForeignKey("kubernetes_clusters.id", ondelete="SET NULL"), nullable=True
+    )
+    host_tmfifo_ip = Column(String(64), nullable=True)
+    dpu_tmfifo_ip = Column(String(64), nullable=True)
+
     # Same cascade pattern as ProjectDpuSettings — defer to DB ON DELETE CASCADE.
     project = relationship(
         "Project",
         backref=backref("dpus", cascade="all, delete-orphan", passive_deletes=True),
     )
+    kubernetes_cluster = relationship("KubernetesCluster", foreign_keys=[kubernetes_cluster_id])
 
     __table_args__ = (
         # A given BMC IP may only be registered once per project, but only
@@ -317,4 +325,18 @@ class Dpu(Base):
             unique=True,
             postgresql_where=text("access_mode = 'in-band'"),
         ),
+        # ADR-424: uniqueness backstop for concurrent IPAM allocation.
+        # Ensures (cluster, dpu_tmfifo_ip) is unique when a DPU IP is allocated.
+        # Concurrent races in allocate_next_subnet become IntegrityError instead
+        # of silent duplicate IP allocation (D-001 bug class).
+        Index(
+            "ix_dpus_cluster_tmfifo_ip",
+            "kubernetes_cluster_id", "dpu_tmfifo_ip",
+            unique=True,
+            postgresql_where=text("dpu_tmfifo_ip IS NOT NULL"),
+        ),
+        # Plain index for membership queries, before_delete UPDATE, and reconcile
+        # (all of which filter WHERE kubernetes_cluster_id = X over NULL-tmfifo rows
+        # that the partial unique index above does not cover).
+        Index("ix_dpus_kubernetes_cluster_id", "kubernetes_cluster_id"),
     )

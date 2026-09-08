@@ -58,7 +58,7 @@ docker build --target worker --build-arg INSTALL_INFRACOST=true -t bnk-forge-wor
 
 ## Keyless Image Signing, SBOM, and Provenance
 
-BNK Forge images published to the registry are signed with **keyless cosign** (Sigstore Fulcio +
+BNK Forge images published from the first release cut through the signing pipeline onward are signed with **keyless cosign** (Sigstore Fulcio +
 Rekor transparency log). No long-lived signing key is stored — the signature is bound to the
 OIDC identity of whoever ran the publish script at the time of signing.
 
@@ -83,36 +83,43 @@ The script signs each image by digest (not tag) and attaches two attestations:
 
 ### Verifying signatures (consumers)
 
-Replace `<signer-email>` with the email of the person who signed the images (visible in the
-Rekor transparency log entry), and `<digest>` with the image digest.
+Replace `<digest>` with the image digest you're verifying. You do **not** fill in a
+signer — official images are signed by the release workflow (`release.yml`), and the
+commands below already pin that identity with `--certificate-identity-regexp … release.yml@…`.
+
+> **Note:** this verifies images published by CI. If a maintainer signed an image
+> locally via the manual path above (`SIGN_EXECUTE=1`), it is bound to *that
+> person's* OIDC identity, not the workflow's, so it will not match the regexp
+> here — verify it with `--certificate-identity <their-email>` instead. Official
+> releases always go through `release.yml`.
 
 ```bash
 # Verify the signature
 cosign verify \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth
+  ghcr.io/f5devcentral/bnk-forge-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Verify + extract the SBOM attestation
 cosign verify-attestation \
   --type cyclonedx \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/f5devcentral/bnk-forge-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .
 
 # Verify + extract the SLSA provenance attestation
 cosign verify-attestation \
   --type slsaprovenance \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/f5devcentral/bnk-forge/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/f5devcentral/bnk-forge-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .
 ```
 
 Apply the same commands to the other image names:
 `bnk-forge-worker`, `bnk-forge-beat`, `bnk-forge-frontend`, `bnk-forge-proxy`,
-`bnk-forge-mcp`.
+`bnk-forge-mcp`, `bnk-forge-operator`.
 
 ### OCI Labels
 
@@ -123,7 +130,7 @@ All images carry standard OCI labels injected at build time via `docker-bake.hcl
 | `org.opencontainers.image.source` | `https://github.com/f5devcentral/bnk-forge` |
 | `org.opencontainers.image.revision` | git commit SHA (`GIT_REVISION` bake arg) |
 | `org.opencontainers.image.version` | `VERSION` file contents |
-| `org.opencontainers.image.created` | RFC 3339 timestamp of the build |
+| `org.opencontainers.image.created` | RFC 3339 build timestamp (`CREATED` bake arg). Emitted only when set — CI release builds set it to the release commit's committer date; a plain `make push-images` leaves it unset and the label is omitted rather than written empty. |
 
 Inject `GIT_REVISION` when calling bake:
 
@@ -148,6 +155,17 @@ All CLI tool downloads are pinned by version **and** verified by SHA256 checksum
 | Infracost | 0.10.43 | `.sha256` files from GitHub releases |
 
 If a download is tampered with, the build fails immediately with a checksum mismatch.
+
+### Building Behind Corporate DLP TLS Interception
+
+Corporate DLP-managed workstations TLS-intercept `github.com` traffic with an internal CA (`ca.f5.goskope.com`). Inside a `docker build` container, `RUN curl https://github.com/...` fails with `curl: (60) SSL certificate problem` because build containers do not inherit the host OS trust store.
+
+Per F5 KB57735 and [D-035](adr/D-035-docker-netskope-tls-interception.md):
+- `github.com` downloads (`tofu`, `llmtop`) use Docker `ADD`, which fetches through the host Docker daemon trust store without baking CA certs into the image or using `curl -k`.
+- Non-intercepted downloads (`get.helm.sh`, `dl.k8s.io`, `awscli.amazonaws.com`) continue to use `curl`.
+- Per-architecture SHA256 checksum verification (`sha256sum -c`) remains strictly enforced for all downloaded binaries.
+
+Because `ADD` (unlike `curl`) has no built-in retry, a transient CDN/TLS blip aborts the whole build. For from-scratch builds on DLP-managed workstations use `make build-retry` (tune with `RETRY_ATTEMPTS` / `RETRY_DELAY`); BuildKit's layer cache makes each retry cheap.
 
 ### Updating Tool Versions
 

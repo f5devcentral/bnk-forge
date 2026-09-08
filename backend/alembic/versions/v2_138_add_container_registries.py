@@ -7,6 +7,14 @@ reference a cloud_credential_templates row for short-lived token exchange.
 
 Revision ID: v2_138
 Revises: v2_137
+
+Idempotent by necessity (INV-7). Fresh installs are provisioned by init_db.py
+with ``create_all`` + ``stamp head``, so a stack installed at any release whose
+ORM already declared ContainerRegistry has this table ALREADY, while its stamp
+sits at v2_137 — below this revision. Upgrading such a stack replays v2_138 and
+an unguarded ``create_table`` raises DuplicateTable, which aborts the whole
+upgrade and crash-loops the backend. Guarding the create lets those stacks move
+through the chain; on a DB that genuinely lacks the table this is unchanged.
 """
 
 import sqlalchemy as sa
@@ -20,6 +28,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("container_registries"):
+        # Built by create_all at install time; nothing to do. Indexes below are
+        # created with if_not_exists so they converge either way.
+        _ensure_indexes()
+        return
+
     op.create_table(
         "container_registries",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -43,11 +57,23 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name"),
     )
-    op.create_index("ix_container_registries_id", "container_registries", ["id"])
-    op.create_index("ix_container_registries_name", "container_registries", ["name"])
+    _ensure_indexes()
+
+
+def _ensure_indexes() -> None:
+    op.create_index(
+        "ix_container_registries_id", "container_registries", ["id"], if_not_exists=True
+    )
+    op.create_index(
+        "ix_container_registries_name", "container_registries", ["name"], if_not_exists=True
+    )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_container_registries_name", "container_registries")
+    # if_exists: v2_152 drops this index (it is redundant beside the unique
+    # constraint), so downgrading past that revision reaches here with it gone.
+    op.drop_index(
+        "ix_container_registries_name", "container_registries", if_exists=True
+    )
     op.drop_index("ix_container_registries_id", "container_registries")
     op.drop_table("container_registries")

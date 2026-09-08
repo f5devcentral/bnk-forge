@@ -134,6 +134,31 @@ def make_resource_map(items: list[dict]) -> dict[str, dict]:
     return {resource_key(r): r for r in items}
 
 
+def resolve_list_refs(
+    names: set[str] | list[str] | None,
+    resource_map: dict[str, dict],
+    namespace: str,
+    spec_key: str,
+) -> list[dict]:
+    """Resolve address/port list references to their spec data."""
+    if not names:
+        return []
+    resolved = []
+    for name in names:
+        res = resource_map.get(f"{namespace}/{name}") or {}
+        spec = res.get("spec") or {}
+        raw_items = spec.get(spec_key) or []
+        if spec_key == "ports":
+            items = [str(p) for p in raw_items if p is not None]
+        else:
+            items = list(raw_items)
+        resolved.append({
+            "name": name,
+            spec_key: items,
+        })
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Topology traversal
 # ---------------------------------------------------------------------------

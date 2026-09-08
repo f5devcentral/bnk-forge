@@ -153,7 +153,9 @@ function OperatorSection({ health }: { health: DpfHealthResponse }) {
         <div className="flex items-center gap-2">
           {op.version && (
             <Badge variant="outline" className="text-xs">
-              v{op.version}
+              {/* status.version already carries a leading 'v' (e.g. "v26.4.0"); strip it
+                  so we render a single 'v' whether or not upstream includes one. */}
+              v{op.version.replace(/^v/i, '')}
             </Badge>
           )}
           {op.ready ? (

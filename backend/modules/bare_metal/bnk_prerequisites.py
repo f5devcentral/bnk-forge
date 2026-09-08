@@ -9,12 +9,10 @@ instance namespace + its far-secret. Maps poc-deployer 00-namespaces.yaml +
 Version resolution: like the catalog tofu module, this downloads the BNK manifest
 from repo.f5.com (``helm pull``) and parses component versions, producing
 ``flo_version`` / ``manifest_version`` / ``component_versions`` for downstream
-modules. If ``flo_version`` is already supplied (e.g. from a BnkVersionProfile via
-the transforms), the download is skipped. This was added after live e2e on
-dpu-server-2 surfaced that environments without a version profile otherwise leave
-flo_version unset (FLO can't install without its chart version). Maps poc-deployer
-download-manifest.sh + parse-versions.sh. cert_manager stays Jetstack v1.16.1 (the
-forge catalog source), NOT the manifest's f5-cert-manager.
+modules. If ``flo_version`` is already supplied (e.g. from a BnkDeployableRelease
+via the transforms), the download is skipped. If neither ``flo_version`` nor
+``bnk_manifest_version`` is set, execution fails fast — a catalog release must be
+assigned to the host. Maps poc-deployer download-manifest.sh + parse-versions.sh.
 
 dockerconfigjson construction mirrors the tofu module exactly:
 ``auth = base64("_json_key_base64:" + cne_pull_secret)`` (Format A), with Format B
@@ -39,7 +37,6 @@ _NS_LABELS = {
 
 # Manifest chart pulled from repo.f5.com to resolve component versions.
 _MANIFEST_CHART = "oci://repo.f5.com/release/f5-bigip-k8s-manifest"
-_DEFAULT_MANIFEST_VERSION = "2.2.1-3.2226.0-0.0.511"
 
 
 def parse_component_versions(text: str) -> dict[str, str]:
@@ -113,7 +110,7 @@ class BnkPrerequisitesSSHModule(BnkSSHModule):
         "gateway_namespace": InputSpec(name="gateway_namespace", source="profile", default="bnk-gw"),
         "instance_namespace": InputSpec(name="instance_namespace", source="profile", required=False, default=""),
         "bnk_manifest_version": InputSpec(
-            name="bnk_manifest_version", source="profile", required=False, default=_DEFAULT_MANIFEST_VERSION
+            name="bnk_manifest_version", source="profile", required=False, default=None
         ),
         "flo_version": InputSpec(name="flo_version", source="profile", required=False, default=""),
     }
@@ -173,9 +170,14 @@ class BnkPrerequisitesSSHModule(BnkSSHModule):
         #    download the BNK manifest from repo.f5.com and parse them (the catalog
         #    k8s/bnk-prerequisites behaviour).
         flo_version = str(variables.get("flo_version") or "")
-        manifest_version = str(variables.get("bnk_manifest_version") or _DEFAULT_MANIFEST_VERSION)
+        manifest_version = str(variables.get("bnk_manifest_version") or "")
         component_versions: dict[str, str] = {}
         if not flo_version:
+            if not manifest_version:
+                raise RuntimeError(
+                    f"{tag} Neither flo_version nor bnk_manifest_version is set — cannot resolve "
+                    "component versions. Assign a BnkDeployableRelease to this host."
+                )
             component_versions = self._download_versions(session, variables, manifest_version, on_output)
             flo_version = component_versions.get("charts/f5-lifecycle-operator", "")
             if not flo_version:
@@ -237,7 +239,7 @@ class BnkPrerequisitesSSHModule(BnkSSHModule):
             "gateway_namespace": v.get("gateway_namespace", "bnk-gw"),
             "far_secret_name": "far-secret",
             "flo_version": v.get("flo_version", ""),
-            "manifest_version": v.get("bnk_manifest_version", _DEFAULT_MANIFEST_VERSION),
+            "manifest_version": v.get("bnk_manifest_version", ""),
             "prerequisites_ready": True,
         }
 

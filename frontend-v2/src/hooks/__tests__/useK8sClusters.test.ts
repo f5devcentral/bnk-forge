@@ -20,6 +20,8 @@ import {
   useTestClusterConnection,
   useDetectEKSClusters,
   useRefreshClusterKubeconfig,
+  useConfigureBnkCluster,
+  useAssignBnkClusterMembers,
 } from '@/hooks/useK8sClusters';
 import type { K8sClusterCreateRequest, K8sClusterUpdateRequest } from '@/types';
 import React from 'react';
@@ -351,5 +353,115 @@ describe('useRefreshClusterKubeconfig', () => {
     });
 
     expect(result.current.data).toMatchObject({ success: true });
+  });
+});
+
+describe('useConfigureBnkCluster', () => {
+  it('posts bnk-config and returns updated BnkClusterConfigSummary', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+
+    server.use(
+      http.post('*/api/k8s/clusters/:clusterId/bnk-config', async ({ request, params }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          id: 10,
+          cluster_id: Number(params.clusterId),
+          tmfifo_pool_cidr: capturedBody.tmfifo_pool_cidr || '192.168.100.0/22',
+          join_transport: capturedBody.join_transport || 'rshim',
+          control_plane_host_id: capturedBody.control_plane_host_id || 1,
+        });
+      })
+    );
+
+    const { result } = renderHook(() => useConfigureBnkCluster(), { wrapper: createWrapper() });
+
+    result.current.mutate({
+      clusterId: 42,
+      data: {
+        tmfifo_pool_cidr: '192.168.200.0/22',
+        join_transport: 'rshim',
+        control_plane_host_id: 1,
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(capturedBody).toEqual({
+      tmfifo_pool_cidr: '192.168.200.0/22',
+      join_transport: 'rshim',
+      control_plane_host_id: 1,
+    });
+    expect(result.current.data).toEqual({
+      id: 10,
+      cluster_id: 42,
+      tmfifo_pool_cidr: '192.168.200.0/22',
+      join_transport: 'rshim',
+      control_plane_host_id: 1,
+    });
+  });
+});
+
+describe('useAssignBnkClusterMembers', () => {
+  it('posts bnk-members and returns assigned members summary', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+
+    server.use(
+      http.post('*/api/k8s/clusters/:clusterId/bnk-members', async ({ request, params }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>;
+        // Real backend shape: BnkClusterMemberAssignResponse
+        // assigned_dpus entries: { dpu_id, dpu_name, host_tmfifo_ip, dpu_tmfifo_ip, subnet_cidr }
+        // bnk_config: BnkClusterConfigSummary (includes host_ids + dpu_ids)
+        return HttpResponse.json({
+          cluster_id: Number(params.clusterId),
+          control_plane_host_id: capturedBody.control_plane_host_id,
+          host_ids: capturedBody.host_ids,
+          assigned_dpus: [
+            {
+              dpu_id: 1,
+              dpu_name: 'dpu-1',
+              host_tmfifo_ip: '192.168.100.1',
+              dpu_tmfifo_ip: '192.168.100.2',
+              subnet_cidr: '192.168.100.0/30',
+            },
+          ],
+          bnk_config: {
+            id: 10,
+            cluster_id: Number(params.clusterId),
+            tmfifo_pool_cidr: '192.168.100.0/22',
+            join_transport: 'rshim',
+            control_plane_host_id: capturedBody.control_plane_host_id,
+            host_ids: capturedBody.host_ids ?? [],
+            dpu_ids: [1],
+          },
+        });
+      })
+    );
+
+    const { result } = renderHook(() => useAssignBnkClusterMembers(), { wrapper: createWrapper() });
+
+    result.current.mutate({
+      clusterId: 42,
+      data: {
+        control_plane_host_id: 1,
+        host_ids: [1, 2],
+        dpu_ids: [1],
+        tmfifo_pool_cidr: '192.168.100.0/22',
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(capturedBody).toEqual({
+      control_plane_host_id: 1,
+      host_ids: [1, 2],
+      dpu_ids: [1],
+      tmfifo_pool_cidr: '192.168.100.0/22',
+    });
+    expect(result.current.data!.host_ids).toEqual([1, 2]);
+    expect(result.current.data!.control_plane_host_id).toBe(1);
   });
 });

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 docker compose exec -it backend python -c "
 from database import SessionLocal
 from models.bare_metal import BareMetalHost

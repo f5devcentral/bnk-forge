@@ -149,6 +149,30 @@ class ClusterScanner:
             data["namespaces"],
         )
 
+        # ADR-494 Phase B: persist the running BNK release line identified by this scan.
+        # FLO chart version (e.g. "2.21.13-0.0.28") resolves to a release-line registry
+        # row (version-line granularity, not exact build).  Unrecognised versions upsert
+        # an observed row so the information is preserved for the drift signal.
+        try:
+            from services.bnk_upgrade_service import detect_current_bnk_version
+            from services.release_registry_service import ReleaseRegistryService
+
+            running_flo = detect_current_bnk_version(bnk_install)
+            if running_flo is not None:
+                registry = ReleaseRegistryService(self.db)
+                ga = registry.resolve_ga(flo_version=running_flo)
+                # SAVEPOINT: if get_or_create_observed's internal flush raises a
+                # DB-level error, only this savepoint is rolled back, leaving the
+                # outer session intact for the subsequent platform-context flush.
+                with self.db.begin_nested():
+                    cluster.running_release_id = (
+                        ga.release_id if ga is not None else registry.get_or_create_observed(running_flo)
+                    )
+        except Exception as exc:
+            # Broad except is deliberate: discovery write-back must never fail the scan
+            # (mirrors the adjacent proxy-inventory pattern above).
+            logger.warning("running_release_id write-back failed (non-fatal): %s", exc)
+
         # Proxy inventory (deliberate exception to "fetch is the only I/O module":
         # reuse outranks one-I/O-module here; proxy I/O lives in ProxyDiscoveryService)
         existing_proxies: dict[str, Any] = {"status": "none", "proxies": [], "discovered_count": 0, "total_scanned": 0}

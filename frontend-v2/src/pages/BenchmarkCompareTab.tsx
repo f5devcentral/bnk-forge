@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/components/ui/section-card';
+import { EmptyState } from '@/components/ui/empty-state';
 import {
   Table,
   TableBody,
@@ -26,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Trophy } from 'lucide-react';
+import { Trophy, AlertTriangle, SearchX } from 'lucide-react';
 import { useBenchmarkCompare } from '@/hooks/useBenchmarks';
 import {
   PROXY_LABELS,
@@ -43,7 +44,19 @@ import type { BenchmarkCompareRunMetrics } from '@/types';
 // ============================================================================
 
 export function BenchmarkCompareTab({ runIds }: { runIds: number[] }) {
-  const { data, isLoading } = useBenchmarkCompare(runIds);
+  const { data, isLoading, isError } = useBenchmarkCompare(runIds);
+
+  if (isError) {
+    return (
+      <SectionCard>
+        <EmptyState
+          icon={SearchX}
+          title="Comparison unavailable"
+          description="One or more of the selected runs no longer exist — they may have been deleted."
+        />
+      </SectionCard>
+    );
+  }
 
   if (isLoading || !data) return <Skeleton className="h-64 w-full" />;
 
@@ -53,6 +66,16 @@ export function BenchmarkCompareTab({ runIds }: { runIds: number[] }) {
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold text-foreground">Proxy Comparison</h3>
+
+      {data.context_mismatch && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/10 px-4 py-3 text-sm text-warning">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <p>
+            These runs don&apos;t share the same config or scenario — differences below may
+            reflect a different workload, not proxy performance.
+          </p>
+        </div>
+      )}
 
       {/* Comparison Table */}
       <SectionCard compact>

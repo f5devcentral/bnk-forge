@@ -25,6 +25,35 @@ def _make_mock_host(**kwargs):
     return host
 
 
+def _make_mock_release(**kwargs):
+    """A minimal mock BnkDeployableRelease for deployment creation tests."""
+    release = MagicMock()
+    release.id = kwargs.get("id", 1)
+    release.name = kwargs.get("name", "bnk-2.2")
+    release.display_name = kwargs.get("display_name", "BNK 2.2 (GA)")
+    release.is_active = kwargs.get("is_active", True)
+    release.is_default = kwargs.get("is_default", True)
+    release.source_type = "manual"
+    release.bnk_release_id = None
+    release.bnk_manifest_version = "2.2.1-3.2226.0-0.0.511"
+    release.bnk_cr_kind = "CNEInstance"
+    release.flo_version = "v2.9.27-0.3.4"
+    release.k8s_version = "1.30.4"
+    release.doca_version = "2.9.1"
+    release.containerd_version = "1.7.20"
+    release.runc_version = "1.1.13"
+    release.calico_version = "3.28.1"
+    release.cert_manager_version = "v1.15.3"
+    release.gateway_api_version = "1.1.0"
+    release.multus_version = "4.1.0"
+    release.sriov_version = "1.4.0"
+    release.storage_class_type = "local-path"
+    release.storage_provisioner = "rancher.io/local-path"
+    release.feature_flags = {}
+    release.full_manifest = None
+    return release
+
+
 def _make_mock_deployment(**kwargs):
     d = MagicMock(spec=BareMetalDeployment)
     d.id = kwargs.get("id", 1)
@@ -80,7 +109,7 @@ def mock_db():
 class TestCreateDeployment:
     def test_create_deployment_regular(self, mock_db):
         host = _make_mock_host(topology="regular")
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
@@ -107,7 +136,7 @@ class TestCreateDeployment:
 
     def test_create_deployment_bf3(self, mock_db):
         host = _make_mock_host(topology="bf3")
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
@@ -119,7 +148,7 @@ class TestCreateDeployment:
 
     def test_create_deployment_bf3_ipmi(self, mock_db):
         host = _make_mock_host(topology="bf3_ipmi")
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
@@ -131,7 +160,7 @@ class TestCreateDeployment:
 
     def test_create_deployment_bmc(self, mock_db):
         host = _make_mock_host(topology="bmc")
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
@@ -147,7 +176,7 @@ class TestCreateDeployment:
             bmc_ip="10.0.0.50",
             deploy_dpu_pci_address="0002:03:00.0",
         )
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
@@ -181,85 +210,50 @@ class TestCreateDeployment:
         with pytest.raises(Exception, match="deploy_dpu_pci_address"):
             svc.create_deployment(1, 1)
 
-    def test_create_deployment_dual_dpu_obmc(self, mock_db):
-        host = _make_mock_host(
-            topology="dual_dpu_obmc",
-            bmc_ip="10.0.0.50",
-            deploy_dpu_pci_address="0002:03:00.0",
-        )
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+    def test_create_deployment_snapshots_deployable_release(self, mock_db):
+        """Deployable release snapshot is captured and FK stamped on create."""
+        release = _make_mock_release(id=7, name="bnk-2.3.1")
+        host = _make_mock_host(topology="regular")
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, release]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
         svc = BareMetalDeploymentService(mock_db)
-        svc.create_deployment(1, 1)
-
-        # dual_dpu_obmc has 20 steps + 1 deployment = 21
-        assert mock_db.add.call_count == 21
-
-    def test_create_deployment_dual_dpu_obmc_requires_bmc_ip(self, mock_db):
-        host = _make_mock_host(
-            topology="dual_dpu_obmc",
-            bmc_ip=None,
-            deploy_dpu_pci_address="0002:03:00.0",
-        )
-        mock_db.query.return_value.filter.return_value.first.return_value = host
-
-        svc = BareMetalDeploymentService(mock_db)
-        with pytest.raises(Exception, match="bmc_ip"):
-            svc.create_deployment(1, 1)
-
-    def test_create_deployment_dual_dpu_obmc_requires_deploy_dpu_pci_address(self, mock_db):
-        host = _make_mock_host(
-            topology="dual_dpu_obmc",
-            bmc_ip="10.0.0.50",
-            deploy_dpu_pci_address=None,
-        )
-        mock_db.query.return_value.filter.return_value.first.return_value = host
-
-        svc = BareMetalDeploymentService(mock_db)
-        with pytest.raises(Exception, match="deploy_dpu_pci_address"):
-            svc.create_deployment(1, 1)
-
-    def test_create_deployment_snapshots_version_profile(self, mock_db):
-        """Version profile should be snapshot-captured on create."""
-        profile = MagicMock()
-        profile.name = "bnk-2.1"
-        profile.bnk_manifest_version = "2.1.0"
-        profile.k8s_version = "1.28.0"
-        profile.doca_version = "2.7.0"
-        profile.flo_version = "1.5.0"
-
-        host = _make_mock_host(topology="regular", version_profile=profile)
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
-        mock_db.add = MagicMock()
-        mock_db.flush = MagicMock()
-
-        captured_deployment = None
-        original_add = mock_db.add.side_effect
-
-        def capture_add(obj):
-            nonlocal captured_deployment
-            if isinstance(obj, MagicMock) and hasattr(obj, "topology"):
-                pass  # skip — it's the deployment mock
-            if original_add:
-                original_add(obj)
-
-        svc = BareMetalDeploymentService(mock_db)
-        # Just verify no error raised when profile present
         svc.create_deployment(1, 1)
         assert mock_db.add.called
+        # host.version_profile_id should be set to release.id
+        assert host.version_profile_id == 7
 
     def test_create_deployment_with_triggered_by(self, mock_db):
         host = _make_mock_host(topology="regular")
-        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None]
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, _make_mock_release()]
         mock_db.add = MagicMock()
         mock_db.flush = MagicMock()
 
         svc = BareMetalDeploymentService(mock_db)
-        # Should not raise
         svc.create_deployment(1, 1, triggered_by="admin")
         assert mock_db.add.called
+
+    def test_create_deployment_no_default_release_raises(self, mock_db):
+        """No default BnkDeployableRelease → BadRequestError."""
+        host = _make_mock_host(topology="regular")
+        # 3rd query (default release) returns None → should raise
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, None]
+
+        svc = BareMetalDeploymentService(mock_db)
+        with pytest.raises(Exception, match="no default BNK release"):
+            svc.create_deployment(1, 1)
+
+    def test_create_deployment_inactive_release_raises(self, mock_db):
+        """Explicit inactive BnkDeployableRelease → BadRequestError."""
+        host = _make_mock_host(topology="regular")
+        inactive = _make_mock_release(is_active=False, name="bnk-2.1")
+        # 3rd query (explicit release) returns inactive release
+        mock_db.query.return_value.filter.return_value.first.side_effect = [host, None, inactive]
+
+        svc = BareMetalDeploymentService(mock_db)
+        with pytest.raises(Exception, match="not active"):
+            svc.create_deployment(1, 1, deployable_release_id=99)
 
 
 # ---------------------------------------------------------------------------

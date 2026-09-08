@@ -15,6 +15,7 @@ import type {
   BenchmarkRunCreate,
   BenchmarkTargetCreate,
   BenchmarkTargetUpdate,
+  BenchmarkTrendsParams,
   BenchmarkWSMessage,
   DiscoverTargetsRequest,
   ProxyDeployRequest,
@@ -144,6 +145,45 @@ export const useDeleteBenchmarkRun = () => {
     onError: (error) => notifyError(error),
   });
 };
+
+// ============================================================================
+// Baseline + Trends
+// ============================================================================
+
+export const useSetBenchmarkRunBaseline = () => {
+  const queryClient = useQueryClient();
+  return useAppMutation({
+    mutationFn: (runId: number) => api.setRunBaseline(runId),
+    onSuccess: (_, runId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.benchmarks.runs.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.benchmarks.runs.detail(runId) });
+      queryClient.invalidateQueries({ queryKey: ['benchmarks', 'trends'] });
+      notify.success('Run marked as baseline', undefined, { category: 'general' });
+    },
+    onError: (error) => notifyError(error),
+  });
+};
+
+export const useUnsetBenchmarkRunBaseline = () => {
+  const queryClient = useQueryClient();
+  return useAppMutation({
+    mutationFn: (runId: number) => api.unsetRunBaseline(runId),
+    onSuccess: (_, runId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.benchmarks.runs.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.benchmarks.runs.detail(runId) });
+      queryClient.invalidateQueries({ queryKey: ['benchmarks', 'trends'] });
+      notify.success('Baseline cleared', undefined, { category: 'general' });
+    },
+    onError: (error) => notifyError(error),
+  });
+};
+
+export const useBenchmarkTrends = (params: BenchmarkTrendsParams | undefined, enabled = true) =>
+  useQuery({
+    queryKey: queryKeys.benchmarks.trends(params),
+    queryFn: () => api.getTrends(params),
+    enabled,
+  });
 
 // ============================================================================
 // Agent Queries

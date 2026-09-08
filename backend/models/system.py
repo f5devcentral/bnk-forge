@@ -1,6 +1,6 @@
 """System models: ApplicationSetting, SyncJob, User, AuditLog, Notification, HelmChart, CloudCredentialTemplate."""
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, false
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -152,6 +152,12 @@ class User(Base):
     role = Column(String(50), nullable=False, default="operator")
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    # bonnyr-f5 #188: provenance for service accounts (mcp). ensure_service_user
+    # refuses to reconcile a row it did NOT create as a service account, so
+    # pointing MCP_SERVICE_USERNAME at a human row can't take it over.
+    # server_default mirrors migration v2_154 so fresh (create_all) and migrated
+    # installs agree on the DB-level default (bonnyr-f5 #188 nit).
+    is_service_account = Column(Boolean, default=False, server_default=false(), nullable=False)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

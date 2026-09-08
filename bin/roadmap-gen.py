@@ -395,11 +395,12 @@ def main():
     print("Wrote %s" % MD_PATH)
     print("Wrote %s" % HTML_PATH)
     print(
-        "Stats: in_progress=%d planned=%d shipped=%d blocked=%d deferred=%d"
+        "Stats: in_progress=%d planned=%d shipped=%d merged=%d blocked=%d deferred=%d"
         % (
             count_status(data["sections"], "in_progress"),
             count_status(data["sections"], "planned"),
             count_status(data["sections"], "shipped"),
+            count_status(data["sections"], "merged"),
             count_status(data["sections"], "blocked"),
             count_status(data["sections"], "deferred"),
         )

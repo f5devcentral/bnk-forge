@@ -15,7 +15,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
-import { Layers, Package, HardDrive, FileCode, Loader2, Library } from 'lucide-react';
+import { Layers, Package, HardDrive, FileCode, Loader2, Library, Cpu } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
@@ -29,10 +29,11 @@ const BluefieldImages = lazy(() =>
 const BfConfTemplates = lazy(() =>
   import('@/components/settings/BfConfTemplates').then((m) => ({ default: m.BfConfTemplates })),
 );
+const BnkReleasesPanel = lazy(() => import('@/components/catalog/BnkReleasesPanel'));
 
 const ADVANCED_STORAGE_KEY = 'forge.catalog.advanced';
 
-const VALID_TABS = ['modules', 'blueprints', 'helm-repos', 'doca-releases', 'bf-conf-templates'] as const;
+const VALID_TABS = ['modules', 'blueprints', 'helm-repos', 'doca-releases', 'bnk-releases', 'bf-conf-templates'] as const;
 type CatalogTab = (typeof VALID_TABS)[number];
 
 const DEFAULT_TAB: CatalogTab = 'blueprints';
@@ -114,6 +115,7 @@ export default function Catalog() {
     { key: 'blueprints' as const, label: 'Blueprints', icon: Library },
     { key: 'helm-repos' as const, label: 'Helm Repos', icon: Package },
     { key: 'doca-releases' as const, label: 'DOCA Releases', icon: HardDrive },
+    { key: 'bnk-releases' as const, label: 'BNK Releases', icon: Cpu },
     { key: 'bf-conf-templates' as const, label: 'bf.conf Templates', icon: FileCode },
   ];
 
@@ -165,6 +167,12 @@ export default function Catalog() {
         <TabsContent value="doca-releases" className="mt-6">
           <Suspense fallback={<TabFallback />}>
             <BluefieldImages />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="bnk-releases" className="mt-6">
+          <Suspense fallback={<TabFallback />}>
+            <BnkReleasesPanel />
           </Suspense>
         </TabsContent>
 

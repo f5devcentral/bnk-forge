@@ -373,10 +373,11 @@ class RshimService:
             raise
         try:
             rshim_map = _enumerate_rshim_devices(client)
-            # Multi-DPU hosts: persist 192.168.{100+N}.1/30 on each
-            # tmfifo_netN so the host side matches what bf.cfg renders.
-            # No-op on single-DPU hosts.
-            _ensure_host_tmfifo_ips(client, rshim_map)
+            # Persist the correct /30 on every tmfifo_netN so the host
+            # matches what bf.cfg renders on the DPU side. Passes `dpu`
+            # and `db` so sibling DPU IPAM allocations on the same host
+            # are all pinned (no peer interface reverts to the formula).
+            _ensure_host_tmfifo_ips(client, rshim_map, dpu=dpu, db=self.db)
             rshim_device = _select_rshim_device(rshim_map, dpu.pci_address)
             self._persist_rshim_device(dpu, rshim_device)
             state = _probe_rshim_state(client, rshim_device=rshim_device)
@@ -688,10 +689,11 @@ class RshimService:
             # expose rshim0, rshim1, ... — without this mapping every action
             # below would silently target rshim0 (the wrong DPU).
             rshim_map = _enumerate_rshim_devices(client)
-            # Persist 192.168.{100+N}.1/30 on the host's tmfifo_netN
-            # interfaces so multi-DPU hosts match what bf.cfg rendered on
-            # the DPU side. No-op on single-DPU hosts.
-            _ensure_host_tmfifo_ips(client, rshim_map)
+            # Persist the correct /30 on every tmfifo_netN so the host
+            # matches what bf.cfg renders on the DPU side. Passes `dpu`
+            # and `db` so sibling DPU IPAM allocations on the same host
+            # are all pinned (no peer interface reverts to the formula).
+            _ensure_host_tmfifo_ips(client, rshim_map, dpu=dpu, db=self.db)
             rshim_device = _select_rshim_device(rshim_map, dpu.pci_address)
             self._persist_rshim_device(dpu, rshim_device)
 
@@ -1211,35 +1213,48 @@ def _select_rshim_device(
 _HOST_TMFIFO_NETPLAN = "/etc/netplan/50-bnk-forge-tmfifo.yaml"
 
 
-def _build_host_tmfifo_netplan(indexes: set[int]) -> str:
-    """Render the netplan YAML for a set of rshim indexes."""
+def _build_host_tmfifo_netplan(
+    indexes: set[int],
+    ip_overrides: dict[int, str] | None = None,
+) -> str:
+    """Render the netplan YAML for a set of rshim indexes.
+
+    ip_overrides: maps rshim index to a persisted host-side IP (bare, no
+    CIDR suffix).  When provided the override replaces the formula
+    ``192.168.{100+n}.1`` for that index.  Indexes only present in
+    ip_overrides (not in rshim_map at discovery time) are included so a
+    freshly allocated IPAM address is always written.
+    """
+    overrides = ip_overrides or {}
+    all_indexes = indexes | set(overrides.keys())
     body = [
         "# Managed by bnk-forge — DO NOT EDIT.",
         "# Each /dev/rshimN exposes a tmfifo_netN to the host. The rshim",
         "# driver only auto-assigns 192.168.100.1/30 to tmfifo_net0; this",
         "# file persists the matching /30 on every additional tmfifo_netN",
-        "# so multi-DPU hosts can reach 192.168.{100+N}.2 (the DPU side)",
-        "# reliably across reboots.",
+        "# so multi-DPU hosts can reach the DPU side reliably across reboots.",
         "network:",
         "  version: 2",
         "  renderer: networkd",
         "  ethernets:",
     ]
-    for n in sorted(indexes):
+    for n in sorted(all_indexes):
+        host_ip = overrides.get(n) or f"192.168.{100 + n}.1"
         body.extend([
             f"    tmfifo_net{n}:",
             "      dhcp4: false",
             "      dhcp6: false",
             "      addresses:",
-            f"        - 192.168.{100 + n}.1/30",
+            f"        - {host_ip}/30",
         ])
     return "\n".join(body) + "\n"
 
 
 def _ensure_host_tmfifo_ips(
     client: paramiko.SSHClient, rshim_map: dict[str, str],
+    *, dpu: Any | None = None, db: Session | None = None,
 ) -> None:
-    """Persist 192.168.{100+N}.1/30 on every tmfifo_netN via netplan.
+    """Persist the correct /30 on every tmfifo_netN via netplan.
 
     NVIDIA documents two host-side patterns for multi-DPU configuration:
     a single ``br_tmfifo`` bridge (one /24) or per-interface /30 subnets.
@@ -1250,9 +1265,12 @@ def _ensure_host_tmfifo_ips(
 
     The rshim kernel driver auto-assigns ``192.168.100.1/30`` to
     ``tmfifo_net0`` only; ``tmfifo_net1+`` come up bare with link-local
-    only. Single-DPU hosts therefore need no intervention — we skip
-    early. Multi-DPU hosts get a single ``50-bnk-forge-tmfifo.yaml`` that
-    pins every interface's IP.
+    only. Single-DPU hosts need no intervention UNLESS the DPU has a
+    cluster-scoped IPAM allocation that differs from the kernel default
+    (``dpu.host_tmfifo_ip`` set). Multi-DPU hosts always get a single
+    ``50-bnk-forge-tmfifo.yaml`` that pins every interface's IP for ALL
+    DPUs on that host, sourced from the DB so one probe never clobbers
+    another DPU's IPAM-allocated address with a formula value.
 
     Best-effort: any failure (no passwordless sudo, netplan missing,
     apply error) is logged and swallowed so a Discover never fails on a
@@ -1269,11 +1287,97 @@ def _ensure_host_tmfifo_ips(
             continue
         if 0 <= n <= 100:
             indexes.add(n)
-    if len(indexes) < 2:
-        # Single-DPU host — kernel default on tmfifo_net0 is enough.
+
+    multi_rshim = len(indexes) >= 2
+
+    # Build IP overrides from ALL DPUs on this host with persisted IPAM
+    # allocations. When the cluster allocator assigns non-default /30s,
+    # every host interface must reflect the correct address — pulling from
+    # the full list avoids one probe overwriting a peer DPU's interface
+    # with a formula value.
+    ip_overrides: dict[int, str] = {}
+    if dpu is not None:
+        host_node_ip = getattr(dpu, "host_node_ip", None)
+        if db is not None and host_node_ip:
+            # Query ALL cluster-member DPUs on this host that have IPAM IPs.
+            # Scoped by project_id (INV-1) and host_node_ip so a foreign
+            # project's same-IP host never pins an address into this netplan.
+            # The probe subject's kubernetes_cluster_id is intentionally NOT
+            # used as a filter: when the probed DPU is an orphan
+            # (kubernetes_cluster_id IS NULL), the old equality conjunct
+            # produced a contradiction with isnot(None) that returned an empty
+            # result set — clobbering a clustered sibling's persisted
+            # host_tmfifo_ip with a formula address and breaking its tmfifo
+            # link.  A host belongs to one cluster, so scoping to the host
+            # (host_node_ip) is the correct invariant.
+            host_dpus: list[Any] = (
+                db.query(Dpu)
+                .filter(
+                    Dpu.project_id == dpu.project_id,
+                    Dpu.kubernetes_cluster_id.isnot(None),  # orphans never contribute
+                    Dpu.host_node_ip == host_node_ip,
+                    Dpu.host_tmfifo_ip.isnot(None),
+                )
+                .all()
+            )
+        else:
+            # No session (tests / callers without DB) — use only the
+            # probed DPU; the single-DPU case still works correctly.
+            # An orphan probe subject (kubernetes_cluster_id is None) contributes
+            # nothing: derive_tmfifo_dpu_ip uses the rshim formula for orphans,
+            # so mixing a persisted host_tmfifo_ip with the formula DPU IP
+            # produces a dead link (ADR-424 finding A).
+            h_ip = getattr(dpu, "host_tmfifo_ip", None)
+            host_dpus = (
+                [dpu] if (h_ip and getattr(dpu, "kubernetes_cluster_id", None) is not None)
+                else []
+            )
+
+        for d in host_dpus:
+            h_ip = getattr(d, "host_tmfifo_ip", None)
+            if not h_ip:
+                continue
+            pci = getattr(d, "pci_address", None)
+
+            # Confident-match: pci_address (or base-BDF) in rshim_map.
+            # On multi-rshim hosts, _select_rshim_device falls back to
+            # rshim0 when pci_address is null/unmatched, which would
+            # silently mis-assign an IPAM IP to the wrong interface.
+            # Skip the override and let the formula apply instead.
+            rshim_name: str | None = None
+            if pci:
+                rshim_name = rshim_map.get(pci)
+                if rshim_name is None and "." in pci:
+                    rshim_name = rshim_map.get(pci.rsplit(".", 1)[0])
+            if rshim_name is None:
+                if multi_rshim:
+                    logger.warning(
+                        "_ensure_host_tmfifo_ips: DPU id=%s pci_address %r not found in "
+                        "rshim_map on multi-rshim host — falling back to formula IP. "
+                        "The tmfifo link may be dead: host side gets formula "
+                        "192.168.{100+n}.1 while DPU side uses the persisted IPAM IP. "
+                        "Ensure pci_address is populated on the DPU record.",
+                        getattr(d, "id", "?"), pci,
+                    )
+                    continue
+                # Single-rshim host: use the only rshim entry.
+                rshim_name = next(
+                    (name for name in rshim_map.values() if name.startswith("rshim")),
+                    "rshim0",
+                )
+
+            try:
+                idx = int(rshim_name[len("rshim"):])
+            except (ValueError, IndexError):
+                continue
+            ip_overrides[idx] = h_ip
+
+    if len(indexes) < 2 and not ip_overrides:
+        # Single-DPU host with no IPAM override — kernel default
+        # 192.168.100.1/30 on tmfifo_net0 is sufficient.
         return
 
-    target = _build_host_tmfifo_netplan(indexes)
+    target = _build_host_tmfifo_netplan(indexes, ip_overrides)
 
     # Idempotency: skip the write + apply when the file already matches.
     rc, current, _ = _exec(
@@ -1312,8 +1416,8 @@ def _ensure_host_tmfifo_ips(
         )
         return
     logger.info(
-        "bnk-forge: applied multi-rshim tmfifo IPs via %s for rshim indexes %s",
-        _HOST_TMFIFO_NETPLAN, sorted(indexes),
+        "bnk-forge: applied tmfifo IPs via %s for rshim indexes %s",
+        _HOST_TMFIFO_NETPLAN, sorted(indexes | set(ip_overrides.keys())),
     )
 
 

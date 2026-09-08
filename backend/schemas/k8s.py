@@ -46,6 +46,46 @@ class PlatformConstraints(BaseModel):
 # Cluster Responses
 # =============================================================================
 
+class BnkClusterConfigSummary(BaseModel):
+    id: int
+    cluster_id: int
+    tmfifo_pool_cidr: str = "192.168.100.0/22"
+    join_transport: str = "rshim"
+    control_plane_host_id: int | None = None
+    # Current membership (ADR-424 #4): IDs of hosts/DPUs whose
+    # kubernetes_cluster_id == cluster_id. Lets the member dialog seed its
+    # selection from real membership instead of re-applying the B-all default
+    # on every open (which silently steals members from sibling clusters).
+    host_ids: list[int] = Field(default_factory=list, description="IDs of hosts currently in this cluster")
+    dpu_ids: list[int] = Field(default_factory=list, description="IDs of DPUs currently in this cluster")
+
+
+class BnkClusterConfigCreateRequest(BaseModel):
+    # All fields use None as sentinel: omitting a field means "don't change the stored value".
+    # On first create, None falls back to the DB server_default (192.168.100.0/22 / rshim).
+    tmfifo_pool_cidr: str | None = Field(None, description="Cluster-wide tmfifo pool CIDR (omit to keep current)")
+    join_transport: Literal["rshim", "mgmt"] | None = Field(
+        None, description="Join transport type ('rshim' or 'mgmt'; omit to keep current)"
+    )
+    control_plane_host_id: int | None = Field(None, description="ID of designated Control Plane host")
+
+
+class BnkClusterMemberAssignRequest(BaseModel):
+    control_plane_host_id: int = Field(..., description="ID of designated Control Plane host")
+    host_ids: list[int] = Field(default_factory=list, description="IDs of member bare-metal hosts")
+    dpu_ids: list[int] = Field(default_factory=list, description="IDs of member DPUs")
+    # None means "use/keep the currently configured pool CIDR"; provide a value to change it.
+    tmfifo_pool_cidr: str | None = Field(None, description="Cluster-wide tmfifo pool CIDR (omit to keep current)")
+
+
+class BnkClusterMemberAssignResponse(BaseModel):
+    cluster_id: int
+    control_plane_host_id: int
+    host_ids: list[int]
+    assigned_dpus: list[dict[str, Any]]
+    bnk_config: BnkClusterConfigSummary
+
+
 class ClusterSummary(BaseModel):
     """Single cluster in list response."""
     id: int
@@ -68,7 +108,12 @@ class ClusterSummary(BaseModel):
     ssh_credential_id: int | None = None
     ssh_host_override: str | None = None
     enabled_prerequisites: list[str] | None = None
+    bnk_config: BnkClusterConfigSummary | None = None
     node_count: int | None = None
+    # ADR-478/494: release FK ids — deployable = intent (set at deploy time);
+    # running = observed (set by discovery scan). Both nullable.
+    deployable_release_id: int | None = None
+    running_release_id: int | None = None
     last_synced_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
@@ -103,6 +148,10 @@ class ClusterDetailResponse(BaseModel):
     ssh_host_override: str | None = None
     enabled_prerequisites: list[str] | None = None
     meta_data: dict[str, Any] | None = None
+    # ADR-478/494: release FK ids — deployable = intent (set at deploy time);
+    # running = observed (set by discovery scan). Both nullable.
+    deployable_release_id: int | None = None
+    running_release_id: int | None = None
     last_synced_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None

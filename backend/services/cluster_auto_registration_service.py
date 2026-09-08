@@ -279,12 +279,35 @@ def maybe_register_container_cluster(
         .first()
     )
     if existing:
+        # Ownership check (#79 item 7). The lookup keys on (name, project), but
+        # unregister keys on meta_data.source_module_id. Two modules in one
+        # project surfacing the same cluster_name used to clobber each other
+        # here: B overwrote A's kubeconfig/api_server, and A's destroy-time
+        # unregister -- which finds the row by source_module_id -- could then
+        # no longer clean up the hijacked row. A re-apply of the SAME module
+        # must still refresh its row; a DIFFERENT module must not take it.
+        owner = (existing.meta_data or {}).get("source_module_id")
+        if owner is not None and owner != module.id:
+            logger.warning(
+                "Cluster '%s' in project %s is owned by module %s; refusing to "
+                "overwrite it from module %s. Give the module a distinct "
+                "cluster_name, or destroy the owning module first.",
+                cluster_name, module.project_id, owner, module.id,
+            )
+            return None
         existing.kubeconfig_encrypted = kubeconfig_encrypted
         if kubeconfig_context:
             existing.context = kubeconfig_context
         if api_server:
             existing.api_server = api_server
         existing.status = "active"
+        # Deliberately NOT claiming an ownerless row by stamping
+        # source_module_id. An ownerless row is hand-registered (or pre-dates
+        # ownership tracking); maybe_unregister_container_cluster keys on
+        # source_module_id precisely so destroying a module never deletes a
+        # hand-registered cluster that shares its name. Adopting here would
+        # reintroduce exactly that. Refreshing its kubeconfig, as before, is
+        # the right and sufficient behaviour.
         db.flush()
         logger.info("Updated cluster '%s' (id=%s) kubeconfig from module %s", cluster_name, existing.id, module.id)
         return existing

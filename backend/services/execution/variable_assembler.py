@@ -261,36 +261,23 @@ def _inject_rendered_bf_conf(
     The join path from BareMetalHost to Dpu is:
         Dpu.project_id == host.project_id AND Dpu.host_node_ip == host.host_ip
 
-    Does nothing (silently returns) if any prerequisite is missing:
-      - No Dpu record for this host (DPU tab not used yet)
-      - No ProjectDpuSettings for the project
-      - No bf.conf template configured in settings
-      - No DPU OS password available
+    Returns silently (no-op) when either:
+    - The DPU-tab bf.conf template was never configured for this project
+      (the minimal bf.cfg fallback is intentionally the right path), OR
+    - No Dpu row exists for this host (normal for regular-topology hosts where
+      discovery creates no per-DPU record; flash_dpu.py populates NET_RSHIM_MAC
+      independently, so the minimal bf.cfg fallback is safe).
+
+    Raises RuntimeError with an actionable diagnostic for genuinely
+    misconfigured prerequisites (dangling template FK, undecryptable/absent
+    password), because those indicate a configuration or data-integrity problem
+    that must be surfaced rather than silently papered over.
     """
     from models.dpu import BfConfTemplate, Dpu, ProjectDpuSettings
 
-    # Find the Dpu record associated with this host. For dual_dpu_obmc
-    # hosts there are TWO Dpu rows sharing the same host_node_ip — one per
-    # BF3 chip — so an unscoped `.first()` is non-deterministic and can
-    # render bf.conf with the OTHER DPU's allocated IPs. When the host
-    # carries a `deploy_dpu_pci_address`, narrow the query to the matching
-    # PCI bus prefix.
-    query = db.query(Dpu).filter(
-        Dpu.project_id == host.project_id,
-        Dpu.host_node_ip == host.host_ip,
-    )
-    deploy_pci_bus = (getattr(host, "deploy_dpu_pci_address", None) or "").rsplit(".", 1)[0]
-    if deploy_pci_bus:
-        query = query.filter(Dpu.pci_address == deploy_pci_bus)
-    dpu = query.first()
-    if dpu is None:
-        logger.debug(
-            "No Dpu record for host %s (ip=%s, deploy_pci_bus=%s) — skipping bf.conf render",
-            host.name, host.host_ip, deploy_pci_bus or "<unset>",
-        )
-        return
-
-    # Get project DPU settings (holds the bf.conf template choice)
+    # Check project DPU settings first.  When no settings exist (or no template
+    # is configured), the DPU tab was never set up — the minimal bf.cfg fallback
+    # is intentional.  Returning here is the ONLY silent path.
     settings = (
         db.query(ProjectDpuSettings)
         .filter(ProjectDpuSettings.project_id == module.project_id)
@@ -300,9 +287,41 @@ def _inject_rendered_bf_conf(
         logger.debug("No DPU settings or bf.conf template for project %s — skipping render", module.project_id)
         return
 
+    # A bf.conf template IS configured for this project; from here every missing
+    # prerequisite is a diagnosable problem — raise loudly rather than falling
+    # back to the default-MAC minimal bf.cfg.
+
     bf_template = db.query(BfConfTemplate).filter(BfConfTemplate.id == settings.bf_template_id).first()
     if bf_template is None:
-        logger.debug("bf.conf template id=%s not found — skipping render", settings.bf_template_id)
+        raise RuntimeError(
+            f"bf.conf template id={settings.bf_template_id} is referenced by project "
+            f"{module.project_id} DPU settings but the template row no longer exists. "
+            "The template may have been deleted. Re-configure the DPU-tab template."
+        )
+
+    # Find the Dpu record associated with this host. For dual_dpu_obmc
+    # hosts there are TWO Dpu rows sharing the same host_node_ip — one per
+    # BF3 chip — so an unscoped `.first()` is non-deterministic and can
+    # render bf.conf with the OTHER DPU's allocated IPs. When the host
+    # carries a `deploy_dpu_pci_address`, narrow the query to the matching
+    # PCI bus prefix.
+    deploy_pci_bus = (getattr(host, "deploy_dpu_pci_address", None) or "").rsplit(".", 1)[0]
+    query = db.query(Dpu).filter(
+        Dpu.project_id == host.project_id,
+        Dpu.host_node_ip == host.host_ip,
+    )
+    if deploy_pci_bus:
+        query = query.filter(Dpu.pci_address == deploy_pci_bus)
+    dpu = query.first()
+    if dpu is None:
+        # Normal for regular-topology hosts: discovery creates no Dpu row when
+        # host.deploy_dpu_pci_address is unset.  flash_dpu.py populates
+        # NET_RSHIM_MAC independently, so the minimal bf.cfg fallback is safe.
+        logger.debug(
+            "No Dpu row for host '%s' (ip=%s, pci_bus=%s, project=%s) — "
+            "skipping bf.conf render, minimal bf.cfg fallback applies",
+            host.name, host.host_ip, deploy_pci_bus or "<any>", module.project_id,
+        )
         return
 
     # Resolve the DPU OS password — prefer the already-injected variable
@@ -311,12 +330,16 @@ def _inject_rendered_bf_conf(
     if not dpu_password and settings.default_os_password_encrypted:
         try:
             dpu_password = decrypt_value(settings.default_os_password_encrypted)
-        except Exception:
-            logger.debug("Could not decrypt project DPU OS password — skipping render")
-            return
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not decrypt the DPU OS password for project {module.project_id}. "
+                f"Re-configure the DPU password in DPU settings. Detail: {exc}"
+            ) from exc
     if not dpu_password:
-        logger.debug("No DPU password available — skipping bf.conf render")
-        return
+        raise RuntimeError(
+            f"No DPU OS password available for project {module.project_id}. "
+            "Set the DPU password in DPU settings before deploying."
+        )
 
     # Propagate the resolved password back so downstream modules (wait-dpu-ready,
     # setup-dpu-networking) can SSH into the DPU with the same password baked
@@ -343,6 +366,13 @@ def _inject_rendered_bf_conf(
     )
     rendered = render_bf_conf(bf_template, ctx)
     variables["rendered_bf_conf"] = rendered
+
+    # The address actually baked into the DPU. flash-dpu used to report a module
+    # constant (192.168.100.2) to wait/validate/setup while bf.conf got the
+    # cluster-scoped IPAM /30, so every DPU past the pool's first /30 was probed
+    # at an address nothing listens on (#118). Taken from the same RenderContext
+    # that produced the bf.conf, so the reported and baked addresses cannot drift.
+    variables["dpu_tmfifo_ip"] = ctx.host.tmfifo_dpu_ip.split("/")[0]
 
     # Also expose the structured VLAN list so downstream modules (notably
     # bare-metal/setup-dpu-networking on the dual_dpu_obmc path) can
@@ -550,97 +580,7 @@ def build_variables(
             variables[_tk] = _tv
 
     # Layer 3: Dependency output wiring (from module.json metadata — explicit wiring)
-    if lib_module and lib_module.inputs_metadata:
-        required_inputs = lib_module.inputs_metadata.get("required", [])
-        optional_inputs = lib_module.inputs_metadata.get("optional", [])
-        required_input_names = {inp.get("name") for inp in required_inputs}
-
-        for inp in required_inputs + optional_inputs:
-            if inp.get("source") == "module":
-                from_module_path = inp.get("from_module")
-                from_output = inp.get("from_output")
-                input_name = inp.get("name")
-                is_required = input_name in required_input_names
-
-                # A source="module" input may omit from_module when a default or
-                # transform supplies the value (e.g. bnk-flo's flo_namespace /
-                # far_secret_name / cluster_issuer_name). With no path there is
-                # nothing to wire — skip so later layers / the module's own
-                # .get(name, default) apply it. (find_dependency_by_path would
-                # otherwise raise on a None path.)
-                if not from_module_path:
-                    continue
-
-                dep_module = find_dependency_by_path(
-                    db,
-                    module.project_id,
-                    from_module_path,
-                    stack_instance_id=getattr(module, "stack_instance_id", None),
-                )
-                if dep_module and dep_module.outputs:
-                    value = dep_module.outputs.get(from_output)
-                    if value is not None:
-                        variables[input_name] = value
-                        logger.debug(f"Wired {input_name} = {value} from {from_module_path}.{from_output}")
-                    else:
-                        # BUG-009: Fail if required dependency output is missing
-                        # But during destroy, skip — deps may already be torn down
-                        if is_required and operation != "destroy":
-                            raise ValueError(
-                                f"Required dependency output not available: "
-                                f"{from_module_path}.{from_output} -> {input_name}"
-                            )
-                        logger.warning(
-                            f"{'[destroy-lenient] ' if operation == 'destroy' else ''}"
-                            f"Optional output {from_output} not found in {from_module_path}"
-                        )
-                else:
-                    # Exact-path lookup missed or dep has no outputs yet.
-                    # Fallback: search among actual declared dependencies for one whose
-                    # outputs contain from_output.  Only runs when the path didn't match
-                    # any module at all — if the dep exists but has no outputs yet, we
-                    # let the error path below raise instead of wiring from an unrelated module.
-                    fallback_value = (
-                        _resolve_from_dependency_outputs(db, module, from_output)
-                        if dep_module is None else None
-                    )
-                    if fallback_value is not None:
-                        if input_name not in variables:
-                            variables[input_name] = fallback_value
-                            logger.info(
-                                f"Layer-3 fallback: wired {input_name} = {fallback_value!r} "
-                                f"from actual dependency output '{from_output}' "
-                                f"(hint '{from_module_path}' did not match)"
-                            )
-                        else:
-                            logger.info(
-                                f"Layer-3 fallback skipped for {input_name}: already resolved earlier"
-                            )
-                    else:
-                        # BUG-009: Fail if required dependency module is missing
-                        # But during destroy, skip — deps may already be torn down.
-                        # Also skip if the variable was already resolved by an earlier
-                        # layer (e.g. Layer 2.5 ProjectContext) — the dependency module
-                        # may not exist in this deployment context (e.g. infra/aws/vpc
-                        # doesn't exist in bare-metal, but DPU settings provide the value).
-                        # Also skip if the input has a default in its metadata — use it.
-                        inp_default = inp.get("default")
-                        if input_name not in variables and inp_default is not None:
-                            variables[input_name] = inp_default
-                            logger.info(
-                                f"Dependency module {from_module_path} not found; "
-                                f"using metadata default for {input_name}: {inp_default!r}"
-                            )
-                        elif is_required and operation != "destroy" and input_name not in variables:
-                            raise ValueError(
-                                f"Required dependency not available: "
-                                f"{from_module_path} (needed for input '{input_name}')"
-                            )
-                        else:
-                            logger.warning(
-                                f"{'[destroy-lenient] ' if operation == 'destroy' else ''}"
-                                f"Optional dependency {from_module_path} not found or has no outputs"
-                        )
+    apply_dependency_output_wiring(db, module, lib_module, variables, operation)
 
     # Layer 4: Auto-wire common variables
     auto_wire_common_variables(db, module, variables)
@@ -803,6 +743,7 @@ def build_variables_for_ssh(
         "default_route_iface": host.default_route_iface,
         "vf_count": host.vf_count,
         "bond_mode": host.bond_mode,
+        "net_rshim_mac_base": host.net_rshim_mac_base,  # host-level tmfifo MAC base override (ADR-478)
     }
     for key, value in host_fields.items():
         if value is not None and key not in variables:
@@ -831,19 +772,15 @@ def build_variables_for_ssh(
         except Exception as exc:
             logger.warning("Failed to inject DPU credentials into variables: %s", exc)
 
-    # Render bf.conf from the full Jinja2 template if:
-    #   1. A Dpu record exists for this host (matched by project + IP)
-    #   2. Project has DPU settings with a bf.conf template configured
-    # The rendered content is injected as a variable so flash-dpu can write
-    # it to the host instead of falling back to the minimal bf.cfg.
-    # Gracefully falls back to nothing if any piece is missing — the Dpu
-    # record is created by the DPU tab, not the blueprint flow, so it may
-    # not exist yet.
+    # Render bf.conf from the full Jinja2 template when the DPU tab has a
+    # template configured for this project.  _inject_rendered_bf_conf returns
+    # silently only when no template was ever configured (intentional fallback).
+    # For any other missing prerequisite (Dpu row, password, …) it raises a
+    # RuntimeError with an actionable diagnostic, which propagates so the
+    # deployment step fails loudly rather than proceeding with a default-MAC
+    # minimal bf.cfg.
     if "rendered_bf_conf" not in variables:
-        try:
-            _inject_rendered_bf_conf(db, host, module, variables)
-        except Exception as exc:
-            logger.warning("bf.conf rendering failed, falling back to minimal bf.cfg: %s", exc)
+        _inject_rendered_bf_conf(db, host, module, variables)
 
     return variables
 
@@ -906,6 +843,127 @@ def can_execute(db: Session, module) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 # Dependency resolution
 # ---------------------------------------------------------------------------
+
+def apply_dependency_output_wiring(
+    db: Session,
+    module,
+    lib_module,
+    variables: dict[str, Any],
+    operation: str = "apply",
+) -> dict[str, Any]:
+    """Resolve inputs declared ``source: "module"`` from a dependency's outputs.
+
+    A pack may declare an input as coming from another module rather than from the
+    operator::
+
+        {"name": "registry_ca_b64", "source": "module",
+         "from_module": "harbor", "from_output": "registry_ca_b64"}
+
+    Extracted from ``build_variables`` so every engine can apply the same rules.
+    It used to live inline there, which meant only the engines routed through
+    ``build_variables`` — opentofu, ansible, kubernetes, cli — honoured the
+    declaration. The container engine assembles its own inputs and so silently
+    ignored it: the metadata was stored, never resolved, and the step ran with the
+    input unset. That surfaces as a failure from inside the container image ("set
+    registry.generic_host"), naming the input rather than the wiring that should
+    have supplied it.
+
+    Mutates and returns ``variables``.
+    """
+    if lib_module and lib_module.inputs_metadata:
+        required_inputs = lib_module.inputs_metadata.get("required", [])
+        optional_inputs = lib_module.inputs_metadata.get("optional", [])
+        required_input_names = {inp.get("name") for inp in required_inputs}
+
+        for inp in required_inputs + optional_inputs:
+            if inp.get("source") == "module":
+                from_module_path = inp.get("from_module")
+                from_output = inp.get("from_output")
+                input_name = inp.get("name")
+                is_required = input_name in required_input_names
+
+                # A source="module" input may omit from_module when a default or
+                # transform supplies the value (e.g. bnk-flo's flo_namespace /
+                # far_secret_name / cluster_issuer_name). With no path there is
+                # nothing to wire — skip so later layers / the module's own
+                # .get(name, default) apply it. (find_dependency_by_path would
+                # otherwise raise on a None path.)
+                if not from_module_path:
+                    continue
+
+                dep_module = find_dependency_by_path(
+                    db,
+                    module.project_id,
+                    from_module_path,
+                    stack_instance_id=getattr(module, "stack_instance_id", None),
+                )
+                if dep_module and dep_module.outputs:
+                    value = dep_module.outputs.get(from_output)
+                    if value is not None:
+                        variables[input_name] = value
+                        logger.debug(f"Wired {input_name} = {value} from {from_module_path}.{from_output}")
+                    else:
+                        # BUG-009: Fail if required dependency output is missing
+                        # But during destroy, skip — deps may already be torn down
+                        if is_required and operation != "destroy":
+                            raise ValueError(
+                                f"Required dependency output not available: "
+                                f"{from_module_path}.{from_output} -> {input_name}"
+                            )
+                        logger.warning(
+                            f"{'[destroy-lenient] ' if operation == 'destroy' else ''}"
+                            f"Optional output {from_output} not found in {from_module_path}"
+                        )
+                else:
+                    # Exact-path lookup missed or dep has no outputs yet.
+                    # Fallback: search among actual declared dependencies for one whose
+                    # outputs contain from_output.  Only runs when the path didn't match
+                    # any module at all — if the dep exists but has no outputs yet, we
+                    # let the error path below raise instead of wiring from an unrelated module.
+                    fallback_value = (
+                        _resolve_from_dependency_outputs(db, module, from_output)
+                        if dep_module is None else None
+                    )
+                    if fallback_value is not None:
+                        if input_name not in variables:
+                            variables[input_name] = fallback_value
+                            logger.info(
+                                f"Layer-3 fallback: wired {input_name} = {fallback_value!r} "
+                                f"from actual dependency output '{from_output}' "
+                                f"(hint '{from_module_path}' did not match)"
+                            )
+                        else:
+                            logger.info(
+                                f"Layer-3 fallback skipped for {input_name}: already resolved earlier"
+                            )
+                    else:
+                        # BUG-009: Fail if required dependency module is missing
+                        # But during destroy, skip — deps may already be torn down.
+                        # Also skip if the variable was already resolved by an earlier
+                        # layer (e.g. Layer 2.5 ProjectContext) — the dependency module
+                        # may not exist in this deployment context (e.g. infra/aws/vpc
+                        # doesn't exist in bare-metal, but DPU settings provide the value).
+                        # Also skip if the input has a default in its metadata — use it.
+                        inp_default = inp.get("default")
+                        if input_name not in variables and inp_default is not None:
+                            variables[input_name] = inp_default
+                            logger.info(
+                                f"Dependency module {from_module_path} not found; "
+                                f"using metadata default for {input_name}: {inp_default!r}"
+                            )
+                        elif is_required and operation != "destroy" and input_name not in variables:
+                            raise ValueError(
+                                f"Required dependency not available: "
+                                f"{from_module_path} (needed for input '{input_name}')"
+                            )
+                        else:
+                            logger.warning(
+                                f"{'[destroy-lenient] ' if operation == 'destroy' else ''}"
+                                f"Optional dependency {from_module_path} not found or has no outputs"
+                        )
+
+    return variables
+
 
 def find_dependency_by_path(
     db: Session,

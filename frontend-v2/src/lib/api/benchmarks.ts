@@ -27,6 +27,8 @@ import type {
   BenchmarkTargetDetail,
   BenchmarkTargetListResponse,
   BenchmarkTargetUpdate,
+  BenchmarkTrendsParams,
+  BenchmarkTrendsResponse,
   DiscoverTargetsRequest,
   DiscoverTargetsResponse,
   ProxyDeployment,
@@ -76,6 +78,18 @@ export const benchmarksApi = {
 
   deleteRun: (runId: number) =>
     apiClient.delete(`/api/benchmarks/runs/${runId}`).then(() => undefined),
+
+  /** Mark a completed run as the baseline for its (target, scenario/config) context. */
+  setRunBaseline: (runId: number) =>
+    apiClient.post<BenchmarkRun>(`/api/benchmarks/runs/${runId}/baseline`).then((res) => res.data),
+
+  /** Clear the baseline flag on a run. */
+  unsetRunBaseline: (runId: number) =>
+    apiClient.delete<BenchmarkRun>(`/api/benchmarks/runs/${runId}/baseline`).then((res) => res.data),
+
+  /** Time-series metrics for a target/proxy/scenario/config context, incl. baseline. */
+  getTrends: (params?: BenchmarkTrendsParams) =>
+    apiClient.get<BenchmarkTrendsResponse>('/api/benchmarks/trends', { params }).then((res) => res.data),
 
   // ── Agents (test client machines) ────────────────────────────────────
 

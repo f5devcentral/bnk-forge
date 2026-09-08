@@ -83,6 +83,70 @@ class TestContainerClusterRegistration:
         assert second.api_server == "https://new:30000"
         assert db.query(KubernetesCluster).filter(KubernetesCluster.name == "roks-e2e").count() == 1
 
+    def test_same_name_from_a_different_module_does_not_clobber(self, db):
+        """#79 item 7: two modules in one project surfacing the same cluster_name.
+
+        The lookup keys on (name, project); unregister keys on source_module_id.
+        B used to overwrite A's row, and A's destroy could then no longer find
+        it. B must be refused; A's row and A's destroy path must be intact.
+        """
+        from tests.factories import ProjectModuleFactory
+
+        module_a = _ibm_cluster_module(db, outputs={
+            "cluster_name": "roks-e2e",
+            "master_url": "https://a:30000",
+            "kubeconfig": PORTABLE_KUBECONFIG,
+        })
+        row_a = maybe_register_container_cluster(db, module_a)
+        assert row_a is not None
+
+        # Module B in the SAME project, same cluster_name, different endpoint.
+        module_b = ProjectModuleFactory(db, project=module_a.project, status="applied")
+        module_b.outputs = {
+            "cluster_name": "roks-e2e",
+            "master_url": "https://b:30000",
+            "kubeconfig": PORTABLE_KUBECONFIG,
+        }
+        db.flush()
+
+        assert maybe_register_container_cluster(db, module_b) is None
+
+        db.refresh(row_a)
+        assert row_a.api_server == "https://a:30000", "B clobbered A's endpoint"
+        assert (row_a.meta_data or {}).get("source_module_id") == module_a.id
+        assert db.query(KubernetesCluster).filter(KubernetesCluster.name == "roks-e2e").count() == 1
+        # And A can still clean up after itself.
+        assert maybe_unregister_container_cluster(db, module_a) is True
+        assert db.query(KubernetesCluster).count() == 0
+
+    def test_hand_registered_row_is_refreshed_but_not_claimed(self, db):
+        """A row with no source_module_id is hand-registered (or pre-dates
+        ownership). Its kubeconfig may be refreshed -- the pre-existing
+        behaviour -- but it must NOT be adopted, or destroying the module
+        would delete the operator's cluster, which unregister's
+        source_module_id keying exists to prevent."""
+        module = _ibm_cluster_module(db, outputs={
+            "cluster_name": "roks-e2e",
+            "master_url": "https://new:30000",
+            "kubeconfig": PORTABLE_KUBECONFIG,
+        })
+        hand = KubernetesCluster(
+            name="roks-e2e", context="roks-e2e", api_server="https://old:30000",
+            status="active", project_id=module.project_id,
+            kubeconfig_encrypted="x", default_namespace="default", meta_data=None,
+        )
+        db.add(hand)
+        db.flush()
+
+        refreshed = maybe_register_container_cluster(db, module)
+        assert refreshed is not None and refreshed.id == hand.id
+        assert refreshed.api_server == "https://new:30000"          # refreshed
+        assert (refreshed.meta_data or {}).get("source_module_id") is None  # not claimed
+
+        # Destroying the module must leave the hand-registered cluster alone.
+        assert maybe_unregister_container_cluster(db, module) is False
+        assert db.query(KubernetesCluster).count() == 1
+
     def test_no_kubeconfig_surfaced_skips(self, db):
         # roksbnkctl's pre-fix outputs: cluster_id present but no kubeconfig → skip.
         module = _ibm_cluster_module(db, outputs={

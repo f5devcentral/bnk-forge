@@ -158,8 +158,15 @@ class BenchmarkRunResponse(BaseModel):
     agent_id: int | None
     target_id: int | None
     proxy_deployment_id: int | None
+    scenario_key: str | None = None
     status: str
     error_message: str | None
+    is_baseline: bool = False
+    # Baseline reference for this run's (target_id, scenario_key, config_id, proxy, variant_label) context —
+    # populated only when a different run holds the baseline. Frontend badge logic
+    # (isRegression in benchmark-utils.tsx) diffs against these.
+    baseline_latency_p99: float | None = None
+    baseline_overall_rps: float | None = None
 
     # Denormalized metrics
     duration_seconds: float | None
@@ -245,6 +252,9 @@ class BenchmarkCompareRunMetrics(BaseModel):
     model: str
     tool: str
     run_label: str | None
+    config_id: int | None = None
+    scenario_key: str | None = None
+    variant_label: str | None = None
     status: str
     total_requests: int | None
     success_rate_pct: float | None
@@ -267,6 +277,39 @@ class BenchmarkCompareResponse(BaseModel):
     """Response for proxy-vs-proxy comparison."""
     runs: list[BenchmarkCompareRunMetrics]
     winners: dict  # {"latency_p50": run_id, "overall_rps": run_id, ...}
+    # True when the compared runs don't share the same config_id/scenario_key —
+    # frontend shows a "comparing mismatched configs" warning instead of silently
+    # implying an apples-to-apples comparison.
+    context_mismatch: bool = False
+
+
+# =============================================================================
+# Trends Schemas — time-series + baseline for a (target, proxy, scenario/config)
+# =============================================================================
+
+class BenchmarkTrendPoint(BaseModel):
+    """One time-series point for the Trends view."""
+    id: int
+    run_label: str | None
+    created_at: datetime
+    is_baseline: bool
+    latency_p50: float | None
+    latency_p99: float | None
+    overall_rps: float | None
+    peak_rps: float | None
+    success_rate_pct: float | None
+    tokens_per_sec: float | None
+    total_output_tokens: int | None
+
+    class Config:
+        from_attributes = True
+
+
+class BenchmarkTrendsResponse(BaseModel):
+    """Time-ordered (oldest-first) completed-run metrics for a target/proxy/scenario/config
+    context, plus the current baseline run id (included in points even if outside limit)."""
+    points: list[BenchmarkTrendPoint]
+    baseline_run_id: int | None
 
 
 # =============================================================================

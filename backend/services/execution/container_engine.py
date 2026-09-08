@@ -94,6 +94,7 @@ class ContainerEngine(DeploymentEngine):
         workspace_subpath: str | None = None,
         outputs_filename: str = DEFAULT_OUTPUTS_FILENAME,
         secret_values: list[str] | None = None,
+        celery_task_id: str | None = None,
     ) -> None:
         self.runner = runner
         self.workspace_host_path = workspace_host_path
@@ -101,6 +102,9 @@ class ContainerEngine(DeploymentEngine):
         # worker; correct on Docker Desktop). None ⟹ host-path bind fallback.
         self.workspace_volume = workspace_volume
         self.workspace_subpath = workspace_subpath
+        # Stamped onto each step container so the reaper can tell a live step
+        # from one whose worker died. None outside a Celery context.
+        self.celery_task_id = celery_task_id
         # In-container path used by the engine itself (e.g. to read outputs.json
         # back). The DockerRunner bind-mounts workspace_host_path; the engine,
         # which runs in the worker, reads via its own mount of the same volume.
@@ -241,17 +245,18 @@ class ContainerEngine(DeploymentEngine):
     def _resolve_steps(self, ctx: ModuleContext, operation: str) -> list[dict]:
         """Resolve the step list for a lifecycle op from the artifact manifest.
 
-        Reads ``execution.steps.<op>`` first (the SEAMS-named location), then
-        falls back to top-level ``steps.<op>`` (where the validator stores it).
+        Delegates to ``module_metadata.canonical_step_sets`` — the SAME resolver
+        the validator uses — so the steps that run are always the steps that were
+        validated. Previously this preferred ``execution.steps`` while every
+        validator read top-level ``steps``, which made the reviewed manifest a
+        decoy for the executed one.
+
         Returns ``[]`` when the phase is not declared.
         """
+        from services.module_metadata import canonical_step_sets
+
         manifest = ctx.pack_manifest or {}
-        execution = manifest.get("execution")
-        if isinstance(execution, dict) and isinstance(execution.get("steps"), dict):
-            steps = execution["steps"].get(operation)
-        else:
-            steps_block = manifest.get("steps")
-            steps = steps_block.get(operation) if isinstance(steps_block, dict) else None
+        steps = canonical_step_sets(manifest).get(operation)
 
         if steps is None:
             return []
@@ -280,7 +285,20 @@ class ContainerEngine(DeploymentEngine):
 
         def _sub(match: re.Match[str]) -> str:
             key = match.group(1)
-            return str(self._lookup_input(key, variables))
+            resolved = self._lookup_input(key, variables)
+            # Reject non-scalars HERE, at the single point where a value becomes
+            # part of an argv token. The equivalent check in
+            # validate_action_inputs only guards the action path; lifecycle
+            # steps render from ctx.variables (module.variables +
+            # variable_overrides, both JSON columns), so a dict there still
+            # reached step argv as a Python repr — the same class on the other
+            # of the two surfaces that exhibit it.
+            if not isinstance(resolved, (str, int, float, bool)):
+                raise ValueError(
+                    f"Input '{key}' is a {type(resolved).__name__}; only scalar "
+                    "values can be templated into a step argument"
+                )
+            return str(resolved)
 
         return _INPUT_TOKEN_RE.sub(_sub, value)
 
@@ -384,6 +402,7 @@ class ContainerEngine(DeploymentEngine):
                 pull_authfile_json=self.pull_authfile_json,
                 component_key=component_key,
                 step_name=step_name,
+                celery_task_id=self.celery_task_id,
             )
 
             # retry/backoff: a long-provisioning step (e.g. a cluster whose
@@ -512,8 +531,137 @@ class ContainerEngine(DeploymentEngine):
         manifest = ctx.pack_manifest or {}
         state = manifest.get("state")
         if isinstance(state, dict) and isinstance(state.get("outputs_file"), str):
-            return state["outputs_file"].strip() or self.outputs_filename
+            declared = state["outputs_file"].strip()
+            if not declared:
+                return self.outputs_filename
+            if not self._is_workspace_relative(declared):
+                # The manifest value was previously passed to os.path.join with
+                # only a .strip(), so an absolute path or a ../ escape read a
+                # file outside the workspace and normalized it into
+                # module.outputs — surfacing worker files (/app/keys, /app/secrets)
+                # to the user. The validator never checked this field (#408.2).
+                logger.warning(
+                    "Ignoring state.outputs_file %r — it escapes the workspace; "
+                    "falling back to %s",
+                    declared, self.outputs_filename,
+                )
+                return self.outputs_filename
+            return declared
         return self.outputs_filename
+
+    def _contained_workspace_path(self, relative: str) -> str:
+        """Resolve ``relative`` under the workspace, refusing to escape it.
+
+        Lexical checks alone are NOT sufficient here, which is the lesson from
+        the first version of this code. The workspace is writable by the
+        artifact's own container — that is its purpose — so a step can simply
+        plant a symlink at the expected name and the subsequent
+        ``os.path.join`` → ``open()`` follows it as the WORKER uid:
+
+            ln -sf /app/keys/encryption.key /state/outputs.json
+
+        ``/app/keys/encryption.key`` is the master encryption key and
+        ``/app/secrets`` is a real read-only mount, so the read direction is
+        credential disclosure into ``module.outputs`` (served by the state
+        viewer), and the write direction is an arbitrary-file truncate.
+
+        Mirrors module_reports_service, which already solved this: realpath
+        containment first, then O_NOFOLLOW on the open so the final component
+        cannot be a symlink either.
+        """
+        root = os.path.realpath(self.workspace_local_path)
+        target = os.path.realpath(os.path.join(root, relative))
+        if target != root and not target.startswith(root + os.sep):
+            raise ValueError(
+                f"path {relative!r} resolves outside the module workspace"
+            )
+        return target
+
+    def _open_contained(self, relative: str, mode: str):
+        """Open a workspace-relative path with NO component able to be a symlink.
+
+        O_NOFOLLOW on the final component is not containment. The path is
+        resolved, then re-resolved by isfile(), then re-resolved again by open()
+        — and swapping a PARENT directory between those steps escapes, because
+        only the last component is checked. That is not contrived here: the
+        shipped artifact declares a nested outputs_file
+        (.roksbnkctl/forge/cluster-outputs.json), and `state: {scope: deployment}`
+        shares one workspace across blueprint modules dispatched concurrently
+        onto --concurrency=4 workers, so module A's still-running step container
+        can swap a directory while module B's engine reads.
+
+        So walk the components, opening each directory with O_NOFOLLOW |
+        O_DIRECTORY relative to the previous fd, then open the leaf relative to
+        the last fd. No component is ever resolved by name twice, and none of
+        them may be a symlink.
+        """
+        import errno
+
+        if not self._is_workspace_relative(relative):
+            raise ValueError(f"path {relative!r} escapes the module workspace")
+
+        parts = [p for p in os.path.normpath(relative).split(os.sep) if p and p != "."]
+        if not parts:
+            raise ValueError(f"path {relative!r} does not name a file")
+
+        root_fd = os.open(os.path.realpath(self.workspace_local_path), os.O_RDONLY | os.O_DIRECTORY)
+        open_fds = [root_fd]
+        try:
+            for component in parts[:-1]:
+                try:
+                    fd = os.open(
+                        component,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=open_fds[-1],
+                    )
+                except OSError as exc:
+                    if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                        raise ValueError(
+                            f"{relative!r}: component {component!r} is a symlink; "
+                            "refusing to follow it out of the workspace"
+                        ) from exc
+                    raise
+                open_fds.append(fd)
+
+            flags = os.O_RDONLY if mode == "r" else (os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            try:
+                leaf = os.open(parts[-1], flags | os.O_NOFOLLOW, 0o600, dir_fd=open_fds[-1])
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.EMLINK):
+                    raise ValueError(
+                        f"{relative!r} is a symlink; refusing to follow it out of "
+                        "the workspace"
+                    ) from exc
+                raise
+            try:
+                return os.fdopen(leaf, mode, encoding="utf-8")
+            except Exception:
+                # fdopen takes ownership on success only; on failure the raw fd
+                # would leak, and this runs per step on a long-lived worker.
+                os.close(leaf)
+                raise
+        finally:
+            for fd in open_fds:
+                try:
+                    os.close(fd)
+                except OSError:      # pragma: no cover - best effort
+                    pass
+
+    @staticmethod
+    def _is_workspace_relative(candidate: str) -> bool:
+        """True when ``candidate`` stays inside the workspace when joined to it.
+
+        Mirrors the containment the sibling ``_step_marker_path`` gets for free
+        by sanitising its input. Rejects absolute paths, drive-letter/UNC forms,
+        and any ``..`` that climbs out.
+        """
+        if not candidate or os.path.isabs(candidate) or candidate.startswith("\\"):
+            return False
+        if os.path.splitdrive(candidate)[0]:
+            return False
+        # normpath collapses ./ and ../ so a climb shows up as a leading "..".
+        normalized = os.path.normpath(candidate)
+        return not (normalized == ".." or normalized.startswith(".." + os.sep))
 
     def _read_outputs_file(self, filename: str | None = None) -> dict[str, Any]:
         """Read + normalize the artifact's outputs file from the workspace.
@@ -526,14 +674,20 @@ class ContainerEngine(DeploymentEngine):
         Tolerates a missing file (the artifact may not emit one) and malformed
         JSON (logged, returns empty). Always returns a flat string-keyed dict.
         """
-        path = os.path.join(self.workspace_local_path, filename or self.outputs_filename)
-        if not os.path.isfile(path):
-            return {}
+        relative = filename or self.outputs_filename
+        # No isfile() precheck: it re-resolves the path by name, which is the
+        # very window a parent-directory swap exploits. Open first and let a
+        # missing file surface as FileNotFoundError.
         try:
-            with open(path) as handle:
+            with self._open_contained(relative, "r") as handle:
                 data = json.load(handle)
+        except FileNotFoundError:
+            return {}
+        except ValueError as exc:          # symlinked component, or escapes
+            logger.warning("Refusing to read artifact outputs file: %s", exc)
+            return {}
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Could not read artifact outputs file %s: %s", path, exc)
+            logger.warning("Could not read artifact outputs file %s: %s", relative, exc)
             return {}
         return self._normalize_outputs(data)
 
@@ -571,9 +725,14 @@ class ContainerEngine(DeploymentEngine):
     def _write_step_marker(self, step_name: str) -> None:
         try:
             os.makedirs(self.workspace_local_path, exist_ok=True)
-            with open(self._step_marker_path(step_name), "w") as handle:
+            # Same symlink exposure in the WRITE direction: a planted symlink at
+            # the marker name would otherwise be an arbitrary-file truncate to
+            # "done\n" as the worker uid. _step_marker_path sanitises the step
+            # name (traversal), which does nothing about symlinks.
+            marker = os.path.basename(self._step_marker_path(step_name))
+            with self._open_contained(marker, "w") as handle:
                 handle.write("done\n")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             # Non-fatal: a missing marker only means the run_once step re-runs next
             # time (and a truly non-idempotent step would then surface its own error).
             logger.warning("Could not write run_once marker for step '%s': %s", step_name, exc)

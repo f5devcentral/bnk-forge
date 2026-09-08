@@ -322,6 +322,22 @@ def _find_cert_secret(api_client: k8s_client.ApiClient, cwc_namespace: str) -> d
 # ---------------------------------------------------------------------------
 
 
+def _client_pod_resources() -> tuple[dict[str, str], dict[str, str]]:
+    """Requests/limits for the CWC helper pod.
+
+    Requests memory is set to the 128Mi floor that BNK cluster mutate-policies
+    (e.g. kyverno f5-bnk-shrink-requests) impose on pods in f5-cne-core/f5-operators;
+    the limit sits above it so the API-server 'requests <= limits' check passes
+    after mutation.
+
+    Returns:
+        Tuple of (requests dict, limits dict), where values are K8s quantity strings.
+    """
+    requests = {"cpu": "25m", "memory": "128Mi"}
+    limits = {"cpu": "250m", "memory": "256Mi"}
+    return requests, limits
+
+
 def _find_running_client_pod(
     api_client: k8s_client.ApiClient,
     cert_secret_name: str,
@@ -392,6 +408,7 @@ def _create_client_pod(
         read_only=True,
     )
 
+    requests, limits = _client_pod_resources()
     pod = k8s_client.V1Pod(
         metadata=k8s_client.V1ObjectMeta(
             name=pod_name,
@@ -412,8 +429,8 @@ def _create_client_pod(
                     command=["sleep", "infinity"],
                     volume_mounts=[volume_mount],
                     resources=k8s_client.V1ResourceRequirements(
-                        requests={"cpu": "10m", "memory": "16Mi"},
-                        limits={"cpu": "100m", "memory": "64Mi"},
+                        requests=requests,
+                        limits=limits,
                     ),
                 )
             ],
@@ -426,8 +443,18 @@ def _create_client_pod(
         core_v1.create_namespaced_pod(cwc_namespace, pod)
         logger.info(f"Created qkview client pod: {pod_name}")
     except k8s_client.rest.ApiException as e:
+        error_detail = e.reason
+        # Extract server error message from response body if available
+        if e.body:
+            try:
+                body_json = json.loads(e.body)
+                if isinstance(body_json, dict) and "message" in body_json:
+                    error_detail = body_json["message"]
+            except (json.JSONDecodeError, TypeError):
+                # Fallback to raw body string (truncated for readability)
+                error_detail = str(e.body)[:300]
         raise QKViewError(
-            f"Failed to create qkview client pod: {e.reason}", e.status
+            f"Failed to create qkview client pod: {error_detail}", e.status
         )
 
     # Wait for pod to be ready

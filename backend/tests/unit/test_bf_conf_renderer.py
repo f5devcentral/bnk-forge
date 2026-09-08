@@ -168,6 +168,28 @@ class TestBuildContext:
         assert ctx.host.authorized_keys.startswith("ssh-ed25519 ")
         assert "bnk-forge:dpu-os-key" in ctx.host.authorized_keys
 
+    def test_persisted_ipam_ip_flows_into_bf_conf_render(self):
+        # End-to-end: DPU with cluster-allocated dpu_tmfifo_ip="192.168.100.6"
+        # must produce tmfifo_dpu_ip="192.168.100.6/30" in the render context,
+        # which is then rendered into the bf.conf template.
+        dpu, settings = self._make_dpu_and_settings()
+        dpu.rshim_device = "rshim0"  # formula would give .2
+        dpu.dpu_tmfifo_ip = "192.168.100.6"
+        dpu.kubernetes_cluster_id = 1  # member → persisted IP wins
+
+        ctx = build_render_context(
+            dpu=dpu, settings=settings, ssh_credential=None,
+            ubuntu_password_plaintext="pw", decrypt=lambda x: x,
+        )
+        assert ctx.host.tmfifo_dpu_ip == "192.168.100.6/30"
+
+        # Verify end-to-end through the template renderer.
+        out = render_bf_conf(
+            _tpl("dpu_ip={{ hostvars[bfb_hostname].tmfifo_dpu_ip }}"),
+            ctx,
+        )
+        assert out == "dpu_ip=192.168.100.6/30"
+
 
 class TestStream:
     def test_stream_emits_bfb_then_bf_cfg(self, tmp_path: Path):
@@ -311,6 +333,31 @@ class TestTmfifoDpuIp:
 
     def test_garbage_falls_back_to_rshim0(self):
         assert derive_tmfifo_dpu_ip("not-an-rshim") == "192.168.100.2/30"
+
+    # ── Persisted IPAM values (ADR-424 cluster-scoped allocation) ──────────
+
+    def test_persisted_dpu_ip_overrides_formula_in_ip(self):
+        # A DPU allocated .6 by cluster IPAM must flash with .6, not the
+        # formula .2 derived from rshim0.
+        dpu = _Stub(dpu_tmfifo_ip="192.168.100.6", kubernetes_cluster_id=1)
+        assert derive_tmfifo_dpu_ip("rshim0", dpu=dpu) == "192.168.100.6/30"
+
+    def test_persisted_dpu_ip_overrides_formula_in_host(self):
+        dpu = _Stub(dpu_tmfifo_ip="192.168.100.6", kubernetes_cluster_id=1)
+        assert derive_tmfifo_dpu_host("rshim0", dpu=dpu) == "192.168.100.6"
+
+    def test_none_dpu_ip_falls_back_to_formula(self):
+        dpu = _Stub(dpu_tmfifo_ip=None)
+        assert derive_tmfifo_dpu_ip("rshim1", dpu=dpu) == "192.168.101.2/30"
+        assert derive_tmfifo_dpu_host("rshim1", dpu=dpu) == "192.168.101.2"
+
+    def test_orphaned_dpu_cluster_id_null_falls_back_to_formula(self):
+        # Belt-and-braces (ADR-424 cold audit A2): cluster deleted, ondelete=SET NULL
+        # cleared kubernetes_cluster_id but dpu_tmfifo_ip still holds the old value.
+        # derive_* must fall back to the rshim formula, not bake the stale orphan IP.
+        dpu = _Stub(dpu_tmfifo_ip="192.168.100.6", kubernetes_cluster_id=None)
+        assert derive_tmfifo_dpu_ip("rshim0", dpu=dpu) == "192.168.100.2/30"
+        assert derive_tmfifo_dpu_host("rshim0", dpu=dpu) == "192.168.100.2"
 
     def test_render_context_includes_tmfifo_ip(self):
         # bf.conf templates reference {{ hostvars[…].tmfifo_dpu_ip }} —

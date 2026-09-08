@@ -706,7 +706,7 @@ def run_k8s_destroy(self, task_db_id: int, module_id: int, **kwargs):
                 _publish_task_completion(task)
                 _update_stack_status_if_needed(module, db)
                 # D-001 Phase 3: fire destroy trigger for skipped modules too
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
                 return {"status": "skipped", "module_id": module.id}
 
             task.status = "in_progress"
@@ -797,7 +797,7 @@ def run_k8s_destroy(self, task_db_id: int, module_id: int, **kwargs):
 
                 _update_stack_status_if_needed(module, db)
                 # D-001 Phase 3: event-chain destroy trigger hook
-                _trigger_next_destroy_module(module, db)
+                _trigger_next_destroy_module(module, db, task.id)
 
             return {
                 "success": result.success,
@@ -824,7 +824,7 @@ def run_k8s_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after K8s ModuleLockError: %s", trigger_err)
             raise
@@ -848,7 +848,7 @@ def run_k8s_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after K8s ModuleLockLostError: %s", trigger_err)
             raise
@@ -872,7 +872,7 @@ def run_k8s_destroy(self, task_db_id: int, module_id: int, **kwargs):
             try:
                 if _exc_module is not None:
                     db.refresh(_exc_module)
-                    _trigger_next_destroy_module(_exc_module, db)
+                    _trigger_next_destroy_module(_exc_module, db, task.id)
             except Exception as trigger_err:
                 logger.warning("_trigger_next_destroy_module failed after K8s generic exception: %s", trigger_err)
             raise

@@ -161,6 +161,83 @@ class TestFencing:
         db.expire(module)
         assert module.deployment_error == "B was here"
 
+    def test_failure_transition_records_the_cause_as_reason(self, db, module, make_task):
+        """#101: every engine writes the cause into deployment_error in the same
+        call as the *_failed status, but the hand-off to the state machine
+        never forwarded it -- so module_state_transitions recorded THAT a
+        module failed and never WHY. The reason is now derived from
+        deployment_error at the one shared hand-off, so no call site has to
+        remember."""
+        from models import ModuleStateTransition
+
+        svc = ModuleLockService(db)
+        module.status = "initializing"
+        db.commit()
+        task = make_task(project=module.project, module=module)
+        lock = svc.acquire(module.id, task_id=task.id)
+
+        set_locked_module_fields(
+            db, module, lock,
+            status="init_failed",
+            deployment_error="step 'init-poc' failed (exit 1): refusing to overwrite /state/poc",
+        )
+        db.expire(module)
+
+        row = (
+            db.query(ModuleStateTransition)
+            .filter(ModuleStateTransition.module_id == module.id)
+            .order_by(ModuleStateTransition.id.desc())
+            .first()
+        )
+        assert row is not None
+        assert row.to_status == "init_failed"
+        assert row.reason, "failure transition was audited with an empty reason"
+        assert "init-poc" in row.reason
+
+    def test_explicit_reason_wins_over_deployment_error(self, db, module, make_task):
+        from models import ModuleStateTransition
+
+        svc = ModuleLockService(db)
+        module.status = "applying"
+        db.commit()
+        task = make_task(project=module.project, module=module)
+        lock = svc.acquire(module.id, task_id=task.id)
+
+        set_locked_module_fields(
+            db, module, lock,
+            status="apply_failed",
+            deployment_error="the long log tail",
+            reason="quota exceeded",
+        )
+        row = (
+            db.query(ModuleStateTransition)
+            .filter(ModuleStateTransition.module_id == module.id)
+            .order_by(ModuleStateTransition.id.desc())
+            .first()
+        )
+        assert row.reason == "quota exceeded"
+
+    def test_reason_is_clamped_to_the_column_width(self, db, module, make_task):
+        """deployment_error can be a 2000-char log tail; reason is String(500)."""
+        from models import ModuleStateTransition
+
+        svc = ModuleLockService(db)
+        module.status = "applying"
+        db.commit()
+        task = make_task(project=module.project, module=module)
+        lock = svc.acquire(module.id, task_id=task.id)
+
+        set_locked_module_fields(
+            db, module, lock, status="apply_failed", deployment_error="x" * 2000,
+        )
+        row = (
+            db.query(ModuleStateTransition)
+            .filter(ModuleStateTransition.module_id == module.id)
+            .order_by(ModuleStateTransition.id.desc())
+            .first()
+        )
+        assert len(row.reason) == 500
+
     def test_set_locked_fields_succeeds_with_correct_fence(
         self, db, module
     ):

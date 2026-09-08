@@ -826,19 +826,11 @@ class StackDeploymentService:
         Uses the same query (active rows, newest sync wins) that the deploy path
         uses so the preflight and the apply agree on what "present" means.
         """
-        return (
-            self.db.query(ModuleLibrary)
-            .filter(
-                ModuleLibrary.path == module_path,
-                ModuleLibrary.is_active,
-            )
-            .order_by(
-                ModuleLibrary.is_latest.desc(),
-                ModuleLibrary.last_synced.desc().nullslast(),
-                ModuleLibrary.id.desc(),
-            )
-            .first()
-        )
+        # Canonical ordering lives in services.module_resolution so the
+        # secret-policy check and the stack map resolve the same row (#90 F8).
+        from services.module_resolution import resolve_module_row
+
+        return resolve_module_row(self.db, module_path)
 
     def verify_template_modules_present(
         self,
@@ -1617,6 +1609,8 @@ class StackDeploymentService:
                             module.status = ModuleStatus.APPLY_FAILED
                         elif old_status == ModuleStatus.DESTROYING:
                             module.status = ModuleStatus.DESTROY_FAILED
+                        elif old_status == ModuleStatus.PLANNING:
+                            module.status = ModuleStatus.PLAN_FAILED
                         else:
                             module.status = ModuleStatus.INIT_FAILED
                         module.deployment_error = last_task.error or "Task failed"
@@ -1625,13 +1619,39 @@ class StackDeploymentService:
                             module.status = ModuleStatus.DESTROYED
                         else:
                             module.status = ModuleStatus.APPLIED
+                    elif old_status in (ModuleStatus.APPLYING, ModuleStatus.DESTROYING):
+                        # No terminal task to learn from -- the worker died mid-run.
+                        # A module that reached applying/destroying MAY OWN CLOUD
+                        # RESOURCES: `tofu apply` creates IAM roles, VPCs and the
+                        # like well before it finishes. Recovering it to
+                        # not_initialized routed it into modules_to_delete below,
+                        # which deletes the row with NO destroy attempt -- so the
+                        # resources outlived Forge's knowledge of them and the next
+                        # deploy hit EntityAlreadyExists (#30). Land it in the
+                        # matching *_failed state instead so it is queued for a
+                        # real destroy, which is idempotent if nothing was created.
+                        module.status = (
+                            ModuleStatus.APPLY_FAILED
+                            if old_status == ModuleStatus.APPLYING
+                            else ModuleStatus.DESTROY_FAILED
+                        )
+                        module.deployment_error = (
+                            "Worker died mid-run; recovered during stack destroy. "
+                            "Resources may exist -- destroy will be attempted."
+                        )
                     else:
+                        # initializing / planning with no terminal task: nothing was
+                        # applied, so nothing can be orphaned. Safe to delete.
                         module.status = ModuleStatus.NOT_INITIALIZED
                         module.deployment_error = "Stale transitional state recovered during destroy"
                     logger.info(f"BUG-008: Recovered stale module {module.id} from {old_status} → {module.status}")
         self.db.commit()
 
-        # Check which modules have actual infrastructure to destroy
+        # Check which modules have actual infrastructure to destroy.
+        # Lazy import: tasks.parallel_tasks pulls in services.* (import cycle at
+        # module load); mirrors the existing import in _execute_stack_destroy.
+        from tasks.parallel_tasks import NO_INFRA_STATUSES
+
         modules_to_destroy = []
         modules_to_delete = []
 
@@ -1647,13 +1667,19 @@ class StackDeploymentService:
                     f"Cannot destroy stack: module '{module_name}' has operation in progress "
                     f"(status: {module.status}). Wait for it to complete or cancel the operation first."
                 )
-            elif module.status in [ModuleStatus.APPLIED, ModuleStatus.APPLY_FAILED, ModuleStatus.DESTROY_FAILED]:
-                # CP-009: Has or may have infrastructure to destroy
-                # Don't require outputs — modules can create resources without output definitions
-                modules_to_destroy.append(module)
-            else:
-                # No infrastructure deployed (not_initialized, initialized, planned, init_failed, plan_failed)
+            elif (module.status or "") in NO_INFRA_STATUSES:
+                # Nothing was ever applied, so nothing can be orphaned. Same
+                # vocabulary the project-DELETE guard uses (#129), so the two
+                # cannot disagree about what "no infrastructure" means.
                 modules_to_delete.append(module)
+            else:
+                # CP-009 / #30: has or MAY have infrastructure -- applied,
+                # apply_failed, destroy_failed, and anything unrecognised.
+                # Fail closed: an unknown status gets a destroy attempt (idempotent
+                # if nothing exists) rather than a silent row delete. Don't
+                # require outputs -- modules create resources without output
+                # definitions.
+                modules_to_destroy.append(module)
 
         # Delete modules with no infrastructure immediately
         for module in modules_to_delete:

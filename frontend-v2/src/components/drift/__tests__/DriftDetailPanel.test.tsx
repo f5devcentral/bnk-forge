@@ -72,4 +72,46 @@ describe('DriftDetailPanel', () => {
     expect(screen.getByText('~1 to change')).toBeInTheDocument();
     expect(screen.getByText('-1 to destroy')).toBeInTheDocument();
   });
+
+  // Status fidelity (#70 review): drift_detected is only meaningful for a
+  // completed check. A failed/checking/scheduled check has drift_detected:false
+  // but must never render "No Drift" -- that would claim the infra was compared
+  // and matched when the compare never finished.
+  it('shows Failed, not "No Drift", for a failed check', () => {
+    render(
+      <DriftDetailPanel
+        driftCheck={{ ...mockDriftCheck, status: 'failed', drift_detected: false }}
+        projectId={1}
+        moduleId={10}
+      />
+    );
+
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.queryByText('No Drift')).not.toBeInTheDocument();
+  });
+
+  it('shows Scheduled, not "No Drift", for a not-yet-run check', () => {
+    render(
+      <DriftDetailPanel
+        driftCheck={{ ...mockDriftCheck, status: 'scheduled', drift_detected: false }}
+        projectId={1}
+        moduleId={10}
+      />
+    );
+
+    expect(screen.getByText('Scheduled')).toBeInTheDocument();
+    expect(screen.queryByText('No Drift')).not.toBeInTheDocument();
+  });
+
+  it('shows "No Drift" only when a completed check found none', () => {
+    render(
+      <DriftDetailPanel
+        driftCheck={{ ...mockDriftCheck, status: 'completed', drift_detected: false }}
+        projectId={1}
+        moduleId={10}
+      />
+    );
+
+    expect(screen.getByText('No Drift')).toBeInTheDocument();
+  });
 });

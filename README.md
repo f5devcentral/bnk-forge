@@ -88,6 +88,11 @@ make deploy
 
 Open **https://localhost** and accept the self-signed certificate warning.
 
+> **Enabling MCP:** the MCP server and backend share a service credential you must
+> set — put `MCP_SERVICE_PASSWORD` in `.env` before starting. Without it the stack
+> still comes up, but the MCP server can't authenticate and MCP tools return auth
+> errors until you set the variable and restart. See [.env.example](.env.example).
+
 `make deploy` detects macOS/WSL and switches to bridge networking with published
 ports (`docker-compose.local.yml`); on a Linux server it uses host networking. You
 do not pick — it picks.
@@ -140,9 +145,17 @@ For first-time destructive bootstrap only (wipes existing BNK Forge volumes), us
 | Field | Value |
 |-------|-------|
 | **Username** | `admin` |
-| **Password** | `changeme` |
+| **Password** | _generated on first startup — see below_ |
 
-You'll be prompted to change the password on first login.
+The admin password is generated randomly on first startup (there is no shipped
+default). Retrieve it once from the backend logs:
+
+```bash
+docker exec bnk-forge-backend cat /app/keys/initial_admin_password
+```
+
+Or choose your own beforehand by setting `DEFAULT_ADMIN_PASSWORD` in `.env`. You
+will be **required** to change it on first login (enforced server-side).
 
 ---
 

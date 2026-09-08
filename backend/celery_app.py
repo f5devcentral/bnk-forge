@@ -40,7 +40,7 @@ celery_app = Celery(
     "bnk_forge",
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
-    include=["tasks.opentofu_tasks", "tasks.kubernetes_tasks", "tasks.ansible_tasks", "tasks.ssh_tasks", "tasks.tmos_tasks", "tasks.cli_tasks", "tasks.bnk_upgrade_tasks", "tasks.drift_tasks", "tasks.stack_tasks", "tasks.parallel_tasks", "tasks.heartbeat_task", "tasks.health_monitor_task", "tasks.operator_cleanup_task", "tasks.proxy_deploy_tasks", "tasks.proxy_migration_tasks", "tasks.bare_metal_tasks", "tasks.dpu_tasks", "tasks.backend_health_task", "tasks.registry_smoke_test", "tasks.registry_update_poller", "tasks.cluster_scan_task", "tasks.helm_tasks", "tasks.fleet_tasks", "tasks.notification_retention_task", "tasks.benchmark_agent_tasks", "tasks.container_tasks"]
+    include=["tasks.opentofu_tasks", "tasks.kubernetes_tasks", "tasks.ansible_tasks", "tasks.ssh_tasks", "tasks.tmos_tasks", "tasks.cli_tasks", "tasks.bnk_upgrade_tasks", "tasks.drift_tasks", "tasks.stack_tasks", "tasks.parallel_tasks", "tasks.heartbeat_task", "tasks.health_monitor_task", "tasks.operator_cleanup_task", "tasks.proxy_deploy_tasks", "tasks.proxy_migration_tasks", "tasks.bare_metal_tasks", "tasks.dpu_tasks", "tasks.backend_health_task", "tasks.registry_smoke_test", "tasks.registry_update_poller", "tasks.cluster_scan_task", "tasks.helm_tasks", "tasks.fleet_tasks", "tasks.notification_retention_task", "tasks.benchmark_agent_tasks", "tasks.container_tasks", "tasks.container_reaper"]
 )
 
 # Celery configuration
@@ -129,6 +129,13 @@ celery_app.conf.update(
         'health-monitor': {
             'task': 'tasks.health_monitor_task.check_cluster_health',
             'schedule': 60.0,  # Every 60 seconds — fires alerts on severity change
+        },
+        'reap-orphaned-step-containers': {
+            'task': 'tasks.container_reaper.reap_orphaned_step_containers',
+            # Every 10 minutes. This is the backstop for an orphan whose step is
+            # never retried; the dangerous case (orphan racing its own retry on
+            # one workspace) is closed synchronously in the runner, not here.
+            'schedule': 600.0,
         },
         'operator-cleanup': {
             'task': 'tasks.operator_cleanup_task.cleanup_stale_operators_and_commands',

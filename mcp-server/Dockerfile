@@ -25,7 +25,7 @@ COPY pyproject.toml README.md ./
 # Keep in sync with [project.dependencies] in pyproject.toml.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install "mcp>=1.26.0" "httpx>=0.27.0" hatchling
+    pip install "mcp>=1.26.0,<2" "httpx>=0.27.0" hatchling
 
 # Copy full source code (only this layer rebuilds on code changes)
 COPY src/ ./src/

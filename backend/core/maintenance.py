@@ -66,6 +66,14 @@ def get_maintenance_status() -> dict[str, str] | None:
     except (RuntimeError, redis.ConnectionError, redis.RedisError):
         # Redis not configured or unreachable — treat as not in maintenance
         return None
+    except (TypeError, ValueError):
+        # The key held something json.loads() could not read. This function runs
+        # from maintenance_middleware on EVERY request, so letting that escape
+        # turns one bad value into a 500 for the entire API. Degrade to "not in
+        # maintenance", which is what this function already promises to do when
+        # it cannot get an answer from Redis.
+        logger.warning("Ignoring unparseable value under %s", MAINTENANCE_KEY)
+        return None
     return None
 
 

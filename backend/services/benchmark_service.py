@@ -511,6 +511,7 @@ class BenchmarkService(BaseService):
 
         total = query.count()
         runs = query.order_by(desc(BenchmarkRun.created_at)).limit(limit).offset(offset).all()
+        self._attach_baseline_context(runs)
         return runs, total
 
     def get_run(self, run_id: int, with_details: bool = False) -> BenchmarkRun:
@@ -524,7 +525,150 @@ class BenchmarkService(BaseService):
         run = query.filter(BenchmarkRun.id == run_id).first()
         if not run:
             raise NotFoundError("benchmark_run", run_id)
+        self._attach_baseline_context([run])
         return run
+
+    def _attach_baseline_context(self, runs: list[BenchmarkRun]) -> None:
+        """Set transient baseline_latency_p99 / baseline_overall_rps on each run.
+
+        These are not DB columns — computed here so BenchmarkRunResponse can carry
+        the reference values the frontend regression badge diffs against. Left unset
+        (None) when a run's (target_id, scenario_key, config_id, proxy, variant_label)
+        context has no baseline, or when the run itself IS the baseline.
+        """
+        target_ids = {r.target_id for r in runs if r.target_id is not None}
+        baselines: dict[tuple, BenchmarkRun] = {}
+        if target_ids:
+            candidates = (
+                self.db.query(BenchmarkRun)
+                .filter(BenchmarkRun.is_baseline.is_(True), BenchmarkRun.target_id.in_(target_ids))
+                .all()
+            )
+            for b in candidates:
+                baselines[(b.target_id, b.scenario_key, b.config_id, b.proxy, b.variant_label)] = b
+
+        for r in runs:
+            baseline = baselines.get((r.target_id, r.scenario_key, r.config_id, r.proxy, r.variant_label))
+            has_reference = baseline is not None and baseline.id != r.id
+            r.baseline_latency_p99 = baseline.latency_p99 if has_reference else None
+            r.baseline_overall_rps = baseline.overall_rps if has_reference else None
+
+    def set_baseline(self, run_id: int) -> BenchmarkRun:
+        """Mark a completed run as the baseline for its (target_id, scenario_key,
+        config_id, proxy, variant_label) context, clearing any previous baseline in
+        that same context.
+
+        Concurrency: locks every run row sharing the context with SELECT ... FOR
+        UPDATE (ordered by id, so concurrent calls acquire locks in a consistent
+        order and can't deadlock) before clearing + setting is_baseline. Locking
+        is scoped to the context's identity columns (target_id/scenario_key/
+        config_id/proxy/variant_label — immutable) rather than only rows currently
+        flagged is_baseline=True (mutable): under READ COMMITTED, a lock query
+        filtered on is_baseline=True can miss a just-committed flip from a concurrent
+        transaction (Postgres re-checks the WHERE clause on the specific locked
+        row, it doesn't re-scan for newly-matching rows), which would let two
+        concurrent set_baseline calls each believe they cleared "the" prior
+        baseline and both end up flagged — the exact bug this locking closes.
+        No-op under SQLite (tests): SQLite has no row-level locking and every
+        writer is already serialized.
+        """
+        target_run = self.get_run(run_id)
+        if target_run.status != BenchmarkRunStatus.COMPLETED:
+            raise BadRequestError("Only completed runs can be marked as baseline", code="RUN_NOT_COMPLETED")
+
+        if target_run.target_id is None:
+            raise BadRequestError("Cannot set baseline on a run without a target_id", code="MISSING_TARGET_ID")
+
+        context_runs = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.target_id == target_run.target_id,
+                BenchmarkRun.scenario_key == target_run.scenario_key,
+                BenchmarkRun.config_id == target_run.config_id,
+                BenchmarkRun.proxy == target_run.proxy,
+                BenchmarkRun.variant_label == target_run.variant_label,
+            )
+            .order_by(BenchmarkRun.id)
+            .with_for_update()
+            .all()
+        )
+        run = next(r for r in context_runs if r.id == run_id)
+
+        for other in context_runs:
+            if other.id != run.id and other.is_baseline:
+                other.is_baseline = False
+
+        run.is_baseline = True
+        self.db.flush()
+        self._attach_baseline_context([run])
+        return run
+
+    def unset_baseline(self, run_id: int) -> BenchmarkRun:
+        """Clear the baseline flag on a run."""
+        run = self.get_run(run_id)
+        run.is_baseline = False
+        self.db.flush()
+        self._attach_baseline_context([run])
+        return run
+
+    def get_trends(
+        self,
+        target_id: int | None = None,
+        proxy: str | None = None,
+        scenario_key: str | None = None,
+        config_id: int | None = None,
+        limit: int = 50,
+    ) -> dict:
+        """Time-ordered (oldest-first) completed-run metrics for a target/proxy/scenario/
+        config context. The current baseline for that context is always included, even
+        when it falls outside the `limit` window."""
+
+        def _base_query():
+            query = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.COMPLETED)
+            if target_id is not None:
+                query = query.filter(BenchmarkRun.target_id == target_id)
+            if proxy:
+                query = query.filter(BenchmarkRun.proxy == proxy)
+            if scenario_key:
+                query = query.filter(BenchmarkRun.scenario_key == scenario_key)
+            if config_id is not None:
+                query = query.filter(BenchmarkRun.config_id == config_id)
+            return query
+
+        runs = _base_query().order_by(desc(BenchmarkRun.created_at)).limit(limit).all()
+        runs = list(reversed(runs))
+
+        # Baseline only makes sense for single-context series. Baseline identity is the 5-tuple
+        # (target_id, config_id, scenario_key, proxy, variant_label) — same as set_baseline locking.
+        # If plotted series interleaves multiple contexts, do not return a cross-context baseline.
+        contexts = {(r.target_id, r.config_id, r.scenario_key, r.proxy, r.variant_label) for r in runs}
+        baseline_run = None
+        if len(contexts) == 1 and runs:
+            # Single-context series — pick baseline scoped to exactly this context
+            context_tuple = contexts.pop()
+            target_id_ctx, config_id_ctx, scenario_key_ctx, proxy_ctx, variant_label_ctx = context_tuple
+            baseline_run = (
+                self.db.query(BenchmarkRun)
+                .filter(
+                    BenchmarkRun.status == BenchmarkRunStatus.COMPLETED,
+                    BenchmarkRun.is_baseline.is_(True),
+                    BenchmarkRun.target_id == target_id_ctx,
+                    BenchmarkRun.config_id == config_id_ctx,
+                    BenchmarkRun.scenario_key == scenario_key_ctx,
+                    BenchmarkRun.proxy == proxy_ctx,
+                    BenchmarkRun.variant_label == variant_label_ctx,
+                )
+                .order_by(desc(BenchmarkRun.created_at))
+                .first()
+            )
+            if baseline_run and not any(r.id == baseline_run.id for r in runs):
+                runs.append(baseline_run)
+                runs.sort(key=lambda r: r.created_at)
+
+        return {
+            "points": runs,
+            "baseline_run_id": baseline_run.id if baseline_run else None,
+        }
 
     def create_run(self, data: dict) -> BenchmarkRun:
         """Create a new benchmark run (triggered from UI)."""
@@ -969,6 +1113,9 @@ class BenchmarkService(BaseService):
                 "model": run.model,
                 "tool": run.tool,
                 "run_label": run.run_label,
+                "config_id": run.config_id,
+                "scenario_key": run.scenario_key,
+                "variant_label": run.variant_label,
                 "status": run.status,
                 "total_requests": run.total_requests,
                 "success_rate_pct": run.success_rate_pct,
@@ -996,9 +1143,20 @@ class BenchmarkService(BaseService):
                 if vals:
                     winners[metric] = max(vals, key=lambda x: x[1])[0]
 
+        # Mismatch warning — comparing runs built from different configs or scenarios can
+        # silently mislead (e.g., "which proxy is faster" when the workloads differ too).
+        # Proxies and variants are deliberately-varied comparison dimensions on the Compare tab.
+        config_ids = {m["config_id"] for m in run_metrics}
+        scenario_keys = {m["scenario_key"] for m in run_metrics}
+        context_mismatch = (
+            len(config_ids) > 1
+            or len(scenario_keys) > 1
+        )
+
         return {
             "runs": run_metrics,
             "winners": winners,
+            "context_mismatch": context_mismatch,
         }
 
     # ================================================================

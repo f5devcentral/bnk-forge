@@ -205,6 +205,20 @@ class TestProjectRead:
         assert response.status_code == 200
 
 
+def _credential_template(db):
+    """A real cloud_credential_templates row.
+
+    project.credential_template_id is a FK, so a synthetic id trips
+    "FOREIGN KEY constraint failed" before the assertion under test is reached.
+    """
+    from models.system import CloudCredentialTemplate
+
+    tpl = CloudCredentialTemplate(name="test-cred-template", provider="ibmcloud")
+    db.add(tpl)
+    db.flush()
+    return tpl
+
+
 class TestProjectUpdate:
     """PUT /api/projects/{id}."""
 
@@ -235,6 +249,79 @@ class TestProjectUpdate:
         db.refresh(sample_project)
         assert sample_project.description == "Only desc changed"
         assert sample_project.project_type == original_type
+
+    def test_partial_update_keeps_platform_routing_fields(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """The same always-true hasattr() was nulling these three on every update.
+
+        They sit thirty lines above the credential guards in the same method, so
+        a fix that stopped at the credential fields would still have left every
+        partial update wiping the project's platform routing.
+        """
+        sample_project.target_platform_profile = "kubernetes-onprem"
+        sample_project.platform_provider = "ibmcloud"
+        sample_project.management_boundary = "customer"
+        db.commit()
+
+        response = client.put(
+            f"/api/projects/{sample_project.id}",
+            json={"description": "unrelated change"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+
+        db.refresh(sample_project)
+        assert sample_project.target_platform_profile == "kubernetes-onprem"
+        assert sample_project.platform_provider == "ibmcloud"
+        assert sample_project.management_boundary == "customer"
+
+    def test_partial_update_keeps_credential_template(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """A partial update must not detach the project's credential template.
+
+        hasattr() is always True for a declared Pydantic field, so the old check
+        fired on every request and wrote the default of None. Any update that did
+        not mention the template silently cleared it — and the template is where
+        IBMCLOUD_API_KEY comes from, so every module that ran afterwards had no
+        cloud credentials.
+        """
+        tpl = _credential_template(db)
+        sample_project.credential_template_id = tpl.id
+        db.commit()
+
+        response = client.put(
+            f"/api/projects/{sample_project.id}",
+            json={"description": "unrelated change"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+
+        db.refresh(sample_project)
+        assert sample_project.credential_template_id == tpl.id, (
+            "partial update cleared the credential template; every subsequent "
+            "module would run without cloud credentials"
+        )
+
+    def test_credential_template_can_still_be_cleared_explicitly(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """Sending an explicit null still detaches it — omission is not the same
+        as an explicit clear, and callers must retain the ability to do both."""
+        tpl = _credential_template(db)
+        sample_project.credential_template_id = tpl.id
+        db.commit()
+
+        response = client.put(
+            f"/api/projects/{sample_project.id}",
+            json={"credential_template_id": None},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+
+        db.refresh(sample_project)
+        assert sample_project.credential_template_id is None
 
     def test_update_project_viewer_denied(self, client, viewer_headers, all_test_users, sample_project):
         """Viewer cannot update projects."""
@@ -316,3 +403,105 @@ class TestProjectActivate:
 
         db.refresh(sample_project)
         assert sample_project.is_active is True
+
+
+class TestProjectDeleteGuardOverHTTP:
+    """The teardown guard and module_state at the route boundary.
+
+    Service-level tests cannot see these: FastAPI filters every response
+    through its response_model, so a field the service emits but the schema
+    does not declare is silently dropped before it reaches a client.
+    """
+
+    def _applied_module(self, db, project, library):
+        from models import ProjectModule
+
+        mod = ProjectModule(
+            project_id=project.id,
+            module_library_id=library.id,
+            path_in_project="infra/live",
+            status="applied",
+        )
+        db.add(mod)
+        db.commit()
+        return mod
+
+    def test_module_state_reaches_client_on_detail(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """GET /{id} carries a COMPUTED module_state.
+
+        Asserting "clean" here would be vacuous: it is also the schema default,
+        so it passes even if the service stops emitting the field. Drive a
+        non-default value instead.
+        """
+        from models import ProjectModule
+        from tests.factories import ModuleLibraryFactory
+
+        lib = ModuleLibraryFactory(db, name="state-lib", category="networking")
+        mod = ProjectModule(project_id=sample_project.id, module_library_id=lib.id,
+                            path_in_project="infra/state", status="applied")
+        db.add(mod)
+        db.commit()
+
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.status_code == 200
+        assert response.json()["module_state"] == "in_progress"
+
+        mod.status = "destroy_failed"
+        db.commit()
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.json()["module_state"] == "failed"
+
+        mod.status = "destroyed"
+        db.commit()
+        response = client.get(f"/api/projects/{sample_project.id}", headers=admin_headers)
+        assert response.json()["module_state"] == "clean"
+
+    def test_module_state_reaches_client_on_list(
+        self, client, admin_headers, sample_user, sample_project, db
+    ):
+        """GET / carries a COMPUTED module_state on each item."""
+        from models import ProjectModule
+        from tests.factories import ModuleLibraryFactory
+
+        lib = ModuleLibraryFactory(db, name="list-state-lib", category="networking")
+        db.add(ProjectModule(project_id=sample_project.id, module_library_id=lib.id,
+                             path_in_project="infra/list-state", status="applied"))
+        db.commit()
+
+        response = client.get("/api/projects", headers=admin_headers)
+        assert response.status_code == 200
+        items = response.json()["projects"]
+        mine = [i for i in items if i["id"] == sample_project.id]
+        assert mine, "expected the sample project in the listing"
+        assert mine[0]["module_state"] == "in_progress"
+
+    def test_delete_blocked_with_409_when_module_still_owns_infra(
+        self, client, admin_headers, sample_user, sample_module, db
+    ):
+        """An applied module blocks deletion with an actionable 409."""
+        project = sample_module["project"]
+        self._applied_module(db, project, sample_module["library"])
+
+        response = client.delete(f"/api/projects/{project.id}", headers=admin_headers)
+        assert response.status_code == 409
+
+        err = response.json()["error"]
+        assert err["details"]["requires_force"] is True
+        undestroyed = err["details"]["undestroyed_modules"]
+        assert [m["status"] for m in undestroyed] == ["applied"]
+        assert db.query(Project).filter(Project.id == project.id).first() is not None
+
+    def test_delete_allowed_with_force(
+        self, client, admin_headers, sample_user, sample_module, db
+    ):
+        """force=true is the documented override and still deletes."""
+        project = sample_module["project"]
+        self._applied_module(db, project, sample_module["library"])
+
+        response = client.delete(
+            f"/api/projects/{project.id}?force=true", headers=admin_headers
+        )
+        assert response.status_code == 200
+        assert db.query(Project).filter(Project.id == project.id).first() is None

@@ -63,7 +63,8 @@ async def test_get_success(client: BNKForgeClient) -> None:
 
     result = await client.get("/api/system/health")
 
-    assert result == {"status": "healthy"}
+    # _mark_ok stamps the universal outcome key on every dict success body (#66).
+    assert result == {"status": "healthy", "ok": True}
     assert route.called
 
 
@@ -106,7 +107,7 @@ async def test_post_success(client: BNKForgeClient) -> None:
 
     result = await client.post("/api/clusters/1/test", json={"timeout": 10})
 
-    assert result == {"connected": True}
+    assert result == {"connected": True, "ok": True}
     assert route.called
 
 
@@ -119,7 +120,7 @@ async def test_post_204_no_content(client: BNKForgeClient) -> None:
 
     result = await client.post("/api/something")
 
-    assert result == {"status": "ok"}
+    assert result == {"status": "ok", "ok": True}
 
 
 # ------------------------------------------------------------------
@@ -245,7 +246,7 @@ async def test_put_supports_query_params(client: BNKForgeClient) -> None:
         params={"namespace": "kube-system"},
     )
 
-    assert result == {"success": True}
+    assert result == {"success": True, "ok": True}
     assert route.calls[0].request.url.params["namespace"] == "kube-system"
 
 
@@ -261,7 +262,7 @@ async def test_delete_supports_query_params(client: BNKForgeClient) -> None:
         params={"namespace": "default", "keep_history": "false"},
     )
 
-    assert result == {"success": True}
+    assert result == {"success": True, "ok": True}
     assert route.calls[0].request.url.params["namespace"] == "default"
 
 
@@ -296,3 +297,99 @@ async def test_client_logs_structured_failure_without_payloads(
     assert "error_class=auth_error" in caplog.text
     assert "super-secret" not in caplog.text
     assert "dont-log-me" not in caplog.text
+
+
+# ------------------------------------------------------------------
+# #66 — single universal outcome key across all tools
+# ------------------------------------------------------------------
+
+
+@respx.mock
+async def test_success_dict_gets_universal_ok_true(client: BNKForgeClient) -> None:
+    """Every dict success body carries ok:true, so an agent has one field to
+    check regardless of which tool it called (#66)."""
+    respx.get("http://test-backend:8000/api/projects/1").mock(
+        return_value=Response(200, json={"project_id": 1, "name": "p"})
+    )
+    result = await client.get("/api/projects/1")
+    assert result["ok"] is True
+
+
+@respx.mock
+async def test_mark_ok_does_not_override_backend_ok(client: BNKForgeClient) -> None:
+    """A body that already set ok (a structured passthrough) is left alone."""
+    respx.get("http://test-backend:8000/api/thing").mock(
+        return_value=Response(200, json={"ok": False, "note": "backend said so"})
+    )
+    result = await client.get("/api/thing")
+    assert result["ok"] is False
+
+
+@respx.mock
+async def test_list_success_returned_as_is(client: BNKForgeClient) -> None:
+    """List/collection successes can't carry a key; they're unambiguously not
+    the error envelope, so success is the absence of ok:false, not a stamped
+    ok:true."""
+    respx.get("http://test-backend:8000/api/clusters").mock(
+        return_value=Response(200, json=[{"id": 1}, {"id": 2}])
+    )
+    result = await client.get("/api/clusters")
+    assert result == [{"id": 1}, {"id": 2}]
+
+
+@respx.mock
+async def test_error_and_success_share_the_ok_key(client: BNKForgeClient) -> None:
+    """The whole point of #66: the same key an agent reads on failure (ok:false)
+    is present on success (ok:true) — no more success/ok split."""
+    respx.get("http://test-backend:8000/api/ok").mock(
+        return_value=Response(200, json={"data": 1})
+    )
+    respx.get("http://test-backend:8000/api/bad").mock(
+        return_value=Response(404, json={"detail": "nope"})
+    )
+    ok_result = await client.get("/api/ok")
+    err_result = await client.get("/api/bad")
+    assert ok_result["ok"] is True
+    assert err_result["ok"] is False
+    # An agent can branch on exactly one field for both.
+    assert "ok" in ok_result and "ok" in err_result
+
+
+@respx.mock
+async def test_success_false_on_200_derives_ok_false(client: BNKForgeClient) -> None:
+    """Several routes return HTTP 200 with an explicit failure body (a Celery
+    task that failed or is pending — helm.py list/detail/history/values/manifest,
+    alert_channels, cloud_auth, ...). ok must derive from success, or the agent
+    reads an authoritative ok:true stamped on a body that says success:false.
+    """
+    respx.get("http://test-backend:8000/api/k8s/1/helm/releases").mock(
+        return_value=Response(200, json={
+            "success": False, "releases": [], "count": 0,
+            "task_id": "abc", "status": "failed",
+        })
+    )
+    result = await client.get("/api/k8s/1/helm/releases")
+    assert result["ok"] is False
+    assert result["success"] is False        # original body untouched
+
+
+@respx.mock
+async def test_pending_task_on_200_reads_as_not_ok(client: BNKForgeClient) -> None:
+    """A still-pending task (success:false, status:pending on 200) is not a
+    success — ok:false reads correctly."""
+    respx.get("http://test-backend:8000/api/k8s/1/helm/releases/r/values").mock(
+        return_value=Response(200, json={"success": False, "values": {}, "status": "pending"})
+    )
+    result = await client.get("/api/k8s/1/helm/releases/r/values")
+    assert result["ok"] is False
+
+
+@respx.mock
+async def test_success_true_on_200_still_ok_true(client: BNKForgeClient) -> None:
+    """An explicit success:true still stamps ok:true — the common mutating-tool
+    body is unchanged."""
+    respx.post("http://test-backend:8000/api/k8s/1/helm/releases").mock(
+        return_value=Response(200, json={"success": True, "release": {"name": "r"}})
+    )
+    result = await client.post("/api/k8s/1/helm/releases", json={})
+    assert result["ok"] is True

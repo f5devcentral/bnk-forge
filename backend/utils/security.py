@@ -146,6 +146,19 @@ def validate_action_inputs(
             continue
 
         # Free string (or unknown type): ends up as an argv token verbatim.
+        #
+        # Reject non-scalars rather than str()-ing them. A dict or list passed
+        # for a `type: string` input previously slipped through — validate_cli_arg
+        # saw the Python repr (a single token with no leading dash, so not
+        # flag-injection) and the RAW value was then stored and templated. Not
+        # exploitable as argv, but it silently accepts a shape the manifest did
+        # not declare, and what reaches the step is a Python repr rather than
+        # anything the artifact can parse (issue #96, N2).
+        if value is not None and not isinstance(value, (str, int, float, bool)):
+            raise ValueError(
+                f"Invalid value for action input '{name}': expected a "
+                f"{declared_type}, got {type(value).__name__}"
+            )
         validate_cli_arg(name, None if value is None else str(value))
         effective[name] = value
 

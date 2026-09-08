@@ -101,3 +101,27 @@ class TestMaintenanceMode:
             mock_settings.REDIS_URL = None
             with pytest.raises(RuntimeError, match="REDIS_URL not configured"):
                 _get_redis()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not json at all",
+            "{unclosed",
+            b"\x80\x81",
+            MagicMock(),
+        ],
+        ids=["plain-text", "truncated-json", "invalid-bytes", "non-str-object"],
+    )
+    def test_get_maintenance_status_survives_an_unparseable_value(self, mock_redis, raw):
+        """A value json.loads() cannot read degrades to "not in maintenance".
+
+        get_maintenance_status() is called from maintenance_middleware on every
+        request, so an exception escaping here is a 500 for the entire API --
+        not just for the maintenance endpoints. Whatever is under the key, the
+        answer must be None rather than a raise.
+        """
+        mock_redis.get.return_value = raw
+
+        assert get_maintenance_status() is None
+        assert is_maintenance_mode() is False

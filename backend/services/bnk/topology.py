@@ -15,6 +15,7 @@ from typing import Any
 from services.bnk.helpers import (
     has_condition,
     make_resource_map,
+    resolve_list_refs,
     resource_name,
     resource_ns,
 )
@@ -378,28 +379,11 @@ def _build_firewall_refs(
         fw_refs.append({
             "name": ext.get("name", ""),
             "rules": rules,
-            "addressLists": _resolve_list_refs(referenced_addr_lists, addr_map, policy_ns, "addresses"),
-            "portLists": _resolve_list_refs(referenced_port_lists, port_map, policy_ns, "ports"),
+            "addressLists": resolve_list_refs(referenced_addr_lists, addr_map, policy_ns, "addresses"),
+            "portLists": resolve_list_refs(referenced_port_lists, port_map, policy_ns, "ports"),
         })
 
     return fw_refs
-
-
-def _resolve_list_refs(
-    names: set[str],
-    resource_map: dict[str, dict],
-    namespace: str,
-    spec_key: str,
-) -> list[dict]:
-    """Resolve address/port list references to their spec data."""
-    return [
-        {
-            "name": name,
-            spec_key: (resource_map.get(f"{namespace}/{name}", {})
-                       .get("spec", {}).get(spec_key, [])),
-        }
-        for name in names
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -437,14 +421,7 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
             }
             for sp in snatpools
         ],
-        "egresses": [
-            {
-                "name": resource_name(eg),
-                "namespace": resource_ns(eg),
-                "sourceTranslation": eg.get("spec", {}).get("sourceTranslation", {}),
-            }
-            for eg in egresses
-        ],
+        "egresses": [_build_egress(eg) for eg in egresses],
         "logging": {
             "hslPublishers": [
                 {
@@ -507,6 +484,27 @@ def _build_cne_instance(cne: dict) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Counts builder
 # ---------------------------------------------------------------------------
+
+
+def _build_egress(egress: dict) -> dict[str, Any]:
+    """Build a single F5SPKEgress entry for the data plane section."""
+    eg_spec = egress.get("spec") or {}
+    cni_config = eg_spec.get("pseudoCNIConfig") or {}
+    vxlan_config = cni_config.get("vxlan")
+    return {
+        "name": resource_name(egress),
+        "namespace": resource_ns(egress),
+        "snatType": eg_spec.get("snatType", ""),
+        "egressSnatpool": eg_spec.get("egressSnatpool"),
+        "firewallEnforcedPolicy": eg_spec.get("firewallEnforcedPolicy"),
+        "logProfile": eg_spec.get("logProfile"),
+        "capturedNamespaces": cni_config.get("namespaces") or [],
+        "vxlan": {
+            "tmmInterfaceName": vxlan_config.get("tmmInterfaceName", "") or "",
+            "nodeInterfaceName": vxlan_config.get("nodeInterfaceName", "") or "",
+        } if isinstance(vxlan_config, dict) and vxlan_config else None,
+        "ready": has_condition(egress, "Programmed"),
+    }
 
 
 def _build_counts(

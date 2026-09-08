@@ -20,6 +20,7 @@ import {
   Scatter,
 } from 'recharts';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/components/ui/section-card';
 import {
@@ -30,12 +31,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Zap, Clock, Activity, Trophy } from 'lucide-react';
-import { useBenchmarkRun, useBenchmarkWebSocket } from '@/hooks/useBenchmarks';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Zap, Clock, Activity, Trophy, Star, SearchX } from 'lucide-react';
+import {
+  useBenchmarkRun,
+  useBenchmarkWebSocket,
+  useSetBenchmarkRunBaseline,
+  useUnsetBenchmarkRunBaseline,
+} from '@/hooks/useBenchmarks';
 import {
   PROXY_COLORS,
   StatusBadge,
   ProxyBadge,
+  RegressionBadge,
   fmtDuration,
   fmtLatency,
   fmtNum,
@@ -58,9 +66,24 @@ const CHART_TOOLTIP = {
 // Main Component
 // ============================================================================
 
-export function BenchmarkRunDetail({ runId }: { runId: number }) {
-  const { data: run, isLoading } = useBenchmarkRun(runId, true);
+export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: () => void }) {
+  const { data: run, isLoading, isError } = useBenchmarkRun(runId, true);
   const { isConnected } = useBenchmarkWebSocket(run?.status === 'running' ? runId : undefined);
+  const setBaseline = useSetBenchmarkRunBaseline();
+  const unsetBaseline = useUnsetBenchmarkRunBaseline();
+
+  if (isError) {
+    return (
+      <SectionCard>
+        <EmptyState
+          icon={SearchX}
+          title="Run not found"
+          description={`Benchmark run #${runId} no longer exists — it may have been deleted.`}
+          action={onBack ? { label: 'Back to runs', onClick: onBack, variant: 'outline' } : undefined}
+        />
+      </SectionCard>
+    );
+  }
 
   if (isLoading || !run) {
     return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-48 w-full" /></div>;
@@ -101,10 +124,24 @@ export function BenchmarkRunDetail({ runId }: { runId: number }) {
           </div>
           <div className="flex items-center gap-3">
             <StatusBadge status={run.status} />
+            <RegressionBadge run={run} />
             {run.status === 'running' && isConnected && (
               <Badge variant="success" className="gap-1">
                 <div className="h-2 w-2 rounded-full bg-success animate-pulse" />Live
               </Badge>
+            )}
+            {run.status === 'completed' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className={cn('gap-1.5', run.is_baseline && 'text-warning border-warning')}
+                onClick={() =>
+                  run.is_baseline ? unsetBaseline.mutate(run.id) : setBaseline.mutate(run.id)
+                }
+              >
+                <Star className={cn('h-3.5 w-3.5', run.is_baseline && 'fill-current')} />
+                {run.is_baseline ? 'Baseline' : 'Mark as baseline'}
+              </Button>
             )}
           </div>
         </div>

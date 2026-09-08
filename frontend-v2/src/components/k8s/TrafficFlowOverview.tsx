@@ -24,6 +24,7 @@ import type {
   TopologyGateway,
   TopologyDataPlane,
   TopologyCounts,
+  TopologyEgress,
   BnkBackendEntry,
 } from '@/types/f5bnk';
 import {
@@ -42,6 +43,8 @@ import {
   Loader2,
   Wifi,
   Layers,
+  ArrowRightLeft,
+  Boxes,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -492,6 +495,144 @@ function GatewayFlowRow({
 }
 
 // ---------------------------------------------------------------------------
+// EgressSection — captured namespaces → TMM SNAT → egress VLAN
+// ---------------------------------------------------------------------------
+
+function EgressFlowRow({
+  egress,
+  onSelectResource,
+}: {
+  egress: TopologyEgress;
+  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+}) {
+  return (
+    <div className="rounded-lg border overflow-hidden bg-card border-border">
+      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 border-border">
+        <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10">
+          <ArrowRightLeft className="h-4 w-4 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <ClickableName
+              name={egress.name}
+              kind="F5SPKEgress"
+              namespace={egress.namespace}
+              onSelect={onSelectResource}
+              className="text-sm"
+            />
+            {!egress.ready && (
+              <Badge variant="warning" className="text-[10px] py-0">
+                not ready
+              </Badge>
+            )}
+          </div>
+          <div className="text-[11px] mt-0.5 text-muted-foreground">
+            {egress.namespace}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-stretch p-4 gap-0 min-h-[100px]">
+        {/* Captured Namespaces */}
+        <div className="w-[35%] min-w-0">
+          <StageHeader title="Captured Namespaces" icon={Boxes} />
+          <div className="flex flex-wrap gap-1">
+            {egress.capturedNamespaces.length > 0 ? (
+              egress.capturedNamespaces.map(ns => (
+                <Badge key={ns} variant="secondary" className="text-[10px] py-0 font-mono">
+                  {ns}
+                </Badge>
+              ))
+            ) : (
+              <div className="text-xs px-2 py-1 text-muted-foreground">
+                no captured namespaces
+              </div>
+            )}
+          </div>
+        </div>
+
+        <FlowConnector />
+
+        {/* TMM SNAT */}
+        <div className="w-[35%] min-w-0">
+          <StageHeader title={`TMM SNAT: ${egress.snatType || 'unknown'}`} icon={ArrowRightLeft} />
+          <div className="flex flex-wrap gap-1">
+            {egress.firewallEnforcedPolicy && (
+              <Badge variant="info" className="gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium">
+                <Shield className="h-2.5 w-2.5" />
+                fw: {egress.firewallEnforcedPolicy}
+              </Badge>
+            )}
+            {egress.logProfile && (
+              <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium">
+                <Code className="h-2.5 w-2.5" />
+                log: {egress.logProfile}
+              </Badge>
+            )}
+            {!egress.firewallEnforcedPolicy && !egress.logProfile && (
+              <div className="text-xs px-2 py-1 text-muted-foreground">
+                no firewall or log policy attached
+              </div>
+            )}
+          </div>
+        </div>
+
+        <FlowConnector />
+
+        {/* Egress VLAN */}
+        <div className="w-[30%] min-w-0">
+          <StageHeader title="Egress VLAN" icon={Globe} />
+          {egress.vxlan?.tmmInterfaceName ? (
+            <div className="flex items-center gap-1.5 rounded px-2 py-1.5 text-xs bg-muted/50">
+              <Network className="h-3 w-3 shrink-0" />
+              <span className="font-mono truncate">{egress.vxlan.tmmInterfaceName}</span>
+              <span className="text-muted-foreground shrink-0">{'→'}</span>
+              <Globe className="h-3 w-3 shrink-0 text-success" />
+              <span className="text-muted-foreground shrink-0">Internet</span>
+            </div>
+          ) : (
+            <div className="text-xs px-2 py-1 text-muted-foreground">
+              no VXLAN configured
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EgressSection({
+  egresses,
+  onSelectResource,
+}: {
+  egresses: TopologyEgress[];
+  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+}) {
+  if (egresses.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 px-1">
+        <ArrowRightLeft className="h-4 w-4 text-success" />
+        <span className="text-sm font-medium text-foreground/80">
+          Egress (outbound)
+        </span>
+        <span className="text-xs text-muted-foreground">
+          ({egresses.length} configured)
+        </span>
+      </div>
+      {egresses.map(egress => (
+        <EgressFlowRow
+          key={`${egress.namespace}/${egress.name}`}
+          egress={egress}
+          onSelectResource={onSelectResource}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // InfrastructureCard — collapsible data plane summary
 // ---------------------------------------------------------------------------
 
@@ -507,13 +648,12 @@ function InfrastructureCard({
   if (!dataPlane) return null;
 
   const hasContent = dataPlane.vlans.length > 0 || dataPlane.cneInstances.length > 0 ||
-    dataPlane.snatPools.length > 0 || dataPlane.egresses.length > 0 ||
-    dataPlane.staticRoutes.length > 0;
+    dataPlane.snatPools.length > 0 || dataPlane.staticRoutes.length > 0;
 
   if (!hasContent) return null;
 
   const itemCount = dataPlane.cneInstances.length + dataPlane.vlans.length +
-    dataPlane.snatPools.length + dataPlane.egresses.length + dataPlane.staticRoutes.length;
+    dataPlane.snatPools.length + dataPlane.staticRoutes.length;
 
   return (
     <div className="rounded-lg border bg-card border-border">
@@ -570,17 +710,6 @@ function InfrastructureCard({
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
                   SNAT · {sp.addresses.length} addr{sp.addresses.length !== 1 ? 's' : ''}
-                </div>
-              </div>
-            ))}
-            {dataPlane.egresses.map(eg => (
-              <div key={eg.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
-                <div className="flex items-center gap-1.5">
-                  <Network className="h-3 w-3 shrink-0" />
-                  <ClickableName name={eg.name} kind="F5SPKEgress" namespace={eg.namespace} onSelect={onSelectResource} />
-                </div>
-                <div className="text-[10px] mt-0.5 text-muted-foreground">
-                  Egress · {(eg.sourceTranslation?.type as string) || 'automap'}
                 </div>
               </div>
             ))}
@@ -794,6 +923,14 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
           onSelectResource={onSelectResource}
         />
       ))}
+
+      {/* Egress (outbound) — only when the cluster has F5SPKEgress resources */}
+      {dataPlane && (
+        <EgressSection
+          egresses={dataPlane.egresses}
+          onSelectResource={onSelectResource}
+        />
+      )}
 
       {/* Unmapped services — only if there are orphans */}
       <UnmappedServicesCard

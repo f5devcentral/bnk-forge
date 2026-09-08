@@ -454,3 +454,57 @@ class TestRunAction:
         )
         assert not result.success
         assert "exit 3" in (result.error_message or "")
+
+
+@pytest.mark.unit
+class TestOutputsFileContainment:
+    """state.outputs_file must not escape the workspace.
+
+    Issue #408.2: the manifest value reached os.path.join with only a .strip(),
+    so an absolute path or a ../ climb read a file outside the workspace, and its
+    contents were normalized into module.outputs and shown to the user —
+    disclosure of worker files such as /app/keys and /app/secrets. The manifest
+    validator never checked the field.
+    """
+
+    @pytest.mark.parametrize("escape", [
+        "/app/keys/id_rsa",
+        "../../app/secrets/creds.json",
+        "..",
+        "../outputs.json",
+        "/etc/passwd",
+        "subdir/../../../etc/passwd",
+    ])
+    def test_escaping_paths_fall_back_to_the_default(self, tmp_path, escape):
+        runner = FakeRunner()
+        engine = _engine(runner, tmp_path)
+        ctx = _ctx(_manifest(state={"outputs_file": escape}))
+
+        resolved = engine._resolve_outputs_filename(ctx)
+
+        assert resolved == engine.outputs_filename, (
+            f"state.outputs_file={escape!r} was accepted — it reads a file outside "
+            "the workspace and surfaces it in module.outputs (#408.2)"
+        )
+
+    @pytest.mark.parametrize("legit", [
+        "outputs.json",
+        ".roksbnkctl/forge/cluster-outputs.json",
+        "./nested/out.json",
+        "a/b/c/outputs.json",
+    ])
+    def test_workspace_relative_paths_are_still_honoured(self, tmp_path, legit):
+        """Contrast: the shipped artifacts declare nested relative paths."""
+        runner = FakeRunner()
+        engine = _engine(runner, tmp_path)
+        ctx = _ctx(_manifest(state={"outputs_file": legit}))
+
+        assert engine._resolve_outputs_filename(ctx) == legit
+
+    def test_absent_or_blank_still_uses_the_default(self, tmp_path):
+        runner = FakeRunner()
+        engine = _engine(runner, tmp_path)
+        assert engine._resolve_outputs_filename(_ctx(_manifest())) == engine.outputs_filename
+        assert engine._resolve_outputs_filename(
+            _ctx(_manifest(state={"outputs_file": "   "}))
+        ) == engine.outputs_filename

@@ -206,3 +206,65 @@ def _normalize_users(kubeconfig: dict[str, Any], source: NormalizationSource) ->
                     field="exec.command",
                     user_message=_exec_user_message(command, source),
                 )
+
+
+# ---------------------------------------------------------------------------
+# SSH-tunnel rewrite (#7)
+# ---------------------------------------------------------------------------
+
+def rewrite_kubeconfig_for_tunnel(yaml_text: str, tunnel_port: int) -> str:
+    """Point every cluster in a kubeconfig at a local SSH tunnel -- with TLS on.
+
+    The tunnel listens on 127.0.0.1:<port>, but the API server's certificate is
+    valid for its real hostname/IPs, not for 127.0.0.1. Both tunnel paths (the
+    OpenTofu provider via config_writer, the in-process clients via
+    cluster_utils) used to solve that by setting insecure-skip-tls-verify and
+    stripping the CA -- which does not fix the hostname mismatch so much as
+    disable verification entirely, leaving a tunnelled plan/apply with no
+    protection against a MITM on the tunnel path.
+
+    kubeconfig has the right tool for this: `tls-server-name` sets the SNI /
+    verification hostname independently of the address dialled. So we keep the
+    original CA, keep verification ON, and tell the client to verify against
+    the ORIGINAL hostname while dialling the tunnel. This is what the fix
+    proposed in #7 did for the Terraform provider (`tls_server_name`), applied
+    at the kubeconfig layer that both consumers now share.
+
+    Fail-safe rule: verification can only be RESTORED, never invented. If the
+    original entry carried no CA (or was itself insecure-skip-tls-verify), or
+    the server URL has no usable hostname, we fall back to the previous
+    behaviour so an existing working cluster never stops connecting.
+
+    Uses 127.0.0.1 explicitly, not "localhost": the latter resolves to both ::1
+    and 127.0.0.1, the tunnel listener is IPv4-only, and httpx/kr8s try ::1
+    first and give up rather than falling back.
+    """
+    from urllib.parse import urlparse
+
+    doc = yaml.safe_load(yaml_text) or {}
+    for entry in doc.get("clusters", []) or []:
+        cluster = entry.get("cluster") if isinstance(entry, dict) else None
+        if not isinstance(cluster, dict):
+            continue
+
+        original_server = str(cluster.get("server") or "")
+        original_host = urlparse(original_server).hostname if original_server else None
+        has_ca = bool(cluster.get("certificate-authority-data") or cluster.get("certificate-authority"))
+        was_insecure = bool(cluster.get("insecure-skip-tls-verify"))
+
+        cluster["server"] = f"https://127.0.0.1:{tunnel_port}"
+
+        if has_ca and original_host and not was_insecure:
+            # Restore verification: verify against the real hostname while
+            # dialling the tunnel. CA stays; skip flag must NOT be set.
+            cluster["tls-server-name"] = original_host
+            cluster.pop("insecure-skip-tls-verify", None)
+        else:
+            # Nothing to verify against -- keep the legacy behaviour so a
+            # cluster that worked yesterday still works today.
+            cluster["insecure-skip-tls-verify"] = True
+            cluster.pop("certificate-authority-data", None)
+            cluster.pop("certificate-authority", None)
+            cluster.pop("tls-server-name", None)
+
+    return yaml.dump(doc, default_flow_style=False)

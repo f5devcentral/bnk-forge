@@ -36,6 +36,7 @@ export function useLlmStats(
     queryKey: queryKeys.llmObservability.stats(clusterId ?? 0, keyParams({ ...params })),
     queryFn: () => llmObservabilityApi.getStats(clusterId!, params),
     enabled: enabled && !!clusterId,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -48,6 +49,7 @@ export function useLlmHistogram(
     queryKey: queryKeys.llmObservability.histogram(clusterId ?? 0, keyParams({ ...params })),
     queryFn: () => llmObservabilityApi.getHistogram(clusterId!, params),
     enabled: enabled && !!clusterId,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -60,6 +62,7 @@ export function useLlmRankings(
     queryKey: queryKeys.llmObservability.rankings(clusterId ?? 0, keyParams({ ...params })),
     queryFn: () => llmObservabilityApi.getRankings(clusterId!, params),
     enabled: enabled && !!clusterId,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -72,6 +75,7 @@ export function useLlmProviderUsage(
     queryKey: queryKeys.llmObservability.providerUsage(clusterId ?? 0, keyParams({ ...params })),
     queryFn: () => llmObservabilityApi.getProviderUsage(clusterId!, params),
     enabled: enabled && !!clusterId,
+    placeholderData: (prev) => prev,
   });
 }
 

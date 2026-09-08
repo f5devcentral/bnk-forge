@@ -118,13 +118,13 @@ Some endpoints use ownership checks instead of role checks:
 
 | Method | Path | Auth | Request Body | Response Model | Description |
 |--------|------|------|-------------|----------------|-------------|
-| GET | `/api/projects` | viewer | — | `ProjectListResponse` | List all projects |
+| GET | `/api/projects` | viewer | — | `ProjectListResponse` | List all projects. Each item carries `module_state` (`clean`/`in_progress`/`failed`) |
 | POST | `/api/projects` | operator | `ProjectCreate` | `ProjectMutationResponse` | Create a project |
 | GET | `/api/projects/active` | viewer | — | `ActiveProjectResponse` | Get active project |
-| GET | `/api/projects/{project_id}` | viewer | — | `ProjectDetailResponse` | Get project detail |
+| GET | `/api/projects/{project_id}` | viewer | — | `ProjectDetailResponse` | Get project detail. `module_state` is the single field to poll for teardown completion — `clean` means no module still owns cloud resources |
 | PUT | `/api/projects/{project_id}` | owner | `ProjectUpdate` | `ProjectMutationResponse` | Update project |
 | PUT | `/api/projects/{project_id}/dependencies` | owner | `list[ProjectDependencyItem]` | `ProjectDependenciesResponse` | Set cross-project deps |
-| DELETE | `/api/projects/{project_id}` | owner | — | `SuccessResponse` | Delete project (query: `force`) |
+| DELETE | `/api/projects/{project_id}` | owner | — | `SuccessResponse` | Delete project. **409** when any module still owns cloud resources (query: `force=true` to abandon them deliberately) |
 | POST | `/api/projects/{project_id}/activate` | owner | — | `ProjectMutationResponse` | Set as active project |
 | POST | `/api/projects/{project_id}/transfer` | owner | `TransferOwnershipRequest` | `TransferOwnershipResponse` | Transfer ownership |
 
@@ -197,6 +197,7 @@ All paths prefixed with `/api/projects`.
 |--------|------|------|-------------|
 | GET | `/{module_id}/logs` | viewer | Get deployment logs (query: `limit`, `level`) |
 | GET | `/{module_id}/deployments` | viewer | Get deployment history (query: `action`, `status`, `limit`) |
+| GET | `/{module_id}/deployments/{deployment_id}/output` | viewer | Get a run's captured stdout/stderr (query: `max_bytes`; keeps the tail when it exceeds the cap) |
 | GET | `/project/{project_id}/deployments` | viewer | Get all deployments in project |
 | GET | `/{module_id}/state-info` | viewer | Get state file metadata |
 | GET | `/{module_id}/state-resources` | viewer | Get managed resources list |
@@ -271,6 +272,8 @@ All paths prefixed with `/api/projects`.
 | POST | `/api/k8s/clusters/{cluster_id}/scan` | cluster_owner | — | Scan cluster prerequisites (`ClusterScanEnvelope`) |
 | POST | `/api/k8s/clusters/{cluster_id}/adaptive-modules` | cluster_owner | `AdaptiveModuleRequest` | Generate adaptive deploy plan |
 | POST | `/api/k8s/clusters/{cluster_id}/adaptive-modules/from-scan` | cluster_owner | `AdaptiveModuleRequest` | Adaptive plan from cached scan |
+| POST | `/api/k8s/clusters/{cluster_id}/bnk-config` | cluster_owner | `BnkClusterConfigCreateRequest` | Create or update BNK cluster config (tmfifo pool CIDR, join transport, CP host) |
+| POST | `/api/k8s/clusters/{cluster_id}/bnk-members` | cluster_owner | `BnkClusterMemberAssignRequest` | Assign bare-metal hosts and DPUs to a BNK cluster with tmfifo IP allocation |
 
 ---
 

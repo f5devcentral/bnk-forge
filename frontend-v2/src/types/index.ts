@@ -23,7 +23,7 @@
 //   alerts.ts        – AlertChannel, AlertChannelCreate, AlertHistoryEntry
 //   module-sources.ts – ModuleSource, RegistryModule, VariableMapping, etc.
 //   fleet.ts         – FleetHealthResponse, FleetOperatorHealth, FleetCompareResult
-//   bare-metal.ts    – BareMetalHost, BareMetalDeployment, DeploymentStep, BnkVersionProfile
+//   bare-metal.ts    – BareMetalHost, BareMetalDeployment, DeploymentStep, DeployableRelease
 // =============================================================================
 
 export * from './benchmarks';
@@ -68,6 +68,6 @@ export type {
   BareMetalDiscoveryResponse,
   DiscoveryAssessmentCheck,
   VersionDrift,
-  BnkVersionProfile,
+  DeployableRelease,
 } from './bare-metal';
 export * from './waf';

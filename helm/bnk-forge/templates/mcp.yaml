@@ -29,6 +29,12 @@ spec:
       {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # #187: roll the pod when the Secret changes, so the backend (which
+        # re-seeds the mcp account) and the MCP server (which authenticates with
+        # it) pick up a rotated mcp-password together instead of drifting for a
+        # restart cycle.
+        checksum/secret: {{ include "bnk-forge.secretsChecksum" . }}
       labels:
         {{- include "bnk-forge.componentLabels" (list . "mcp") | nindent 8 }}
     spec:
@@ -57,16 +63,38 @@ spec:
           ports:
             - containerPort: 8081
               name: mcp
+          # bonnyr-f5 #193 M7/M4/M5: the auth-probe healthcheck
+          # (`python -m bnk_forge_mcp.healthcheck`) belongs on READINESS only. It
+          # logs in to the backend and exits non-zero on 401, so a credential
+          # drift or a disabled mcp row (M8) takes the pod OUT OF SERVICE on
+          # Kubernetes too, not just the compose/dist paths — a tcpSocket readiness
+          # probe would only prove the port is open. The "no credentials at all ->
+          # NOT READY" half of that guarantee depends on the probe returning
+          # non-zero when no credential is configured; that behaviour ships with the
+          # credential-guard image (the tag this chart pins, image.tag, moves to it
+          # in lockstep at release). On an older pinned image the probe treats "no
+          # credentials" as ready, so verify MCP with a real tool call.
           readinessProbe:
-            tcpSocket:
-              port: 8081
+            exec:
+              command: ["python", "-m", "bnk_forge_mcp.healthcheck"]
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 10
+          # bonnyr-f5 #193 M4: LIVENESS must test the PROCESS, not its
+          # dependency. healthcheck.py returns 1 when the BACKEND is merely
+          # unreachable; on Kubernetes (no `start_period` for liveness) a backend
+          # rollout / Postgres blip / credential drift lasting > 3x periodSeconds
+          # would make kubelet kill and restart every mcp pod for a dependency
+          # outage — restarting mcp fixes neither cause, so it settles into
+          # CrashLoopBackOff. A tcpSocket check restarts only a genuinely wedged
+          # process, matching compose's `healthcheck` semantics (unhealthy, never
+          # a restart-for-dependency).
           livenessProbe:
             tcpSocket:
-              port: 8081
+              port: mcp
             initialDelaySeconds: 30
             periodSeconds: 30
+            timeoutSeconds: 10
           resources:
             {{- toYaml .Values.mcp.resources | nindent 12 }}
 {{- end }}

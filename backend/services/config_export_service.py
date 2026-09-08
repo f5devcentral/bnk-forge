@@ -232,6 +232,96 @@ def _fetch_resources(custom_api, resource_type: dict) -> list[dict]:
         return []
 
 
+def apply_resources(db, cluster_id: int, custom_api, resources: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """
+    Server-side-apply a category -> [resources] map to a cluster via `custom_api`.
+
+    Extracted from the `/bnk/import` route handler (`routes/config_export.py`)
+    so both the legacy import path and the use-case-artifact apply path
+    (`services/usecase_artifact_service.apply_usecase_artifact`) share one
+    write path — same `results` shape, same `field_manager`/`force` semantics,
+    same 404-to-skipped handling.
+    """
+    from kubernetes.client.rest import ApiException
+
+    results: dict[str, list[dict]] = {
+        "applied": [],
+        "failed": [],
+        "skipped": [],
+    }
+
+    for category, resource_list in resources.items():
+        for resource in resource_list:
+            kind = resource.get("kind", "Unknown")
+            name = resource.get("metadata", {}).get("name", "unknown")
+            ns = resource.get("metadata", {}).get("namespace", "")
+            api_version = resource.get("apiVersion", "v1")
+
+            try:
+                # Parse group/version from apiVersion
+                if "/" in api_version:
+                    group, version = api_version.rsplit("/", 1)
+                else:
+                    group, version = "", api_version
+
+                if not group:
+                    results["skipped"].append({
+                        "kind": kind, "name": name, "namespace": ns,
+                        "reason": "Core API import not supported",
+                    })
+                    continue
+
+                from services.execution.kubernetes_engine import KNOWN_PLURALS
+                from services.kubernetes._resources import resolve_plural_by_kind
+                plural = (
+                    resolve_plural_by_kind(db, cluster_id, kind, group or None)
+                    or KNOWN_PLURALS.get(kind, kind.lower() + "s")
+                )
+
+                # Server-side apply via PATCH with application/apply-patch+yaml
+                if ns:
+                    custom_api.patch_namespaced_custom_object(
+                        group=group, version=version, namespace=ns,
+                        plural=plural, name=name, body=resource,
+                        field_manager="bnk-forge", force=True,
+                    )
+                else:
+                    custom_api.patch_cluster_custom_object(
+                        group=group, version=version,
+                        plural=plural, name=name, body=resource,
+                        field_manager="bnk-forge", force=True,
+                    )
+
+                results["applied"].append({
+                    "kind": kind, "name": name, "namespace": ns,
+                })
+            except ApiException as e:
+                if e.status == 404:
+                    results["skipped"].append({
+                        "kind": kind, "name": name, "namespace": ns,
+                        "reason": f"CRD not installed: {kind}",
+                    })
+                else:
+                    results["failed"].append({
+                        "kind": kind, "name": name, "namespace": ns,
+                        "error": str(e.reason)[:200],
+                    })
+            except Exception as e:
+                error_str = str(e)
+                if "404" in error_str or "resource type" in error_str.lower():
+                    results["skipped"].append({
+                        "kind": kind, "name": name, "namespace": ns,
+                        "reason": f"CRD not installed: {kind}",
+                    })
+                else:
+                    results["failed"].append({
+                        "kind": kind, "name": name, "namespace": ns,
+                        "error": error_str[:200],
+                    })
+
+    return results
+
+
 def export_cluster_config(cluster_id: int, db) -> dict[str, Any]:
     """
     Export complete BNK configuration from a cluster.

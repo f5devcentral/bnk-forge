@@ -22,9 +22,96 @@ import time
 from typing import Any
 
 from modules.base import InputSpec, OutputSpec, SSHModule
+from services.bf_conf_renderer import _rshim_index
 
 DPU_IP = "192.168.100.2"
 HOST_RSHIM_IP = "192.168.100.1"
+
+# Default tmfifo MAC base — matches the proven poc-deployer scheme.
+# The final octet is appended as the rshim index, so:
+#   rshim0 → 00:1a:ca:ff:ff:10,  rshim1 → 00:1a:ca:ff:ff:11
+# This deliberately avoids the BlueField factory default (:01/:02) so
+# dual-DPU hosts never share a tmfifo MAC.
+_DEFAULT_RSHIM_MAC_BASE = "00:1a:ca:ff:ff:1"
+
+
+def _compute_rshim_mac(rshim_device: str, base: str | None = None) -> str:
+    """Return the unique tmfifo MAC for *rshim_device*.
+
+    The base defaults to _DEFAULT_RSHIM_MAC_BASE.  An operator may supply a
+    host-level override (net_rshim_mac_base on BareMetalHost) so that all DPUs
+    on a given host enumerate from a custom base.
+
+    Constraint (matching poc-deployer `00:1a:ca:ff:ff:1${i}`): the rshim index
+    is appended as a single digit after the base, so the final octet is "1N"
+    (e.g. "10", "11").  Indexes >= 10 would produce a two-digit suffix and
+    malform the MAC octet — hosts with 10+ rshim devices are not a supported
+    topology and must not silently emit an invalid MAC.
+    """
+    _base = base or _DEFAULT_RSHIM_MAC_BASE
+    idx = _rshim_index(rshim_device)
+    if idx >= 10:
+        raise RuntimeError(
+            f"rshim index {idx} (from {rshim_device!r}) is >= 10 — the default MAC scheme "
+            f"'{_DEFAULT_RSHIM_MAC_BASE}<index>' would produce a malformed octet. "
+            "Hosts with 10 or more rshim devices are not supported by this enumeration scheme. "
+            "Set a custom net_rshim_mac_base that accommodates a two-digit suffix, or contact support."
+        )
+    return f"{_base}{idx}"
+
+
+def _select_rshim_by_pci(
+    session: Any,
+    rshim_devices: list[str],
+    pci_address: str,
+    on_output: Any,
+) -> str:
+    """Select the rshim device whose DEV_NAME in /dev/rshimN/misc matches pci_address.
+
+    Reads ``/dev/rshimN/misc`` for each candidate and checks whether pci_address
+    appears as a substring of the ``DEV_NAME`` line.  This mirrors the live-verified
+    mapping (e.g. ``/dev/rshim0/misc`` → ``DEV_NAME  pcie-0000:0d:00.2``).
+
+    Raises RuntimeError if no device matches (caller must NOT fall back to rshim0,
+    as that would silently flash the wrong DPU).
+    """
+    for rshim in rshim_devices:
+        r = session.execute(f"sudo cat /dev/{rshim}/misc 2>/dev/null", timeout=5)
+        if pci_address in r.stdout:
+            on_output(f"[flash-dpu] PCI {pci_address!r} matched {rshim} via DEV_NAME")
+            return rshim
+    raise RuntimeError(
+        f"No rshim device matches deploy_dpu_pci_address={pci_address!r}. "
+        f"Checked: {rshim_devices}. "
+        "Verify the PCI address in host settings matches the DEV_NAME in /dev/rshimN/misc "
+        "(e.g. 'sudo cat /dev/rshim0/misc'), then re-save or re-discover."
+    )
+
+
+def _validate_bfb_on_host(session: Any, path: str, bfb_url: str) -> int:
+    """Check that a remote file looks like a real BFB image.
+
+    Returns the file size in bytes. Raises RuntimeError if the file is
+    too small or appears to be an HTML/error page (e.g. from a 404 redirect).
+    """
+    size_r = session.execute(
+        f"stat -c %s '{path}' 2>/dev/null || stat -f %z '{path}' 2>/dev/null",
+        timeout=10,
+    )
+    file_size = (
+        int(size_r.stdout.strip())
+        if size_r.exit_code == 0 and size_r.stdout.strip().isdigit()
+        else 0
+    )
+    if file_size < 1_000_000:  # less than 1 MB is definitely not a real BFB
+        head_r = session.execute(f"head -c 200 '{path}'", timeout=10)
+        raise RuntimeError(
+            f"BFB file is only {file_size} bytes (expected ~1-3 GB). "
+            f"The URL may be wrong or return a redirect/error page. "
+            f"URL: {bfb_url}\n"
+            f"File content preview: {head_r.stdout.strip()[:200]}"
+        )
+    return file_size
 
 
 class FlashDPUModule(SSHModule):
@@ -109,10 +196,13 @@ class FlashDPUModule(SSHModule):
             resource_name="",
             static_value=True,
         ),
+        # NOT static: the reported address must be the one baked into bf.conf.
+        # A static DPU_IP here sent wait/validate/setup-dpu-networking to
+        # 192.168.100.2 while the DPU came up on its allocated IPAM /30 (#118).
         "dpu_ip": OutputSpec(
             resource_kind="",
             resource_name="",
-            static_value=DPU_IP,
+            static_value=None,
         ),
         "rshim_source": OutputSpec(
             resource_kind="",
@@ -517,6 +607,100 @@ class FlashDPUModule(SSHModule):
         return {}
 
     # ------------------------------------------------------------------ #
+    # BFB cache helper                                                     #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _ensure_bfb(
+        session: Any, bfb_path: str, bfb_url: str, on_output: Any
+    ) -> None:
+        """Ensure a valid BFB file is present at bfb_path on the remote host.
+
+        Downloads to <bfb_path>.partial first, then atomically promotes to
+        bfb_path only after validation succeeds. On any failure, both the
+        temp and final paths are cleaned up so a subsequent retry starts fresh.
+
+        If a cached file already exists but fails validation (too small, HTML
+        error page), it is deleted and re-downloaded.
+        """
+        bfb_tmp = f"{bfb_path}.partial"
+        bfb_filename = bfb_path.rsplit("/", 1)[-1]
+
+        r = session.execute(
+            f"test -f '{bfb_path}' && echo 'CACHED' || echo 'DOWNLOAD_NEEDED'",
+            timeout=10,
+        )
+        need_download = "DOWNLOAD_NEEDED" in r.stdout
+
+        if not need_download:
+            on_output(f"[flash-dpu] BFB already cached: {bfb_path}")
+            try:
+                file_size = _validate_bfb_on_host(session, bfb_path, bfb_url)
+                on_output(f"[flash-dpu] BFB cache validated: {file_size:,} bytes")
+            except RuntimeError as exc:
+                on_output(
+                    f"[flash-dpu] Cached BFB failed validation — deleting and re-downloading. {exc}"
+                )
+                session.execute(f"rm -f '{bfb_path}'", timeout=10)
+                need_download = True
+
+        if need_download:
+            # Pre-flight HEAD: detect stale/forbidden URLs before attempting a multi-GB download.
+            # Only block on a definitive 403/404; all other outcomes (200, 405, connection errors)
+            # fall through to the normal GET, which now surfaces errors via -S.
+            head_r = session.execute(
+                f"curl -sS -I --max-time 30 '{bfb_url}' 2>&1",
+                timeout=35,
+            )
+            http_status: int | None = None
+            for line in head_r.stdout.splitlines():
+                if line.upper().startswith("HTTP/"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        http_status = int(parts[1])
+                        break
+            if http_status in (403, 404):
+                raise RuntimeError(
+                    f"BFB URL returned HTTP {http_status} — URL may be stale: {bfb_url}. "
+                    f"Re-run bare-metal/probe-dpu to recompose bfb_url from the current DOCA catalog."
+                )
+            if http_status is None:
+                on_output(
+                    "[flash-dpu] BFB URL HEAD check inconclusive (no HTTP status) — proceeding with download."
+                )
+
+            on_output(f"[flash-dpu] Downloading BFB image ({bfb_filename})...")
+            r = session.execute(
+                # -C - resumes from a leftover .partial; --retry/--retry-all-errors handles
+                # transient CDN errors; --speed-limit/--speed-time aborts a stalled transfer
+                # (< 1 KB/s for 60 s) so curl retries+resumes instead of hanging to the
+                # Celery soft-time-limit; -sS keeps errors visible; timeout 1800s covers
+                # a legit 1.5 GB pull over a flaky link.
+                f"curl -L --fail -sS -C - "
+                f"--retry 5 --retry-delay 5 --retry-all-errors "
+                f"--speed-limit 1024 --speed-time 60 "
+                f"-o '{bfb_tmp}' '{bfb_url}' 2>&1",
+                timeout=1800,
+            )
+            if r.exit_code != 0:
+                # Keep .partial so the next apply's -C - can resume from where it stalled;
+                # only remove the final path in case a stale copy is sitting there.
+                session.execute(f"rm -f '{bfb_path}'", timeout=10)
+                raise RuntimeError(
+                    f"BFB download failed for {bfb_url}: {r.stderr.strip() or r.stdout.strip()} "
+                    f"(partial kept at {bfb_tmp} for resume)"
+                )
+            try:
+                file_size = _validate_bfb_on_host(session, bfb_tmp, bfb_url)
+            except RuntimeError:
+                # Content is corrupt (HTML error page, truncated) — delete .partial so the
+                # next attempt starts fresh rather than resuming from bad data.
+                session.execute(f"rm -f '{bfb_tmp}' '{bfb_path}'", timeout=10)
+                raise
+            session.execute(f"mv '{bfb_tmp}' '{bfb_path}'", timeout=10)
+            on_output(f"[flash-dpu] BFB file validated and promoted: {file_size:,} bytes")
+
+    # ------------------------------------------------------------------ #
     # Python execute() path                                                #
     # ------------------------------------------------------------------ #
 
@@ -562,11 +746,11 @@ class FlashDPUModule(SSHModule):
             # rshim must be available on the host for bfb-install. Try to start it if missing.
             on_output("[flash-dpu] Checking rshim availability...")
             rshim_check = session.execute(
-                "ls /dev/rshim*/boot 2>/dev/null | head -1 || echo 'NO_RSHIM'",
+                "ls /dev/rshim*/boot 2>/dev/null",
                 timeout=10,
             )
-            rshim_boot = rshim_check.stdout.strip()
-            if not rshim_boot or rshim_boot == "NO_RSHIM":
+            rshim_boot_raw = rshim_check.stdout.strip()
+            if not rshim_boot_raw:
                 on_output("[flash-dpu] rshim not found — attempting to start rshim service...")
                 session.execute("sudo modprobe rshim_pcie 2>/dev/null; sudo modprobe rshim 2>/dev/null", timeout=15)
                 session.execute("sudo systemctl enable rshim 2>/dev/null", timeout=10)
@@ -574,21 +758,44 @@ class FlashDPUModule(SSHModule):
                 time.sleep(3)
                 # Re-check
                 rshim_check = session.execute(
-                    "ls /dev/rshim*/boot 2>/dev/null | head -1 || echo 'NO_RSHIM'",
+                    "ls /dev/rshim*/boot 2>/dev/null",
                     timeout=10,
                 )
-                rshim_boot = rshim_check.stdout.strip()
-                if not rshim_boot or rshim_boot == "NO_RSHIM":
+                rshim_boot_raw = rshim_check.stdout.strip()
+                if not rshim_boot_raw:
                     raise RuntimeError(
                         "rshim driver not loaded — /dev/rshim*/boot not found even after "
                         "attempting modprobe + systemctl start rshim. "
                         "Check 'systemctl status rshim' and 'dmesg | grep rshim' on the host."
                     )
-                on_output(f"[flash-dpu] rshim started successfully: {rshim_boot}")
-            # Extract the rshim device name (e.g., /dev/rshim0/boot -> rshim0)
-            rshim_match = re.search(r"/dev/(rshim\d+)/boot", rshim_boot)
-            rshim_device = rshim_match.group(1) if rshim_match else "rshim0"
+                on_output(f"[flash-dpu] rshim started successfully: {rshim_boot_raw.splitlines()[0]}")
+
+            # Parse all available rshim devices from the ls output
+            all_rshim_devices = re.findall(r"/dev/(rshim\d+)/boot", rshim_boot_raw)
+            if not all_rshim_devices:
+                all_rshim_devices = ["rshim0"]  # safe fallback if regex misses an unusual path
+
+            # When deploy_dpu_pci_address is set, select the rshim whose /dev/rshimN/misc
+            # DEV_NAME line contains the PCI address.  On a dual-DPU host, head -1 would
+            # always pick rshim0; this ensures we flash the intended DPU.
+            deploy_pci = variables.get("deploy_dpu_pci_address", "")
+            if deploy_pci:
+                rshim_device = _select_rshim_by_pci(session, all_rshim_devices, deploy_pci, on_output)
+            else:
+                rshim_device = all_rshim_devices[0]
             on_output(f"[flash-dpu] rshim device: {rshim_device}")
+
+        # Compute unique tmfifo MAC from the resolved rshim index.
+        # Respects an operator-supplied override already in variables (e.g. set
+        # via module variable_overrides), then falls back to the host-level base
+        # (net_rshim_mac_base from BareMetalHost), then the hard-coded default.
+        # This runs on BOTH rshim paths (host-rshim and bmc) so the fallback
+        # bf.cfg always has a non-default, index-unique NET_RSHIM_MAC.
+        if not variables.get("net_rshim_mac"):
+            variables["net_rshim_mac"] = _compute_rshim_mac(
+                rshim_device, variables.get("net_rshim_mac_base")
+            )
+        on_output(f"[flash-dpu] net_rshim_mac: {variables['net_rshim_mac']}")
 
         # Early BMC IP validation — fail fast before downloading BFB
         if rshim_source == "bmc":
@@ -626,39 +833,7 @@ class FlashDPUModule(SSHModule):
         on_output("[flash-dpu] Checking BFB cache...")
         bfb_filename = bfb_url.rsplit("/", 1)[-1] if "/" in bfb_url else "firmware.bfb"
         bfb_path = f"/tmp/{bfb_filename}"
-
-        r = session.execute(
-            f"test -f '{bfb_path}' && echo 'CACHED' || echo 'DOWNLOAD_NEEDED'",
-            timeout=10,
-        )
-        if "DOWNLOAD_NEEDED" in r.stdout:
-            on_output(f"[flash-dpu] Downloading BFB image ({bfb_filename})...")
-            r = session.execute(
-                f"wget -q --show-progress -O '{bfb_path}' '{bfb_url}' 2>&1 || "
-                f"curl --fail -sL -o '{bfb_path}' '{bfb_url}' 2>&1",
-                timeout=600,  # BFB files can be 1-2 GB
-            )
-            if r.exit_code != 0:
-                raise RuntimeError(
-                    f"BFB download failed: {r.stderr.strip() or r.stdout.strip()}"
-                )
-            # Validate download — BFB images are typically 1-3 GB
-            size_r = session.execute(
-                f"stat -c %s '{bfb_path}' 2>/dev/null || stat -f %z '{bfb_path}' 2>/dev/null",
-                timeout=10,
-            )
-            file_size = int(size_r.stdout.strip()) if size_r.exit_code == 0 and size_r.stdout.strip().isdigit() else 0
-            if file_size < 1_000_000:  # less than 1 MB is definitely not a real BFB
-                head_r = session.execute(f"head -c 200 '{bfb_path}'", timeout=10)
-                raise RuntimeError(
-                    f"BFB download failed — file is only {file_size} bytes (expected ~1-3 GB). "
-                    f"The URL may be wrong or return a redirect/error page. "
-                    f"URL: {bfb_url}\n"
-                    f"File content preview: {head_r.stdout.strip()[:200]}"
-                )
-            on_output(f"[flash-dpu] BFB file validated: {file_size:,} bytes")
-        else:
-            on_output(f"[flash-dpu] BFB already cached: {bfb_path}")
+        self._ensure_bfb(session, bfb_path, bfb_url, on_output)
 
         r = session.execute(f"ls -lh '{bfb_path}'", timeout=10)
         on_output(f"[flash-dpu] BFB file: {r.stdout.strip()}")
@@ -991,8 +1166,14 @@ class FlashDPUModule(SSHModule):
 
         total = time.monotonic() - t0
         on_output(f"[flash-dpu] Complete ({total:.1f}s total)")
+        # Report the address this DPU was actually flashed with. variables
+        # carries it alongside rendered_bf_conf, both derived from the same
+        # RenderContext, so they cannot disagree. DPU_IP remains the fallback for
+        # the single-DPU / no-IPAM case, where it is also what bf.conf got.
+        reported_ip = variables.get("dpu_tmfifo_ip") or DPU_IP
+        on_output(f"[flash-dpu] dpu_ip reported downstream: {reported_ip}")
         return {
             "flash_completed": True,
-            "dpu_ip": DPU_IP,
+            "dpu_ip": reported_ip,
             "execution_duration_seconds": round(total, 1),
         }

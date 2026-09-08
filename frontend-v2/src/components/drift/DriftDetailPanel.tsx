@@ -4,7 +4,7 @@
  * Shows:
  *   - Header: module name, resource type, last drift check time, severity
  *   - Resource changes with colored diff lines (success = add, destructive = remove, warning = change)
- *   - Action buttons: [Reconcile] [Accept Changes] [View Full Module]
+ *   - Action buttons: [Reconcile] [View Full Module]
  *
  * Uses simple styled <pre> blocks for diff rendering — no heavy diff libraries.
  */
@@ -30,6 +30,7 @@ import {
   Loader2,
   RefreshCw,
   Shield,
+  XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDriftCheck } from '@/hooks/useDrift';
@@ -127,8 +128,12 @@ export function DriftDetailPanel({
   const applyModule = useApplyModule();
 
   const handleReconcile = () => {
-    if (moduleId) {
-      applyModule.mutate({ moduleId, autoApprove: true });
+    // Use the same fallback the button renders on (moduleId || check.module_id),
+    // so the panel's checkId-only entry path can't show an enabled Reconcile
+    // button that silently no-ops on click.
+    const targetModuleId = moduleId || check?.module_id;
+    if (targetModuleId) {
+      applyModule.mutate({ moduleId: targetModuleId, autoApprove: true });
       onReconcile?.();
     }
   };
@@ -187,6 +192,45 @@ export function DriftDetailPanel({
   const effectiveProjectId = projectId || check.project_id;
   const effectiveModuleId = moduleId || check.module_id;
 
+  // Status fidelity: "No Drift" must mean the compare ran and matched. Only a
+  // completed check licenses the drift_detected boolean; checking/scheduled have
+  // no verdict yet, and failed means tofu plan never completed -- so none of them
+  // may render "No Drift". Mirrors getStatusBadge in DriftCheckHistory so the row
+  // and the dialog opened from it never contradict each other.
+  const statusBadge =
+    check.status === 'completed' ? (
+      check.drift_detected ? (
+        <Badge variant="destructive" className="text-xs gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Drift Detected
+        </Badge>
+      ) : (
+        <Badge variant="success" className="text-xs gap-1">
+          <CheckCircle2 className="h-3 w-3" />
+          No Drift
+        </Badge>
+      )
+    ) : check.status === 'checking' ? (
+      <Badge variant="info" className="text-xs gap-1">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Checking
+      </Badge>
+    ) : check.status === 'scheduled' ? (
+      <Badge variant="muted" className="text-xs gap-1">
+        <Clock className="h-3 w-3" />
+        Scheduled
+      </Badge>
+    ) : check.status === 'failed' ? (
+      <Badge variant="destructive" className="text-xs gap-1">
+        <XCircle className="h-3 w-3" />
+        Failed
+      </Badge>
+    ) : (
+      <Badge variant="muted" className="text-xs">
+        {check.status}
+      </Badge>
+    );
+
   const content = (
     <div className="space-y-5">
       {/* Header */}
@@ -207,17 +251,7 @@ export function DriftDetailPanel({
                 Last checked {formatTimeAgo(check.last_check_at)}
               </span>
             )}
-            {check.drift_detected ? (
-              <Badge variant="destructive" className="text-xs gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                Drift Detected
-              </Badge>
-            ) : (
-              <Badge variant="success" className="text-xs gap-1">
-                <CheckCircle2 className="h-3 w-3" />
-                No Drift
-              </Badge>
-            )}
+            {statusBadge}
           </div>
         </div>
       </div>

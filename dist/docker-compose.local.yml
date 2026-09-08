@@ -1,0 +1,159 @@
+# =============================================================================
+# Local Laptop Overrides — macOS / Windows (Docker Desktop)
+# =============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Switches from host networking to bridge networking with port mappings.
+# Requires: Docker Compose v2.24.0+ (for !reset support)
+#
+# Ports exposed on your laptop:
+#   443  → Nginx proxy (HTTPS — accept the self-signed cert warning)
+#   80   → Nginx proxy (HTTP → redirects to HTTPS)
+#   8080 → Frontend direct (no proxy, no HTTPS)
+#   8000 → Backend API direct
+#   8081 → MCP server
+
+x-local-backend-env: &local-backend-env
+  BNK_FORGE_DEPLOY_MODE: local
+  DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@postgres:5432/bnkforge
+  REDIS_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@redis:6379/0
+  # Bridge mode: reach the socket proxy by service DNS (the base compose's
+  # 127.0.0.1:2375 is the container's own loopback here, not the host).
+  DOCKER_HOST: tcp://docker-socket-proxy:2375
+  # MCP service account (see base compose): no shipped default (#186/#187).
+  # bonnyr-f5 #193 B1/M3: alias the PASSWORD only, and only for a NON-DEFAULT value —
+  # a legacy MCP_PASSWORD=changeme is a known-default the backend rejects, so it
+  # resolves through the alias but leaves MCP disabled. The USERNAME is not aliased (a
+  # legacy MCP_USERNAME=admin must never resolve the service username).
+  MCP_SERVICE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+  MCP_SERVICE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+  # bonnyr-f5 #193 B3: plumb ENVIRONMENT so staging/production reaches the fail-fast.
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # bonnyr-f5 #193 B2: plumb the three vars validate_production also gates on.
+  # bonnyr-f5 #193 B1 (r4): OMIT-when-unset (null-value passthrough) — the pinned 3.1.6
+  # backend uses `if self.KEY is None`, so a present-but-empty "" (from `${VAR:-}`) would
+  # boot with an empty JWT secret / invalid Fernet key rather than auto-generating. A map
+  # entry with NO value is passthrough: omitted when unset, forwarded when set — letting
+  # 3.1.6 fall through to None → auto-generate. Set real values in .env for production.
+  JWT_SECRET_KEY:
+  ENCRYPTION_KEY:
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+
+networks:
+  bnk-local:
+    driver: bridge
+
+services:
+  postgres:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "5432:5432"
+
+  redis:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "6379:6379"
+
+  backend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *local-backend-env
+    volumes:
+      - module_catalog:/tmp/bnk-forge-modules
+      - bnk-forge-data:/app/projects
+      - bnk-forge-keys:/app/keys
+      - state_data:/app/state
+      - helm_cache:/home/bnkforge/.cache/helm
+      - helm_config:/home/bnkforge/.config/helm
+      - helm_charts:/app/helm_charts
+      - workspace_data:/app/workspaces
+      - ./secrets:/app/secrets:ro
+      - ./VERSION:/app/VERSION:ro
+
+  celery-worker:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  celery-worker-2:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  # On the bridge network the runner services reach the daemon proxy by its
+  # service name (docker-socket-proxy:2375), not the host loopback.
+  docker-socket-proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+
+  celery-beat:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      <<: *local-backend-env
+
+  frontend:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/frontend.local.conf:/etc/nginx/conf.d/default.conf:ro
+
+  proxy:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    # Host 80/443 -> container 8080/8443. The proxy image is
+    # nginxinc/nginx-unprivileged running as uid 101, which cannot bind
+    # privileged ports, so the container side must stay unprivileged --
+    # matching proxy/nginx.local.conf, which `make dist` copies to
+    # nginx/proxy.local.conf. See #134.
+    ports:
+      - "443:8443"
+      - "80:8080"
+    volumes:
+      - ./nginx/proxy.local.conf:/etc/nginx/conf.d/nginx.conf:ro
+
+  mcp:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    ports:
+      - "8081:8081"
+    environment:
+      BNK_FORGE_API_URL: http://backend:8000
+      # #186: MCP authenticates as the dedicated 'mcp' service account, NOT the
+      # human admin. admin/changeme is gone (#184 generates the admin password
+      # and gates it). Set MCP_SERVICE_PASSWORD in .env (no shipped default — the
+      # published one can no longer authenticate); the backend reconciles to it.
+      # bonnyr-f5 #193 B1: PASSWORD aliased from legacy MCP_PASSWORD; USERNAME is not.
+      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
+      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-${MCP_PASSWORD:-}}
+      MCP_PORT: "8081"
+
+  postgres-backup:
+    network_mode: !reset null
+    networks:
+      - bnk-local
+    environment:
+      PGHOST: postgres

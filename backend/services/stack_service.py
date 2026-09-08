@@ -32,6 +32,7 @@ from models.enums import ModuleStatus, StackInstanceStatus, TaskStatus
 from modules import get_module_registry
 from services.base_service import BaseService
 from services.module_capabilities import serialize_engine_metadata
+from services.module_resolution import _map_order, resolve_module_row
 from services.workspace_manager import WorkspaceManager
 from utils.security import is_sensitive_input
 
@@ -167,9 +168,10 @@ class StackService(BaseService):
                     ModuleLibrary.path.in_(module_paths),
                     ModuleLibrary.is_active,
                 )
-                # D-033: multiple version rows may share a path — iterate so the
-                # preferred row (is_latest, newest id) lands last and wins the map.
-                .order_by(ModuleLibrary.is_latest.asc(), ModuleLibrary.id.asc())
+                # D-033: multiple version rows may share a path. Ordering lives in
+                # services.module_resolution so this map cannot drift away from
+                # what stack deploy resolves (#90 F8).
+                .order_by(*_map_order())
                 .all()
             )
             modules_by_path = {row.path: row for row in module_rows if isinstance(row.path, str)}
@@ -320,10 +322,7 @@ class StackService(BaseService):
             module_name = module_def.get("name", module_path)
             stack_variables = module_def.get("variables", {})
 
-            library_module = self.db.query(ModuleLibrary).filter(
-                ModuleLibrary.path == module_path,
-                ModuleLibrary.is_active,
-            ).order_by(ModuleLibrary.is_latest.desc(), ModuleLibrary.id.desc()).first()
+            library_module = resolve_module_row(self.db, module_path)
 
             if not library_module:
                 logger.warning(f"Module '{module_path}' not found in library, skipping input analysis")
@@ -799,7 +798,42 @@ class StackService(BaseService):
             "modules": serialized_modules,
         }
 
-    def deploy_stack(self, project_id: int, stack_id: int) -> dict:
+    def _stamp_host_release(self, stack: StackInstance, deployable_release_id: int) -> None:
+        """Stamp the chosen BNK release onto the bare-metal host's version_profile_id.
+
+        Searches for bare_metal_host_id nested in stack.variables (module-scoped dict)
+        and updates the host so resolve_project_context picks up the per-deploy override.
+        No-op when the stack has no bare-metal host association.
+        """
+        from models.bare_metal import BareMetalHost
+
+        variables = stack.variables or {}
+        host_id: int | None = None
+        for value in variables.values():
+            if isinstance(value, dict):
+                raw = value.get("bare_metal_host_id")
+                if raw is not None:
+                    try:
+                        host_id = int(raw)
+                    except (ValueError, TypeError):
+                        continue
+                    break
+
+        if host_id is None:
+            return
+
+        host = self.db.query(BareMetalHost).filter(BareMetalHost.id == host_id).first()
+        if host is None:
+            return
+
+        host.version_profile_id = deployable_release_id
+        self.db.flush()
+        logger.info(
+            "Stamped BareMetalHost %s version_profile_id=%s for stack %s deploy",
+            host_id, deployable_release_id, stack.id,
+        )
+
+    def deploy_stack(self, project_id: int, stack_id: int, *, deployable_release_id: int | None = None) -> dict:
         """Start stack deployment using StackDeploymentService."""
         from services.stack_deployment_service import StackDeploymentService
         from services.system_service import SystemService
@@ -812,6 +846,10 @@ class StackService(BaseService):
             )
 
         stack = self._get_stack(project_id, stack_id)
+
+        # ADR-478 P1b: stamp the chosen BNK release onto the host carrier before module creation.
+        if deployable_release_id is not None:
+            self._stamp_host_release(stack, deployable_release_id)
 
         try:
             deployment_service = StackDeploymentService(self.db)
@@ -851,7 +889,7 @@ class StackService(BaseService):
         deployment_service = StackDeploymentService(self.db)
         return deployment_service.check_prerequisites(project_id, template)
 
-    def run_deploy(self, project_id: int, stack_id: int) -> dict:
+    def run_deploy(self, project_id: int, stack_id: int, *, deployable_release_id: int | None = None) -> dict:
         """Deploy all stack modules (init + apply) with dependency ordering."""
         from models import Task as TaskModel
         from services.execution.task_dispatch import dispatch_apply, dispatch_init
@@ -861,6 +899,10 @@ class StackService(BaseService):
 
         if not stack.deployed_modules:
             raise BadRequestError("Stack has no modules to deploy", code="EMPTY_STACK")
+
+        # ADR-478 P1b: re-stamp host release on run-deploy (idempotent; supports retry with a different release).
+        if deployable_release_id is not None:
+            self._stamp_host_release(stack, deployable_release_id)
 
         # Re-sync stack-supplied shared defaults before every run to keep retry/resume
         # flows truthful when stack variables are module-scoped (e.g., user_ip).
@@ -967,7 +1009,29 @@ class StackService(BaseService):
 
         unchanged_applied = [m for m in modules if m.status == ModuleStatus.APPLIED and not workspace.vars_changed(m)]
         changed_applied = [m for m in modules if m.status == ModuleStatus.APPLIED and workspace.vars_changed(m)]
-        pending_modules = [m for m in modules if m.status != ModuleStatus.APPLIED] + changed_applied
+        # Disabled modules are filtered OUT here rather than left to raise at
+        # dispatch. This loop commits a queued Task row before calling
+        # dispatch_init, and has no try/except: a raise would abandon every
+        # later module, leave the stack DEPLOYING, and leave an orphan queued
+        # row that makes _has_active_task true forever — permanently skipping
+        # that module on every re-run.
+        #
+        # _apply_topology_module_filter is the tree's main producer of disabled
+        # modules (optional bare-metal modules that don't match host topology),
+        # and those deploy through exactly this path.
+        pending_modules = [
+            m for m in ([m for m in modules if m.status != ModuleStatus.APPLIED] + changed_applied)
+            if m.enabled
+        ]
+        skipped_disabled = [
+            m.id for m in modules
+            if not m.enabled and (m.status != ModuleStatus.APPLIED or m in changed_applied)
+        ]
+        if skipped_disabled:
+            logger.info(
+                "Stack deploy: skipping %d disabled module(s): %s",
+                len(skipped_disabled), skipped_disabled,
+            )
 
         if changed_applied:
             logger.info(

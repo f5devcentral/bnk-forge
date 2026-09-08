@@ -51,13 +51,44 @@ jobs:
           import os, re
           body = os.environ.get("PR_BODY") or ""
           repo = os.environ["REPO"]
+          # Neutralise fenced blocks and inline code spans BEFORE scanning. A PR
+          # that documents closing keywords (a parser change, a template change,
+          # a how-to) otherwise closes the issues it is merely talking about --
+          # #158's own description parsed as issues=94 128 7, two of them open
+          # with their real fixes still unmerged. Fences first (they may contain
+          # backticks), then spans. Both fence styles -- ``` and ~~~ -- since ~~~
+          # is what an author reaches for when the example itself contains
+          # backticks, i.e. exactly the case this exists for. Like-to-like: a
+          # ~~~ block must close with ~~~ (backreference), so a stray ~~~ cannot
+          # "close" a ``` fence and over-strip.
+          #
+          # Replace with a NON-WHITESPACE sentinel, never ''. Deleting the code
+          # outright glues a keyword onto a following reference -- "Fixes `x`
+          # #94" becomes "Fixes  #94" and the [:\s]* separator swallows the
+          # gap -- a NEW false-close the pre-stripping parser never produced.
+          # The sentinel cannot be eaten by the separator or the "/ Implements"
+          # skip, so the barrier survives; a real "Fixes #94" in prose is
+          # unaffected because it contains no code to replace.
+          #
+          # Indented (4-space) code blocks are NOT neutralised: they need a
+          # line-based pass and nobody in this repo writes them. Known
+          # safe-direction gap: an unbalanced backtick in prose can swallow a
+          # real closing line -> the issue simply stays open (the pre-Action
+          # status quo).
+          CODE = "\u2400"  # U+2400 SYMBOL FOR NULL: non-whitespace, never in a ref
+          body = re.sub(r'(```|~~~).*?\1', CODE, body, flags=re.S)
+          body = re.sub(r'`[^`]*`', CODE, body)
           kw_pat = re.compile(r'(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b')
           ref_pat = re.compile(r'([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#(\d+)')
           sep_pat = re.compile(r'[ \t,]+')
           out=[]; seen=set()
           for m in kw_pat.finditer(body):
               i = m.end()
-              i += re.match(r'[:\s]*', body[i:]).end()
+              # Accept the PR template's own line, "Fixes / Implements: #N":
+              # allow an optional "/ Implements" (or "/ Closes" etc.) between the
+              # keyword and the reference. Before this, the template form matched
+              # NOTHING and every issue had to be closed by hand.
+              i += re.match(r'(?i)[:\s]*(?:/\s*(?:implements|closes|fixes|resolves)\s*)?[:\s]*', body[i:]).end()
               while True:
                   r = ref_pat.match(body, i)
                   if not r:

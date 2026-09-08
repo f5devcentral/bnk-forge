@@ -16,6 +16,7 @@ inside the workspace root, and a refusal of any symlink leaf.
 from __future__ import annotations
 
 import errno
+import logging
 import os
 
 from sqlalchemy.orm import Session
@@ -24,6 +25,8 @@ from core.errors import BadRequestError, NotFoundError
 from models import ProjectModule
 from services.execution.container_engine import _INPUT_TOKEN_RE
 from services.workspace_manager import WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 # Refuse to serve a single report file larger than this — a report viewer is
 # for human-readable deliverables, not for streaming multi-megabyte blobs.
@@ -96,6 +99,18 @@ class ModuleReportsService:
         variables = {**(module.variables or {}), **(module.variable_overrides or {})}
         rendered = _render_input_tokens(raw_dir, variables).strip()
         if not rendered or rendered.startswith("/") or rendered.startswith("~"):
+            return None
+        # Reject `..` on the RENDERED value too, matching what the manifest-time
+        # validator does to the declared one. realpath containment below already
+        # holds, so this is defence in depth rather than a known bypass — but the
+        # asymmetry was the kind that survives a refactor of the other check
+        # (issue #470). Templating is what makes it reachable: `dir` may render
+        # from an input, so a value clean in the manifest need not stay clean.
+        if ".." in rendered.replace("\\", "/").split("/"):
+            logger.warning(
+                "Ignoring reports dir %r for module %s — rendered value contains '..'",
+                rendered, module.id,
+            )
             return None
 
         # Workspace root resolved exactly like the engine does (tasks/
@@ -215,7 +230,7 @@ class ModuleReportsService:
             if exc.errno == errno.ELOOP:
                 raise BadRequestError("Report path is a symlink; refusing to read through it")
             raise NotFoundError("report", path)
-        with os.fdopen(fd, encoding="utf-8", errors="replace") as handle:
+        with os.fdopen(fd, encoding="utf-8", errors="strict") as handle:
             st = os.fstat(handle.fileno())
             # A legitimate report file has exactly one link. nlink > 1 means the
             # artifact's own (already-privileged) container hardlinked another file
@@ -229,7 +244,14 @@ class ModuleReportsService:
                     f"Report file is too large to view ({size} bytes; "
                     f"limit {MAX_REPORT_FILE_BYTES} bytes)"
                 )
-            content = handle.read()
+            try:
+                content = handle.read()
+            except UnicodeDecodeError as exc:
+                # Previously served as errors="replace" mojibake, which reads as
+                # a corrupt report rather than as "this is not text" (issue #470).
+                raise BadRequestError(
+                    "Report file is not valid UTF-8 text and cannot be displayed"
+                ) from exc
 
         rel = os.path.relpath(target_real, reports_dir)
         return {"path": rel, "kind": _kind_for(rel), "size": size, "content": content}

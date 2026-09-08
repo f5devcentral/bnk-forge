@@ -44,7 +44,7 @@ class BnkVlansSSHModule(BnkSSHModule):
     estimated_duration = 60
     timeout = 300
 
-    dependencies = ["bare-metal/bnk-cneinstance"]
+    dependencies = ["bare-metal/bnk-cneinstance", "bare-metal/bnk-license"]
 
     namespace_var = "namespace"
     default_namespace = "f5-operator"

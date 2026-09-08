@@ -189,7 +189,7 @@ def _run_dpu_pings(
         )
         return []
 
-    os_ip = derive_tmfifo_dpu_host(getattr(src_dpu, "rshim_device", None))
+    os_ip = derive_tmfifo_dpu_host(getattr(src_dpu, "rshim_device", None), dpu=src_dpu)
     results: list[dict[str, Any]] = []
 
     try:

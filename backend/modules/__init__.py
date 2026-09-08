@@ -36,6 +36,7 @@ def _register_all():
     from modules.bare_metal.bnk_cneinstance import BnkCneInstanceSSHModule
     from modules.bare_metal.bnk_flo import BnkFloSSHModule
     from modules.bare_metal.bnk_gatewayclass import BnkGatewayClassSSHModule
+    from modules.bare_metal.bnk_license import BnkLicenseSSHModule
     from modules.bare_metal.bnk_network_setup import NetworkSetupSSHModule
     from modules.bare_metal.bnk_prerequisites import BnkPrerequisitesSSHModule
     from modules.bare_metal.bnk_vlans import BnkVlansSSHModule
@@ -82,6 +83,7 @@ def _register_all():
         BnkCertIssuerSSHModule,
         BnkFloSSHModule,
         BnkCneInstanceSSHModule,
+        BnkLicenseSSHModule,
         BnkVlansSSHModule,
         BnkGatewayClassSSHModule,
     ]

@@ -21,7 +21,7 @@ from models.associations import (
 )
 
 # --- Bare Metal (DPU Deployment) ---
-from models.bare_metal import BareMetalDeployment, BareMetalHost, BnkVersionProfile, DeploymentStep
+from models.bare_metal import BareMetalDeployment, BareMetalHost, DeploymentStep
 
 # --- Benchmarks (Phase 2: AI Performance Dashboard, Phase 4b: Targets) ---
 from models.benchmark import (
@@ -38,6 +38,9 @@ from models.blueprint_catalog import (
     BlueprintRelease,
     BlueprintSource,
 )
+
+# --- BNK Deployable Release catalog (ADR-478) ---
+from models.bnk_deployable_release import BnkDeployableRelease
 
 # --- BNK Release Registry (issue #217) ---
 from models.bnk_release import (
@@ -111,6 +114,7 @@ from models.enums import (
     ParallelExecutionStatus,
     ProxyDeploymentStatus,
     ProxyMigrationStatus,
+    ReleaseSourceKind,
     ReleaseSourceType,
     StackInstanceStatus,
     SyncJobStatus,
@@ -138,6 +142,7 @@ from models.fleet_targeting import (
 
 # --- Kubernetes and F5 BNK networking ---
 from models.kubernetes import (
+    BnkClusterConfig,
     EgressConfiguration,
     FirewallPolicy,
     K8sGateway,
@@ -179,6 +184,9 @@ from models.project_infra import ProjectInfraConfig
 # --- Proxy Migration (D-021 P3) ---
 from models.proxy_migration import ProxyMigration, ProxyMigrationStep
 
+# --- BNK Release Source (ADR-494) ---
+from models.release_source import ReleaseSource
+
 # --- SSH Credentials (first-class on-prem/bastion access) ---
 from models.ssh_credential import SSHCredential
 
@@ -206,6 +214,13 @@ from models.task import (
     Task,
 )
 
+# --- Use-Case Artifacts (D-034 Phase 0 tracer) ---
+from models.usecase_artifact import (
+    UseCaseApplication,
+    UseCaseArtifact,
+    UseCaseArtifactVersion,
+)
+
 # --- Variable mappings ---
 from models.variable import (
     VariableMapping,
@@ -217,14 +232,14 @@ __all__ = [
     # enums
     "TaskStatus", "ModuleStatus", "ParallelExecutionStatus", "StackInstanceStatus",
     "DiscoveryJobStatus", "DiscoveredNodeStatus",
-    "DriftCheckStatus", "BnkUpgradeStatus", "ReleaseSourceType", "ClusterStatus",
+    "DriftCheckStatus", "BnkUpgradeStatus", "ReleaseSourceKind", "ReleaseSourceType", "ClusterStatus",
     "K8sResourceStatus", "OperatorStatus", "OperatorCommandStatus", "AlertStatus",
     "SyncJobStatus", "ModuleSyncStatus", "ModuleTestStatus", "DeploymentStatus",
     "BlueprintReleaseState", "BlueprintValidationState",
     "BareMetalDeploymentStatus", "BareMetalTopology", "DeploymentPhase", "DeploymentStepStatus", "HostAccessTier",
     "ProxyMigrationStatus", "MigrationStepStatus",
     # kubernetes
-    "KubernetesCluster", "K8sGateway", "FirewallPolicy", "EgressConfiguration", "SnatPool",
+    "KubernetesCluster", "BnkClusterConfig", "K8sGateway", "FirewallPolicy", "EgressConfiguration", "SnatPool",
     # project
     "Project", "ProjectModule", "ProjectSecret", "Environment", "Deployment", "DeploymentLog",
     "ModuleStateTransition",
@@ -273,7 +288,9 @@ __all__ = [
     # discovery
     "DiscoveryJob", "DiscoveredNode",
     # bare metal (DPU deployment)
-    "BareMetalHost", "BareMetalDeployment", "DeploymentStep", "BnkVersionProfile",
+    "BareMetalHost", "BareMetalDeployment", "DeploymentStep", "BnkDeployableRelease",
+    # release source (ADR-494)
+    "ReleaseSource",
     # proxy migration (D-021 P3)
     "ProxyMigration", "ProxyMigrationStep",
     # DPU provisioning (Blueprint 1)
@@ -289,4 +306,6 @@ __all__ = [
     # fleet policy + compliance (D-022 Phase 3)
     "FleetPolicy",
     "PolicyEvaluation",
+    # use-case artifacts (D-034 Phase 0 tracer)
+    "UseCaseArtifact", "UseCaseArtifactVersion", "UseCaseApplication",
 ]

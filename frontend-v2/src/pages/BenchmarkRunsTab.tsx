@@ -3,6 +3,7 @@
  * Status conveyed via Badge variants only; action buttons are ghost icons.
  */
 import { useMemo } from 'react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -31,13 +32,17 @@ import {
   Search,
   ArrowRight,
   GitCompare,
+  Star,
+  LineChart,
 } from 'lucide-react';
 import {
   useBenchmarkRuns,
   useCancelBenchmarkRun,
   useDeleteBenchmarkRun,
+  useSetBenchmarkRunBaseline,
+  useUnsetBenchmarkRunBaseline,
 } from '@/hooks/useBenchmarks';
-import { StatusBadge, ProxyBadge, fmtLatency, fmtNum, fmtPct } from './benchmark-utils';
+import { StatusBadge, ProxyBadge, RegressionBadge, fmtLatency, fmtNum, fmtPct } from './benchmark-utils';
 
 interface RunsTabProps {
   proxyFilter: string;
@@ -50,13 +55,14 @@ interface RunsTabProps {
   compareRunIds: number[];
   onToggleCompare: (id: number) => void;
   onCompare: () => void;
+  onViewTrends?: () => void;
 }
 
 export function BenchmarkRunsTab({
   proxyFilter, onProxyFilterChange,
   statusFilter, onStatusFilterChange,
   searchQuery, onSearchChange,
-  onSelectRun, compareRunIds, onToggleCompare, onCompare,
+  onSelectRun, compareRunIds, onToggleCompare, onCompare, onViewTrends,
 }: RunsTabProps) {
   const { data, isLoading } = useBenchmarkRuns({
     proxy: proxyFilter || undefined,
@@ -65,6 +71,8 @@ export function BenchmarkRunsTab({
   });
   const cancelRun = useCancelBenchmarkRun();
   const deleteRun = useDeleteBenchmarkRun();
+  const setBaseline = useSetBenchmarkRunBaseline();
+  const unsetBaseline = useUnsetBenchmarkRunBaseline();
 
   const runs = useMemo(() => data?.runs ?? [], [data?.runs]);
   const filtered = useMemo(() => {
@@ -112,6 +120,12 @@ export function BenchmarkRunsTab({
             Compare {compareRunIds.length} runs
           </Button>
         )}
+        {onViewTrends && (
+          <Button size="sm" variant="outline" onClick={onViewTrends}>
+            <LineChart className="h-4 w-4 mr-1" />
+            Trends
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -141,6 +155,7 @@ export function BenchmarkRunsTab({
                   <TableHead>Model</TableHead>
                   <TableHead>Tool</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Baseline</TableHead>
                   <TableHead className="text-right">Latency P50</TableHead>
                   <TableHead className="text-right">Latency P99</TableHead>
                   <TableHead className="text-right">RPS</TableHead>
@@ -165,6 +180,24 @@ export function BenchmarkRunsTab({
                     <TableCell className="text-sm font-medium max-w-[200px] truncate">{run.model}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{run.tool}</TableCell>
                     <TableCell><StatusBadge status={run.status} /></TableCell>
+                    <TableCell onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5">
+                        {run.status === 'completed' && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className={cn('h-6 w-6', run.is_baseline ? 'text-warning' : 'text-muted-foreground')}
+                            onClick={() =>
+                              run.is_baseline ? unsetBaseline.mutate(run.id) : setBaseline.mutate(run.id)
+                            }
+                            title={run.is_baseline ? 'Clear baseline' : 'Mark as baseline'}
+                          >
+                            <Star className={cn('h-3.5 w-3.5', run.is_baseline && 'fill-current')} />
+                          </Button>
+                        )}
+                        <RegressionBadge run={run} />
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right text-sm font-mono">{fmtLatency(run.latency_p50)}</TableCell>
                     <TableCell className="text-right text-sm font-mono">{fmtLatency(run.latency_p99)}</TableCell>
                     <TableCell className="text-right text-sm font-mono">{fmtNum(run.overall_rps)}</TableCell>

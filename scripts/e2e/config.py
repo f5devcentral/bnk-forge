@@ -179,8 +179,12 @@ class E2EConfig(BaseModel):
     # bnk-forge target.
     bnk_forge_url: str = "https://localhost"
     bnk_forge_admin_user: str = "admin"
-    # Don't put real passwords in committed YAML — leave this default
-    # and override via env (BNK_FORGE_PASSWORD) at run time.
+    # bonnyr-f5 #193: the admin password is no longer a fixed default (#184) — this
+    # placeholder ("changeme") authenticates NOWHERE. You MUST override it at run
+    # time via BNK_FORGE_PASSWORD to the same value the target was deployed with as
+    # DEFAULT_ADMIN_PASSWORD (or the generated per-install password); step_login
+    # rotates the freshly-seeded must_change password to that same value. Don't put
+    # real passwords in committed YAML.
     bnk_forge_admin_password: str = "changeme"
 
     # Whether the harness should `make install` a fresh local

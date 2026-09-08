@@ -37,10 +37,20 @@ export interface StackPrerequisiteSecretStatus {
   guidance?: string;
 }
 
+export interface StackPreflightCheck {
+  id: string;
+  title: string;
+  status: 'pass' | 'warn' | 'fail';
+  blocking: boolean;
+  message: string;
+  guidance?: string;
+}
+
 export interface StackPrerequisitesCheck {
   all_satisfied: boolean;
   missing_secrets: StackPrerequisiteSecretStatus[];
   required_secrets: StackPrerequisiteSecretStatus[];
+  preflight_checks?: StackPreflightCheck[];
   secret_source_policy?: {
     project_secret_precedence: boolean;
     global_cne_pull_secret_default_supported: boolean;

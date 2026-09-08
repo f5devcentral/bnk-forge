@@ -17,7 +17,7 @@
 #                     "AUTO:planned" are computed from item counts; any other
 #                     value (e.g. "25+") is a static meta number.
 # status_legend:      key -> { emoji, dot, label } used for BOTH md + html.
-#   keys: shipped | in_progress | blocked | deferred | planned
+#   keys: shipped | merged | in_progress | blocked | deferred | planned
 # sections: ordered list of
 #   - id:       stable slug (used by roadmap-add.py --section)
 #     number:   section number for the md heading "## N. ..."
@@ -55,7 +55,7 @@ meta:
 
     **2026-06-09 sync:** D-021/D-022 fleet epics shipped (PRs #276/#277); D-027 zero-toast shipped (PRs #260/#261/#278); D-028 unified blueprint catalog shipped (PR #274); D-001 Phase 3 / D-019 E1/E3/E6 / Ops MCP+celery / AWS cred-expiry UX all shipped. D-023 (classic BIG-IP) + D-020 (F5 design-system) + benchmark experience remain in-flight.
 
-    **2026-06-12 sync:** cb-rebuild → staging de-stacking COMPLETE; new `customer-build` integration line live on localhost (staging + all open PRs + customer deltas); multi-arch images published `ghcr.io/jlcode-tech 3.1.6-cb.72b29dbb` + rolling `customer-build`. D-023 P1-P3 shipped (PR #280); alembic dedupe shipped (PR #283). 13 PRs in review: #282 (scenario override guard), #284 (BNK registry-driven GA/ReleaseRegistry), #285 (multiarch publish), #286 (benchmark remote agent-host + Slice-4 auth), #287 (AI-Analyzer rename + Migration tab fix), #288 (dist uninstall-purge fix), #290 (D-023 P4 CIS coverage), #291 (Dashboard Command Center fleet section), #292 (bfb-cache atime/LRU fix), #293 (runtime brand flag #289), #295 (CIS IngressClass kind-aware classify), #296 (top-level Infrastructure section), #297 (release automation — team decision pending). D-020 reskin branch fully rebuilt 2026-06-10/11 (complete reskin + anvil ForgeLogo general rebrand).
+    **2026-06-12 sync:** cb-rebuild → staging de-stacking COMPLETE; new `customer-build` integration line live on localhost (staging + all open PRs + customer deltas); multi-arch images published `ghcr.io/f5devcentral 3.1.6-cb.72b29dbb` + rolling `customer-build`. D-023 P1-P3 shipped (PR #280); alembic dedupe shipped (PR #283). 13 PRs in review: #282 (scenario override guard), #284 (BNK registry-driven GA/ReleaseRegistry), #285 (multiarch publish), #286 (benchmark remote agent-host + Slice-4 auth), #287 (AI-Analyzer rename + Migration tab fix), #288 (dist uninstall-purge fix), #290 (D-023 P4 CIS coverage), #291 (Dashboard Command Center fleet section), #292 (bfb-cache atime/LRU fix), #293 (runtime brand flag #289), #295 (CIS IngressClass kind-aware classify), #296 (top-level Infrastructure section), #297 (release automation — team decision pending). D-020 reskin branch fully rebuilt 2026-06-10/11 (complete reskin + anvil ForgeLogo general rebrand).
 
     **Human view (clickable):** `docs/roadmap.html` · **Contribution flow:** `docs/ROADMAP_PROCESS.md` · (local per-clone agent queue: `.agent/backlog/BACKLOG.md`).
 
@@ -77,6 +77,10 @@ status_legend:
     emoji: ✅
     dot: d-ship
     label: Shipped
+  merged:
+    emoji: 🟢
+    dot: d-ship
+    label: Merged (unreleased)
   in_progress:
     emoji: 🟡
     dot: d-prog
@@ -212,7 +216,7 @@ sections:
     refs:
     - 'PR #285'
     - 'PR #288'
-    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/jlcode-tech) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
+    note: 'PR #285 (push-customer-build-multiarch target: amd64+arm64 to ghcr.io/f5devcentral) + PR #288 (uninstall --purge deletes wrong compose volumes fix + stale install messaging) in review.'
     group: Top of queue — PRs open (CI-green)
   - title: Alembic migration deduplication (v2_131)
     status: shipped
@@ -353,7 +357,7 @@ sections:
     - '#419'
     note: 'Fresh install / volume wipe leaves the git module catalog (bnk/app/infra packs) un-synced, so BNK/app blueprints are DOA until an operator runs Catalog→Advanced→Modules→''Sync all''. The wizard''s ''requires sync'' prompt is wired to no endpoint. Fix: (1) boot-time auto-sync step (non-fatal, ref-aware) after builtin seeders; (2) wire wizard CTA to POST /api/module-library/sync. Separate from the d019/adr-204 execution_engine seeder-guard fix.'
   - title: CI container runner engine — security hardening follow-ups
-    status: planned
+    status: merged
     refs:
     - '#408'
     - 'PR #340'
@@ -399,6 +403,19 @@ sections:
     - '#471'
     - '#472'
     note: 'Low-priority follow-ups from the PR #468 review (F1/F2/amber/hardlink/allowlist-drift already fixed in-PR). #469 boot-sync: advisory lock held for whole clone (idle-in-txn), boot-vs-force-sync uncovered, skip-branch untested. #470 report readback: mirror `..` rejection on rendered dir, reject non-UTF8 instead of mojibake. #471 action dialog: handleSubmit double-click re-guard, invalidate reports on action, escaping-regression test. #472 validator: test main() CLI paths, align path-equality with the sync stripped value.'
+    group: Catalog & blueprints
+  - title: Container-module deploy diagnosability — blank failure reason, secret_files/step collision
+    status: planned
+    refs:
+    - '#479'
+    - '#480'
+    note: 'Both surfaced debugging a live ocibnkctl deploy that failed at its first step. #479 every engine''s failure transitions audit with an empty reason — set_locked_module_fields strips status and hands off to transition_module_status without forwarding a reason, though the cause is already in fields[deployment_error]; one shared fix covers opentofu/ssh/tmos/cli-bnkctl/ansible/container/k8s. #480 artifact validation accepts a secret_files path colliding with a step''s target dir (materialization creates the parent before any step runs), making a module permanently un-deployable and unrecoverable by retry — run_once then skips init so the retry fails downstream at the wrong step.'
+    group: Catalog & blueprints
+  - title: Catalog version history only accrues by observation — fresh Forge cannot reach older ctl versions
+    status: planned
+    refs:
+    - '#482'
+    note: 'D-033 version rows are created only by observing a bump during a sync, and a content repo publishes one version at HEAD — so the version list is a function of how long that Forge has watched the repo, not of what versions exist. A fresh install sees exactly one version and cannot redeploy a known-good older ctl release (ocibnkctl has 14 upstream releases; bnkctl-index publishes one pack dir). Mechanism works as designed (module_sync_service._upsert_pack_module; _inactivate_stale_manifest_modules prunes by path so accrued rows do persist) — the design just cannot serve the use case. Directions: index publishes one pack per released version (zero backend change, but module.path must equal the dir path so per-version dirs fragment the version axis into separate modules); a source type enumerating upstream GitHub releases; or on-demand backfill from the content repo git history. Stopgap today: re-point git_ref at successive older commits and sync each.'
     group: Catalog & blueprints
 - id: d019_d018_detail
   number: 2

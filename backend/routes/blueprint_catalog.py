@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from core.errors import BadRequestError, handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
+from schemas.catalog_prune import PruneRequest, PruneResponse
 from services.blueprint_catalog_service import BlueprintCatalogService
 from services.blueprint_sync_service import BlueprintSyncService
 
@@ -290,3 +291,37 @@ def update_blueprint_release_visibility(
     result = BlueprintCatalogService(db).set_release_visibility(release_id, body.is_visible)
     db.commit()
     return result
+
+
+@router.post(
+    "/sources/{source_id}/prune",
+    response_model=PruneResponse,
+    dependencies=[Depends(require_operator)],
+)
+@handle_route_errors("prune blueprint source")
+def prune_blueprint_source_releases(
+    source_id: int, request: PruneRequest, db: Session = Depends(get_db)
+):
+    """Retire superseded blueprint releases for this source.
+
+    Every edit to a blueprint adds an immutable release, so a source under
+    development ends up serving a version picker full of history. Deactivating
+    (the default) hides a release without discarding it. `delete` removes rows
+    outright and only ever those nothing was deployed from — a release a
+    StackInstance points at is deactivated instead, because that FK is
+    ON DELETE SET NULL and deleting would silently strip the stack of the record
+    of what it was built from.
+    """
+    from services.catalog_prune_service import prune_blueprint_source
+
+    result = prune_blueprint_source(
+        db,
+        source_id,
+        keep=request.keep,
+        delete=request.delete,
+        dry_run=request.dry_run,
+        include_in_use=request.include_in_use,
+    )
+    if not request.dry_run:
+        db.commit()
+    return result.as_dict()
