@@ -1,6 +1,16 @@
 import os
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.sql import func
 
 from database import Base
@@ -32,11 +42,16 @@ VALID_WIDTHS = {"full", "half"}
 
 class WafPanel(Base):
     __tablename__ = "waf_panels"
-    # Table was created manually without FK constraints — model must match exactly
-    __table_args__ = {"extend_existing": True}
+    # Must match migration v2_157_add_waf_panels (+ tab_id from v2_158) EXACTLY so
+    # create_all and the migration chain build the same schema (schema-parity gate).
+    __table_args__ = (
+        Index("idx_waf_panels_cluster", "cluster_id", "panel_order"),
+        {"extend_existing": True},
+    )
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    cluster_id  = Column(Integer, nullable=False)  # no FK to keep schema portable
+    cluster_id  = Column(Integer, nullable=False, index=True)  # no FK to keep schema portable
+    created_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     tab_id      = Column(Integer, nullable=True)   # null = legacy/default "Custom" tab
     title       = Column(String(255), nullable=False)
     chart_type  = Column(String(50),  nullable=False, default="bar")
@@ -53,11 +68,37 @@ class WafPanel(Base):
 class WafDashboardTab(Base):
     """A user-defined dashboard tab that groups a set of custom panels."""
     __tablename__ = "waf_dashboard_tabs"
-    __table_args__ = {"extend_existing": True}
+    # Must match migration v2_158_add_waf_dashboard_tabs EXACTLY (schema-parity gate).
+    __table_args__ = (
+        Index("idx_waf_dashboard_tabs_cluster", "cluster_id", "tab_order"),
+        {"extend_existing": True},
+    )
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    cluster_id  = Column(Integer, nullable=False)
+    cluster_id  = Column(Integer, nullable=False, index=True)
     name        = Column(String(100), nullable=False)
     tab_order   = Column(Integer,     nullable=False, default=0)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
     updated_at  = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WafIngestionCursor(Base):
+    """Tracks the last-ingested line per (cluster, log file) for ClickHouse ingest.
+
+    Mirrors migration v2_156_add_waf_ingestion_cursors EXACTLY so create_all and
+    the migration chain build the same schema (schema-parity gate). The table is
+    not yet used by app code, but the parity gate requires every chain table to
+    have an ORM model.
+    """
+    __tablename__ = "waf_ingestion_cursors"
+    __table_args__ = (
+        UniqueConstraint("cluster_id", "log_file", name="uq_waf_cursor_cluster_file"),
+        Index("ix_waf_ingestion_cursors_cluster_id", "cluster_id"),
+        {"extend_existing": True},
+    )
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id    = Column(Integer, nullable=False)
+    log_file      = Column(String(512), nullable=False)
+    last_line_num = Column(Integer, nullable=False, server_default="0")
+    updated_at    = Column(DateTime(timezone=True), server_default=text("now()"))
