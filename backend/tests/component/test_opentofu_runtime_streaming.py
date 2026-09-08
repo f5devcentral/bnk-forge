@@ -228,6 +228,166 @@ class TestStreamSubprocess:
         )
         assert elapsed < 5, f"took {elapsed:.1f}s — child was reaped, not killed"
 
+    def test_eof_with_child_still_alive_enforces_timeout(self, tmp_path, monkeypatch):
+        """MINOR 1 reproduction: real pipe EOF while the child is still alive must
+        still honour the deadline — not fall into an UNBOUNDED ``proc.wait()``.
+
+        The child prints a line then closes BOTH fd 1 and fd 2 (the merged
+        stdout/stderr write end ⇒ genuine EOF, ``os.read`` returns ``b""``) and
+        then sleeps far longer than the timeout while still alive. The read loop
+        breaks on EOF with ``timed_out=False``; a bare ``proc.wait()`` there would
+        block for the child's whole 60s lifetime, silently defeating the timeout
+        the docstring promises. The fix bounds that wait by the remaining deadline,
+        kills the child, and raises ``TimeoutExpired`` at ~the deadline.
+        """
+        import time
+
+        script = (
+            "import os, sys, time\n"
+            "sys.stdout.write('bye\\n'); sys.stdout.flush()\n"
+            "os.close(1)\n"  # close stdout write end
+            "os.close(2)\n"  # close the merged stderr write end ⇒ real EOF
+            "time.sleep(60)\n"  # child stays alive far past the 2s timeout
+        )
+        procs: list[subprocess.Popen] = []
+        real_popen = subprocess.Popen
+
+        def spy_popen(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            procs.append(proc)
+            return proc
+
+        monkeypatch.setattr(otr.subprocess, "Popen", spy_popen)
+
+        seen: list[str] = []
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired) as exc:
+            _stream_subprocess(
+                [sys.executable, "-c", script],
+                cwd=str(tmp_path),
+                env=dict(os.environ),
+                timeout=2,
+                on_output=seen.append,
+            )
+        elapsed = time.monotonic() - started
+
+        # Enforced at ~the deadline, NOT at the child's 60s lifetime.
+        assert elapsed < 6, f"took {elapsed:.1f}s — unbounded proc.wait() after EOF, timeout not enforced"
+        # Partial output streamed before EOF is preserved on the exception.
+        assert "bye" in (exc.value.output or "")
+        assert "bye" in seen
+        # The still-alive child must be SIGKILLed, not left to finish its sleep.
+        proc = procs[0]
+        assert proc.returncode is not None and proc.returncode < 0, (
+            f"child not killed after EOF-alive timeout (returncode={proc.returncode})"
+        )
+
+    def test_timeout_with_partial_multibyte_raises_timeout_not_unicode(self, tmp_path):
+        """MINOR 2 reproduction: a deadline hit while a partial multibyte char is
+        buffered must raise ``TimeoutExpired`` — NOT ``UnicodeDecodeError``.
+
+        The child emits a full line, then the first 2 of the 3 UTF-8 bytes of
+        ``€`` (U+20AC = ``e2 82 ac``), then hangs with the incomplete sequence
+        buffered inside the incremental decoder. If the ``decoder.decode(b"",
+        final=True)`` flush runs BEFORE the timeout check, ``final=True`` raises
+        ``UnicodeDecodeError`` on the truncated sequence — which surfaces in place
+        of ``TimeoutExpired`` and bypasses ``run_apply``/``run_destroy``'s graceful
+        ``except subprocess.TimeoutExpired`` branch. The fix raises TimeoutExpired
+        before that final flush.
+        """
+        script = (
+            "import os, time\n"
+            "os.write(1, b'line1\\n')\n"
+            "os.write(1, b'\\xe2\\x82')\n"  # first 2 of 3 bytes of U+20AC EURO SIGN
+            "time.sleep(30)\n"
+        )
+        seen: list[str] = []
+        with pytest.raises(subprocess.TimeoutExpired) as exc:
+            _stream_subprocess(
+                [sys.executable, "-c", script],
+                cwd=str(tmp_path),
+                env=dict(os.environ),
+                timeout=2,
+                on_output=seen.append,
+            )
+        # The complete line streamed before the hang is preserved; the dangling
+        # partial byte pair is simply not flushed (would raise on final decode).
+        assert "line1" in (exc.value.output or "")
+        assert seen == ["line1"]
+
+    def test_streamed_newlines_match_text_mode(self, tmp_path):
+        """MINOR 3: streamed decode must apply universal-newline translation like
+        the no-callback ``subprocess.run(text=True)`` path.
+
+        ``a\\r\\nb\\rc\\nd`` (CRLF, lone CR, LF) must normalize to ``a\\nb\\nc\\nd``
+        in BOTH the returned combined output and the delivered lines — otherwise
+        streamed logs diverge from non-streamed runs.
+        """
+        script = (
+            "import os\n"
+            "os.write(1, b'a\\r\\nb\\rc\\nd')\n"
+        )
+        seen: list[str] = []
+        code, output = _stream_subprocess(
+            [sys.executable, "-c", script],
+            cwd=str(tmp_path),
+            env=dict(os.environ),
+            timeout=20,
+            on_output=seen.append,
+        )
+        assert code == 0
+        assert output == "a\nb\nc\nd"
+        assert seen == ["a", "b", "c", "d"]
+
+    def test_crlf_split_across_reads_normalizes_to_single_lf(self, tmp_path, monkeypatch):
+        """MINOR 3 edge: a CRLF split across two reads (``…\\r`` | ``\\n…``) must
+        become ONE ``\\n``, not two.
+
+        Normalizing per-chunk would turn the split ``\\r``+``\\n`` into ``\\n\\n``.
+        The fix normalizes on the accumulated stream (holding a trailing ``\\r``
+        until the next read arrives). Reads are injected deterministically so the
+        boundary is exactly on the CRLF.
+        """
+        reads = [b"a\r", b"\nb\rc\n", b""]  # CRLF straddles read #1/#2; lone CR mid-#2
+        it = iter(reads)
+
+        class _FakeStdout:
+            def fileno(self):
+                return 4321
+
+        class _FakeProc:
+            returncode = 0
+            stdout = _FakeStdout()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(otr.subprocess, "Popen", lambda *a, **k: _FakeProc())
+        monkeypatch.setattr(otr.select, "select", lambda r, w, x, t: (list(r), [], []))
+        monkeypatch.setattr(otr.os, "read", lambda fd, n: next(it))
+
+        seen: list[str] = []
+        code, output = _stream_subprocess(
+            ["x"],
+            cwd=str(tmp_path),
+            env={},
+            timeout=10,
+            on_output=seen.append,
+        )
+        assert code == 0
+        # Split CRLF → single '\n'; lone '\r' → '\n'. No spurious blank line.
+        assert output == "a\nb\nc\n"
+        assert seen == ["a", "b", "c"]
+
 
 @pytest.mark.component
 class TestRunMethodsRouteThroughStreaming:

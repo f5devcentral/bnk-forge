@@ -90,12 +90,13 @@ def _stream_subprocess(
       task is marked failed and the workspace lock released. We do the same.
     """
     deadline = time.monotonic() + timeout
-    chunks: list[str] = []           # decoded text pieces == the combined output
+    chunks: list[str] = []           # decoded+newline-normalized pieces == combined output
     # Incremental UTF-8 decoder: correctly reassembles multibyte characters that
     # straddle two reads, and (strict) raises UnicodeDecodeError on genuinely
     # invalid bytes — the same failure ``text=True`` would surface.
     decoder = codecs.getincrementaldecoder("utf-8")("strict")
     pending = ""                     # current partial line, not yet newline-terminated
+    carry_cr = False                 # a trailing '\r' held back — maybe the first half of a CRLF
 
     def _deliver(line: str) -> None:
         try:
@@ -104,7 +105,25 @@ def _stream_subprocess(
             logger.exception("on_output callback raised while streaming subprocess output")
 
     def _emit(text: str, *, flush: bool = False) -> None:
-        nonlocal pending
+        # MINOR 3: match ``subprocess.run(text=True)`` universal-newline semantics
+        # (the no-callback path uses it) so streamed logs don't diverge — translate
+        # CRLF and lone CR to LF. Normalize on the *accumulated* stream (via
+        # ``carry_cr``), never per-chunk, so a CRLF split across two reads
+        # (``…\r`` | ``\n…``) is not mistaken for two newlines. ``chunks`` (the
+        # returned combined output) is fed here too, so return value and delivered
+        # lines stay identical to the ``text=True`` path.
+        nonlocal pending, carry_cr
+        if carry_cr:
+            text = "\r" + text
+            carry_cr = False
+        text = text.replace("\r\n", "\n")
+        if not flush and text.endswith("\r"):
+            # Hold the trailing CR: the next read may bring the LF of a CRLF.
+            carry_cr = True
+            text = text[:-1]
+        text = text.replace("\r", "\n")
+        if text:
+            chunks.append(text)
         pending += text
         newline = pending.find("\n")
         while newline != -1:
@@ -147,20 +166,33 @@ def _stream_subprocess(
                 if not data:
                     break  # EOF: all write ends (incl. any descendant's) closed
                 text = decoder.decode(data)  # may raise UnicodeDecodeError → killed below
-                chunks.append(text)
                 _emit(text)
 
-            # Flush any bytes buffered inside the incremental decoder plus the
-            # trailing line that had no terminating newline.
-            tail = decoder.decode(b"", final=True)
-            if tail:
-                chunks.append(tail)
-            _emit(tail, flush=True)
-
+            # MINOR 2: honour the deadline BEFORE the final decoder flush. If the
+            # deadline expired with a partial multibyte sequence buffered,
+            # ``decoder.decode(b"", final=True)`` would raise UnicodeDecodeError,
+            # which would surface IN PLACE OF TimeoutExpired and bypass the
+            # callers' graceful ``except subprocess.TimeoutExpired`` branch. Raise
+            # TimeoutExpired first, with the partial output accumulated so far.
             if timed_out:
                 proc.kill()
                 raise subprocess.TimeoutExpired(cmd, timeout, output="".join(chunks))
-            proc.wait()
+
+            # Genuine EOF on all pipe write ends. Flush any bytes buffered inside
+            # the incremental decoder plus the trailing line that had no newline.
+            _emit(decoder.decode(b"", final=True), flush=True)
+
+            # MINOR 1: EOF does NOT imply the child has exited — a descendant may
+            # have closed the inherited stdout pipe while the child keeps running
+            # (real EOF, child alive). A bare ``proc.wait()`` here would block
+            # forever, defeating the timeout the docstring promises. Bound the wait
+            # by the remaining deadline; on expiry, kill and raise TimeoutExpired
+            # with the accumulated partial output (same shape as the in-loop path).
+            try:
+                proc.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(chunks))
         except BaseException:
             # Any abrupt exit — SoftTimeLimitExceeded, KeyboardInterrupt,
             # UnicodeDecodeError, OSError, … — must not orphan a live child.
