@@ -4,9 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.encryption import encrypt_value
-from models import CloudCredentialTemplate
-from services.cluster_discovery_service import ClusterDiscoveryService
+from core.encryption import decrypt_value, encrypt_value
+from models import CloudCredentialTemplate, KubernetesCluster
+from services.cluster_discovery_service import (
+    ClusterDiscoveryService,
+    _normalize_api_server_host,
+)
 
 
 def _aws_template() -> CloudCredentialTemplate:
@@ -75,6 +78,56 @@ class TestDetectClustersFromCredentials:
         assert result["registered"][0]["provider"] == "aws"
         assert result["registered"][0]["status"] == "registered"
         assert len(result["errors"]) == 0
+
+    @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
+    def test_persisted_kubeconfig_is_encrypted_at_rest(self, mock_list, db, make_project):
+        """The kubeconfig must be stored ENCRYPTED, never as plaintext (I-*).
+
+        This asserts the encryption-at-rest invariant directly against the
+        persisted column: replacing ``encrypt_value(...)`` in
+        ``register_discovered_cluster`` with the plaintext yaml reds this test —
+        ``decrypt_value`` raises on the plaintext (not a Fernet token) and the
+        stored value would equal its own plaintext.
+        """
+        project = make_project()
+        template = _aws_template()
+        db.add(template)
+        db.flush()
+        project.credential_template_id = template.id
+        db.flush()
+
+        mock_list.return_value = [
+            {
+                "name": "eks-prod",
+                "endpoint": "https://ABC123.eks.amazonaws.com",
+                "certificate_authority_data": "LS0tLS1CRUdJTi...",
+                "region": "us-east-1",
+                "version": "1.29",
+                "arn": "arn:aws:eks:us-east-1:123456789012:cluster/eks-prod",
+                "account_id": "123456789012",
+            }
+        ]
+
+        svc = ClusterDiscoveryService(db)
+        result = svc.detect_clusters_from_credentials(project.id)
+        assert len(result["registered"]) == 1
+
+        cluster = db.query(KubernetesCluster).filter(
+            KubernetesCluster.name == "eks-prod",
+            KubernetesCluster.project_id == project.id,
+        ).one()
+
+        stored = cluster.kubeconfig_encrypted
+        assert stored, "kubeconfig column must be persisted"
+
+        # The at-rest value is NOT the plaintext kubeconfig.
+        assert "apiVersion" not in stored
+        decrypted = decrypt_value(stored)
+        assert stored != decrypted
+
+        # ...but it decrypts back to the real kubeconfig yaml.
+        assert "apiVersion" in decrypted
+        assert "kind: Config" in decrypted
 
     @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
     def test_skips_already_registered_aws_cluster(self, mock_list, db, make_project, make_k8s_cluster):
@@ -282,3 +335,21 @@ class TestDetectClustersFromCredentials:
         assert len(result["registered"]) == 1
         assert result["registered"][0]["name"] == "gke-prod"
         assert result["registered"][0]["provider"] == "gcp"
+
+
+class TestNormalizeApiServerHost:
+    """M3: composing the Azure api_server must never double-prefix a scheme/port."""
+
+    @pytest.mark.parametrize(
+        "server",
+        [
+            "aks-prod.hcp.eastus.azmk8s.io",           # bare host
+            "https://aks-prod.hcp.eastus.azmk8s.io",   # scheme-prefixed host
+            "aks-prod.hcp.eastus.azmk8s.io:6443",      # host:port
+        ],
+    )
+    def test_yields_single_correct_url(self, server):
+        assert (
+            _normalize_api_server_host(server)
+            == "https://aks-prod.hcp.eastus.azmk8s.io:443"
+        )
