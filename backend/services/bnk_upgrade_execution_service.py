@@ -414,8 +414,22 @@ class BnkUpgradeExecutionMixin:
                 scan_data = scanner.scan(cluster_id)
             except Exception as e:
                 emit(f"  Health scan failed: {e}, retrying...")
+                # Drop any partial, uncommitted scan writes (and their row locks)
+                # before sleeping so a failed iteration holds nothing.
+                self.db.rollback()
                 time.sleep(10)
                 continue
+
+            # Issue #194 (bonnyr-f5 r2, finding 4): scan() now ALWAYS writes
+            # last_synced_at, so its flush leaves an uncommitted UPDATE on the
+            # kubernetes_clusters row. In this multi-minute retry loop (10s/15s
+            # sleeps between iterations) that row lock would otherwise be held
+            # uncommitted across every sleep, blocking a concurrent
+            # scan_cluster_async commit for the same cluster. Commit the scan's
+            # writes immediately so the lock is released before we sleep — this
+            # matches ENG-006 ("callers commit after every step and every health
+            # snapshot") and persists each iteration's inventory + last_synced_at.
+            self.db.commit()
 
             bnk = scan_data.get("bnk_install", {})
             health_snapshot = {

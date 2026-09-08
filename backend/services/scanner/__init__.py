@@ -227,6 +227,38 @@ class ClusterScanner:
         end_time = datetime.now(UTC)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
+        # Issue #194: record when this cluster was last successfully scanned so
+        # "never scanned" (last_synced_at IS NULL) is distinguishable from
+        # "scanned and genuinely empty". Set only after all analysis has
+        # completed — a scan that raises earlier must NOT stamp a sync time.
+        # Every scan path routes through scan(), so this is the single place the
+        # stamp is written. It is FLUSHED here, not committed — the row is
+        # persisted only if the caller commits. Most callers do (the async
+        # registration/PUT task, the sync /scan route, the upgrade health gate,
+        # which commits each iteration), but some deliberately do NOT
+        # (get_adaptive_module_plan / get_adaptive_module_plan_from_scan run
+        # read-only and never commit), so for those the stamp is rolled back
+        # with the rest of their session — a missed stamp, never wrong data.
+        #
+        # CRITICAL: stamp ONLY when the scan genuinely reached the cluster's API
+        # server (data["reached"], derived from the version/namespace/API-group
+        # preflight in fetch_scan_data). Every fetcher swallows its exception and
+        # returns an empty default, so an expired-token / unreachable cluster
+        # otherwise produces a fully-shaped EMPTY dict and would stamp a fresh
+        # sync time over a panel with no data — the exact failure #194 reported,
+        # where a timestamp over an empty panel is strictly worse than NULL.
+        # A genuinely-empty-but-reachable cluster still stamps (reached is True);
+        # an unreachable / 401 one does not (reached is False) and stays NULL.
+        #
+        # Stamp start_time (NOT end_time): this is the same instant surfaced as
+        # scan_metadata.scanned_at, so "when was this scanned" has ONE answer
+        # across the DB stamp and the result payload (bonnyr-f5 r2 nit). It is a
+        # safe lower bound on freshness — the data is at most as old as the scan
+        # start; the scan duration remains available as scan_metadata.duration_ms.
+        if data.get("reached"):
+            cluster.last_synced_at = start_time
+            self.db.flush()
+
         return {
             "cluster_id": cluster_id,
             "cluster_name": cluster.name,

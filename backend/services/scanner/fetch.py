@@ -899,15 +899,33 @@ def fetch_scan_data(
 
     f5_tenant_pods, f5_utils_pods = f5_pods_f.result()
     crds = crds_f.result()
+    version_info = version_f.result()
+    namespaces = namespaces_f.result()
+
+    # Issue #194: did this scan genuinely reach the cluster's API server?
+    # Every individual fetcher swallows its exception and returns an empty
+    # default (frozenset()/[]/None), so on an expired-token / unreachable
+    # cluster fetch_scan_data still returns a fully-shaped dict of empties —
+    # indistinguishable, key-by-key, from a reachable-but-empty cluster.
+    # The three preflight-class signals below all traverse the same
+    # reach-and-authenticate path: the /apis discovery call (api_groups), the
+    # /version call (version_info) and the namespace list. A 401 / connection
+    # failure fails ALL THREE (empty set / None / empty list); a genuinely
+    # reachable cluster — even an otherwise empty one — always returns a
+    # version, registered API groups and at least the built-in namespaces.
+    # `reached` is False iff none of them came back, so the caller can stamp
+    # last_synced_at only on a scan that actually contacted the cluster.
+    reached = bool(api_groups) or version_info is not None or bool(namespaces)
 
     return {
-        "version_info": version_f.result(),
+        "reached": reached,
+        "version_info": version_info,
         "nodes": nodes_f.result(),
         "crds": crds,
         "crd_names": {c["name"] for c in crds},
         "crd_groups": {c["group"] for c in crds},
         "storage_classes": storage_f.result(),
-        "namespaces": namespaces_f.result(),
+        "namespaces": namespaces,
         "daemonsets": daemonsets_f.result(),
         "helm_releases": helm_f.result(),
         "f5_tenant_pods": f5_tenant_pods,

@@ -45,6 +45,27 @@ class TestClusterCreate:
         assert data["cloud_provider"] == "aws"
         mock_svc.create_cluster.assert_called_once()
 
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_registration_enqueues_initial_scan(self, mock_svc_cls, mock_enqueue, client, admin_headers,
+                                                 sample_user, sample_project):
+        """Issue #194 defect 1: registering a cluster enqueues the first inventory sync.
+
+        This is the path a roks/ibm register hits — the initial sync must be
+        enqueued so last_synced_at can be stamped when it completes.
+        """
+        mock_svc = MagicMock()
+        mock_svc.create_cluster.return_value = {"id": 16, "name": "f5e2e1", "cloud_provider": "ibm"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters",
+            json={"name": "f5e2e1", "kubeconfig": "YXBpVmVyc2lvbjogdjEK", "cloud_provider": "ibm"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(16)
+
     @patch("routes.k8s.clusters.ClusterManagementService")
     def test_create_cluster_operator_allowed(self, mock_svc_cls, client, operator_headers, all_test_users, sample_project):
         """Operator can create clusters."""
@@ -174,6 +195,26 @@ class TestClusterUpdate:
             headers=viewer_headers,
         )
         assert response.status_code == 403
+
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_noop_put_enqueues_rescan(self, mock_svc_cls, mock_enqueue, client, admin_headers,
+                                      sample_user, sample_project, make_k8s_cluster):
+        """Issue #194 defect 2: a no-op PUT (empty body) still enqueues a rescan.
+
+        Operators use a no-op PUT to force a refresh; the route must enqueue a
+        scan regardless of whether any field actually changed.
+        """
+        cluster = make_k8s_cluster(project=sample_project, name="noop-put")
+        mock_svc = MagicMock()
+        mock_svc.update_cluster.return_value = {"id": cluster.id, "name": "noop-put"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.put(
+            f"/api/k8s/clusters/{cluster.id}", json={}, headers=admin_headers
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(cluster.id)
 
 
 class TestClusterDelete:

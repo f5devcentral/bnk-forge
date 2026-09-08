@@ -15039,7 +15039,7 @@ export interface components {
         };
         /**
          * ClusterOperationResponse
-         * @description Generic response for cluster mutations (delete).
+         * @description Response for DELETE /api/k8s/clusters/{id} (cluster delete).
          */
         ClusterOperationResponse: {
             /**
