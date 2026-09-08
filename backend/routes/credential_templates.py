@@ -5,6 +5,7 @@ Thin HTTP handlers delegating to CredentialTemplateService.
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -14,13 +15,8 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
-from services.credential_template_service import (
-    SUPPORTED_PROVIDERS,
-    CredentialTemplateService,
-)
+from services.credential_template_service import CredentialTemplateService
 from utils.validators import validate_aws_region
-
-_SUPPORTED_PROVIDERS_MSG = ", ".join(sorted(SUPPORTED_PROVIDERS))
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +30,7 @@ router = APIRouter(prefix="/api/credential-templates", tags=["credential-templat
 class CredentialTemplateBase(BaseModel):
     name: str
     description: str | None = None
-    provider: str
+    provider: Literal["aws", "azure", "gcp", "ibm", "ssh"]
     aws_auth_method: str | None = None
     aws_profile: str | None = None
     region: str | None = None
@@ -67,10 +63,6 @@ class CredentialTemplateBase(BaseModel):
 
     @model_validator(mode="after")
     def _validate_regions(self):
-        if self.provider not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"Unsupported provider '{self.provider}'. Must be one of: {_SUPPORTED_PROVIDERS_MSG}."
-            )
         if self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
             validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
@@ -86,7 +78,7 @@ class CredentialTemplateCreate(CredentialTemplateBase):
 class CredentialTemplateUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    provider: str | None = None
+    provider: Literal["aws", "azure", "gcp", "ibm", "ssh"] | None = None
     aws_auth_method: str | None = None
     aws_profile: str | None = None
     region: str | None = None
@@ -119,12 +111,6 @@ class CredentialTemplateUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_regions(self):
-        # provider is optional on update; only validate when the caller is
-        # actually changing it, so an unknown value can't be persisted (issue #191).
-        if self.provider is not None and self.provider not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"Unsupported provider '{self.provider}'. Must be one of: {_SUPPORTED_PROVIDERS_MSG}."
-            )
         validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
         if self.region and self.provider == "aws":
             validate_aws_region(self.region, field_name="region")

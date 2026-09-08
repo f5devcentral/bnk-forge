@@ -349,9 +349,14 @@ class CredentialTemplateService:
 
         # If the caller is changing the provider, hold it to the same canonical
         # set as create so an update can't move a template onto a value that
-        # injects nothing (issue #191).  A None/absent provider leaves it unchanged.
+        # injects nothing (issue #191).  An explicit ``null`` (or an absent
+        # field) leaves the stored provider unchanged: drop it here so the
+        # generic assignment loop below can't write None into the
+        # ``nullable=False`` column and 500 on flush.
         if update_data.get("provider") is not None:
             validate_provider(update_data["provider"])
+        else:
+            update_data.pop("provider", None)
 
         # Handle encrypted fields
         encrypted_map = {

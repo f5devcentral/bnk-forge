@@ -309,6 +309,20 @@ class TestProviderValidation:
         assert result["provider"] == "aws"
         assert result["description"] == "just a note"
 
+    def test_update_with_explicit_null_provider_leaves_it_unchanged(self, db):
+        """Minor 3: ``PUT {"provider": null}`` must leave the provider unchanged,
+        not assign None into the ``nullable=False`` column and 500 on flush.
+
+        ``model_dump(exclude_unset=True)`` includes ``{"provider": None}`` for an
+        explicit null, so the presence-not-non-nullness guard must drop it."""
+        t = _create_template_in_db(db, name="aws-null-prov", provider="aws")
+        svc = CredentialTemplateService(db)
+        result = svc.update_template(t.id, _make_update_data(provider=None, description="edit"))
+        assert result["provider"] == "aws"
+        assert result["description"] == "edit"
+        db.refresh(t)
+        assert t.provider == "aws"
+
 
 # ---------------------------------------------------------------------------
 # list_templates / get_template

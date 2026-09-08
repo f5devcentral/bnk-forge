@@ -40729,6 +40729,13 @@
           },
           "provider": {
             "type": "string",
+            "enum": [
+              "aws",
+              "azure",
+              "gcp",
+              "ibm",
+              "ssh"
+            ],
             "title": "Provider"
           },
           "aws_auth_method": {
@@ -41531,7 +41538,14 @@
           "provider": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "aws",
+                  "azure",
+                  "gcp",
+                  "ibm",
+                  "ssh"
+                ]
               },
               {
                 "type": "null"
