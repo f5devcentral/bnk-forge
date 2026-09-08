@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppMutation } from '@/hooks/lib/useAppMutation';
 import { wafPanelsApi, type PanelCreatePayload, type TimeRange } from '@/lib/api/waf-panels';
 
 export function useWafPanelTemplates(clusterId: number | null) {
@@ -33,7 +34,7 @@ export function useWafPanelData(clusterId: number | null, panelId: number, timeR
 
 export function useCreateWafPanel(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (payload: PanelCreatePayload) => wafPanelsApi.create(clusterId, payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-panels', clusterId] }),
   });
@@ -41,7 +42,7 @@ export function useCreateWafPanel(clusterId: number) {
 
 export function useUpdateWafPanel(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ id, ...payload }: { id: number } & Partial<PanelCreatePayload>) =>
       wafPanelsApi.update(clusterId, id, payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-panels', clusterId] }),
@@ -50,7 +51,7 @@ export function useUpdateWafPanel(clusterId: number) {
 
 export function useDeleteWafPanel(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (panelId: number) => wafPanelsApi.remove(clusterId, panelId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-panels', clusterId] }),
   });

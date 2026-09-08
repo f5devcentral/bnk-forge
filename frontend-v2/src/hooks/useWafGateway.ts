@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppMutation } from '@/hooks/lib/useAppMutation';
 import {
   wafGatewayApi,
   type GatewayCreatePayload,
@@ -40,7 +41,7 @@ export function useGatewayClasses(clusterId: number | null) {
 
 export function useCreateGatewayClass(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (p: { name: string; controller_name?: string; description?: string }) =>
       wafGatewayApi.createGatewayClass(clusterId, p),
     onSuccess: () => qc.invalidateQueries({ queryKey: GW_KEYS.classes(clusterId) }),
@@ -49,7 +50,7 @@ export function useCreateGatewayClass(clusterId: number) {
 
 export function useDeleteGatewayClass(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (name: string) => wafGatewayApi.deleteGatewayClass(clusterId, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: GW_KEYS.classes(clusterId) }),
   });
@@ -68,7 +69,7 @@ export function useGateways(clusterId: number | null, namespace?: string) {
 
 export function useCreateGateway(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (p: GatewayCreatePayload) => wafGatewayApi.createGateway(clusterId, p),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['waf-gateways', clusterId] });
@@ -79,7 +80,7 @@ export function useCreateGateway(clusterId: number) {
 
 export function useUpdateGateway(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, payload }: { name: string; payload: GatewayUpdatePayload }) =>
       wafGatewayApi.updateGateway(clusterId, name, payload),
     onSuccess: () => {
@@ -91,7 +92,7 @@ export function useUpdateGateway(clusterId: number) {
 
 export function useDeleteGateway(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, namespace }: { name: string; namespace: string }) =>
       wafGatewayApi.deleteGateway(clusterId, name, namespace),
     onSuccess: () => {
@@ -114,7 +115,7 @@ export function useSecurityProfiles(clusterId: number | null, namespace?: string
 
 export function useCreateSecurityProfile(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (p: { name: string; namespace: string; policy_name: string }) =>
       wafGatewayApi.createSecurityProfile(clusterId, p),
     onSuccess: () => {
@@ -126,7 +127,7 @@ export function useCreateSecurityProfile(clusterId: number) {
 
 export function useUpdateSecurityProfile(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, payload }: { name: string; payload: { namespace: string; policy_name: string } }) =>
       wafGatewayApi.updateSecurityProfile(clusterId, name, payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-sec-profiles', clusterId] }),
@@ -135,7 +136,7 @@ export function useUpdateSecurityProfile(clusterId: number) {
 
 export function useDeleteSecurityProfile(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, namespace }: { name: string; namespace: string }) =>
       wafGatewayApi.deleteSecurityProfile(clusterId, name, namespace),
     onSuccess: () => {
@@ -158,7 +159,7 @@ export function useHTTPRoutes(clusterId: number | null, namespace?: string) {
 
 export function useCreateHTTPRoute(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (p: HTTPRouteCreatePayload) => wafGatewayApi.createHTTPRoute(clusterId, p),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['waf-httproutes', clusterId] });
@@ -169,7 +170,7 @@ export function useCreateHTTPRoute(clusterId: number) {
 
 export function useUpdateHTTPRoute(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, payload }: { name: string; payload: HTTPRouteUpdatePayload }) =>
       wafGatewayApi.updateHTTPRoute(clusterId, name, payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-httproutes', clusterId] }),
@@ -178,7 +179,7 @@ export function useUpdateHTTPRoute(clusterId: number) {
 
 export function useDeleteHTTPRoute(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, namespace }: { name: string; namespace: string }) =>
       wafGatewayApi.deleteHTTPRoute(clusterId, name, namespace),
     onSuccess: () => {
@@ -201,7 +202,7 @@ export function useReferenceGrants(clusterId: number | null, namespace?: string)
 
 export function useCreateReferenceGrant(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (p: Parameters<typeof wafGatewayApi.createReferenceGrant>[1]) =>
       wafGatewayApi.createReferenceGrant(clusterId, p),
     onSuccess: () => {
@@ -213,7 +214,7 @@ export function useCreateReferenceGrant(clusterId: number) {
 
 export function useDeleteReferenceGrant(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ name, namespace }: { name: string; namespace: string }) =>
       wafGatewayApi.deleteReferenceGrant(clusterId, name, namespace),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-refgrants', clusterId] }),

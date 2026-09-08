@@ -355,7 +355,7 @@ function GatewayWafTab({ clusterId, namespace }: { clusterId: number; namespace:
                           {gwRoutes.map(r => (
                             <div key={`${r.metadata.namespace}/${r.metadata.name}`} className="flex items-center gap-1.5">
                               <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                              <Route className="h-3 w-3 text-blue-500 shrink-0" />
+                              <Route className="h-3 w-3 text-info shrink-0" />
                               <span className="text-[10px] font-mono">{r.metadata.namespace}/{r.metadata.name}</span>
                               {(r.spec.hostnames ?? []).map(h => <span key={h} className="text-[10px] px-1 py-0.5 rounded bg-muted">{h}</span>)}
                               <StatusBadge conditions={r.status?.parents?.[0]?.conditions} />

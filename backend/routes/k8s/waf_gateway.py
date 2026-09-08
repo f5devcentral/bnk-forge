@@ -150,26 +150,26 @@ def _find_by_name(resources: list[dict], name: str) -> dict | None:
     return None
 
 
-def _build_listener(l: ListenerModel) -> dict:
+def _build_listener(lm: ListenerModel) -> dict:
     listener: dict[str, Any] = {
-        "name": l.name,
-        "protocol": l.protocol,
-        "port": l.port,
+        "name": lm.name,
+        "protocol": lm.protocol,
+        "port": lm.port,
     }
     # allowedRoutes
-    if l.allowed_routes_from == "All":
+    if lm.allowed_routes_from == "All":
         listener["allowedRoutes"] = {"namespaces": {"from": "All"}}
-    elif l.allowed_routes_from == "Selector" and l.allowed_routes_selector:
-        listener["allowedRoutes"] = {"namespaces": {"from": "Selector", "selector": l.allowed_routes_selector}}
+    elif lm.allowed_routes_from == "Selector" and lm.allowed_routes_selector:
+        listener["allowedRoutes"] = {"namespaces": {"from": "Selector", "selector": lm.allowed_routes_selector}}
     else:
         listener["allowedRoutes"] = {"namespaces": {"from": "Same"}}
     # TLS
-    if l.tls_mode and l.tls_cert_ref_name:
-        tls: dict[str, Any] = {"mode": l.tls_mode}
-        if l.tls_cert_ref_name:
-            cert_ref: dict[str, Any] = {"name": l.tls_cert_ref_name, "kind": "Secret"}
-            if l.tls_cert_ref_namespace:
-                cert_ref["namespace"] = l.tls_cert_ref_namespace
+    if lm.tls_mode and lm.tls_cert_ref_name:
+        tls: dict[str, Any] = {"mode": lm.tls_mode}
+        if lm.tls_cert_ref_name:
+            cert_ref: dict[str, Any] = {"name": lm.tls_cert_ref_name, "kind": "Secret"}
+            if lm.tls_cert_ref_namespace:
+                cert_ref["namespace"] = lm.tls_cert_ref_namespace
             tls["certificateRefs"] = [cert_ref]
         listener["tls"] = tls
     return listener
@@ -196,7 +196,7 @@ def _build_gateway_dict(
 
     spec: dict[str, Any] = {
         "gatewayClassName": gateway_class_name,
-        "listeners": [_build_listener(l) for l in listeners],
+        "listeners": [_build_listener(lm) for lm in listeners],
     }
     if addresses:
         spec["addresses"] = [{"type": "IPAddress", "value": a} for a in addresses]

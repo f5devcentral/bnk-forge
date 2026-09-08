@@ -388,7 +388,7 @@ function LogProfilesTab({ clusterId, namespace }: { clusterId: number; namespace
               return (
               <TableRow key={key} className="cursor-pointer" onClick={() => setViewingItem(lc)}>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => setSelected(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
+                  <button onClick={() => setSelected(s => { const n = new Set(s); if (n.has(key)) { n.delete(key); } else { n.add(key); } return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
                     {selected.has(key) ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
                   </button>
                 </TableCell>
@@ -575,7 +575,7 @@ function PoliciesTab({ clusterId, namespace, isDark, initialOpenPolicy, onConsum
               return (
               <TableRow key={key} className="cursor-pointer" onClick={() => setSelectedPolicy(p)}>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => setSelected(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
+                  <button onClick={() => setSelected(s => { const n = new Set(s); if (n.has(key)) { n.delete(key); } else { n.add(key); } return n; })} className="flex items-center text-muted-foreground hover:text-foreground">
                     {selected.has(key) ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
                   </button>
                 </TableCell>

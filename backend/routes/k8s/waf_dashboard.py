@@ -22,7 +22,9 @@ from fastapi import APIRouter, Depends, Query
 
 from core.errors import handle_route_errors
 from routes.auth import require_viewer
-from services.clickhouse import get_clickhouse, CLICKHOUSE_DB as _DB
+from services.clickhouse import CLICKHOUSE_DB as _DB
+from services.clickhouse import get_clickhouse
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
@@ -601,9 +603,12 @@ def dashboard_severity(
 
     # Map numeric rating to severity label matching BIG-IP NAP conventions
     def _label(rating: int) -> str:
-        if rating >= 5: return "Critical"
-        if rating >= 4: return "Error"
-        if rating >= 2: return "Warning"
+        if rating >= 5:
+            return "Critical"
+        if rating >= 4:
+            return "Error"
+        if rating >= 2:
+            return "Warning"
         return "Info"
 
     return {
@@ -853,7 +858,6 @@ def dashboard_top_geolocations(
         {"cid": cluster_id, "h": hours, "lim": limit},
     )
 
-    items = []
     by_country: dict = {}
     for r in rows:
         ip = r["ip"]

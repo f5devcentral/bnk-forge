@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppMutation } from '@/hooks/lib/useAppMutation';
 import { wafDashboardTabsApi } from '@/lib/api/waf-dashboard-tabs';
 
 export function useWafDashboardTabs(clusterId: number | null) {
@@ -13,7 +14,7 @@ export function useWafDashboardTabs(clusterId: number | null) {
 
 export function useCreateWafDashboardTab(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (name: string) => wafDashboardTabsApi.create(clusterId, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-dashboard-tabs', clusterId] }),
   });
@@ -21,7 +22,7 @@ export function useCreateWafDashboardTab(clusterId: number) {
 
 export function useRenameWafDashboardTab(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => wafDashboardTabsApi.rename(clusterId, id, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waf-dashboard-tabs', clusterId] }),
   });
@@ -29,7 +30,7 @@ export function useRenameWafDashboardTab(clusterId: number) {
 
 export function useDeleteWafDashboardTab(clusterId: number) {
   const qc = useQueryClient();
-  return useMutation({
+  return useAppMutation({
     mutationFn: (tabId: number) => wafDashboardTabsApi.remove(clusterId, tabId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['waf-dashboard-tabs', clusterId] });

@@ -155,14 +155,14 @@ describe('SecurityLogsTab', () => {
       <SecurityLogsTab {...defaultProps} crKind="appolicy" />,
       { wrapper }
     );
-    expect(screen.queryByPlaceholderText('vs_name…')).not.toBeInTheDocument();
+    expect(screen.queryByText('All virtual servers')).not.toBeInTheDocument();
 
     rerender(
       <QueryClientProvider client={new QueryClient()}>
         <SecurityLogsTab {...defaultProps} crKind="f5virtualserver" />
       </QueryClientProvider>
     );
-    expect(screen.getByPlaceholderText('vs_name…')).toBeInTheDocument();
+    expect(screen.getByText('All virtual servers')).toBeInTheDocument();
   });
 
   it('CSV export button is disabled when no entries', () => {

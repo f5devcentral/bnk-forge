@@ -1362,7 +1362,7 @@ export default function WafDashboard() {
                           <span className="tabular-nums text-muted-foreground">{s.hits >= 1000 ? `${(s.hits/1000).toFixed(1)}K` : s.hits}</span>
                         </div>
                         <div className="bg-muted rounded-full h-1 overflow-hidden">
-                          <div className="h-full bg-orange-400 rounded-full"
+                          <div className="h-full bg-warning rounded-full"
                             style={{width:`${Math.round(s.hits/(subviolData as {available:true;items:SubvioItem[]}).items[0].hits*100)}%`}} />
                         </div>
                       </div>

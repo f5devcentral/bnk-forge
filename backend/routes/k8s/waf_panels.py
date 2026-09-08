@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
-from core.errors import handle_route_errors, NotFoundError, BadRequestError
+from core.errors import NotFoundError, handle_route_errors
 from database import get_db
 from models.waf_panels import PANEL_QUERY_TEMPLATES, VALID_CHART_TYPES, VALID_TIME_RANGES, VALID_WIDTHS, WafPanel
 from routes.auth import require_operator, require_viewer

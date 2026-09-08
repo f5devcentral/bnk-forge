@@ -26,8 +26,8 @@ from routes.k8s.tunnels import router as tunnels_router
 from routes.k8s.waf_dashboard import router as waf_dashboard_router
 from routes.k8s.waf_dashboard_tabs import router as waf_dashboard_tabs_router
 from routes.k8s.waf_gateway import router as waf_gateway_router
-from routes.k8s.waf_panels import router as waf_panels_router
 from routes.k8s.waf_logs import router as waf_logs_router
+from routes.k8s.waf_panels import router as waf_panels_router
 from routes.k8s.waf_policies import router as waf_policies_router
 
 __all__ = [

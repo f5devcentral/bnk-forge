@@ -84,10 +84,10 @@ from routes.k8s import (
     topology_router,
     tunnels_router,
     waf_dashboard_router,
-    waf_panels_router,
     waf_dashboard_tabs_router,
     waf_gateway_router,
     waf_logs_router,
+    waf_panels_router,
     waf_policies_router,
 )
 from routes.k8s_websocket import router as k8s_websocket_router
