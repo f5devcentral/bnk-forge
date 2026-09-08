@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -911,7 +911,7 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int) -> bool:
+    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
@@ -921,14 +921,36 @@ class BenchmarkService(BaseService):
         UPDATE (WHERE status='pending') means exactly one caller flips it to RUNNING
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
+
+        ``group_id`` adds the group-sequential guard (MAJOR-2): the same conditional
+        UPDATE also requires that NO sibling of that group is currently RUNNING
+        (``NOT EXISTS``), so two different children of one group can never both be
+        claimed. This serializes the connect-drain path against
+        ``_dispatch_next_group_child`` even when they target *different* rows (so the
+        single-row ``WHERE id=`` guard alone would not): the first winning claim
+        publishes a RUNNING sibling, and every other claim in that group then fails
+        the NOT EXISTS and skips. Pass it whenever the run belongs to a group;
+        standalone (group-less) runs omit it and rely on the single-row guard.
         """
         now = datetime.now(UTC)
+        filters = [
+            BenchmarkRun.id == run_id,
+            BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+        ]
+        if group_id is not None:
+            sibling = aliased(BenchmarkRun)
+            running_sibling = (
+                self.db.query(sibling.id)
+                .filter(
+                    sibling.run_group_id == group_id,
+                    sibling.status == BenchmarkRunStatus.RUNNING,
+                )
+                .exists()
+            )
+            filters.append(~running_sibling)
         result = (
             self.db.query(BenchmarkRun)
-            .filter(
-                BenchmarkRun.id == run_id,
-                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
-            )
+            .filter(*filters)
             .update(
                 {
                     BenchmarkRun.status: BenchmarkRunStatus.RUNNING,
