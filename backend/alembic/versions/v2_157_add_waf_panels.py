@@ -20,7 +20,10 @@ def upgrade() -> None:
         "waf_panels",
         # checkfirst=True handled at migration level — table may exist from manual creation
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("cluster_id", sa.Integer(), sa.ForeignKey("k8s_clusters.id", ondelete="CASCADE"), nullable=False, index=True),
+        # no FK to keep schema portable, matches waf_ingestion_cursors / waf_dashboard_tabs
+        # (the prior sa.ForeignKey("k8s_clusters.id") referenced a table that does not exist —
+        #  the clusters table is "kubernetes_clusters" — so it failed to create on Postgres)
+        sa.Column("cluster_id", sa.Integer(), nullable=False, index=True),
         sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
         sa.Column("title", sa.String(255), nullable=False),
         sa.Column("chart_type", sa.String(50), nullable=False, server_default="bar"),
