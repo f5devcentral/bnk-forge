@@ -42,11 +42,11 @@ import {
   Zap,
   Trash2,
   Search,
-  CheckCircle2,
   Loader2,
   Plus,
   Play,
   RefreshCw,
+  Server,
 } from 'lucide-react';
 import {
   useBenchmarkTargets,
@@ -107,12 +107,14 @@ function proxyDeployBadge(status: string) {
   return PROXY_DEPLOY_BADGE[(status as ProxyDeployStatus)] ?? PROXY_DEPLOY_BADGE.pending;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
+export interface BenchmarkTargetsTabProps {
+  selectedClusterId?: number;
+}
 
-export function BenchmarkTargetsTab() {
-  const { data: targetsData, isLoading } = useBenchmarkTargets();
+export function BenchmarkTargetsTab({ selectedClusterId }: BenchmarkTargetsTabProps = {}) {
+  const { data: targetsData, isLoading } = useBenchmarkTargets(
+    selectedClusterId ? { cluster_id: selectedClusterId } : undefined
+  );
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const { data: targetDetail } = useBenchmarkTarget(selectedTargetId ?? undefined);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -182,7 +184,7 @@ export function BenchmarkTargetsTab() {
   const resetForm = () => {
     setFormName('');
     setFormDescription('');
-    setFormClusterId('');
+    setFormClusterId(selectedClusterId ? String(selectedClusterId) : '');
     setFormLlmBaseUrl('');
     setFormLlmModel('');
     setFormLlmNamespace('');
@@ -201,52 +203,64 @@ export function BenchmarkTargetsTab() {
     );
   }
 
-  // Detail view when a target is selected
+  // Detail view for selected target
   if (selectedTargetId && targetDetail) {
+    const isVal = validateTarget.isPending;
+    const tBadge = targetBadge(targetDetail.status);
+    const clusterName = targetDetail.cluster_name || clusters.find(c => c.id === targetDetail.cluster_id)?.name || `Cluster #${targetDetail.cluster_id}`;
     const proxies = (targetDetail as BenchmarkTargetDetail).proxy_deployments ?? [];
     const deployedTypes = new Set(proxies.map(p => p.proxy_type));
     const availableTypes = AVAILABLE_PROXY_TYPES.filter(t => !deployedTypes.has(t));
-    const tBadge = targetBadge(targetDetail.status);
 
     return (
       <div className="space-y-6">
-        {/* Back + Header */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => { setSelectedTargetId(null); setActiveRunGroupId(null); }}>
-            ← Back
-          </Button>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-foreground truncate">
-              {targetDetail.name}
-            </h3>
-            <p className="text-sm text-muted-foreground truncate">{targetDetail.description || 'No description'}</p>
+        {/* Header with back button */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedTargetId(null)}>
+              ← Back to targets
+            </Button>
+            <h3 className="text-lg font-semibold text-foreground">{targetDetail.name}</h3>
+            <Badge variant={tBadge.variant}>{tBadge.label}</Badge>
           </div>
-          <Badge variant={tBadge.variant}>{tBadge.label}</Badge>
-          <Button
-            variant="outline" size="sm"
-            onClick={() => discoverProxies.mutate(selectedTargetId)}
-            disabled={discoverProxies.isPending}
-          >
-            {discoverProxies.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
-            {discoverProxies.isPending ? 'Scanning...' : 'Discover Proxies'}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => validateTarget.mutate(selectedTargetId)}>
-            <CheckCircle2 className="h-4 w-4 mr-1" />
-            Validate
-          </Button>
-          <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
-            if (confirm(`Delete target "${targetDetail.name}"? This will remove all proxy deployments.`)) {
-              deleteTarget.mutate(selectedTargetId, { onSuccess: () => { setSelectedTargetId(null); setActiveRunGroupId(null); } });
-            }
-          }}>
-            <Trash2 className="h-4 w-4 mr-1" />
-            Delete
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isVal}
+              onClick={() => validateTarget.mutate(targetDetail.id)}
+            >
+              {isVal ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              Validate
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                if (confirm(`Delete target "${targetDetail.name}" and all associated proxy deployments?`)) {
+                  deleteTarget.mutate(targetDetail.id, {
+                    onSuccess: () => setSelectedTargetId(null),
+                  });
+                }
+              }}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete
+            </Button>
+          </div>
         </div>
 
         {/* Target Info */}
         <SectionCard title="Target details" compact>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div>
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">Cluster</span>
+              <p className="flex items-center gap-1.5 text-xs font-medium mt-1 text-foreground">
+                <Server className="h-3.5 w-3.5 text-primary shrink-0" />
+                {clusterName}
+              </p>
+            </div>
             <div>
               <span className="text-xs uppercase tracking-wider text-muted-foreground">LLM endpoint</span>
               <p className="font-mono text-xs mt-1 text-foreground/80">{targetDetail.llm_base_url}</p>
@@ -508,7 +522,7 @@ export function BenchmarkTargetsTab() {
           K8s clusters + LLM endpoints used as benchmark targets. Deploy proxies and trigger tests.
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { setScanClusterId(''); setShowScanDialog(true); }}>
+          <Button variant="outline" size="sm" onClick={() => { setScanClusterId(selectedClusterId ? String(selectedClusterId) : ''); setShowScanDialog(true); }}>
             <Search className="h-4 w-4 mr-1" />
             Scan cluster
           </Button>
@@ -530,7 +544,7 @@ export function BenchmarkTargetsTab() {
               Scan a cluster to auto-discover LLM services and proxies, or add a target manually.
             </p>
             <div className="flex gap-2 justify-center">
-              <Button size="sm" onClick={() => { setScanClusterId(''); setShowScanDialog(true); }}>
+              <Button size="sm" onClick={() => { setScanClusterId(selectedClusterId ? String(selectedClusterId) : ''); setShowScanDialog(true); }}>
                 <Search className="h-4 w-4 mr-1" />
                 Scan cluster
               </Button>
@@ -548,6 +562,7 @@ export function BenchmarkTargetsTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Cluster</TableHead>
                   <TableHead>LLM endpoint</TableHead>
                   <TableHead>Model</TableHead>
                   <TableHead>Proxies</TableHead>
@@ -559,9 +574,16 @@ export function BenchmarkTargetsTab() {
               <TableBody>
                 {targets.map(target => {
                   const tBadge = targetBadge(target.status);
+                  const clusterName = target.cluster_name || clusters.find(c => c.id === target.cluster_id)?.name || `Cluster #${target.cluster_id}`;
                   return (
                     <TableRow key={target.id} className="cursor-pointer" onClick={() => { setActiveRunGroupId(null); setSelectedTargetId(target.id); }}>
                       <TableCell className="font-medium text-foreground">{target.name}</TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground/90">
+                          <Server className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          {clusterName}
+                        </span>
+                      </TableCell>
                       <TableCell className="font-mono text-xs text-foreground/80">{target.llm_base_url}</TableCell>
                       <TableCell className="text-xs text-foreground/80">{target.llm_model}</TableCell>
                       <TableCell>

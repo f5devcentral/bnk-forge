@@ -118,6 +118,11 @@ class BenchmarkRun(Base):
     proxy_deployment = relationship("ProxyDeployment", back_populates="runs")
     run_group = relationship("BenchmarkRunGroup", back_populates="runs")
 
+    @property
+    def cluster_name(self) -> str | None:
+        """Name of the associated Kubernetes cluster (via target)."""
+        return self.target.cluster.name if (self.target and self.target.cluster) else None
+
     __table_args__ = (
         Index("idx_benchmark_run_proxy_created", "proxy", "created_at"),
         Index("idx_benchmark_run_tool_proxy", "tool", "proxy"),
@@ -182,6 +187,11 @@ class BenchmarkRunGroup(Base):
     # Relationships
     runs = relationship("BenchmarkRun", back_populates="run_group", order_by="BenchmarkRun.id")
     target = relationship("BenchmarkTarget")
+
+    @property
+    def cluster_name(self) -> str | None:
+        """Name of the associated Kubernetes cluster (via target)."""
+        return self.target.cluster.name if (self.target and self.target.cluster) else None
 
     __table_args__ = (
         Index("idx_benchmark_run_group_scenario", "scenario_key"),
@@ -329,6 +339,11 @@ class BenchmarkTarget(Base):
     cluster = relationship("KubernetesCluster")
     proxy_deployments = relationship("ProxyDeployment", back_populates="target", cascade="all, delete-orphan")
     runs = relationship("BenchmarkRun", back_populates="target")
+
+    @property
+    def cluster_name(self) -> str | None:
+        """Name of the associated Kubernetes cluster."""
+        return self.cluster.name if self.cluster else None
 
     @property
     def proxy_count(self) -> int:
