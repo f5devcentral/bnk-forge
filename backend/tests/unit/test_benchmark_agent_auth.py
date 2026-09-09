@@ -327,7 +327,7 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "agent", "role": "admin"})
+        token = create_access_token(data={"sub": "viewer-user", "role": "viewer"})
         ws = MagicMock()
         ws.query_params = {"token": token}
 

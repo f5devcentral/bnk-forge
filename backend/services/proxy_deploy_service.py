@@ -23,6 +23,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+from kubernetes import client as k8s_client
+from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.errors import BadRequestError, NotFoundError, ReleaseNotFoundError
@@ -31,6 +33,8 @@ from models.enums import ProxyDeploymentStatus
 from services.cluster_utils import kubeconfig_for_cluster
 from services.entity_lock import EntityLock, set_locked_entity_fields
 from services.helm_service import HelmService
+from services.kubernetes_service import KubernetesService
+from services.proxy_discovery_service import _resolve_external_url
 from utils.security import validate_cli_arg
 
 logger = logging.getLogger(__name__)
@@ -326,7 +330,9 @@ class ProxyDeployService:
                 )
             else:
                 proxy_url = f"http://{release}.{namespace}:{PROXY_LISTEN_PORT}"
-                external_url = None
+                external_url = self._resolve_service_external_url(
+                    cluster, release, namespace, on_status,
+                )
 
             self._write(
                 deploy,
@@ -439,6 +445,60 @@ class ProxyDeployService:
             )
             self._emit(on_status, f"Uninstall FAILED: {exc}")
             raise
+
+    def _resolve_service_external_url(
+        self,
+        cluster: Any,
+        release: str,
+        namespace: str,
+        on_status: Any = None,
+    ) -> str | None:
+        """Resolve a routable external URL (NodePort or LoadBalancer) for a deployed proxy service."""
+        try:
+            k8s_svc = KubernetesService(self.db)
+            api_client = k8s_svc.load_kubeconfig(cluster)
+            core_v1 = k8s_client.CoreV1Api(api_client)
+
+            # Look up service by exact name or matching pattern in namespace
+            svc = None
+            try:
+                svc = core_v1.read_namespaced_service(name=release, namespace=namespace, _request_timeout=10)
+            except ApiException:
+                pass
+
+            if not svc:
+                svcs = core_v1.list_namespaced_service(namespace=namespace, _request_timeout=10)
+                for item in svcs.items:
+                    item_name = item.metadata.name or ""
+                    if release in item_name or item_name in release:
+                        svc = item
+                        break
+
+            if not svc:
+                self._emit(on_status, f"Could not find K8s Service for release '{release}' to resolve external URL")
+                return None
+
+            ports = svc.spec.ports or []
+            if not ports:
+                return None
+
+            # Prefer http/proxy/web named ports or standard ports 80/10080 or first with node_port
+            chosen_port = ports[0]
+            for p in ports:
+                p_name = (p.name or "").lower()
+                if p_name in ("http", "proxy", "web") or p.port in (80, 10080):
+                    chosen_port = p
+                    break
+
+            ext_url = _resolve_external_url(core_v1, svc, chosen_port)
+            if ext_url:
+                self._emit(on_status, f"Resolved external URL: {ext_url}")
+            return ext_url
+
+        except Exception as exc:
+            logger.warning("Failed to resolve external URL for service %s/%s: %s", namespace, release, exc)
+            self._emit(on_status, f"Warning: failed to resolve external URL: {exc}")
+            return None
 
     # ------------------------------------------------------------------
     # Envoy Gateway data-plane resources (Helm chart only ships controller)
@@ -1186,6 +1246,12 @@ class ProxyDeployService:
         return {
             "service": {
                 "type": "NodePort",
+                "ports": {
+                    "http": PROXY_LISTEN_PORT,
+                },
+            },
+            "containerPorts": {
+                "http": PROXY_LISTEN_PORT,
             },
             "config": (
                 f"frontend llm_proxy\n"

@@ -310,13 +310,22 @@ def list_benchmark_runs(
     tool: str | None = Query(None),
     model: str | None = Query(None),
     status: str | None = Query(None),
+    cluster_id: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     """List benchmark runs with optional filters."""
     svc = BenchmarkService(db)
-    runs, total = svc.list_runs(proxy=proxy, tool=tool, model=model, status=status, limit=limit, offset=offset)
+    runs, total = svc.list_runs(
+        proxy=proxy,
+        tool=tool,
+        model=model,
+        status=status,
+        cluster_id=cluster_id,
+        limit=limit,
+        offset=offset,
+    )
     return {"runs": runs, "total": total, "limit": limit, "offset": offset}
 
 
@@ -1107,7 +1116,7 @@ def trigger_benchmark_run(
 
     # 3. Build RunConfig — keys map directly to aiperf CLI flags
     #    See: https://github.com/ai-dynamo/aiperf/blob/main/docs/cli-options.md
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     config_json: dict = {
         "url": base_url,
@@ -1272,7 +1281,7 @@ def run_benchmark_scenario(
             code="AGENT_NOT_CONNECTED",
         )
 
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     # 3. Expand scenario into a run-group + child runs
     group, runs = bench_svc.create_run_group_from_scenario(
@@ -1298,26 +1307,11 @@ def run_benchmark_scenario(
     dispatched = 0
     if runs:
         first = runs[0]
-        first_id = first.id
-        first_config = first.config_snapshot
-        # Claim the first child ATOMICALLY (PENDING→RUNNING) and PERSIST the claim
-        # BEFORE the blocking dispatch_to_agent round-trip (MAJOR-1). The group +
-        # children were already committed PENDING above, so a WS (re)connect firing
-        # during this dispatch window would otherwise find the child still PENDING,
-        # win claim_pending_run, and send a SECOND {"type":"run"} for the same run.
-        # Going through the same atomic claim (group-guarded) makes initial-dispatch
-        # and connect-drain mutually exclusive on this row — the loser skips — and
-        # leaves no window where the row is PENDING while a dispatch is in flight.
-        if bench_svc.claim_pending_run(first_id, group_id=group.id):
-            db.commit()
-            command = {"type": "run", "run_id": first_id, "config": first_config}
-            if dispatch_to_agent(agent_id, command):
-                dispatched = 1
-            else:
-                # Send failed after a winning claim — revert RUNNING→PENDING so a
-                # later reconnect-drain can re-dispatch it (mirrors the drain path).
-                bench_svc.release_claimed_run(first_id)
-                db.commit()
+        command = {"type": "run", "run_id": first.id, "config": first.config_snapshot}
+        if dispatch_to_agent(agent_id, command):
+            first.status = BenchmarkRunStatus.RUNNING
+            first.started_at = datetime.now(UTC)
+            dispatched = 1
 
     if dispatched:
         group.status = BenchmarkRunStatus.RUNNING
@@ -1485,6 +1479,11 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
+            # The built-in agent container connects using the bootstrap token minted
+            # before registration (carrying sub=forge-builtin-agent, role=agent, and no agent_id).
+            # Operator and admin bearer tokens also carry no agent_id claim.
+            if payload.get("sub") == "forge-builtin-agent" or payload.get("role") in _AGENT_WRITE_ROLES:
+                return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
                 agent_id,
@@ -1613,6 +1612,12 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                 )
                 if sent:
                     logger.info("Agent %d connect: dispatched pending run #%d", agent_id, pending_run.id)
+                    if pending_run.run_group_id:
+                        group = svc.get_run_group(pending_run.run_group_id)
+                        if group and group.status == BenchmarkRunStatus.PENDING:
+                            group.status = BenchmarkRunStatus.RUNNING
+                            group.started_at = datetime.now(UTC)
+                            db.commit()
                 else:
                     svc.release_claimed_run(pending_run.id)
                     db.commit()
