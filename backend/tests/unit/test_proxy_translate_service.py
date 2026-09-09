@@ -859,3 +859,55 @@ class TestF5AnnotationUnmapped:
         entries = self._collect({"virtual-server.f5.com/partition": "Production"})
         assert len(entries) == 1
         assert "partition" in entries[0].detail
+
+
+# ===========================================================================
+# Deployment Proxy Translation
+# ===========================================================================
+
+
+class TestDeploymentProxyTranslation:
+    def test_translate_synthetic_haproxy_deployment(self):
+        from services.proxy_translate_service import translate_to_bnk
+
+        synthetic_ingress = {
+            "metadata": {
+                "name": "perf-haproxy-vllm-952188",
+                "namespace": "awsbnkctl-scn-aiinference",
+            },
+            "spec": {
+                "rules": [
+                    {
+                        "http": {
+                            "paths": [
+                                {
+                                    "path": "/",
+                                    "pathType": "Prefix",
+                                    "backend": {
+                                        "service": {
+                                            "name": "vllm",
+                                            "port": {"number": 80},
+                                        }
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        }
+
+        result = translate_to_bnk(
+            proxy_type="haproxy",
+            source_kind="Deployment",
+            source_ingresses=[synthetic_ingress],
+            source_httproutes=[],
+            gateway_class_name="f5-bnk",
+        )
+
+        assert "GatewayClass" in result.gatewayclass_yaml
+        assert "Gateway" in result.gateway_yaml
+        assert "HTTPRoute" in result.httproute_yaml
+        assert "vllm" in result.httproute_yaml
+        assert "awsbnkctl-scn-aiinference" in result.gateway_yaml or "awsbnkctl-scn-aiinference" in result.httproute_yaml
+
