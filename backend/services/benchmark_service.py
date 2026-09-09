@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import aliased, joinedload
+from sqlalchemy.orm import joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -495,11 +495,14 @@ class BenchmarkService(BaseService):
         tool: str | None = None,
         model: str | None = None,
         status: str | None = None,
+        cluster_id: int | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[BenchmarkRun], int]:
         """List benchmark runs with optional filters."""
-        query = self.db.query(BenchmarkRun)
+        query = self.db.query(BenchmarkRun).options(
+            joinedload(BenchmarkRun.target).joinedload(BenchmarkTarget.cluster),
+        )
         if proxy:
             query = query.filter(BenchmarkRun.proxy == proxy)
         if tool:
@@ -508,6 +511,10 @@ class BenchmarkService(BaseService):
             query = query.filter(BenchmarkRun.model == model)
         if status:
             query = query.filter(BenchmarkRun.status == status)
+        if cluster_id:
+            query = query.join(BenchmarkTarget, BenchmarkRun.target_id == BenchmarkTarget.id).filter(
+                BenchmarkTarget.cluster_id == cluster_id
+            )
 
         total = query.count()
         runs = query.order_by(desc(BenchmarkRun.created_at)).limit(limit).offset(offset).all()
@@ -516,7 +523,9 @@ class BenchmarkService(BaseService):
 
     def get_run(self, run_id: int, with_details: bool = False) -> BenchmarkRun:
         """Get a benchmark run by ID."""
-        query = self.db.query(BenchmarkRun)
+        query = self.db.query(BenchmarkRun).options(
+            joinedload(BenchmarkRun.target).joinedload(BenchmarkTarget.cluster),
+        )
         if with_details:
             query = query.options(
                 joinedload(BenchmarkRun.config),
@@ -911,7 +920,7 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
+    def claim_pending_run(self, run_id: int) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
@@ -921,7 +930,6 @@ class BenchmarkService(BaseService):
         UPDATE (WHERE status='pending') means exactly one caller flips it to RUNNING
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
-
         ``group_id`` adds the group-sequential guard (MAJOR-2 / MAJOR-A):
         Under PostgreSQL READ COMMITTED, evaluating NOT EXISTS without a lock can
         suffer write-skew if concurrent transactions claim different sibling rows.
