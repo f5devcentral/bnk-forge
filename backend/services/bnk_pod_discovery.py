@@ -37,7 +37,15 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 # Includes "default" so manual/test deployments are discovered too.
 
-BNK_NAMESPACES = ("f5-bnk", "f5-operator", "f5-utils", "default")
+BNK_NAMESPACES = (
+    "f5-bnk",
+    "f5-cne-core",
+    "f5-cne-system",
+    "f5-bnk-instance",
+    "f5-operator",
+    "f5-utils",
+    "default",
+)
 
 # All F5 pod name prefixes — used for cluster-wide sweep (fallback)
 ALL_F5_PREFIXES = (
@@ -262,7 +270,7 @@ def _fetch_pods_in_namespace(api_client, namespace: str) -> list:
     """Fetch raw V1Pod objects from a single namespace. Returns [] if namespace doesn't exist."""
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        resp = v1.list_namespaced_pod(namespace=namespace, _request_timeout=10)
+        resp = v1.list_namespaced_pod(namespace=namespace, _request_timeout=45)
         return resp.items
     except Exception as e:
         logger.debug(f"Could not fetch pods in {namespace} (may not exist): {e}")
@@ -278,7 +286,7 @@ def _sweep_all_namespaces(api_client) -> list:
     """
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        resp = v1.list_pod_for_all_namespaces(_request_timeout=15)
+        resp = v1.list_pod_for_all_namespaces(_request_timeout=(5, 25))
         return [pod for pod in resp.items if pod.metadata and _is_bnk_pod(pod)]
     except Exception as e:
         logger.debug(f"Cluster-wide pod sweep failed (non-fatal): {e}")

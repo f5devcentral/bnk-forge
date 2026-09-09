@@ -203,9 +203,11 @@ class KubernetesServiceBase:
         # a single broken request into ~75s of blocking. The breaker assumes one
         # call = one wire attempt; per-call _request_timeout enforces the upper
         # bound on the wire attempt itself.
+        import urllib3.util
         cfg = client.Configuration.get_default_copy()
-        cfg.retries = 0
-        return client.ApiClient(cfg)
+        cfg.retries = urllib3.util.Retry(total=0, connect=0, read=0, redirect=0)
+        cfg.connection_pool_maxsize = 32
+        return client.ApiClient(cfg, pool_threads=32)
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:
@@ -404,7 +406,6 @@ class KubernetesServiceBase:
         """Delegate to shared cluster_utils._maybe_open_ssh_tunnel()."""
         return _maybe_open_ssh_tunnel(cluster)
 
-    @with_breaker("cluster", target_id_arg="cluster_id")
     def test_connection(self, cluster_id: int) -> dict[str, Any]:
         """Test connection to cluster."""
         try:
@@ -412,13 +413,20 @@ class KubernetesServiceBase:
             api_client = self.load_kubeconfig(cluster)
             v1 = client.CoreV1Api(api_client)
 
-            # Bound the wire attempt: connect=3s, read=8s. Without _request_timeout
+            # Bound the wire attempt: connect=5s, read=15s. Without _request_timeout
             # a kubernetes-client call inherits the OS TCP timeout (75s+).
-            v1.list_namespace(limit=1, _request_timeout=(3, 8))
+            v1.list_namespace(limit=1, _request_timeout=(5, 15))
 
             # Get server version
             version_api = client.VersionApi(api_client)
-            version_info = version_api.get_code(_request_timeout=(3, 8))
+            version_info = version_api.get_code(_request_timeout=(5, 15))
+
+            try:
+                from services.reachability import get_reachability_registry
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=True)
+            except Exception:
+                pass
 
             return {
                 "success": True,
@@ -431,6 +439,12 @@ class KubernetesServiceBase:
             }
         except ApiException as e:
             logger.error(f"Kubernetes API error during connection test: {e}")
+            try:
+                from services.reachability import get_reachability_registry, categorize_exception
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
+            except Exception:
+                pass
             return {
                 "success": False,
                 "message": f"Kubernetes API error: {e.reason}",
@@ -438,6 +452,12 @@ class KubernetesServiceBase:
             }
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
+            try:
+                from services.reachability import get_reachability_registry, categorize_exception
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
+            except Exception:
+                pass
             return {
                 "success": False,
                 "message": str(e)

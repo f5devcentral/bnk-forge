@@ -170,21 +170,24 @@ class ResourcesMixin:
                             version=resource_type.api_version,
                             namespace=namespace,
                             plural=resource_type.plural,
-                            label_selector=label_selector or ""
+                            label_selector=label_selector or "",
+                            _request_timeout=(3, 5),
                         )
                     else:
                         response = custom_api.list_cluster_custom_object(
                             group=resource_type.api_group,
                             version=resource_type.api_version,
                             plural=resource_type.plural,
-                            label_selector=label_selector or ""
+                            label_selector=label_selector or "",
+                            _request_timeout=(3, 5),
                         )
                 else:
                     response = custom_api.list_cluster_custom_object(
                         group=resource_type.api_group,
                         version=resource_type.api_version,
                         plural=resource_type.plural,
-                        label_selector=label_selector or ""
+                        label_selector=label_selector or "",
+                        _request_timeout=(3, 5),
                     )
 
                 resources = response.get('items', [])
@@ -251,9 +254,9 @@ class ResourcesMixin:
         list_method = getattr(api_instance, method_name)
 
         if resource_type.namespaced and namespace:
-            response = list_method(namespace=namespace, label_selector=label_selector or "")
+            response = list_method(namespace=namespace, label_selector=label_selector or "", _request_timeout=(5, 15))
         else:
-            response = list_method(label_selector=label_selector or "")
+            response = list_method(label_selector=label_selector or "", _request_timeout=(5, 15))
 
         return response.items
 
