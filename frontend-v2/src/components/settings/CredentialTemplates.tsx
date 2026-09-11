@@ -1097,7 +1097,7 @@ export default function CredentialTemplates() {
                                  template.aws_auth_method === 'sso' ||
                                  !!(template.aws_sso_start_url && template.aws_sso_region && template.aws_sso_account_id && template.aws_sso_role_name))) ||
                                (template.provider === 'azure' &&
-                                 (template.azure_auth_method === 'sso' || !template.has_azure_client_secret))) && (
+                                 template.azure_auth_method === 'sso')) && (
                                <DropdownMenuItem
                                  onClick={() => {
                                    setSsoAuthTemplateId(template.id);

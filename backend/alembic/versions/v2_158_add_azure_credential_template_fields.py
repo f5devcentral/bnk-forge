@@ -1,14 +1,14 @@
 """Add Azure credential fields to cloud_credential_templates.
 
-Revision ID: v2_156
-Revises: v2_155
+Revision ID: v2_158
+Revises: v2_157
 """
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "v2_156"
-down_revision = "v2_155"
+revision = "v2_158"
+down_revision = "v2_157"
 branch_labels = None
 depends_on = None
 

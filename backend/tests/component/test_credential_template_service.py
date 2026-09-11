@@ -1053,3 +1053,84 @@ class TestAzureTemplateService:
         assert res["success"] is False
         assert res["error"] == "Token expired"
 
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_azure_sso_test_refreshes_and_persists_token(
+        self, mock_azure_cls, db
+    ):
+        """M2 regression: when test_template refreshes an expired SSO token, the
+        refreshed access and refresh tokens must be committed and persisted to the DB."""
+        from core.encryption import decrypt_value, encrypt_value
+
+        mock_azure = MagicMock()
+        mock_azure.refresh_credentials.return_value = {
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "expires_in": 7200,
+        }
+        mock_azure.validate_subscription_access.return_value = {
+            "subscription_id": "sub-123",
+            "display_name": "Test Sub",
+        }
+        mock_azure_cls.return_value = mock_azure
+
+        data = _make_template_data(
+            name="azure-sso-refresh-persist",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-111",
+            azure_client_id="client-222",
+            azure_subscription_id="sub-123",
+        )
+        svc = CredentialTemplateService(db)
+        created = svc.create_template(data)
+
+        template = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        template.azure_sso_access_token_encrypted = encrypt_value("old-access-token")
+        template.azure_sso_refresh_token_encrypted = encrypt_value("old-refresh-token")
+        template.azure_sso_token_expiry = datetime.now(UTC) - timedelta(hours=1)
+        db.commit()
+
+        res = svc.test_template(created["id"])
+        assert res["success"] is True
+        mock_azure.refresh_credentials.assert_called_once()
+
+        # Re-fetch from fresh query to assert DB persistence
+        db.expire_all()
+        refreshed_tmpl = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        assert decrypt_value(refreshed_tmpl.azure_sso_access_token_encrypted) == "new-access-token"
+        assert decrypt_value(refreshed_tmpl.azure_sso_refresh_token_encrypted) == "new-refresh-token"
+        expiry = refreshed_tmpl.azure_sso_token_expiry
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        assert expiry > datetime.now(UTC)
+
+    def test_has_complete_sso_config_azure_auth_methods(self, db):
+        """m2 regression: _has_complete_sso_config must return True only for Azure SSO,
+        not for Azure Service Principal templates."""
+        sp_tmpl = CloudCredentialTemplate(
+            name="azure-sp",
+            provider="azure",
+            azure_auth_method="service_principal",
+            azure_tenant_id="tenant-1",
+            azure_client_id="client-1",
+        )
+        assert CredentialTemplateService._has_complete_sso_config(sp_tmpl) is False
+
+        sso_tmpl = CloudCredentialTemplate(
+            name="azure-sso",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-1",
+            azure_client_id="client-1",
+        )
+        assert CredentialTemplateService._has_complete_sso_config(sso_tmpl) is True
+
+

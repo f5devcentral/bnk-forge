@@ -30,7 +30,7 @@ export interface CloudCredentialTemplate {
   azure_subscription_id?: string;
   azure_tenant_id?: string;
   azure_client_id?: string;
-  has_azure_client_secret?: boolean;
+  has_azure_client_secret: boolean;
   has_azure_credentials: boolean;
   azure_sso_authenticated_at?: string;
   azure_sso_token_expiry?: string;

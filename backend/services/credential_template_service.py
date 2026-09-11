@@ -115,7 +115,7 @@ def _test_aws_template_via_boto3(template: Any) -> dict[str, Any]:
                 "message": f"Failed to test credentials: {str(e)}"}
 
 
-def _test_azure_template(template: Any) -> dict[str, Any]:
+def _test_azure_template(template: Any, db: Session | None = None) -> dict[str, Any]:
     """Validate an Azure template using AzureAuthService."""
     auth_service = AzureAuthService()
 
@@ -149,6 +149,11 @@ def _test_azure_template(template: Any) -> dict[str, Any]:
                     if refreshed.get("refresh_token"):
                         template.azure_sso_refresh_token_encrypted = encrypt_value(refreshed["refresh_token"])
                     template.azure_sso_token_expiry = datetime.now(UTC) + timedelta(seconds=refreshed.get("expires_in", 3600))
+                    if db:
+                        try:
+                            db.commit()
+                        except Exception as e:
+                            logger.warning(f"Failed to persist refreshed Azure SSO tokens: {e}")
                 except Exception as e:
                     return {
                         "success": False,
@@ -542,7 +547,7 @@ class CredentialTemplateService:
             )
 
         if template.provider == 'azure':
-            return _test_azure_template(template)
+            return _test_azure_template(template, db=self.db)
 
         if template.provider == 'ibm':
             if not template.ibmcloud_api_key_encrypted:
@@ -634,7 +639,7 @@ class CredentialTemplateService:
     def _has_complete_sso_config(template: Any) -> bool:
         """Return True when the template has all fields required to run SSO device auth."""
         if template.provider == 'azure':
-            return True
+            return template.azure_auth_method == 'sso'
         return bool(
             template.aws_sso_start_url
             and template.aws_sso_region

@@ -5,6 +5,7 @@ Thin HTTP handlers delegating to CredentialTemplateService.
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -43,7 +44,7 @@ class CredentialTemplateBase(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -100,7 +101,7 @@ class CredentialTemplateUpdate(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -155,7 +156,7 @@ class CredentialTemplateResponse(BaseModel):
     aws_credentials_expiry: datetime | None
     gcp_project_id: str | None
     has_gcp_credentials: bool
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
