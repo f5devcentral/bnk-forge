@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -920,7 +920,7 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int) -> bool:
+    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
