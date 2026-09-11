@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Standard wire-bound timeouts: (connect_seconds, read_seconds).
 # Used everywhere we don't have a domain-specific reason to differ.
-DEFAULT_REQUEST_TIMEOUT: tuple[int, int] = (3, 8)
+DEFAULT_REQUEST_TIMEOUT: tuple[int, int] = (5, 15)
 
 
 def call_with_timeout(fn: Any, *args: Any, timeout: tuple[int, int] | int | None = None, **kwargs: Any) -> Any:

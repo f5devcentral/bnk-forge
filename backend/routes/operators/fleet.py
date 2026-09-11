@@ -480,7 +480,7 @@ _TCP_PRECHECK_TIMEOUT = 10
 
 def _query_cluster_health(
     cluster: KubernetesCluster,
-    db: Session,
+    db: Session | None = None,
 ) -> dict:
     """
     Query a single cluster's BNK + DPF health via kubeconfig.
@@ -520,52 +520,59 @@ def _query_cluster_health(
                 )
                 return {**_OFFLINE_RESULT}
 
-    try:
-        k8s_service = KubernetesService(db)
-        # Quick reachability check via K8s API before expensive BNK fetch
+    def _do_query(session: Session) -> dict:
         try:
-            k8s_service.test_connection(cluster.id)
+            k8s_service = KubernetesService(session)
+            # Quick reachability check via K8s API before expensive BNK fetch
+            conn_res = k8s_service.test_connection(cluster.id)
+            if not isinstance(conn_res, dict) or not conn_res.get("success"):
+                err_msg = conn_res.get("message") if isinstance(conn_res, dict) else "connection failed"
+                logger.warning(f"Fleet: cluster {cluster.name} (id={cluster.id}) K8s API unreachable: {err_msg}")
+                return {**_OFFLINE_RESULT}
+
+            # Cheap short-circuits: one discovery call (cached) answers both
+            # "does this cluster have BNK?" and "does it have DPF?". Skip the
+            # heavy probes for absent frameworks.
+            has_bnk = _cluster_has_bnk_api_groups(cluster, session)
+            has_dpf = _cluster_has_dpf_api_groups(cluster, session)
+
+            dpf_summary = (
+                _query_dpf_summary(k8s_service, cluster.id)
+                if has_dpf
+                else dict(_DPF_NOT_INSTALLED_SUMMARY)
+            )
+
+            if not has_bnk:
+                return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
+
+            try:
+                data = fetch_all_bnk_data(k8s_service, cluster.id)
+                health = analyze_health(data)
+                status = _derive_status_from_health(health)
+                metrics = _extract_health_metrics(health, data)
+            except Exception as e:
+                # Cluster is reachable but BNK data fetch failed unexpectedly.
+                # (The no-BNK-installed case is now handled by the short-circuit above.)
+                logger.info(f"Fleet: cluster {cluster.name} (id={cluster.id}) BNK fetch failed: {e}")
+                return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
+
+            return {
+                "status": status,
+                "bnk_severity": health.get("overall", status),
+                "effective_connectivity_status": "connected",
+                "reachable": True,
+                **metrics,
+                **dpf_summary,
+            }
         except Exception as e:
-            logger.warning(f"Fleet: cluster {cluster.name} (id={cluster.id}) K8s API unreachable: {e}")
+            logger.warning(f"Fleet health query failed for cluster {cluster.name} (id={cluster.id}): {e}")
             return {**_OFFLINE_RESULT}
 
-        # Cheap short-circuits: one discovery call (cached) answers both
-        # "does this cluster have BNK?" and "does it have DPF?". Skip the
-        # heavy probes for absent frameworks.
-        has_bnk = _cluster_has_bnk_api_groups(cluster, db)
-        has_dpf = _cluster_has_dpf_api_groups(cluster, db)
-
-        dpf_summary = (
-            _query_dpf_summary(k8s_service, cluster.id)
-            if has_dpf
-            else dict(_DPF_NOT_INSTALLED_SUMMARY)
-        )
-
-        if not has_bnk:
-            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
-
-        try:
-            data = fetch_all_bnk_data(k8s_service, cluster.id)
-            health = analyze_health(data)
-            status = _derive_status_from_health(health)
-            metrics = _extract_health_metrics(health, data)
-        except Exception as e:
-            # Cluster is reachable but BNK data fetch failed unexpectedly.
-            # (The no-BNK-installed case is now handled by the short-circuit above.)
-            logger.info(f"Fleet: cluster {cluster.name} (id={cluster.id}) BNK fetch failed: {e}")
-            return {**_BNK_NOT_INSTALLED_RESULT, **dpf_summary}
-
-        return {
-            "status": status,
-            "bnk_severity": health.get("overall", status),
-            "effective_connectivity_status": "connected",
-            "reachable": True,
-            **metrics,
-            **dpf_summary,
-        }
-    except Exception as e:
-        logger.warning(f"Fleet health query failed for cluster {cluster.name} (id={cluster.id}): {e}")
-        return {**_OFFLINE_RESULT}
+    if db is not None:
+        return _do_query(db)
+    from database import SessionLocal
+    with SessionLocal() as session:
+        return _do_query(session)
 
 
 # ---------------------------------------------------------------------------
@@ -602,9 +609,9 @@ def get_fleet_health(db: Session = Depends(get_db)):
     )
     now_mono = time.monotonic()
     with _fleet_health_lock:
-        cached = _fleet_health_cache.get(cache_key)
-        if cached and (now_mono - cached[0]) < _FLEET_HEALTH_TTL_SEC:
-            return cached[1]
+        cached_entry = _fleet_health_cache.get(cache_key)
+        if cached_entry and (now_mono - cached_entry[0]) < _FLEET_HEALTH_TTL_SEC:
+            return cached_entry[1]
 
     if not clusters:
         empty_response = {
@@ -617,7 +624,7 @@ def get_fleet_health(db: Session = Depends(get_db)):
             "operators": [],
             "platform_context": {
                 "mixed_platform_profiles": False,
-                "detected_profiles": [],
+                "profiles_present": [],
                 "clusters": [],
                 "comparison_caveats": [],
                 "support_semantics": [],
@@ -634,11 +641,13 @@ def get_fleet_health(db: Session = Depends(get_db)):
         if op.cluster_id:
             op_by_cluster[op.cluster_id] = op
 
-    # Query all clusters in parallel (30s per-cluster, 60s overall safety timeout)
+    # Query all clusters in parallel (30s per-cluster, 60s overall safety timeout).
+    # Pass db=None so worker threads use their own isolated SessionLocal().
     cluster_results: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(10, len(clusters))) as executor:
+    executor = ThreadPoolExecutor(max_workers=min(10, len(clusters)))
+    try:
         futures = {
-            executor.submit(_query_cluster_health, cluster, db): cluster
+            executor.submit(_query_cluster_health, cluster, None): cluster
             for cluster in clusters
         }
         try:
@@ -655,6 +664,8 @@ def get_fleet_health(db: Session = Depends(get_db)):
                 if cluster.id not in cluster_results:
                     logger.warning(f"Fleet: cluster {cluster.name} timed out — marking offline")
                     cluster_results[cluster.id] = {**_OFFLINE_RESULT}
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     # Build response
     operators_out = []

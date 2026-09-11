@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -27010,6 +27010,22 @@
             }
           },
           {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -34359,6 +34375,17 @@
             ],
             "title": "Target Id"
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "proxy_deployment_id": {
             "anyOf": [
               {
@@ -34766,6 +34793,17 @@
               }
             ],
             "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "proxy_deployment_id": {
             "anyOf": [
@@ -35224,6 +35262,17 @@
             "type": "integer",
             "title": "Cluster Id"
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "llm_base_url": {
             "type": "string",
             "title": "Llm Base Url"
@@ -35374,6 +35423,17 @@
           "cluster_id": {
             "type": "integer",
             "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "llm_base_url": {
             "type": "string",
@@ -56609,6 +56669,17 @@
               }
             ],
             "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "proxy": {
             "anyOf": [

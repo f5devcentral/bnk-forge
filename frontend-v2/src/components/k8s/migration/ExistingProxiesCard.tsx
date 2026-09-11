@@ -36,6 +36,7 @@ export function ExistingProxiesCard({
     const classNameFromDetails =
       (proxy.details as Record<string, string>)['ingress_class_name'] ||
       (proxy.details as Record<string, string>)['gateway_class_name'] ||
+      (proxy.details as Record<string, string>)['deployment_name'] ||
       proxy.proxy_type;
     translateProxy.mutate({
       clusterId,

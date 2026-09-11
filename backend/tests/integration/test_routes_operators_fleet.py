@@ -153,6 +153,50 @@ class TestFleetHealth:
         assert result["effective_connectivity_status"] == "connected"
         assert result["status"] == "warning"
 
+    @patch("routes.operators.fleet.KubernetesService")
+    @patch("routes.operators.fleet._probe_tcp")
+    def test_query_cluster_health_short_circuits_on_test_connection_failure(
+        self,
+        mock_probe_tcp,
+        mock_k8s_service,
+        db,
+    ):
+        """Unreachable cluster should short-circuit immediately without querying API groups or BNK data."""
+        cluster = _make_cluster(
+            db,
+            name="failing-cluster",
+            context="failing-cluster",
+        )
+        cluster.cloud_provider = "aws"
+        cluster.api_server = "https://example.eks.amazonaws.com"
+        cluster.ssh_tunnel_enabled = False
+        db.commit()
+
+        svc = MagicMock()
+        mock_k8s_service.return_value = svc
+        svc.test_connection.return_value = {
+            "success": False,
+            "message": "Connection refused",
+        }
+
+        with (
+            patch("routes.operators.fleet._cluster_has_bnk_api_groups") as mock_bnk_groups,
+            patch("routes.operators.fleet._cluster_has_dpf_api_groups") as mock_dpf_groups,
+            patch("routes.operators.fleet.fetch_all_bnk_data") as mock_fetch_bnk,
+        ):
+            from routes.operators.fleet import _query_cluster_health
+
+            result = _query_cluster_health(cluster, db)
+
+        mock_probe_tcp.assert_not_called()
+        svc.test_connection.assert_called_once_with(cluster.id)
+        mock_bnk_groups.assert_not_called()
+        mock_dpf_groups.assert_not_called()
+        mock_fetch_bnk.assert_not_called()
+        assert result["effective_connectivity_status"] == "unreachable"
+        assert result["status"] == "offline"
+        assert result["reachable"] is False
+
 
 class TestFleetCompare:
     """POST /api/operators/fleet/compare."""
