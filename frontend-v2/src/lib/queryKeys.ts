@@ -108,6 +108,8 @@ export const queryKeys = {
       // BNK data
       bnkData: (clusterId: number, params?: Record<string, string | undefined>) =>
         ['k8s', 'clusters', clusterId, 'f5bnk', 'data', params] as const,
+      bnkHealth: (clusterId: number, params?: Record<string, string | undefined>) =>
+        ['k8s', 'clusters', clusterId, 'f5bnk', 'health', params] as const,
       // A2A agent discovery
       a2aAgents: (clusterId: number, params?: Record<string, string | boolean | undefined>) =>
         ['k8s', 'clusters', clusterId, 'f5bnk', 'a2a', 'agents', params] as const,
@@ -272,6 +274,7 @@ export const queryKeys = {
     defaultsStatus: () => ['defaults-status'] as const,
     backupStatus: () => [...queryKeys.system.all, 'backup', 'status'] as const,
     maintenanceStatus: () => [...queryKeys.system.all, 'maintenance'] as const,
+    bnkConsumption: () => [...queryKeys.system.all, 'bnk-consumption'] as const,
   },
 
   // Registry hierarchy

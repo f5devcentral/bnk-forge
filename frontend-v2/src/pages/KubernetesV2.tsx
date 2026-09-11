@@ -770,27 +770,27 @@ export default function KubernetesV2() {
               icon={Server}
               title="No cluster selected"
               description="Select a cluster from the dropdown above to view and manage Kubernetes resources"
-              action={{
-                label: 'Auto-detect Kubernetes Clusters',
-                onClick: async () => {
-                  if (!selectedProject) return;
-                  try {
-                    const data = await api.detectEKSClusters(selectedProject);
-                    queryClient.invalidateQueries({
-                      queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
-                    });
-                    notify.success(
-                      data.registered?.length
-                        ? `Found ${data.registered.length} cluster(s)`
-                        : 'No new clusters found',
-                      undefined,
-                      { category: 'system' },
-                    );
-                  } catch (error) {
-                    notifyError(error, 'detecting clusters');
-                  }
-                },
-              }}
+                action={{
+                  label: 'Auto-detect Kubernetes Clusters',
+                  onClick: async () => {
+                    if (!selectedProject) return;
+                    try {
+                      const data = await api.detectClustersFromCredentials(selectedProject);
+                      queryClient.invalidateQueries({
+                        queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
+                      });
+                      notify.success(
+                        data.registered?.length
+                          ? `Found ${data.registered.length} cluster(s)`
+                          : 'No new clusters found',
+                        undefined,
+                        { category: 'system' },
+                      );
+                    } catch (error) {
+                      notifyError(error, 'detecting clusters');
+                    }
+                  },
+                }}
             />
           ) : viewMode === 'migration' ? (
             /* Migration mode: proxy/CIS migration surface (D-022 P6 Slice A).

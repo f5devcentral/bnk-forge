@@ -36,12 +36,16 @@ import {
   XCircle,
   Loader2,
   GitCompareArrows,
+  Wifi,
+  Link2,
 } from 'lucide-react';
 import type {
   HealthSeverity,
   HealthPodDetail,
   HealthRemediationAction,
   ClusterDriftStatus,
+  HealthConnectivityStatus,
+  HealthIntegrationStatus,
 } from '@/types';
 import { SEVERITY_CONFIG, getSeverityConfig, compareSeverity } from '@/lib/health-severity';
 import { ErrorState } from '@/components/ui/error-state';
@@ -106,6 +110,54 @@ function FeatureBadge({ label, enabled }: { label: string; enabled: boolean }) {
   );
 }
 
+// ---- Connectivity / integration badges ----
+
+function ConnectivityBadge({ connectivity }: { connectivity: HealthConnectivityStatus }) {
+  const statusConfig: Record<string, { variant: 'success' | 'warning' | 'destructive' | 'muted'; icon: typeof Wifi; label: string }> = {
+    connected: { variant: 'success', icon: CheckCircle2, label: 'Connected' },
+    reachable: { variant: 'warning', icon: Wifi, label: 'Reachable' },
+    partial: { variant: 'warning', icon: AlertTriangle, label: 'Partial' },
+    unreachable: { variant: 'destructive', icon: XCircle, label: 'Unreachable' },
+    unknown: { variant: 'muted', icon: Wifi, label: 'Unknown' },
+  };
+  const cfg = statusConfig[connectivity.status] || statusConfig.unknown;
+  const Icon = cfg.icon;
+  return (
+    <Badge
+      variant={cfg.variant}
+      className="text-xs gap-1 font-normal"
+      title={connectivity.message}
+    >
+      <Icon className="h-3 w-3" />
+      {cfg.label}
+    </Badge>
+  );
+}
+
+function IntegrationBadge({ integration }: { integration: HealthIntegrationStatus }) {
+  const severityConfigMap: Record<string, { variant: 'success' | 'warning' | 'destructive' | 'muted'; icon: typeof Link2; label: string }> = {
+    healthy: { variant: 'success', icon: CheckCircle2, label: 'Operator Connected' },
+    warning: { variant: 'warning', icon: AlertTriangle, label: 'Operator Disconnected' },
+    critical: { variant: 'destructive', icon: XCircle, label: 'Integration Failed' },
+    unknown: { variant: 'muted', icon: Link2, label: 'Integration Unknown' },
+  };
+  const cfg = severityConfigMap[integration.status] || severityConfigMap.unknown;
+  const Icon = cfg.icon;
+  const label = integration.operatorMode === 'kubeconfig'
+    ? 'Kubeconfig'
+    : cfg.label;
+  return (
+    <Badge
+      variant={cfg.variant}
+      className="text-xs gap-1 font-normal"
+      title={integration.message}
+    >
+      <Icon className="h-3 w-3" />
+      {label}
+    </Badge>
+  );
+}
+
 // ---- Component card data builder ----
 
 interface ComponentCardData {
@@ -115,6 +167,9 @@ interface ComponentCardData {
   explanation: string;
   podDetails: HealthPodDetail[];
   remediationActions: HealthRemediationAction[];
+  namespaces: string[];
+  zones: string[];
+  nodes: string[];
   children?: React.ReactNode;
 }
 
@@ -213,6 +268,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (comp.explanation as string) || '',
         podDetails: (comp.podDetails as HealthPodDetail[]) || [],
         remediationActions: (comp.remediationActions as HealthRemediationAction[]) || [],
+        namespaces: (comp.namespaces as string[]) || [],
+        zones: (comp.zones as string[]) || [],
+        nodes: (comp.nodes as string[]) || [],
       });
     }
 
@@ -228,6 +286,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (tmm.explanation as string) || '',
         podDetails: (tmm.podDetails as HealthPodDetail[]) || [],
         remediationActions: (tmm.remediationActions as HealthRemediationAction[]) || [],
+        namespaces: (tmm.namespaces as string[]) || [],
+        zones: (tmm.zones as string[]) || [],
+        nodes: (tmm.nodes as string[]) || [],
         children: hasCne ? (
           <div className="pt-2 border-t border-border">
             <p className="text-xs mb-2 text-muted-foreground">
@@ -256,6 +317,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (gateways.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             <StatRow label="Listeners" value={health.networking?.listeners ?? 0} />
@@ -275,6 +339,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (vlans.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             {(vlans.details as Array<{ name: string; interfaces: string[]; selfIPs: string[] }>)?.map((vlan) => (
@@ -299,6 +366,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: (irules.explanation as string) || '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: errorIrules.length > 0 ? (
           <>
             {errorIrules.map((ir) => (
@@ -327,6 +397,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
         explanation: 'Security policies protect your network functions with firewall rules, network segmentation, and access control.',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
         children: (
           <>
             <StatRow label="Firewall Policies" value={health.security?.firewallPolicies ?? 0} />
@@ -343,7 +416,7 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
     return cards;
   }, [health]);
 
-  if (isLoading) {
+  if (isLoading && !health) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -397,6 +470,12 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
                   {health.installMethod}
                 </Badge>
               )}
+              {health.connectivity && (
+                <ConnectivityBadge connectivity={health.connectivity} />
+              )}
+              {health.integration && (
+                <IntegrationBadge integration={health.integration} />
+              )}
             </h2>
             <p className="text-sm text-muted-foreground">
               {health.counts?.tmm_containers || '0/0'} TMM containers
@@ -443,6 +522,9 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
             explanation={card.explanation}
             podDetails={card.podDetails}
             remediationActions={card.remediationActions}
+            namespaces={card.namespaces}
+            zones={card.zones}
+            nodes={card.nodes}
             clusterId={clusterId}
             onViewLogs={handleViewLogs}
             onDescribe={handleDescribe}
