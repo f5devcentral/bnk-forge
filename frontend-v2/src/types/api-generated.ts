@@ -16231,7 +16231,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16321,7 +16321,7 @@ export interface components {
             /** Has Gcp Credentials */
             has_gcp_credentials: boolean;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16447,7 +16447,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */

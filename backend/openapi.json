@@ -42155,7 +42155,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
@@ -42551,7 +42555,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
@@ -43044,7 +43052,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
