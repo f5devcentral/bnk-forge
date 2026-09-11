@@ -518,7 +518,7 @@ class TestClusterScannerProxyIntegration:
             "crd_names": set(),
             "crd_groups": set(),
             "cert_manager_pods": [],
-            "kube_system_pods": [],
+            "kube_system_pods": [], "multus_pods": [],
             "daemonsets": [],
             "storage_classes": [],
             "gateways": [],
