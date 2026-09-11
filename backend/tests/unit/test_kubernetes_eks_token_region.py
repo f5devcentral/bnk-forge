@@ -34,12 +34,6 @@ def _cluster(region: str | None, *, name: str = "syd-tracer") -> SimpleNamespace
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _mock_cache():
-    with patch("services.kubernetes._base.cache.get", return_value=None):
-        yield
-
-
 def _patch_boto_pipeline():
     """Patch the boto3 / botocore call chain to capture the region used to
     construct the SigV4 signer. Returns the SigV4QueryAuth mock so callers

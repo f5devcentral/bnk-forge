@@ -311,7 +311,7 @@ class TestBnkSafeFetchAggregation:
             # Patch batch API call inside safe_fetch_crd_installer_job
             with patch("kubernetes.client.BatchV1Api") as mock_batch:
                 mock_batch.return_value.list_namespaced_job.return_value.items = []
-                result = fetch_all_bnk_data(k8s_service, 1, force=True)
+                result = fetch_all_bnk_data(k8s_service, 1)
 
         # All resource lists must be empty — aggregation not broken
         for key in BNK_RESOURCE_TYPES:
@@ -345,7 +345,7 @@ class TestBnkSafeFetchAggregation:
 
             with patch("kubernetes.client.BatchV1Api") as mock_batch:
                 mock_batch.return_value.list_namespaced_job.return_value.items = []
-                result = fetch_all_bnk_data(k8s_service, 1, force=True)
+                result = fetch_all_bnk_data(k8s_service, 1)
 
         assert result["resources"][first_rt_key] == [fake_item]
 
