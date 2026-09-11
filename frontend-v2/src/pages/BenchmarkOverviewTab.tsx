@@ -52,6 +52,7 @@ interface BenchmarkOverviewTabProps {
   /** Opens the Run benchmark wizard. Pass `true` to prefill from the most
    * recent completed run ("Re-run last"). */
   onOpenWizard: (reRunLast?: boolean) => void;
+  selectedClusterId?: number;
 }
 
 export function BenchmarkOverviewTab({
@@ -60,16 +61,25 @@ export function BenchmarkOverviewTab({
   onGoToRunsList,
   onGoToTrends,
   onOpenWizard,
+  selectedClusterId,
 }: BenchmarkOverviewTabProps) {
-  const { data: targetsData, isLoading: targetsLoading } = useBenchmarkTargets();
+  const { data: targetsData, isLoading: targetsLoading } = useBenchmarkTargets(
+    selectedClusterId ? { cluster_id: selectedClusterId } : undefined
+  );
   const { data: agents, isLoading: agentsLoading } = useBenchmarkAgents();
   const { data: configs, isLoading: configsLoading } = useBenchmarkConfigs();
   const { data: summary } = useBenchmarkSummary();
   const { data: runsData, isLoading: runsLoading } = useBenchmarkRuns({
+    cluster_id: selectedClusterId,
     limit: RECENT_RUNS_LIMIT,
     pollingEnabled: true,
   });
-  const { data: completedRunsData } = useBenchmarkRuns({ status: 'completed', limit: 1, pollingEnabled: false });
+  const { data: completedRunsData } = useBenchmarkRuns({
+    cluster_id: selectedClusterId,
+    status: 'completed',
+    limit: 1,
+    pollingEnabled: false,
+  });
   const hasCompletedRun = (completedRunsData?.runs?.length ?? 0) > 0;
 
   const targets = targetsData?.targets ?? [];

@@ -64,7 +64,7 @@ export const benchmarksApi = {
 
   // ── Runs (load test results) ─────────────────────────────────────────
 
-  listRuns: (params?: { proxy?: string; tool?: string; model?: string; status?: string; limit?: number; offset?: number }) =>
+  listRuns: (params?: { proxy?: string; tool?: string; model?: string; status?: string; cluster_id?: number; limit?: number; offset?: number }) =>
     apiClient.get<BenchmarkRunListResponse>('/api/benchmarks/runs', { params }).then((res) => res.data),
 
   getRun: (runId: number) =>
