@@ -372,9 +372,10 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
   };
 
   const canSubmit =
-    deployMode === 'existing'
+    Boolean(template) &&
+    (deployMode === 'existing'
       ? !!selectedProjectId
-      : !!projectName.trim() && !requiresCluster;
+      : !!projectName.trim() && !requiresCluster);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -752,7 +753,18 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
               </div>
             </ScrollArea>
           </>
-        ) : null}
+        ) : (
+          <div className="p-12 flex flex-col items-center justify-center text-center space-y-4">
+            <VisuallyHidden>
+              <DialogTitle>Failed to Load Blueprint</DialogTitle>
+              <DialogDescription>Unable to load the requested imported blueprint</DialogDescription>
+            </VisuallyHidden>
+            <p className="text-sm text-destructive">Failed to load blueprint template details.</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
