@@ -37,7 +37,7 @@ import {
   Clock,
 } from 'lucide-react';
 import type { Project } from '@/types';
-import { getProjectLocationInfo } from '@/lib/aws-regions';
+import { getCloudProviderBadgeInfo, getProjectLocationInfo } from '@/lib/aws-regions';
 import { formatTimeAgo } from '@/lib/time-utils';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -58,13 +58,18 @@ const FILTER_CONFIG: Record<ProjectFilter, { label: string }> = {
 };
 
 function projectTypeLabel(project: Project): string {
-  if (project.project_type === 'kubernetes') return 'Kubernetes';
-  if (project.project_type === 'cloud-aws') return 'AWS';
-  if (project.project_type === 'cloud-azure') return 'Azure';
-  if (project.project_type === 'cloud-gcp') return 'GCP';
-  if (project.project_type === 'cloud-ibm') return 'IBM';
+  const p = (project.cloud_provider || '').toLowerCase().trim();
+  const pt = (project.project_type || '').toLowerCase().trim();
+  if (pt === 'kubernetes' || p === 'kubernetes') return 'Kubernetes';
+  if (pt === 'cloud-aws' || pt === 'aws' || p === 'aws' || p === 'eks') return 'AWS';
+  if (pt === 'cloud-azure' || pt === 'azure' || p === 'azure' || p === 'aks') return 'Azure';
+  if (pt === 'cloud-gcp' || pt === 'gcp' || p === 'gcp' || p === 'gke' || p === 'google') return 'GCP (GKE)';
+  if (pt === 'cloud-ibm' || pt === 'ibm' || p === 'ibm' || p === 'roks') return 'IBM Cloud';
+  if (p === 'on-prem' || p === 'bare-metal' || p === 'metal') return 'Bare-Metal';
   if (project.credential_template?.provider === 'ssh') return 'SSH';
   if (project.credential_template) return project.credential_template.name;
+  if (p) return p.toUpperCase();
+  if (pt) return pt.toUpperCase();
   return '—';
 }
 
@@ -276,6 +281,7 @@ export default function Projects() {
                     project.credential_template?.provider,
                     project.project_type,
                   );
+                  const providerBadge = getCloudProviderBadgeInfo(project.cloud_provider || project.project_type);
                   const driftCount = projectDriftCounts[project.id] || 0;
 
                   return (
@@ -306,11 +312,20 @@ export default function Projects() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-foreground/80">{projectTypeLabel(project)}</span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant={providerBadge.badgeVariant} className={providerBadge.badgeClass}>
+                              {providerBadge.shortLabel}
+                            </Badge>
+                            <span className="text-foreground/80 font-medium text-xs">{projectTypeLabel(project)}</span>
+                          </div>
                           {location && (
-                            <span className="text-xs text-muted-foreground">
-                              {location.flag} {location.label}
+                            <span className="text-xs text-muted-foreground inline-flex items-center gap-1 font-mono">
+                              <span>{location.flag}</span>
+                              <span>{location.display}</span>
+                              {location.label !== location.display && (
+                                <span className="font-sans text-muted-foreground/70">({location.label})</span>
+                              )}
                             </span>
                           )}
                           <span className="text-xs text-muted-foreground">

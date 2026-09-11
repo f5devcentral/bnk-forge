@@ -97,7 +97,7 @@ const DpuPanel = lazy(() =>
   import('@/components/dpu/DpuPanel').then((m) => ({ default: m.DpuPanel }))
 );
 import { useActiveRunHandle, useRunProgress, useExecutionPlan } from '@/hooks/useParallelExecution';
-import { getProjectLocationInfo } from '@/lib/aws-regions';
+import { getCloudProviderBadgeInfo, getProjectLocationInfo } from '@/lib/aws-regions';
 import { NodeDiscoveryPanel } from '@/components/discovery/NodeDiscoveryPanel';
 import { BackendBadge } from '@/components/projects/BackendBadge';
 import type { ProjectModule } from '@/types';
@@ -127,6 +127,7 @@ export default function ProjectDetailV2() {
   // K8S-UX-001: clusters hook must be above projectMode which depends on it
   const { data: clusters } = useProjectClusters(projectId, { pollingEnabled: false });
   const locationInfo = project ? getProjectLocationInfo(project.cloud_provider, project.region, project.credential_template?.provider, project.project_type) : null;
+  const providerBadge = project ? getCloudProviderBadgeInfo(project.cloud_provider || project.project_type) : null;
   const targetPlatform = getProjectTargetPlatform(project);
   const targetPlatformLabel = getPlatformProfileLabel(targetPlatform);
   const managementBoundaryLabel = getManagementBoundaryLabel(project?.management_boundary);
@@ -452,9 +453,15 @@ export default function ProjectDetailV2() {
               <p className="text-sm text-muted-foreground mt-1">{project.description}</p>
             )}
             <div className="flex flex-wrap items-center gap-2 mt-3">
+              {providerBadge && (
+                <Badge variant={providerBadge.badgeVariant} className={providerBadge.badgeClass}>
+                  {providerBadge.shortLabel}
+                </Badge>
+              )}
               {locationInfo && (
-                <Badge variant="outline" className="text-xs font-normal whitespace-nowrap">
-                  {locationInfo.flag} {locationInfo.display}
+                <Badge variant="outline" className="text-xs font-normal whitespace-nowrap gap-1">
+                  <span>{locationInfo.flag}</span>
+                  <span>{locationInfo.display}</span>
                 </Badge>
               )}
               <BackendBadge

@@ -25,6 +25,9 @@ def _sa_info() -> dict:
 
 
 class TestGenerateGcpToken:
+    def setup_method(self):
+        KubernetesServiceBase._gcp_token_cache.clear()
+
     def test_returns_token_from_google_auth(self):
         fake_credentials = MagicMock()
         fake_credentials.token = "ya29.fake-access-token"

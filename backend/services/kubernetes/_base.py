@@ -4,7 +4,8 @@ Core KubernetesService: cluster loading, kubeconfig, connection testing.
 
 import logging
 import os
-import tempfile
+import time
+from datetime import datetime
 from typing import Any
 
 from kubernetes import client
@@ -27,6 +28,9 @@ class KubernetesServiceBase:
     Core Kubernetes service methods: cluster access, kubeconfig, connection testing.
     """
 
+    _azure_token_cache: dict[str, tuple[str, float]] = {}
+    _gcp_token_cache: dict[str, tuple[str, float]] = {}
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -37,7 +41,9 @@ class KubernetesServiceBase:
     def load_kubeconfig(self, cluster: KubernetesCluster) -> client.ApiClient:
         """
         Load kubeconfig for a cluster.
-        Creates temporary kubeconfig file and returns configured API client.
+        Parses the decrypted kubeconfig in-memory via
+        ``load_kube_config_from_dict`` (no temporary file on disk) and returns
+        a configured API client.
 
         For EKS clusters, mints a bearer token via boto3 and rewrites the
         kubeconfig user to use it as a static token, so the API container
@@ -65,12 +71,16 @@ class KubernetesServiceBase:
             kubeconfig_yaml, source=NormalizationSource.INTERNAL_REREAD
         )
 
-        # Check if project uses SSH credential template -- open tunnel if so
         import yaml as yaml_lib
+
+        kubeconfig_dict = yaml_lib.safe_load(kubeconfig_yaml)
+        if not isinstance(kubeconfig_dict, dict):
+            raise ValueError("Kubeconfig payload is not a valid YAML dictionary")
+
+        # Check if project uses SSH credential template -- open tunnel if so
         tunnel_port = self._maybe_open_ssh_tunnel(cluster)
         if tunnel_port:
             # Rewrite kubeconfig to route through SSH tunnel
-            kubeconfig_dict = yaml_lib.safe_load(kubeconfig_yaml)
             for c in kubeconfig_dict.get('clusters', []):
                 # 127.0.0.1 not "localhost" — see cluster_utils. Tunnel
                 # listener is IPv4-only and "localhost" resolves to ::1
@@ -79,119 +89,123 @@ class KubernetesServiceBase:
                 c['cluster']['insecure-skip-tls-verify'] = True
                 c['cluster'].pop('certificate-authority-data', None)
                 c['cluster'].pop('certificate-authority', None)
-            kubeconfig_yaml = yaml_lib.dump(kubeconfig_dict, default_flow_style=False)
 
-        # Write to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            f.write(kubeconfig_yaml)
-            kubeconfig_path = f.name
+        # For EKS/AWS clusters, generate a bearer token using boto3 (Python-native)
+        # so the API container does not need the AWS CLI binary. The worker
+        # containers have `aws` and can use the exec-plugin kubeconfig directly,
+        # but the slim API image intentionally omits heavy CLI tools.
+        if cluster.cloud_provider in ["eks", "aws"]:
+            from services.credentials_service import (
+                CredentialUnavailableError,
+                get_cloud_credentials_env,
+            )
+            project = cluster.project
+            # strict=True: CredentialUnavailableError propagates when SSO
+            # keys are absent or expired — intentionally NOT caught below
+            # so test_connection returns success:false with a credential
+            # message rather than masking it as a 401.
+            # All other callers (tasks, tofu, drift, etc.) call with the
+            # default strict=False and retain graceful-degradation behaviour.
+            aws_env = get_cloud_credentials_env(project, self.db, strict=True)
 
-        try:
-            # For EKS/AWS clusters, generate a bearer token using boto3 (Python-native)
-            # so the API container does not need the AWS CLI binary.  The worker
-            # containers have `aws` and can use the exec-plugin kubeconfig directly,
-            # but the slim API image intentionally omits heavy CLI tools.
-            if cluster.cloud_provider in ["eks", "aws"]:
-                from services.credentials_service import (
-                    CredentialUnavailableError,
-                    get_cloud_credentials_env,
-                )
-                project = cluster.project
-                # strict=True: CredentialUnavailableError propagates when SSO
-                # keys are absent or expired — intentionally NOT caught below
-                # so test_connection returns success:false with a credential
-                # message rather than masking it as a 401.
-                # All other callers (tasks, tofu, drift, etc.) call with the
-                # default strict=False and retain graceful-degradation behaviour.
-                aws_env = get_cloud_credentials_env(project, self.db, strict=True)
+            for key, value in aws_env.items():
+                if key.startswith('AWS_'):
+                    os.environ[key] = value
 
-                for key, value in aws_env.items():
-                    if key.startswith('AWS_'):
-                        os.environ[key] = value
+            logger.info(f"Set AWS credentials for EKS cluster {cluster.name}")
 
-                logger.info(f"Set AWS credentials for EKS cluster {cluster.name}")
-
-                # Generate a bearer token via boto3 STS presigned URL (same mechanism
-                # as `aws eks get-token`) and rewrite the kubeconfig to use it as a
-                # static token instead of the exec plugin.  This avoids the need for
-                # the `aws` binary in the API container.
+            # Generate a bearer token via boto3 STS presigned URL (same mechanism
+            # as `aws eks get-token`) and rewrite the kubeconfig to use it as a
+            # static token instead of the exec plugin. This avoids the need for
+            # the `aws` binary in the API container.
+            try:
+                token = self._generate_eks_token(cluster, aws_env)
+                if token:
+                    # Replace exec-based user auth with a static bearer token
+                    for user_entry in kubeconfig_dict.get("users", []):
+                        user_entry["user"] = {"token": token}
+                    logger.info("Injected boto3-generated bearer token for EKS cluster %s", cluster.name)
+            except CredentialUnavailableError:
+                raise  # propagate structured credential error — not a transient mint glitch
+            except Exception as e:
+                # Propagate AWS credential-expiry errors as AuthenticationError rather than
+                # silently falling back to the exec plugin (which would fail with a vague error).
                 try:
-                    token = self._generate_eks_token(cluster, aws_env)
+                    from botocore.exceptions import ClientError as BotoCoreClientError
+
+                    from core.errors import classify_aws_credential_error
+                    if isinstance(e, BotoCoreClientError):
+                        classified = classify_aws_credential_error(e)
+                        if classified is not None:
+                            raise classified from e
+                except (ImportError, CredentialUnavailableError):
+                    pass
+                logger.warning("Failed to generate boto3 EKS token for %s, falling back to exec plugin: %s", cluster.name, e)
+
+        # For GKE/GCP clusters, mint an OAuth access token from a service-account
+        # key via google-auth (Python-native) and rewrite the kubeconfig user to
+        # use it as a static token. Mirrors the EKS path: avoids needing
+        # gke-gcloud-auth-plugin or gcloud inside the container.
+        elif cluster.cloud_provider in ["gke", "gcp"]:
+            from services.credentials_service import get_gcp_service_account_info
+            project = cluster.project
+            sa_info = get_gcp_service_account_info(project, self.db)
+
+            if not sa_info:
+                logger.warning(
+                    "No GCP service-account credentials configured for cluster %s "
+                    "(project '%s'); kubeconfig exec plugin will be invoked and "
+                    "is expected to fail in slim API container",
+                    cluster.name, project.name if project else "<none>",
+                )
+            else:
+                try:
+                    token = self._generate_gcp_token(sa_info)
                     if token:
-                        kubeconfig_dict = yaml_lib.safe_load(
-                            open(kubeconfig_path).read()
-                        )
-                        # Replace exec-based user auth with a static bearer token
                         for user_entry in kubeconfig_dict.get("users", []):
                             user_entry["user"] = {"token": token}
-                        with open(kubeconfig_path, "w") as f:
-                            yaml_lib.dump(kubeconfig_dict, f, default_flow_style=False)
-                        logger.info("Injected boto3-generated bearer token for EKS cluster %s", cluster.name)
-                except CredentialUnavailableError:
-                    raise  # propagate structured credential error — not a transient mint glitch
+                        logger.info("Injected google-auth-generated bearer token for GKE cluster %s", cluster.name)
                 except Exception as e:
-                    # Propagate AWS credential-expiry errors as AuthenticationError rather than
-                    # silently falling back to the exec plugin (which would fail with a vague error).
-                    try:
-                        from botocore.exceptions import ClientError as BotoCoreClientError
+                    logger.warning("Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s", cluster.name, e)
 
-                        from core.errors import classify_aws_credential_error
-                        if isinstance(e, BotoCoreClientError):
-                            classified = classify_aws_credential_error(e)
-                            if classified is not None:
-                                raise classified from e
-                    except (ImportError, CredentialUnavailableError):
-                        pass
-                    logger.warning("Failed to generate boto3 EKS token for %s, falling back to exec plugin: %s", cluster.name, e)
+        # For Azure / AKS clusters, mint an OAuth access token scoped to AKS AAD Server
+        # via pure Python OAuth2 token exchange and rewrite the kubeconfig user to
+        # use it as a static token. Mirrors the EKS and GKE paths: avoids needing
+        # `az` CLI or `kubelogin` inside the container and prevents token expiration.
+        elif cluster.cloud_provider in ["azure", "aks"]:
+            from services.credentials_service import get_azure_service_principal_info
+            project = cluster.project
+            azure_info = get_azure_service_principal_info(project, self.db)
 
-            # For GKE/GCP clusters, mint an OAuth access token from a service-account
-            # key via google-auth (Python-native) and rewrite the kubeconfig user to
-            # use it as a static token.  Mirrors the EKS path: avoids needing
-            # gke-gcloud-auth-plugin or gcloud inside the container.
-            elif cluster.cloud_provider in ["gke", "gcp"]:
-                from services.credentials_service import get_gcp_service_account_info
-                project = cluster.project
-                sa_info = get_gcp_service_account_info(project, self.db)
+            if not azure_info:
+                logger.warning(
+                    "No Azure service-principal credentials configured for cluster %s "
+                    "(project '%s'); static token in kubeconfig will be used and "
+                    "may expire",
+                    cluster.name, project.name if project else "<none>",
+                )
+            else:
+                try:
+                    tenant_id, client_id, client_secret = azure_info
+                    token = self._generate_azure_token(tenant_id, client_id, client_secret)
+                    if token:
+                        for user_entry in kubeconfig_dict.get("users", []):
+                            user_entry["user"] = {"token": token}
+                        logger.info("Injected pure-Python OAuth bearer token for Azure AKS cluster %s", cluster.name)
+                except Exception as e:
+                    logger.warning("Failed to generate Azure AKS token for %s: %s", cluster.name, e)
 
-                if not sa_info:
-                    logger.warning(
-                        "No GCP service-account credentials configured for cluster %s "
-                        "(project '%s'); kubeconfig exec plugin will be invoked and "
-                        "is expected to fail in slim API container",
-                        cluster.name, project.name if project else "<none>",
-                    )
-                else:
-                    try:
-                        token = self._generate_gcp_token(sa_info)
-                        if token:
-                            kubeconfig_dict = yaml_lib.safe_load(
-                                open(kubeconfig_path).read()
-                            )
-                            for user_entry in kubeconfig_dict.get("users", []):
-                                user_entry["user"] = {"token": token}
-                            with open(kubeconfig_path, "w") as f:
-                                yaml_lib.dump(kubeconfig_dict, f, default_flow_style=False)
-                            logger.info("Injected google-auth-generated bearer token for GKE cluster %s", cluster.name)
-                    except Exception as e:
-                        logger.warning("Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s", cluster.name, e)
+        # Load config directly from memory dictionary
+        k8s_config.load_kube_config_from_dict(kubeconfig_dict, context=cluster.context)
 
-            # Load config from file
-            k8s_config.load_kube_config(config_file=kubeconfig_path, context=cluster.context)
-
-            # Disable urllib3 retries on the returned ApiClient. The kubernetes-client
-            # default is to inherit urllib3's 3-retry policy, which silently amplifies
-            # a single broken request into ~75s of blocking. The breaker assumes one
-            # call = one wire attempt; per-call _request_timeout enforces the upper
-            # bound on the wire attempt itself.
-            cfg = client.Configuration.get_default_copy()
-            cfg.retries = 0
-            return client.ApiClient(cfg)
-        finally:
-            # Clean up temp file
-            try:
-                os.unlink(kubeconfig_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete temp kubeconfig: {e}")
+        # Disable urllib3 retries on the returned ApiClient. The kubernetes-client
+        # default is to inherit urllib3's 3-retry policy, which silently amplifies
+        # a single broken request into ~75s of blocking. The breaker assumes one
+        # call = one wire attempt; per-call _request_timeout enforces the upper
+        # bound on the wire attempt itself.
+        cfg = client.Configuration.get_default_copy()
+        cfg.retries = 0
+        return client.ApiClient(cfg)
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:
@@ -287,18 +301,27 @@ class KubernetesServiceBase:
         logger.info("Generated EKS bearer token for cluster %s (region=%s)", cluster_name, region)
         return token
 
-    @staticmethod
-    def _generate_gcp_token(sa_info: dict) -> str | None:
+    @classmethod
+    def _generate_gcp_token(cls, sa_info: dict) -> str | None:
         """
-        Mint a GKE-compatible OAuth access token from a GCP service-account
+        Generate a GCP access token for a GKE cluster from a service-account
         key dict, using google-auth.  This is the Python-native equivalent of
         ``gke-gcloud-auth-plugin`` and does not require the gcloud CLI.
 
         The token is a Google OAuth2 access token (~1 hour TTL) with the
         ``cloud-platform`` scope, which GKE accepts as a bearer token.
+        Cached in-memory until shortly before the token's real expiry (with a
+        5-minute safety buffer) to prevent redundant network calls.
 
         Returns the token string, or None on failure.
         """
+        client_email = sa_info.get("client_email", "")
+        now = time.time()
+        if client_email:
+            cached = cls._gcp_token_cache.get(client_email)
+            if cached and cached[1] > now:
+                return cached[0]
+
         try:
             from google.auth.transport.requests import Request
             from google.oauth2 import service_account
@@ -306,16 +329,75 @@ class KubernetesServiceBase:
             logger.warning("google-auth not available — cannot generate GCP token natively")
             return None
 
-        credentials = service_account.Credentials.from_service_account_info(
-            sa_info,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        credentials.refresh(Request())
-        logger.info(
-            "Generated GCP access token for service account %s",
-            sa_info.get("client_email", "<unknown>"),
-        )
-        return credentials.token
+        try:
+            import requests
+            credentials = service_account.Credentials.from_service_account_info(
+                sa_info,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            session = requests.Session()
+            credentials.refresh(Request(session=session))
+
+            token = credentials.token
+            if token and client_email:
+                # Derive the cache TTL from the token's real expiry (google-auth
+                # stores it as a naive UTC datetime), mirroring the Azure path, with
+                # a 5-minute safety buffer and a 60s floor. Fall back to a 1-hour
+                # assumption if the expiry is unavailable.
+                expiry = getattr(credentials, "expiry", None)
+                if isinstance(expiry, datetime):
+                    expires_in = (expiry - datetime.utcnow()).total_seconds()
+                else:
+                    expires_in = 3600
+                ttl = max(60, expires_in - 300)
+                cls._gcp_token_cache[client_email] = (token, now + ttl)
+            logger.info(
+                "Generated GCP access token for service account %s",
+                client_email or "<unknown>",
+            )
+            return token
+        except Exception as e:
+            logger.warning("Failed to generate GCP access token for %s: %s", client_email or "unknown", e)
+            return None
+
+    @classmethod
+    def _generate_azure_token(cls, tenant_id: str, client_id: str, client_secret: str) -> str | None:
+        """
+        Generate an AKS bearer token using Azure OAuth2 client_credentials flow.
+        Cached in-memory for 45 minutes (Azure tokens are valid for 60-90 minutes).
+        """
+        cache_key = f"{tenant_id}:{client_id}"
+        now = time.time()
+        cached = cls._azure_token_cache.get(cache_key)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        from services.azure_oauth_service import request_azure_oauth_token
+
+        # Microsoft AKS Azure AD Server Application ID
+        # Authority: https://learn.microsoft.com/en-us/azure/aks/azure-ad-integration-cli
+        aks_aad_server_app_id = "6dae42f8-4368-4678-94ff-3960e28e3630"
+        try:
+            token_data = request_azure_oauth_token(
+                tenant_id=tenant_id,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "scope": f"{aks_aad_server_app_id}/.default",
+                },
+                timeout=15,
+            )
+            token = token_data.get("access_token")
+            if token:
+                expires_in = token_data.get("expires_in", 3600)
+                ttl = max(60, expires_in - 300)
+                cls._azure_token_cache[cache_key] = (token, now + ttl)
+                return token
+        except Exception as e:
+            logger.error("Failed to fetch AKS OAuth bearer token from Azure: %s", e)
+            raise
+        return None
 
     @staticmethod
     def _maybe_open_ssh_tunnel(cluster: KubernetesCluster) -> int | None:

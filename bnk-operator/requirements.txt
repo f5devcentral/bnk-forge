@@ -9,6 +9,7 @@ kr8s>=0.17,<1.0
 
 # HTTP health endpoint + polling client
 aiohttp>=3.9,<4.0
+urllib3>=2.6.4,<3.0.0
 
 # YAML parsing (for manifests)
 pyyaml>=6.0,<7.0

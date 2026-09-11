@@ -11,7 +11,7 @@ import type { Project } from '@/types';
 import { Calendar, FolderGit2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ProjectStatsDisplay } from '@/components/shared/ProjectStatsDisplay';
-import { getProjectLocationInfo } from '@/lib/aws-regions';
+import { getCloudProviderBadgeInfo, getProjectLocationInfo } from '@/lib/aws-regions';
 import { BackendBadge } from './BackendBadge';
 
 interface ProjectCardProps {
@@ -20,6 +20,7 @@ interface ProjectCardProps {
 
 export const ProjectCard = memo(function ProjectCard({ project }: ProjectCardProps) {
   const locationInfo = getProjectLocationInfo(project.cloud_provider, project.region, project.credential_template?.provider, project.project_type);
+  const providerBadge = getCloudProviderBadgeInfo(project.cloud_provider || project.project_type);
 
   return (
     <Card
@@ -44,6 +45,9 @@ export const ProjectCard = memo(function ProjectCard({ project }: ProjectCardPro
             <div>
               <h3 className="text-xl font-bold">{project.name}</h3>
               <div className="flex items-center gap-2 mt-1 flex-wrap relative z-10">
+                <Badge variant={providerBadge.badgeVariant} className={providerBadge.badgeClass}>
+                  {providerBadge.shortLabel}
+                </Badge>
                 {project.has_deployments && (
                   <TooltipProvider>
                     <Tooltip>

@@ -80,7 +80,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getProjectLocationInfo } from '@/lib/aws-regions';
+import {
+  getCloudProviderBadgeInfo,
+  getClusterLocationInfo,
+  getProjectLocationInfo,
+} from '@/lib/aws-regions';
 import type { FleetOperatorHealth, FleetOperatorStatus, FleetRollup } from '@/types/fleet';
 
 // ============================================================================
@@ -718,6 +722,7 @@ export default function Dashboard() {
               <div className="space-y-1">
                 {projects.slice(0, DISPLAY_LIMITS.DASHBOARD_CARDS).map((project) => {
                   const locationInfo = getProjectLocationInfo(project.cloud_provider, project.region, project.credential_template?.provider, project.project_type);
+                  const providerBadge = getCloudProviderBadgeInfo(project.cloud_provider || project.project_type);
                   // Status dot: destructive for failures, success for deployed, muted for inactive
                   const statusDot = project.failed_count > 0
                     ? 'bg-destructive'
@@ -731,11 +736,21 @@ export default function Dashboard() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-sm truncate text-foreground">{project.name}</span>
+                            <Badge variant={providerBadge.badgeVariant} className={providerBadge.badgeClass}>
+                              {providerBadge.shortLabel}
+                            </Badge>
                           </div>
-                          <span className="text-xs text-muted-foreground">
-                            {locationInfo?.flag || '📦'} {locationInfo?.display || 'No location'}
+                          <span className="text-xs text-muted-foreground inline-flex items-center gap-1 font-mono">
+                            {locationInfo ? (
+                              <>
+                                <span>{locationInfo.flag}</span>
+                                <span>{locationInfo.display}</span>
+                              </>
+                            ) : (
+                              <span className="font-sans">📦 No location</span>
+                            )}
                             {project.target_platform_profile && project.target_platform_profile !== 'unknown' && (
-                              <> · {project.target_platform_profile.toUpperCase()}</>
+                              <span className="font-sans"> · {project.target_platform_profile.toUpperCase()}</span>
                             )}
                           </span>
                         </div>
@@ -816,16 +831,28 @@ export default function Dashboard() {
                         : cluster.status === 'error'
                           ? 'bg-destructive'
                           : 'bg-muted-foreground';
+                  const clusterLocation = getClusterLocationInfo(cluster.cloud_provider, cluster.region);
+                  const clusterBadge = getCloudProviderBadgeInfo(cluster.cloud_provider);
                   return (
                     <Link key={cluster.id} to="/kubernetes" className="block group">
                       <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-muted/50">
                         <div className={cn('h-2 w-2 rounded-full flex-shrink-0', statusDot)} />
                         <div className="flex-1 min-w-0">
                           <span className="font-medium text-sm truncate block text-foreground">{cluster.name}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              {cluster.detected_platform_profile?.toUpperCase() || cluster.cloud_provider?.toUpperCase() || 'On-Prem'} {cluster.region ? `· ${cluster.region}` : ''}
-                            </span>
+                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <Badge variant={clusterBadge.badgeVariant} className={clusterBadge.badgeClass}>
+                              {clusterBadge.shortLabel}
+                            </Badge>
+                            {clusterLocation ? (
+                              <span className="text-xs text-muted-foreground inline-flex items-center gap-1 font-mono">
+                                <span>{clusterLocation.flag}</span>
+                                <span>{clusterLocation.display}</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {cluster.detected_platform_profile?.toUpperCase() || 'On-Prem'}
+                              </span>
+                            )}
                             {fleetInfo?.bnk_version && (
                               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-info/10 text-info">
                                 BNK {fleetInfo.bnk_version}
