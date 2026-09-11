@@ -1,10 +1,11 @@
 """
 Unit tests for benchmark cluster_name serialization and cluster_id filtering.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock
-from models.benchmark import BenchmarkTarget, BenchmarkRun, BenchmarkRunGroup
-from schemas.benchmarks import BenchmarkTargetResponse, BenchmarkRunResponse, RunGroupSummary
+
+from models.benchmark import BenchmarkRun, BenchmarkRunGroup, BenchmarkTarget
+from schemas.benchmarks import BenchmarkRunResponse, BenchmarkTargetResponse, RunGroupSummary
 
 
 class TestBenchmarkClusterInfo:
@@ -12,7 +13,7 @@ class TestBenchmarkClusterInfo:
         mock_cluster = MagicMock()
         mock_cluster.name = "bnk-singapore"
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         target = BenchmarkTarget(
             id=1,
             name="vllm-awsbnkctl",
