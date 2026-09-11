@@ -278,7 +278,7 @@ class BenchmarkTargetService(BaseService):
                     http_ok = True
                     http_msg = f"K8s Service '{svc_name}.{svc_ns}' found"
             except Exception as k8s_err:
-                logger.debug("K8s validation fallback failed for target %d: %s", target_id, k8s_err)
+                logger.warning("K8s validation fallback failed for target %d: %s", target_id, k8s_err)
 
         if http_ok:
             target.status = BenchmarkTargetStatus.ACTIVE

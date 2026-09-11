@@ -1481,8 +1481,7 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         if token_agent_id is None:
             # The built-in agent container connects using the bootstrap token minted
             # before registration (carrying sub=forge-builtin-agent, role=agent, and no agent_id).
-            # Operator and admin bearer tokens also carry no agent_id claim.
-            if payload.get("sub") == "forge-builtin-agent" or payload.get("role") in _AGENT_WRITE_ROLES:
+            if payload.get("sub") == "forge-builtin-agent":
                 return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
