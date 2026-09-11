@@ -37,6 +37,7 @@ from typing import Any
 from kubernetes import client as k8s_client
 from kubernetes.stream import stream as k8s_stream
 
+from core.cache import cache
 from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -1121,7 +1122,7 @@ def _restart_cwc_pod(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_
 
 
 def check_setup_status(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Check whether QKView mTLS setup has been completed for this cluster.
@@ -1139,6 +1140,12 @@ def check_setup_status(
         "message": str,
       }
     """
+    cache_key = f"cwc:setup_status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         cluster = k8s_service.get_cluster(cluster_id)
         api_client = k8s_service.load_kubeconfig(cluster)
@@ -1178,13 +1185,15 @@ def check_setup_status(
             "certificates and restart the CWC pod (one-time operation)."
         )
 
-    return {
+    res = {
         "setup_complete": setup_complete,
         "cert_manager_available": cert_manager_ok,
         "server_cert_exists": server_cert_ok,
         "client_cert_exists": client_cert_ok,
         "message": message,
     }
+    cache.set(cache_key, res, ttl_seconds=60)
+    return res
 
 
 def setup_cwc_api_certs(
@@ -1290,6 +1299,11 @@ def setup_cwc_api_certs(
     _cleanup_all_client_pods(api_client, cwc_ns)
     steps.append({"step": "stale_pods_cleanup", "status": "ok"})
 
+    # Invalidate cached CWC status
+    cache.delete(f"cwc:setup_status:{cluster_id}")
+    cache.delete(f"cwc:available:{cluster_id}")
+    cache.delete(f"license:status:{cluster_id}")
+
     return {
         "success": True,
         "message": "CWC API mTLS setup complete. CWC REST API now uses cert-manager certs.",
@@ -1302,7 +1316,7 @@ setup_qkview_certs = setup_cwc_api_certs
 
 
 def check_cwc_available(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Check if the CWC service is available and the mTLS certs are accessible.
@@ -1310,6 +1324,12 @@ def check_cwc_available(
     QKView and licensing both depend on the same CWC REST API path, so this is
     the shared health check for those workflows.
     """
+    cache_key = f"cwc:available:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         cluster = k8s_service.get_cluster(cluster_id)
         api_client = k8s_service.load_kubeconfig(cluster)
@@ -1339,7 +1359,9 @@ def check_cwc_available(
         except QKViewError as e:
             return {"available": False, "message": str(e)}
 
-        return {"available": True, "message": f"CWC is available in namespace '{cwc_ns}'"}
+        res = {"available": True, "message": f"CWC is available in namespace '{cwc_ns}'"}
+        cache.set(cache_key, res, ttl_seconds=60)
+        return res
 
     except Exception as e:
         return {
@@ -1349,21 +1371,30 @@ def check_cwc_available(
 
 
 def list_qkviews(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> list[dict]:
     """List all QKView jobs on the cluster."""
+    cache_key = f"cwc:qkviews:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
 
     result = _cwc_request(api_client, "GET", "/v1/qkview")
+    items = []
     if isinstance(result, list):
-        return result
-    if isinstance(result, dict):
+        items = result
+    elif isinstance(result, dict):
         if "items" in result:
-            return result["items"]
+            items = result["items"]
         # Single item or empty
-        return [result] if result.get("id") or result.get("filename") else []
-    return []
+        elif result.get("id") or result.get("filename"):
+            items = [result]
+    cache.set(cache_key, items, ttl_seconds=30)
+    return items
 
 
 def create_qkview(
@@ -1372,6 +1403,7 @@ def create_qkview(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a new QKView diagnostic tarball."""
+    cache.delete(f"cwc:qkviews:{cluster_id}")
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     # Only send a body if there are actual options
@@ -1418,6 +1450,7 @@ def delete_qkview(
     k8s_service: KubernetesService, cluster_id: int, qkview_id: str
 ) -> dict:
     """Delete a specific QKView by ID."""
+    cache.delete(f"cwc:qkviews:{cluster_id}")
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     try:
@@ -1437,6 +1470,7 @@ def cancel_qkview(
     k8s_service: KubernetesService, cluster_id: int, qkview_id: str
 ) -> dict:
     """Cancel a running QKView job."""
+    cache.delete(f"cwc:qkviews:{cluster_id}")
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     result = _cwc_request(
@@ -1622,7 +1656,7 @@ def _format_switch_failure_message(
 
 
 def get_license_status(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Get CWC license and telemetry status for a cluster.
@@ -1631,27 +1665,49 @@ def get_license_status(
     Returns normalized license state, entitlement type, expiry, telemetry
     status, etc.  The raw CWC response is included as ``raw_cwc_response``
     for debugging.
+
+    Results are cached for 30 seconds per cluster; pass ``force=True`` to
+    bypass the cache.
     """
+    cache_key = f"license:status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     result = _cwc_request(api_client, "GET", "/status")
     normalized = _normalize_cwc_status(result if isinstance(result, dict) else {})
-    return {"success": True, **normalized}
+    response = {"success": True, **normalized}
+    cache.set(cache_key, response, ttl_seconds=30)
+    return response
 
 
 def get_license_report(
-    k8s_service: KubernetesService, cluster_id: int
+    k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
     """
     Get CWC telemetry report for a cluster.
 
     CWC endpoint: GET /report
     Only available when CWC telemetry state is "Config Report Ready to Download".
+
+    Results are cached for 60 seconds per cluster; pass ``force=True`` to
+    bypass the cache.
     """
+    cache_key = f"license:report:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     result = _cwc_request(api_client, "GET", "/report")
-    return {"success": True, **result}
+    response = {"success": True, **result}
+    cache.set(cache_key, response, ttl_seconds=60)
+    return response
 
 
 def activate_license(
@@ -1750,6 +1806,11 @@ def activate_license(
         response["jwks_validation"] = jwks_status
     elif jwks_validation:
         response["jwks_validation"] = jwks_validation
+
+    # Activation changed license state; invalidate cached status/report so the
+    # next read reflects the new state instead of a stale cached value.
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"license:report:{cluster_id}")
     return response
 
 

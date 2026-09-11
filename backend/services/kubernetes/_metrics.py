@@ -11,6 +11,55 @@ from kubernetes.client.rest import ApiException
 logger = logging.getLogger(__name__)
 
 
+def parse_cpu_to_millicores(cpu_str: str | None) -> int:
+    """Parse a Kubernetes CPU quantity string to millicores."""
+    if not cpu_str or cpu_str == "0":
+        return 0
+    cpu_str = cpu_str.strip()
+    if cpu_str.endswith("n"):
+        return int(float(cpu_str[:-1]) / 1_000_000)
+    if cpu_str.endswith("u"):
+        return int(float(cpu_str[:-1]) / 1_000)
+    if cpu_str.endswith("m"):
+        return int(float(cpu_str[:-1]))
+    return int(float(cpu_str) * 1000)
+
+
+def parse_memory_to_bytes(memory_str: str | None) -> int:
+    """Parse a Kubernetes memory quantity string to bytes."""
+    if not memory_str or memory_str == "0":
+        return 0
+    memory_str = memory_str.strip()
+    try:
+        return int(float(memory_str))
+    except ValueError:
+        pass
+
+    suffixes = {
+        "Ki": 1024,
+        "Mi": 1024**2,
+        "Gi": 1024**3,
+        "Ti": 1024**4,
+        "Pi": 1024**5,
+        "Ei": 1024**6,
+        "k": 1000,
+        "M": 1000**2,
+        "G": 1000**3,
+        "T": 1000**4,
+        "P": 1000**5,
+        "E": 1000**6,
+    }
+    for suffix, multiplier in suffixes.items():
+        if memory_str.endswith(suffix):
+            return int(float(memory_str[: -len(suffix)]) * multiplier)
+
+    try:
+        return int(float(memory_str))
+    except ValueError:
+        logger.warning(f"Could not parse memory string: {memory_str}")
+        return 0
+
+
 class MetricsMixin:
     """Mixin for pod/node metrics (requires metrics-server)."""
 
@@ -44,8 +93,8 @@ class MetricsMixin:
                     total_memory = 0
                     for container in containers:
                         usage = container.get("usage", {})
-                        total_cpu += self._parse_cpu_string(usage.get("cpu", "0"))
-                        total_memory += self._parse_memory_string(usage.get("memory", "0"))
+                        total_cpu += parse_cpu_to_millicores(usage.get("cpu", "0"))
+                        total_memory += parse_memory_to_bytes(usage.get("memory", "0"))
 
                     pod_metrics.append({
                         "name": metadata.get("name"),
@@ -96,8 +145,8 @@ class MetricsMixin:
                 node_allocatable = {}
                 for node in nodes.items:
                     node_allocatable[node.metadata.name] = {
-                        "cpu": self._parse_cpu_string(node.status.allocatable.get("cpu", "0")),
-                        "memory": self._parse_memory_string(node.status.allocatable.get("memory", "0")),
+                        "cpu": parse_cpu_to_millicores(node.status.allocatable.get("cpu", "0")),
+                        "memory": parse_memory_to_bytes(node.status.allocatable.get("memory", "0")),
                         "pods": int(node.status.allocatable.get("pods", "0"))
                     }
 
@@ -107,8 +156,8 @@ class MetricsMixin:
                     usage = item.get("usage", {})
                     node_name = metadata.get("name")
 
-                    cpu_millicores = self._parse_cpu_string(usage.get("cpu", "0"))
-                    memory_bytes = self._parse_memory_string(usage.get("memory", "0"))
+                    cpu_millicores = parse_cpu_to_millicores(usage.get("cpu", "0"))
+                    memory_bytes = parse_memory_to_bytes(usage.get("memory", "0"))
 
                     allocatable = node_allocatable.get(node_name, {})
                     allocatable_cpu = allocatable.get("cpu", 0)
@@ -150,39 +199,10 @@ class MetricsMixin:
             logger.error(f"Unexpected error getting node metrics: {e}")
             raise
 
-    def _parse_cpu_string(self, cpu_str: str) -> int:
+    def _parse_cpu_string(self, cpu_str: str | None) -> int:
         """Parse Kubernetes CPU string to millicores."""
-        if not cpu_str or cpu_str == "0":
-            return 0
-        cpu_str = cpu_str.strip()
-        if cpu_str.endswith("n"):
-            return int(float(cpu_str[:-1]) / 1_000_000)
-        if cpu_str.endswith("u"):
-            return int(float(cpu_str[:-1]) / 1_000)
-        if cpu_str.endswith("m"):
-            return int(float(cpu_str[:-1]))
-        return int(float(cpu_str) * 1000)
+        return parse_cpu_to_millicores(cpu_str)
 
-    def _parse_memory_string(self, memory_str: str) -> int:
+    def _parse_memory_string(self, memory_str: str | None) -> int:
         """Parse Kubernetes memory string to bytes."""
-        if not memory_str or memory_str == "0":
-            return 0
-        memory_str = memory_str.strip()
-        try:
-            return int(float(memory_str))
-        except ValueError:
-            pass
-
-        suffixes = {
-            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4, "Pi": 1024**5, "Ei": 1024**6,
-            "k": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4, "P": 1000**5, "E": 1000**6,
-        }
-        for suffix, multiplier in suffixes.items():
-            if memory_str.endswith(suffix):
-                return int(float(memory_str[:-len(suffix)]) * multiplier)
-
-        try:
-            return int(float(memory_str))
-        except ValueError:
-            logger.warning(f"Could not parse memory string: {memory_str}")
-            return 0
+        return parse_memory_to_bytes(memory_str)

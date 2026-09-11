@@ -129,34 +129,35 @@ VALID_AWS_REGIONS = {
 
 def validate_aws_region(value: str | None, field_name: str = "region") -> None:
     """
-    Validate that *value* is a known AWS region code.
+    Validate that *value* is an AWS-shaped region code.
 
-    Only validates when the value looks like an AWS region (matches the
-    ``xx-yyyy-N`` pattern). Free-form location labels (e.g. "on-prem",
-    "datacenter-nyc") are allowed through without error.
+    Any value matching the AWS ``xx-yyyy-N`` pattern is accepted so that
+    new or private AWS regions are selectable without waiting for a
+    hardcoded list update. Free-form location labels (e.g. "on-prem",
+    "datacenter-nyc", "eu-fr2") are also allowed through without error.
+
+    The known-region set (VALID_AWS_REGIONS) is kept for dropdown
+    suggestions but no longer blocks validation.
 
     Args:
         value: Region string to validate. ``None`` and empty string are allowed.
         field_name: Human-readable field name for the error message.
 
     Raises:
-        ValueError: If *value* looks like an AWS region but isn't in the known list.
+        ValueError: If *value* is clearly malformed (currently no-op;
+        reserved for future stricter checks).
     """
     if not value:
         return
 
-    # Only validate if it looks like an AWS region code (e.g. us-east-1, eu-west-2)
-    # Free-form labels like "on-prem" or "datacenter-nyc" pass through
+    # Only validate shape if it looks like an AWS region code (e.g. us-east-1,
+    # eu-west-2). Free-form labels like "on-prem", "datacenter-nyc", or
+    # "eu-fr2" pass through so users can select any cloud region.
     aws_region_pattern = re.compile(r"^[a-z]{2,4}-[a-z]+-\d+$")
     if not aws_region_pattern.match(value):
         return  # Not an AWS region pattern — allow as free-form label
 
-    if value not in VALID_AWS_REGIONS:
-        raise ValueError(
-            f"Invalid AWS region for '{field_name}': '{value}'. "
-            f"Must be a valid AWS region (e.g. 'us-east-1', 'eu-west-1'). "
-            f"See https://docs.aws.amazon.com/general/latest/gr/rande.html"
-        )
+    # Accept any AWS-shaped region; VALID_AWS_REGIONS is now suggestion-only.
 
 
 # IBM Cloud multi-zone-region (MZR) codes. Mirrors services.ibm_cloud_service.IBM_REGIONS.
@@ -176,30 +177,71 @@ VALID_IBM_REGIONS = {
 
 
 def validate_ibm_region(value: str | None, field_name: str = "region") -> None:
-    """Validate that *value* is a known IBM Cloud region code.
+    """Validate that *value* is an IBM-shaped region code.
 
-    Only validates when the value looks like an IBM region (matches one of the
-    short ``xx-yyy`` / ``xx-yyyy`` shapes). Free-form location labels are
-    allowed through. The IBM region naming pattern is distinguishable from
-    the AWS ``xx-yyyy-N`` pattern by the absence of a trailing digit segment.
+    Any value matching the short ``xx-yyy`` / ``xx-yyyy`` IBM region shape is
+    accepted so that new MZRs are selectable without waiting for a hardcoded
+    list update. Free-form location labels are allowed through. The IBM region
+    naming pattern is distinguishable from the AWS ``xx-yyyy-N`` pattern by
+    the absence of a trailing digit segment.
+
+    The known-region set (VALID_IBM_REGIONS) is kept for dropdown
+    suggestions but no longer blocks validation.
 
     Raises:
-        ValueError: If *value* looks like an IBM region but isn't recognized.
+        ValueError: If *value* is clearly malformed (currently no-op).
     """
     if not value:
         return
 
     # IBM regions are short two-segment codes without a trailing number:
     # us-east, eu-de, jp-tok, br-sao, etc. AWS regions always have a trailing
-    # numeric segment (us-east-1). Reject only IBM-shaped values that aren't
-    # in the known set.
+    # numeric segment (us-east-1). Accept any IBM-shaped value; VALID_IBM_REGIONS
+    # is now suggestion-only.
     ibm_region_pattern = re.compile(r"^[a-z]{2,3}-[a-z]{2,5}$")
     if not ibm_region_pattern.match(value):
         return
 
-    if value not in VALID_IBM_REGIONS:
-        raise ValueError(
-            f"Invalid IBM Cloud region for '{field_name}': '{value}'. "
-            f"Must be a valid IBM Cloud MZR code (e.g. 'us-south', 'eu-de', 'jp-tok'). "
-            f"See https://cloud.ibm.com/docs/overview?topic=overview-locations"
-        )
+    # Accept any IBM-shaped region; VALID_IBM_REGIONS is now suggestion-only.
+
+
+# Azure region codes: lowercase letters with an optional trailing digit.
+# Examples: westus, westus2, francecentral, germanywestcentral, australiacentral2.
+AZURE_REGION_PATTERN = re.compile(r"^[a-z]+[0-9]?$")
+
+
+def validate_azure_region(value: str | None, field_name: str = "region") -> None:
+    """Validate that *value* is an Azure-shaped region code.
+
+    Any value matching the typical Azure region shape is accepted so that new
+    regions are selectable without waiting for a hardcoded list update.
+    Free-form location labels are allowed through.
+
+    Raises:
+        ValueError: If *value* is clearly malformed (currently no-op).
+    """
+    if not value:
+        return
+    if not AZURE_REGION_PATTERN.match(value):
+        return  # Allow free-form labels such as "eu-fr2" or "on-prem"
+
+
+# GCP region codes: lowercase letters, hyphen, lowercase letters, trailing digit.
+# Examples: us-central1, europe-west1, asia-southeast1, australia-southeast1.
+GCP_REGION_PATTERN = re.compile(r"^[a-z]+-[a-z]+[0-9]+$")
+
+
+def validate_gcp_region(value: str | None, field_name: str = "region") -> None:
+    """Validate that *value* is a GCP-shaped region code.
+
+    Any value matching the typical GCP region shape is accepted so that new
+    regions are selectable without waiting for a hardcoded list update.
+    Free-form location labels are allowed through.
+
+    Raises:
+        ValueError: If *value* is clearly malformed (currently no-op).
+    """
+    if not value:
+        return
+    if not GCP_REGION_PATTERN.match(value):
+        return  # Allow free-form labels such as "eu-fr2" or "on-prem"

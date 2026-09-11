@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@/test/test-utils';
+import userEvent from '@testing-library/user-event';
 import Fleet from '@/pages/Fleet';
 import { useFleetHealth, useFleetMembersByFleet, useFleetRollups, useFleetTargets } from '@/hooks/useFleet';
 import { useAllClusters as _useAllClusters, useBatchConnectivity } from '@/hooks/useK8s';
@@ -75,6 +76,14 @@ vi.mock('@/hooks/useK8s', () => ({
 
 vi.mock('@/hooks/useProjects', () => ({
   useProjects: vi.fn(() => ({ data: [], isLoading: false })),
+}));
+
+vi.mock('@/hooks/useSystem', () => ({
+  useBnkConsumption: vi.fn(() => ({ data: undefined, isLoading: false, error: null })),
+}));
+
+vi.mock('@/components/system/BnkResourcesPanel', () => ({
+  BnkResourcesPanel: () => <div data-testid="bnk-resources-panel">BnkResourcesPanel</div>,
 }));
 
 vi.mock('@/components/fleet/ConfigPromotionWizard', () => ({
@@ -225,16 +234,25 @@ describe('Fleet', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders only the Fleets top-level tab; no DPU Infrastructure, Cluster Health, or Migration tab', () => {
+  it('renders Fleets and BNK Resources top-level tabs; no DPU Infrastructure, Cluster Health, or Migration tab', () => {
     // D-022 P6 IA: DPU Infrastructure relocated to /infrastructure.
-    // Landing is the Fleets list — the only top-level Fleet tab.
+    // Top-level tabs: Fleets list + fleet-wide BNK Resources.
     // Cluster Health is a per-fleet sub-tab; Migration moved to K8s page (D-022 P6 Slice A).
     setFleetHealthMock();
     render(<Fleet />);
     expect(screen.getByRole('tab', { name: /fleets/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /bnk resources/i })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /dpu infrastructure/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /cluster health/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /migration/i })).not.toBeInTheDocument();
+  });
+
+  it('switches to BNK Resources tab and renders the panel', async () => {
+    const user = userEvent.setup();
+    setFleetHealthMock();
+    render(<Fleet />);
+    await user.click(screen.getByRole('tab', { name: /bnk resources/i }));
+    expect(screen.getByTestId('bnk-resources-panel')).toBeInTheDocument();
   });
 
   it('renders aggregate stats in the per-fleet Health facet', () => {

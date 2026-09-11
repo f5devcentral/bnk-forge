@@ -1,8 +1,8 @@
 /**
  * Tests for Dashboard page
  *
- * Covers: renders greeting, loading skeletons, data display (projects, clusters,
- * fleet health, stats), action buttons, enriched cluster cards with BNK data.
+ * Covers: renders greeting, loading skeletons, Hero Omnisearch, Multi-Cloud Estate,
+ * Fleets overview, and action buttons.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
@@ -58,11 +58,22 @@ describe('Dashboard', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/projects?action=create');
   });
 
-  it('renders Projects section heading', async () => {
+  it('renders Hero Omnisearch input with placeholder and filter chips', async () => {
     render(<Dashboard />);
     await waitFor(() => {
-      const projectsElements = screen.getAllByText('Projects');
-      expect(projectsElements.length).toBeGreaterThan(0);
+      expect(
+        screen.getByPlaceholderText(/search fqdn/i)
+      ).toBeInTheDocument();
+      expect(screen.getByText(/ingresses & vips/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders Multi-Cloud Estate section with provider groups', async () => {
+    render(<Dashboard />);
+    await waitFor(() => {
+      expect(screen.getByText('Multi-Cloud Estate')).toBeInTheDocument();
+      const awsPills = screen.getAllByText(/AWS/i);
+      expect(awsPills.length).toBeGreaterThan(0);
     });
   });
 
@@ -77,56 +88,22 @@ describe('Dashboard', () => {
     );
   });
 
-  it('renders empty state for projects when none exist', async () => {
-    server.use(
-      http.get('*/api/projects', ({ request }) => {
-        const url = new URL(request.url);
-        if (url.pathname !== '/api/projects') return;
-        return HttpResponse.json({ projects: [], total: 0 });
-      }),
-    );
-    render(<Dashboard />);
-    await waitFor(() => {
-      // Should still render the page
-      expect(screen.getByText(/good (morning|afternoon|evening)/i)).toBeInTheDocument();
-    });
-  });
-
-  // D-022 P6: Fleets section (fleet-entity model)
+  // Fleets section (fleet-entity model)
   it('renders Fleets section with all-fleets-healthy when fleets exist and are ready', async () => {
     render(<Dashboard />);
     await waitFor(() => {
-      // The global MSW handler returns mockFleetTargets (1 fleet, worst_state: 'ready'), so the section mounts on data.
       const fleetHeadings = screen.getAllByText('Fleets');
       expect(fleetHeadings.length).toBeGreaterThan(0);
-      // Assert: 1 fleet with worst_state='ready' → healthStateFromRollup returns 'green' → no attention needed → "All fleets healthy"
       expect(screen.getByText('All fleets healthy')).toBeInTheDocument();
       expect(screen.getByText('Fleet Dashboard')).toBeInTheDocument();
     });
   });
 
-  it('renders BNK version in enriched cluster cards', async () => {
+  it('renders BNK version in cluster cards', async () => {
     render(<Dashboard />);
     await waitFor(() => {
-      // BNK version appears in the enriched cluster cards (Clusters section)
       const bnkVersions = screen.getAllByText('BNK 2.3.0');
       expect(bnkVersions.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  // Stats row includes Fleet
-  it('renders Fleet stat card', async () => {
-    render(<Dashboard />);
-    await waitFor(() => {
-      expect(screen.getByText('Fleet')).toBeInTheDocument();
-    });
-  });
-
-  it('renders Clusters section heading', async () => {
-    render(<Dashboard />);
-    await waitFor(() => {
-      const clusterElements = screen.getAllByText('Clusters');
-      expect(clusterElements.length).toBeGreaterThan(0);
     });
   });
 
@@ -134,13 +111,6 @@ describe('Dashboard', () => {
     render(<Dashboard />);
     await waitFor(() => {
       expect(screen.getByText('Fleet Dashboard')).toBeInTheDocument();
-    });
-  });
-
-  it('renders Recent Operations section', async () => {
-    render(<Dashboard />);
-    await waitFor(() => {
-      expect(screen.getByText('Recent Operations')).toBeInTheDocument();
     });
   });
 });

@@ -87,6 +87,9 @@ x-worker-volumes: &worker-volumes
   - bfb_cache:/app/bfb-cache
   # Mount secrets directory (for FAR credentials, etc.)
   - ./secrets:/app/secrets:ro
+  # Custom TLS CA certificates (corporate SSL inspection proxies). Read-only;
+  # backend/entrypoint.sh installs them into the system trust store on startup.
+  - ./certs:/app/certs:ro
   # *bnkctl family binaries (linux/amd64). Only the worker needs the binary —
   # the API container deliberately omits CLI tools.
   # Provisioned by `make fetch-awsbnkctl` (pinned + checksum-verified release
@@ -182,6 +185,9 @@ services:
       - provider_cache:/app/provider-cache
       - bfb_cache:/app/bfb-cache
       - ./secrets:/app/secrets:ro
+      # Custom TLS CA certificates (corporate SSL inspection proxies). Read-only;
+      # backend/entrypoint.sh installs them into the system trust store on startup.
+      - ./certs:/app/certs:ro
       # Backend-specific volumes (not needed by workers)
       - ./VERSION:/app/VERSION:ro
       # SEC-004: Docker socket moved to docker-compose.override.yml (opt-in).

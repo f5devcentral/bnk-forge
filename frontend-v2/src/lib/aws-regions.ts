@@ -148,6 +148,11 @@ export const CONTINENT_ORDER = [
 export {
   getCloudProviderBadgeInfo,
   getClusterLocationInfo,
+  normalizeProvider,
+  cleanNameForMatching,
+  formatAvailabilityZone,
   type CloudProviderBadgeInfo,
+  type NormalizedCloudProvider,
 } from './cloud-providers';
+
 

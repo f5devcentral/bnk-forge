@@ -790,6 +790,59 @@ export const mockMaintenanceActive = {
   started_at: '2026-04-13T12:00:00Z',
 };
 
+export const mockBnkConsumption = {
+  timestamp: '2026-09-01T12:00:00Z',
+  fleet_summary: {
+    total_clusters: 2,
+    reachable_clusters: 2,
+    bnk_installed_clusters: 1,
+    total_bnk_pods: 5,
+    control_plane_pods: 2,
+    data_plane_pods: 3,
+    total_cpu_millicores: 1850,
+    total_memory_bytes: 3900000000,
+    dpf_detected_clusters: 0,
+    dpu_count: 0,
+  },
+  clusters: [
+    {
+      cluster_id: 1,
+      cluster_name: 'dev-cluster',
+      reachable: true,
+      bnk_installed: true,
+      bnk_version: '2.5.0',
+      status: 'connected',
+      node_count: 3,
+      control_plane: { count: 1, cpu_millicores: 200, memory_bytes: 500000000 },
+      data_plane: { count: 2, cpu_millicores: 1000, memory_bytes: 2000000000 },
+      total: { count: 3, cpu_millicores: 1200, memory_bytes: 2500000000 },
+      metrics_available: true,
+      metrics_error: null,
+      dpf: { detected: false, dpu_count: 0 },
+      top_pods: [
+        { name: 'f5-tmm-abc', namespace: 'f5-bnk', role: 'tmm', cpu_millicores: 600, memory_bytes: 1100000000 },
+        { name: 'f5ingress-ctrl', namespace: 'f5-bnk', role: 'controller', cpu_millicores: 200, memory_bytes: 500000000 },
+      ],
+    },
+    {
+      cluster_id: 2,
+      cluster_name: 'prod-cluster',
+      reachable: true,
+      bnk_installed: false,
+      bnk_version: null,
+      status: 'connected',
+      node_count: 6,
+      control_plane: { count: 0, cpu_millicores: 0, memory_bytes: 0 },
+      data_plane: { count: 0, cpu_millicores: 0, memory_bytes: 0 },
+      total: { count: 0, cpu_millicores: 0, memory_bytes: 0 },
+      metrics_available: true,
+      metrics_error: null,
+      dpf: { detected: false, dpu_count: 0 },
+      top_pods: [],
+    },
+  ],
+};
+
 // ============================================================================
 // Alert Channels
 // ============================================================================

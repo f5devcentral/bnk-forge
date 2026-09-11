@@ -79,9 +79,6 @@ describe('Sidebar', () => {
     expect(screen.getByText('Access Methods')).toBeInTheDocument();
     expect(screen.getByText('Blueprints')).toBeInTheDocument();
     expect(screen.getByText('Projects')).toBeInTheDocument();
-    expect(screen.getByText('Operations Log')).toBeInTheDocument();
-    // Catalog lives at the bottom of BUILD, after Operations Log. Helm
-    // Packages is gone (now part of the Kubernetes page).
     expect(screen.getByText('Catalog')).toBeInTheDocument();
   });
 
@@ -217,17 +214,15 @@ describe('Sidebar', () => {
     const blueprints = screen.getByText('Blueprints');
     const accessTemplates = screen.getByText('Access Methods');
     const projects = screen.getByText('Projects');
-    const operationsLog = screen.getByText('Operations Log');
     const fleet = screen.getByText('Fleet');
     const kubernetes = screen.getByText('Kubernetes');
 
-    // BUILD: Catalog → Blueprints → Access Methods → Projects → Operations Log
+    // BUILD: Catalog → Blueprints → Access Methods → Projects
     expect(catalog.compareDocumentPosition(blueprints) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(blueprints.compareDocumentPosition(accessTemplates) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(accessTemplates.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(projects.compareDocumentPosition(operationsLog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // BUILD → OPERATE
-    expect(operationsLog.compareDocumentPosition(fleet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(projects.compareDocumentPosition(fleet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(fleet.compareDocumentPosition(kubernetes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

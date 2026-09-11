@@ -110,6 +110,13 @@ class ClusterSummary(BaseModel):
     enabled_prerequisites: list[str] | None = None
     bnk_config: BnkClusterConfigSummary | None = None
     node_count: int | None = None
+    # Cloud-account / discovery metadata (PLAT-REL-001 / fleet health)
+    account_id: str | None = None
+    discovery_status: str | None = None
+    connectivity_status: str | None = None
+    integration_status: str | None = None
+    zones: list[str] = Field(default_factory=list)
+    access_method: str | None = None
     # ADR-478/494: release FK ids — deployable = intent (set at deploy time);
     # running = observed (set by discovery scan). Both nullable.
     deployable_release_id: int | None = None
@@ -148,6 +155,14 @@ class ClusterDetailResponse(BaseModel):
     ssh_host_override: str | None = None
     enabled_prerequisites: list[str] | None = None
     meta_data: dict[str, Any] | None = None
+    node_count: int | None = None
+    # Cloud-account / discovery metadata (PLAT-REL-001 / fleet health)
+    account_id: str | None = None
+    discovery_status: str | None = None
+    connectivity_status: str | None = None
+    integration_status: str | None = None
+    zones: list[str] = Field(default_factory=list)
+    access_method: str | None = None
     # ADR-478/494: release FK ids — deployable = intent (set at deploy time);
     # running = observed (set by discovery scan). Both nullable.
     deployable_release_id: int | None = None

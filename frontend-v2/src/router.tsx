@@ -21,7 +21,6 @@ const System = lazy(() => import('@/pages/System'));
 const Fleet = lazy(() => import('@/pages/Fleet'));
 const UserManagement = lazy(() => import('@/pages/UserManagement'));
 const Benchmarks = lazy(() => import('@/pages/Benchmarks'));
-const MCP = lazy(() => import('@/pages/MCP'));
 const Infrastructure = lazy(() => import('@/pages/Infrastructure'));
 const LlmDashboard = lazy(() => import('@/pages/observability/LlmDashboard'));
 const LlmLogs = lazy(() => import('@/pages/observability/LlmLogs'));
@@ -159,7 +158,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'mcp-server',
-        element: <MCP />,
+        element: <Navigate to="/system?tab=mcp" replace />,
       },
       {
         path: 'users',

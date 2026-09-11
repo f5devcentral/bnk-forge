@@ -45,6 +45,7 @@ export { settingsApi } from './settings';
 export { auditApi } from './audit';
 export { backupApi } from './backup';
 export { llmObservabilityApi } from './llmObservability';
+export { searchGlobal } from './search';
 
 // Import all for the unified api object
 import { benchmarksApi } from './benchmarks';

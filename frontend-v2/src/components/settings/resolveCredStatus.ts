@@ -37,22 +37,25 @@ function remainingLabel(ms: number): string {
 }
 
 /**
- * Collapse two divergent AWS credential signals into one authoritative status.
+ * Collapse cloud credential signals into one authoritative status.
  *
  * Priority (first match wins):
  *  1. failed  — last observation is an error newer than last success
- *  2. expired — aws_credentials_expiry is in the past
+ *  2. expired — credentials/token expiry is in the past
  *  3. warning — expiry within 1 hour
  *  4. ok      — creds valid (with remaining time if lease present)
  *  5. unknown — no expiry and no observation
  *
- * Only meaningful for provider === 'aws'; callers should guard before
- * calling this for other providers.
+ * Meaningful for provider === 'aws' or provider === 'azure'.
  */
 export function resolveCredStatus(template: CloudCredentialTemplate): CredStatus {
   const errorAt = toDate(template.last_error_at);
   const successAt = toDate(template.last_successful_call_at);
-  const expiryAt = toDate(template.aws_credentials_expiry);
+  const expiryAt = toDate(
+    template.provider === 'azure'
+      ? template.azure_sso_token_expiry
+      : template.aws_credentials_expiry
+  );
   const now = Date.now();
 
   // 1. failed: error observation is present and newer than last success

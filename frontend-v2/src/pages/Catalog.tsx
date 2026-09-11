@@ -1,39 +1,27 @@
 /**
- * Catalog page — D-020 redesign.
+ * Catalog page — Streamlined 4-tab architecture.
  *
- * Unified home for shared, reusable building blocks behind a single tab strip:
- *   • Modules           — browsable module catalog with source management (Advanced only)
- *   • Blueprints        — browsable blueprint catalog with source management
- *   • Helm Repos        — chart repositories
- *   • DOCA Releases     — paired BFB + DOCA catalog
- *   • bf.conf Templates — DPU config templates
- *
- * The Modules tab is hidden by default and revealed by an "Advanced" toggle
- * (persisted in localStorage key `forge.catalog.advanced`).
+ * Unified home for shared, reusable building blocks behind 4 clear primary tabs:
+ *   • Blueprints & Stacks — browsable blueprint catalog with source management
+ *   • Modules             — browsable module catalog with source management
+ *   • Helm Charts & Repos — chart repositories & registries
+ *   • System & DPU Images — DOCA/BFB releases, BNK releases, and bf.conf templates
  */
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Switch } from '@/components/ui/switch';
-import { Layers, Package, HardDrive, FileCode, Loader2, Library, Cpu } from 'lucide-react';
+import { Layers, Package, HardDrive, Loader2, Library } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
+import type { SystemSubTab } from '@/components/catalog/SystemImagesPanel';
 
 const Modules = lazy(() => import('@/pages/Modules'));
 const BlueprintCatalogPanel = lazy(() => import('@/components/catalog/BlueprintCatalogPanel'));
 const HelmReposPanel = lazy(() => import('@/components/catalog/HelmReposPanel'));
-const BluefieldImages = lazy(() =>
-  import('@/components/settings/BluefieldImages').then((m) => ({ default: m.BluefieldImages })),
-);
-const BfConfTemplates = lazy(() =>
-  import('@/components/settings/BfConfTemplates').then((m) => ({ default: m.BfConfTemplates })),
-);
-const BnkReleasesPanel = lazy(() => import('@/components/catalog/BnkReleasesPanel'));
+const SystemImagesPanel = lazy(() => import('@/components/catalog/SystemImagesPanel'));
 
-const ADVANCED_STORAGE_KEY = 'forge.catalog.advanced';
-
-const VALID_TABS = ['modules', 'blueprints', 'helm-repos', 'doca-releases', 'bnk-releases', 'bf-conf-templates'] as const;
+const VALID_TABS = ['blueprints', 'modules', 'helm-repos', 'system-images'] as const;
 type CatalogTab = (typeof VALID_TABS)[number];
 
 const DEFAULT_TAB: CatalogTab = 'blueprints';
@@ -46,43 +34,29 @@ function TabFallback() {
   );
 }
 
-function readAdvancedFromStorage(): boolean {
-  try {
-    return localStorage.getItem(ADVANCED_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
 export default function Catalog() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [advanced, setAdvanced] = useState<boolean>(readAdvancedFromStorage);
 
   const urlTab = searchParams.get('tab');
-  // Support legacy tab values — redirect old tab names to the new unified tab
-  const resolvedTab =
-    urlTab === 'bfb-images' || urlTab === 'doca-images'
-      ? 'doca-releases'
-      : urlTab === 'module-library'
-        ? 'modules'
-        : urlTab;
-  const requestedTab: CatalogTab = VALID_TABS.includes(resolvedTab as CatalogTab) ? (resolvedTab as CatalogTab) : DEFAULT_TAB;
+  // Map legacy / deep-link subtab values to primary tab + initial system subtab
+  let initialSystemSubTab: SystemSubTab = 'doca';
+  let resolvedTab = urlTab;
+  if (urlTab === 'bfb-images' || urlTab === 'doca-images' || urlTab === 'doca-releases') {
+    resolvedTab = 'system-images';
+    initialSystemSubTab = 'doca';
+  } else if (urlTab === 'bnk-releases') {
+    resolvedTab = 'system-images';
+    initialSystemSubTab = 'bnk';
+  } else if (urlTab === 'bf-conf-templates') {
+    resolvedTab = 'system-images';
+    initialSystemSubTab = 'bfconf';
+  } else if (urlTab === 'module-library') {
+    resolvedTab = 'modules';
+  }
 
-  // Deep-link safety: if arriving at ?tab=modules while advanced is off, auto-enable advanced.
-  useEffect(() => {
-    if (requestedTab === 'modules' && !advanced) {
-      setAdvanced(true);
-      try {
-        localStorage.setItem(ADVANCED_STORAGE_KEY, 'true');
-      } catch {
-        // ignore
-      }
-    }
-  // Only run on mount (or if requestedTab changes from a navigation).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestedTab]);
-
-  const activeTab: CatalogTab = requestedTab === 'modules' && !advanced ? DEFAULT_TAB : requestedTab;
+  const activeTab: CatalogTab = VALID_TABS.includes(resolvedTab as CatalogTab)
+    ? (resolvedTab as CatalogTab)
+    : DEFAULT_TAB;
 
   const handleTabChange = (tab: string) => {
     if (tab === DEFAULT_TAB) {
@@ -93,46 +67,21 @@ export default function Catalog() {
     setSearchParams(searchParams);
   };
 
-  const handleAdvancedChange = (checked: boolean) => {
-    // If turning off while Modules is active, switch to the default tab first.
-    if (!checked && activeTab === 'modules') {
-      searchParams.delete('tab');
-      setSearchParams(searchParams);
-    }
-    setAdvanced(checked);
-    try {
-      localStorage.setItem(ADVANCED_STORAGE_KEY, String(checked));
-    } catch {
-      // ignore
-    }
-  };
-
   const { refresh, isRefreshing } = usePageRefresh();
 
-  // Build tab list — Modules only shown when advanced is enabled
   const tabs = [
-    ...(advanced ? [{ key: 'modules' as const, label: 'Modules', icon: Layers }] : []),
-    { key: 'blueprints' as const, label: 'Blueprints', icon: Library },
-    { key: 'helm-repos' as const, label: 'Helm Repos', icon: Package },
-    { key: 'doca-releases' as const, label: 'DOCA Releases', icon: HardDrive },
-    { key: 'bnk-releases' as const, label: 'BNK Releases', icon: Cpu },
-    { key: 'bf-conf-templates' as const, label: 'bf.conf Templates', icon: FileCode },
+    { key: 'blueprints' as const, label: 'Blueprints & Stacks', icon: Library },
+    { key: 'modules' as const, label: 'Modules', icon: Layers },
+    { key: 'helm-repos' as const, label: 'Helm Charts & Repos', icon: Package },
+    { key: 'system-images' as const, label: 'System & DPU Images', icon: HardDrive },
   ];
-
-  const advancedToggle = (
-    <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-muted-foreground">
-      <Switch checked={advanced} onCheckedChange={handleAdvancedChange} />
-      Advanced
-    </label>
-  );
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <PageHeader
         title="Catalog"
-        subtitle="Shared building blocks used by blueprints and projects — modules, blueprints, DPU bootstreams, bf.conf templates, and their sources."
-        actions={advancedToggle}
+        subtitle="Shared building blocks used by blueprints and projects — blueprints, modules, helm repositories, DPU bootstreams, and BNK releases."
         onRefresh={refresh}
         isRefreshing={isRefreshing}
       />
@@ -146,15 +95,15 @@ export default function Catalog() {
           tabs={tabs}
         />
 
-        <TabsContent value="modules" className="mt-6">
-          <Suspense fallback={<TabFallback />}>
-            <Modules />
-          </Suspense>
-        </TabsContent>
-
         <TabsContent value="blueprints" className="mt-6">
           <Suspense fallback={<TabFallback />}>
             <BlueprintCatalogPanel />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="modules" className="mt-6">
+          <Suspense fallback={<TabFallback />}>
+            <Modules />
           </Suspense>
         </TabsContent>
 
@@ -164,21 +113,9 @@ export default function Catalog() {
           </Suspense>
         </TabsContent>
 
-        <TabsContent value="doca-releases" className="mt-6">
+        <TabsContent value="system-images" className="mt-6">
           <Suspense fallback={<TabFallback />}>
-            <BluefieldImages />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="bnk-releases" className="mt-6">
-          <Suspense fallback={<TabFallback />}>
-            <BnkReleasesPanel />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="bf-conf-templates" className="mt-6">
-          <Suspense fallback={<TabFallback />}>
-            <BfConfTemplates />
+            <SystemImagesPanel initialSubTab={initialSystemSubTab} />
           </Suspense>
         </TabsContent>
       </Tabs>
