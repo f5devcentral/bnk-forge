@@ -280,17 +280,17 @@ describe('useTestClusterConnection', () => {
 });
 
 // ============================================================================
-// useDetectEKSClusters
+// useDetectClusters
 // ============================================================================
 
-describe('useDetectEKSClusters', () => {
-  it('detects and registers EKS clusters', async () => {
+describe('useDetectClusters', () => {
+  it('detects and registers clusters from credential templates', async () => {
     server.use(
-      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () => {
         return HttpResponse.json({
           success: true,
-          message: 'Found 2 EKS clusters',
-          registered: [{ id: 10, name: 'eks-1', module_id: 1, status: 'connected' }],
+          message: 'Discovered 2 cluster(s) from credential templates, registered 1 new cluster(s)',
+          registered: [{ id: 10, name: 'eks-1', provider: 'aws', status: 'registered' }],
           skipped: [],
           errors: [],
         });
@@ -307,6 +307,7 @@ describe('useDetectEKSClusters', () => {
 
     expect(result.current.data!.registered).toHaveLength(1);
     expect(result.current.data!.registered[0].name).toBe('eks-1');
+    expect(result.current.data!.registered[0].provider).toBe('aws');
   });
 });
 

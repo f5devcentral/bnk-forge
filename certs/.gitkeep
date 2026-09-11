@@ -1,0 +1,2 @@
+# Keep the certs/ directory tracked in git, but ignore the actual certificate files.
+# See README.md for usage.

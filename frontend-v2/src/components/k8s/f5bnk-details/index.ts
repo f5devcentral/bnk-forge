@@ -27,6 +27,7 @@ export { L4RouteDetail } from './L4RouteDetail';
 export { IpamRangeDetail } from './IpamRangeDetail';
 export { BnkGatewayDetail } from './BnkGatewayDetail';
 export { FirewallRuleListDetail } from './FirewallRuleListDetail';
+export { ServiceDetail } from './ServiceDetail';
 
 // Re-export shared types for consumers that need them
 export type { DetailPanelProps } from './shared';

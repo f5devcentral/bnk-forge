@@ -160,6 +160,7 @@ class TestGetBnkData:
     ):
         """Unified endpoint returns health, topology, backends, palette, policy."""
         cluster = make_k8s_cluster(project=sample_project, name="bnk-data-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data",
@@ -215,6 +216,7 @@ class TestGetBnkData:
     ):
         """Namespace query param is forwarded to fetch_all_bnk_data."""
         cluster = make_k8s_cluster(project=sample_project, name="ns-filter-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data?namespace=f5-bnk",
@@ -237,6 +239,7 @@ class TestGetBnkHealth:
     ):
         """Health endpoint runs real analysis and returns structured result."""
         cluster = make_k8s_cluster(project=sample_project, name="bnk-health-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/health",

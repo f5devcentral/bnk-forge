@@ -1,15 +1,12 @@
 /**
- * MCP Server page — D-020 redesign.
+ * MCP Server panel — tab body for System Administration.
  *
- * Bold heading + subtitle, calm KPI strip for status, side-by-side panels
- * (setup guides + tool catalog) in SectionCards. Status conveyed via Badge
- * variants only; code blocks use muted surface tokens.
+ * KPI strip for status, side-by-side panels (setup guides + tool catalog).
+ * Status conveyed via Badge variants only; code blocks use muted surface tokens.
  */
 
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { usePageRefresh } from '@/hooks/usePageRefresh';
 import { queryKeys } from '@/lib/queryKeys';
 import { systemApi } from '@/lib/api/system';
 import type { MCPStatusResponse, MCPToolCategory } from '@/lib/api/system';
@@ -384,10 +381,10 @@ function ToolCatalog({ catalog }: { catalog: MCPToolCategory[] }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Main page
+// Main panel
 // ──────────────────────────────────────────────────────────────────────────────
 
-export default function MCP() {
+export function McpPanel() {
   const { data, isLoading } = useQuery<MCPStatusResponse>({
     queryKey: queryKeys.mcp.status(),
     queryFn: systemApi.getMCPStatus,
@@ -395,20 +392,10 @@ export default function MCP() {
     refetchInterval: 60_000,
   });
 
-  const { refresh, isRefreshing } = usePageRefresh();
-
   const baseUrl = `${window.location.protocol}//${window.location.host}`;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <PageHeader
-        title="MCP Server"
-        subtitle="Connect AI assistants to BNK-Forge via the Model Context Protocol."
-        onRefresh={refresh}
-        isRefreshing={isRefreshing}
-      />
-
+    <div className="space-y-6">
       <StatusStrip data={data} isLoading={isLoading} />
 
       <div className="grid lg:grid-cols-2 gap-6">
