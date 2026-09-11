@@ -644,7 +644,8 @@ def get_fleet_health(db: Session = Depends(get_db)):
     # Query all clusters in parallel (30s per-cluster, 60s overall safety timeout).
     # Pass db=None so worker threads use their own isolated SessionLocal().
     cluster_results: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(10, len(clusters))) as executor:
+    executor = ThreadPoolExecutor(max_workers=min(10, len(clusters)))
+    try:
         futures = {
             executor.submit(_query_cluster_health, cluster, None): cluster
             for cluster in clusters
@@ -663,6 +664,8 @@ def get_fleet_health(db: Session = Depends(get_db)):
                 if cluster.id not in cluster_results:
                     logger.warning(f"Fleet: cluster {cluster.name} timed out — marking offline")
                     cluster_results[cluster.id] = {**_OFFLINE_RESULT}
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     # Build response
     operators_out = []

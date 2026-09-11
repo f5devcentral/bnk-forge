@@ -42,6 +42,9 @@ from services.kubernetes import KubernetesService
 
 logger = logging.getLogger(__name__)
 
+# Max bytes of a ConfigMap data value to parse for proxy backends (bounds CPU time)
+_MAX_CONFIGMAP_PARSE_BYTES = 256 * 1024
+
 
 # ---------------------------------------------------------------------------
 # Discovery result types
@@ -128,7 +131,7 @@ class ProxyDiscoveryService:
                 raise ValueError("cluster_id is required when target is None")
             cluster = self.k8s.get_cluster(cluster_id)
             api_client = self.k8s.load_kubeconfig(cluster)
-            return self.discover_inventory(api_client)
+            return self.discover_inventory(api_client, cluster_id=cluster_id)
 
         # --- Target-aware mode (original path, unchanged) ---
         cluster = self.k8s.get_cluster(target.cluster_id)
@@ -174,7 +177,11 @@ class ProxyDiscoveryService:
     # Inventory mode (target-independent, read-only, D-019 dynamic)
     # ------------------------------------------------------------------
 
-    def discover_inventory(self, api_client: k8s_client.ApiClient) -> list[dict[str, Any]]:
+    def discover_inventory(
+        self,
+        api_client: k8s_client.ApiClient,
+        cluster_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Enumerate all proxy / ingress controllers on the cluster.
 
         Thin entry point for the scan caller (which already holds an
@@ -313,14 +320,15 @@ class ProxyDiscoveryService:
             if gc.get("spec", {}).get("controllerName")
         }
 
-        # Query active ProxyDeployments from DB to enrich target metadata if available
+        # Query active ProxyDeployments scoped strictly to the scanned cluster (INV-1)
         db_deploy_map: dict[str, Any] = {}
-        if self.db:
+        if self.db and cluster_id is not None:
             try:
                 db_deploys = (
                     self.db.query(ProxyDeployment)
                     .join(BenchmarkTarget, ProxyDeployment.target_id == BenchmarkTarget.id)
                     .filter(
+                        BenchmarkTarget.cluster_id == cluster_id,
                         ProxyDeployment.status.in_([
                             ProxyDeploymentStatus.READY,
                             ProxyDeploymentStatus.DISCOVERED,
@@ -1492,7 +1500,10 @@ def _safe_list_namespaced_deployments(
         )
         return resp.items
     except ApiException as e:
-        if e.status == 404 or e.status == 403:
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing deployments in %s: %s", namespace, e.reason)
+            return []
+        if e.status == 404:
             return []
         logger.debug("Failed to list deployments in %s: %s", namespace, e.reason)
         return []
@@ -1662,7 +1673,10 @@ def _safe_list_all_deployments(apps: k8s_client.AppsV1Api) -> list:
         resp = apps.list_deployment_for_all_namespaces(_request_timeout=10)
         return resp.items
     except ApiException as e:
-        if e.status in (404, 403):
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing deployments for all namespaces: %s", e.reason)
+            return []
+        if e.status == 404:
             return []
         logger.debug("Failed to list deployments for all namespaces: %s", e.reason)
         return []
@@ -1680,7 +1694,10 @@ def _safe_list_namespaced_configmaps(
         resp = core.list_namespaced_config_map(namespace=namespace, _request_timeout=10)
         return resp.items
     except ApiException as e:
-        if e.status in (404, 403):
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing ConfigMaps in %s: %s", namespace, e.reason)
+            return []
+        if e.status == 404:
             return []
         logger.debug("Failed to list ConfigMaps in %s: %s", namespace, e.reason)
         return []
@@ -1743,6 +1760,9 @@ def _extract_backends_from_configmaps(
             if not isinstance(content, str):
                 continue
 
+            if len(content) > _MAX_CONFIGMAP_PARSE_BYTES:
+                content = content[:_MAX_CONFIGMAP_PARSE_BYTES]
+
             # HAProxy: server <name> <host>:<port>
             if proxy_type == "haproxy" or "haproxy" in fname.lower():
                 for match in re.finditer(r"server\s+\S+\s+([a-zA-Z0-9_\-\.]+)(?::(\d+))?", content):
@@ -1761,7 +1781,7 @@ def _extract_backends_from_configmaps(
                             "via": f"HAProxy Config ({cm_name})",
                         })
 
-            # NGINX: proxy_pass http(s)://<host>:<port>
+            # NGINX: proxy_pass http(s)://<host>[:<port>]
             elif proxy_type == "nginx" or "nginx" in fname.lower() or "default.conf" in fname.lower():
                 for match in re.finditer(r"proxy_pass\s+https?://([a-zA-Z0-9_\-\.]+)(?::(\d+))?", content):
                     host = match.group(1)
@@ -1779,23 +1799,31 @@ def _extract_backends_from_configmaps(
                             "via": f"NGINX Config ({cm_name})",
                         })
 
-            # Envoy: address: <host>, port_value: <port>
+            # Envoy: address: <host>, port_value: <port> (parsed line-by-line to prevent quadratic backtracking DoS)
             elif proxy_type == "envoy" or "envoy" in fname.lower():
-                for match in re.finditer(r"address:\s*([a-zA-Z0-9_\-\.]+)\s*.*port_value:\s*(\d+)", content, re.DOTALL):
-                    host = match.group(1)
-                    port = int(match.group(2)) if match.group(2) else 80
-                    parts = host.split(".")
-                    svc_name = parts[0]
-                    svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
-                    key = (svc_name, svc_ns, port)
-                    if key not in seen:
-                        seen.add(key)
-                        backends.append({
-                            "service": svc_name,
-                            "namespace": svc_ns,
-                            "port": port,
-                            "via": f"Envoy Config ({cm_name})",
-                        })
+                current_host: str | None = None
+                for line in content.splitlines():
+                    addr_match = re.search(r"address:\s*[\"']?([a-zA-Z0-9_\-\.]+)[\"']?", line)
+                    if addr_match:
+                        current_host = addr_match.group(1)
+                        continue
+                    if current_host:
+                        port_match = re.search(r"port_value:\s*(\d+)", line)
+                        if port_match:
+                            port = int(port_match.group(1))
+                            parts = current_host.split(".")
+                            svc_name = parts[0]
+                            svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
+                            key = (svc_name, svc_ns, port)
+                            if key not in seen:
+                                seen.add(key)
+                                backends.append({
+                                    "service": svc_name,
+                                    "namespace": svc_ns,
+                                    "port": port,
+                                    "via": f"Envoy Config ({cm_name})",
+                                })
+                            current_host = None
 
     return backends
 
@@ -1812,8 +1840,10 @@ def _has_configmap_to_backend(
         target_lower = target_svc_name.lower()
         for cm in cms:
             for content in (cm.data or {}).values():
-                if isinstance(content, str) and target_lower in content.lower():
-                    return True
+                if isinstance(content, str):
+                    capped = content[:_MAX_CONFIGMAP_PARSE_BYTES] if len(content) > _MAX_CONFIGMAP_PARSE_BYTES else content
+                    if target_lower in capped.lower():
+                        return True
         return False
     except Exception as e:
         logger.debug("Failed to check configmaps in %s for %s: %s", namespace, target_svc_name, e)

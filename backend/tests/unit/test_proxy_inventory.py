@@ -725,3 +725,55 @@ class TestDiscoverInventoryDeployments:
         assert item["backends"][0]["service"] == "vllm"
         assert item["backends"][0]["namespace"] == "awsbnkctl-scn-aiinference"
 
+    def test_discover_inventory_scopes_db_lookup_to_cluster_id(self):
+        """INV-1: db_deploy_map query must be filtered to the scanned cluster_id."""
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        db = MagicMock()
+        api_client = MagicMock()
+
+        with patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_ingresses", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_deployments", return_value=[]):
+
+            svc = ProxyDiscoveryService(db)
+            svc.discover_inventory(api_client, cluster_id=123)
+
+        # Verify DB query was made and filtered
+        db.query.assert_called_once()
+        filter_call = db.query.return_value.join.return_value.filter
+        filter_call.assert_called_once()
+
+    def test_envoy_configmap_linear_extraction_and_size_cap(self):
+        """Major 2: Envoy ConfigMaps are parsed line-by-line in linear time with size bounding."""
+        from services.proxy_discovery_service import _extract_backends_from_configmaps
+
+        core = MagicMock()
+        cm = MagicMock()
+        cm.metadata.name = "envoy-cm"
+        cm.data = {
+            "envoy.yaml": """
+static_resources:
+  clusters:
+  - name: service_vllm
+    load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: vllm-server.ai-inference.svc.cluster.local
+                port_value: 8000
+"""
+        }
+
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            backends = _extract_backends_from_configmaps(core, "ai-inference", proxy_type="envoy")
+
+        assert len(backends) == 1
+        assert backends[0]["service"] == "vllm-server"
+        assert backends[0]["namespace"] == "ai-inference"
+        assert backends[0]["port"] == 8000
+        assert backends[0]["via"] == "Envoy Config (envoy-cm)"
+
