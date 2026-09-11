@@ -327,12 +327,23 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "viewer-user", "role": "viewer"})
-        ws = MagicMock()
-        ws.query_params = {"token": token}
+        token_viewer = create_access_token(data={"sub": "viewer-user", "role": "viewer"})
+        token_admin = create_access_token(data={"sub": "admin-user", "role": "admin"})
+        token_builtin = create_access_token(data={"sub": "forge-builtin-agent", "role": "agent"})
+
+        ws_viewer = MagicMock()
+        ws_viewer.query_params = {"token": token_viewer}
+
+        ws_admin = MagicMock()
+        ws_admin.query_params = {"token": token_admin}
+
+        ws_builtin = MagicMock()
+        ws_builtin.query_params = {"token": token_builtin}
 
         with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
-            assert _agent_ws_authorized(ws, 5) == 4401
+            assert _agent_ws_authorized(ws_viewer, 5) == 4401
+            assert _agent_ws_authorized(ws_admin, 5) == 4401
+            assert _agent_ws_authorized(ws_builtin, 5) is None
 
     def test_matching_agent_id_claim_authorizes_through_helper(self):
         """The bound case still connects — the gate must not be a blanket deny."""

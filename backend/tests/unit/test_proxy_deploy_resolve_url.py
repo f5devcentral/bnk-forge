@@ -75,7 +75,7 @@ class TestResolveServiceExternalUrl:
 
         svc_obj = _svc("NodePort", [_port(80, node_port=31235, name="http")])
         mock_core.read_namespaced_service.return_value = svc_obj
-        mock_core.list_node.return_value = MagicMock(items=[_node(external_ip="18.143.91.120")])
+        mock_core.list_node.return_value = MagicMock(items=[_node(external_ip="203.0.113.120")])
 
         service = ProxyDeployService(db=MagicMock())
         result = service._resolve_service_external_url(
@@ -83,7 +83,7 @@ class TestResolveServiceExternalUrl:
             release="perf-haproxy-test",
             namespace="perf-proxies",
         )
-        assert result == "http://18.143.91.120:31235"
+        assert result == "http://203.0.113.120:31235"
 
     @patch("services.proxy_deploy_service.k8s_client.CoreV1Api")
     @patch("services.proxy_deploy_service.KubernetesService")
