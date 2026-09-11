@@ -531,3 +531,47 @@ class TestDispatchNextGroupChildDrainPath:
 
         await bench_routes._dispatch_next_group_child(svc, agent_id=3, group_id=group.id)
         assert sent == []
+
+
+# ---------------------------------------------------------------------------
+# NIT-D — Atomic run-group PENDING→RUNNING transition on connect-drain
+# ---------------------------------------------------------------------------
+
+class TestMarkRunGroupRunningIfPending:
+    def test_transitions_pendingGroup_to_running_when_child_running(self, db):
+        group = _group(db, status="pending", total_runs=2)
+        _child(db, group.id, "running", variant_label="r0")
+        _child(db, group.id, "pending", variant_label="r1")
+        svc = BenchmarkService(db)
+
+        transitioned = svc.mark_run_group_running_if_pending(group.id)
+        db.commit()
+
+        assert transitioned is True
+        db.refresh(group)
+        assert group.status == BenchmarkRunStatus.RUNNING
+        assert group.started_at is not None
+
+    def test_noop_when_no_running_child(self, db):
+        group = _group(db, status="pending", total_runs=2)
+        _child(db, group.id, "pending", variant_label="p0")
+        svc = BenchmarkService(db)
+
+        transitioned = svc.mark_run_group_running_if_pending(group.id)
+        db.commit()
+
+        assert transitioned is False
+        db.refresh(group)
+        assert group.status == BenchmarkRunStatus.PENDING
+
+    def test_noop_when_group_already_running(self, db):
+        group = _group(db, status="running", total_runs=2)
+        _child(db, group.id, "running", variant_label="r0")
+        svc = BenchmarkService(db)
+
+        transitioned = svc.mark_run_group_running_if_pending(group.id)
+        db.commit()
+
+        # Already RUNNING, rowcount == 0 so returns False
+        assert transitioned is False
+

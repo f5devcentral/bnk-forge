@@ -922,15 +922,15 @@ class BenchmarkService(BaseService):
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
 
-        ``group_id`` adds the group-sequential guard (MAJOR-2): the same conditional
-        UPDATE also requires that NO sibling of that group is currently RUNNING
-        (``NOT EXISTS``), so two different children of one group can never both be
-        claimed. This serializes the connect-drain path against
-        ``_dispatch_next_group_child`` even when they target *different* rows (so the
-        single-row ``WHERE id=`` guard alone would not): the first winning claim
-        publishes a RUNNING sibling, and every other claim in that group then fails
-        the NOT EXISTS and skips. Pass it whenever the run belongs to a group;
-        standalone (group-less) runs omit it and rely on the single-row guard.
+        ``group_id`` adds the group-sequential guard (MAJOR-2 / MAJOR-A):
+        Under PostgreSQL READ COMMITTED, evaluating NOT EXISTS without a lock can
+        suffer write-skew if concurrent transactions claim different sibling rows.
+        To guarantee mutual exclusion across transactions, we acquire an exclusive row
+        lock on the group (``with_for_update()``) before evaluating the conditional
+        UPDATE requiring that NO sibling of that group is currently RUNNING.
+        This serializes all sibling claims within a group so two children can never
+        both be claimed/RUNNING simultaneously. Standalone (group-less) runs omit
+        ``group_id`` and rely on the single-row atomic guard.
         """
         now = datetime.now(UTC)
         filters = [
@@ -938,6 +938,10 @@ class BenchmarkService(BaseService):
             BenchmarkRun.status == BenchmarkRunStatus.PENDING,
         ]
         if group_id is not None:
+            # Lock the group row to serialize sibling claims across concurrent transactions
+            # under PostgreSQL READ COMMITTED (MAJOR-A / INV-8).
+            # SQLite (test env) ignores with_for_update() and serializes via its database write lock.
+            self.db.query(BenchmarkRunGroup).filter(BenchmarkRunGroup.id == group_id).with_for_update().first()
             sibling = aliased(BenchmarkRun)
             running_sibling = (
                 self.db.query(sibling.id)
@@ -981,6 +985,31 @@ class BenchmarkService(BaseService):
             },
             synchronize_session=False,
         )
+
+    def mark_run_group_running_if_pending(self, group_id: int) -> bool:
+        """Atomically transition a run-group PENDING→RUNNING if it has a running child.
+
+        Returns True iff this call transitioned the row (rowcount == 1).
+        """
+        if not self.find_running_group_child(group_id):
+            return False
+        now = datetime.now(UTC)
+        result = (
+            self.db.query(BenchmarkRunGroup)
+            .filter(
+                BenchmarkRunGroup.id == group_id,
+                BenchmarkRunGroup.status == BenchmarkRunStatus.PENDING,
+            )
+            .update(
+                {
+                    BenchmarkRunGroup.status: BenchmarkRunStatus.RUNNING,
+                    BenchmarkRunGroup.started_at: now,
+                    BenchmarkRunGroup.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        return result == 1
 
     def maybe_finalize_run_group(self, group_id: int) -> BenchmarkRunGroup | None:
         """Recompute group counts; roll up aggregate metrics when all children terminal.
