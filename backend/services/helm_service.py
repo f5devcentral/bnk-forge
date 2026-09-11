@@ -444,7 +444,10 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         if chart:
             command.append(chart)
 
-        command.extend(['--output', 'json'])
+        command.extend([
+            '--output', 'json',
+            '--disable-openapi-validation',
+        ])
 
         if version:
             command.extend(['--version', version])
