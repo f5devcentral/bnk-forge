@@ -15,6 +15,7 @@ Covers:
 import logging
 import os
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -127,6 +128,10 @@ class SystemService:
             return cached
 
         from models.kubernetes import KubernetesCluster
+        from services.bnk.consumption import aggregate_cluster_consumption, aggregate_fleet_summary
+        from services.bnk.dpf import detect_dpf
+        from services.bnk.fetch import fetch_all_bnk_data
+        from services.kubernetes_service import KubernetesService
 
         clusters = self.db.query(KubernetesCluster).all()
         cluster_payloads = [

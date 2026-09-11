@@ -18,7 +18,6 @@ from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
-from services.reachability import with_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -440,7 +439,7 @@ class KubernetesServiceBase:
         except ApiException as e:
             logger.error(f"Kubernetes API error during connection test: {e}")
             try:
-                from services.reachability import get_reachability_registry, categorize_exception
+                from services.reachability import categorize_exception, get_reachability_registry
                 reg = get_reachability_registry()
                 reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
             except Exception:
@@ -453,7 +452,7 @@ class KubernetesServiceBase:
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             try:
-                from services.reachability import get_reachability_registry, categorize_exception
+                from services.reachability import categorize_exception, get_reachability_registry
                 reg = get_reachability_registry()
                 reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
             except Exception:
