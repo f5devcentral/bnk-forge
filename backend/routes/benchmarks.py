@@ -1602,16 +1602,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                 # one group RUNNING — the loser's claim fails the NOT-EXISTS guard.
                 # It claims, sends, and reverts the claim on send failure.
                 await _dispatch_next_group_child(svc, agent_id, group_id)
-                # Reflect the group as RUNNING only once a child is actually running.
-                group = svc.get_run_group(group_id)
-                if (
-                    group
-                    and group.status == BenchmarkRunStatus.PENDING
-                    and svc.find_running_group_child(group_id)
-                ):
-                    group.status = BenchmarkRunStatus.RUNNING
-                    group.started_at = datetime.now(UTC)
-                db.commit()
+                # Reflect the group as RUNNING only once a child is actually running (NIT-D atomic flip).
+                if svc.mark_run_group_running_if_pending(group_id):
+                    db.commit()
             elif svc.claim_pending_run(pending_run.id):
                 # Standalone (group-less) run: no siblings, single-row atomic claim.
                 db.commit()
@@ -1668,12 +1661,14 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                     if run_id and result_data and _agent_owns_run(svc, agent_id, int(run_id)):
                         svc.complete_run_with_aiperf_result(int(run_id), result_data)
                         logger.info("Run #%d completed by agent %d — result ingested", run_id, agent_id)
+                        db.commit()
                         # Gated dispatch: now that this child is done, send the next pending
                         # child of its run-group (one aiperf at a time, strictly sequential).
                         done = svc.get_run(int(run_id))
-                        if done.run_group_id:
+                        if done and done.run_group_id:
                             await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
-                    db.commit()
+                    else:
+                        db.commit()
                 except Exception as e:
                     logger.error("Error ingesting run_completed for run #%s: %s", run_id, e)
                     db.rollback()
@@ -1701,9 +1696,12 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                             # Roll up the parent run-group when a child fails.
                             if run.run_group_id:
                                 svc.maybe_finalize_run_group(run.run_group_id)
-                                # Gated dispatch: continue the sweep with the next child.
+                            db.commit()
+                            # Gated dispatch: continue the sweep with the next child.
+                            if run.run_group_id:
                                 await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
-                    db.commit()
+                    else:
+                        db.commit()
                 except Exception as e:
                     logger.error("Error handling run_failed for run #%s: %s", run_id, e)
                     db.rollback()
@@ -1752,7 +1750,7 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
         return
     nxt_id = nxt.id
     nxt_config = nxt.config_snapshot
-    # Group-guarded atomic claim (MAJOR-2): only claim if NO sibling of this group
+    # Group-guarded atomic claim (MAJOR-2 / MAJOR-A): only claim if NO sibling of this group
     # is already RUNNING. This is the single serialization point shared with the
     # connect-drain (which routes through here for grouped runs), so two children
     # of one group can never both be RUNNING — even if the two paths pick different
@@ -1761,6 +1759,8 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
         # Lost the race — a sibling is already claimed/RUNNING, or another handler
         # already claimed and dispatched this child.
         return
+    # MINOR-B: Persist the claim BEFORE the awaited network send, freeing the connection/row lock.
+    svc.db.commit()
     sent = await send_command_to_agent(
         agent_id, {"type": "run", "run_id": nxt_id, "config": nxt_config}
     )
@@ -1769,6 +1769,7 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
     else:
         # Undo the claim so the child can be re-dispatched later.
         svc.release_claimed_run(nxt_id)
+        svc.db.commit()
         logger.warning("Gated dispatch: send failed for run #%d, reverted to pending", nxt_id)
 
 
