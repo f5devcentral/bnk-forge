@@ -214,8 +214,6 @@ describe('getClusterLocationInfo()', () => {
     expect(res!.display).toBe('On-Prem');
   });
 });
-<<<<<<< HEAD
-=======
 
 describe('normalizeProvider()', () => {
   it('normalizes AWS and EKS aliases to aws', () => {
