@@ -44,6 +44,7 @@ class _NoopClient:
 
 def _collect_registered_tools_by_module() -> dict[str, set[str]]:
     from bnk_forge_mcp.tools import (
+        register_benchmarks,
         register_bnk_operations,
         register_cloud_auth,
         register_cluster_management,
@@ -63,6 +64,7 @@ def _collect_registered_tools_by_module() -> dict[str, set[str]]:
         "config_management": register_config_management,
         "iac_operations": register_iac_operations,
         "cloud_auth": register_cloud_auth,
+        "benchmarks": register_benchmarks,
     }
 
     mcp = _FakeMCP()
@@ -275,6 +277,7 @@ def test_governed_auth_expectations_align_with_known_backend_dependencies() -> N
         "runbooks.py": (base / "backend" / "routes" / "runbooks.py").read_text(),
         "k8s/dpf.py": (base / "backend" / "routes" / "k8s" / "dpf.py").read_text(),
         "alert_channels.py": (base / "backend" / "routes" / "alert_channels.py").read_text(),
+        "benchmarks.py": (base / "backend" / "routes" / "benchmarks.py").read_text(),
     }
 
     # Bounded subset: explicit tools whose backend auth pattern is easy to verify statically.
@@ -432,6 +435,8 @@ def test_governed_auth_expectations_align_with_known_backend_dependencies() -> N
         "bnk_recovery_cert_sync": ("k8s/recovery.py", "require_operator"),
         "bnk_platform_restart": ("k8s/recovery.py", "require_operator"),
         "bnk_recovery_status": ("k8s/recovery.py", "require_operator"),
+        "list_benchmark_targets": ("benchmarks.py", "require_viewer"),
+        "create_benchmark_target": ("benchmarks.py", "require_operator"),
     }
     dep_to_expectation = {
         "require_viewer": "viewer",

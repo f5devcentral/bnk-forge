@@ -748,6 +748,28 @@ describe('useBenchmarkTargets', () => {
       total: 1,
     });
   });
+
+  it('fetches target list with name filter', async () => {
+    let capturedUrl = '';
+    server.use(
+      http.get('*/api/benchmarks/targets', ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({
+          targets: [mockTargetResponse({ name: 'target-a', cluster_name: 'cluster-prod' })],
+          total: 1,
+        });
+      })
+    );
+
+    const { result } = renderHook(() => useBenchmarkTargets({ name: 'target-a', cluster_id: 10 }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(capturedUrl).toContain('name=target-a');
+    expect(capturedUrl).toContain('cluster_id=10');
+    expect(result.current.data?.targets[0].cluster_name).toBe('cluster-prod');
+  });
 });
 
 describe('useBenchmarkTarget', () => {

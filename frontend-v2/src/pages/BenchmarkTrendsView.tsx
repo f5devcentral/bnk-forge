@@ -104,7 +104,9 @@ export function BenchmarkTrendsView() {
               <SelectTrigger className="w-56"><SelectValue placeholder="Select a target" /></SelectTrigger>
               <SelectContent>
                 {targets.map((t) => (
-                  <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.name}{t.cluster_name ? ` (${t.cluster_name})` : ''}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

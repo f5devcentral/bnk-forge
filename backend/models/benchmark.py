@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -300,7 +301,7 @@ class BenchmarkTarget(Base):
     __tablename__ = "benchmark_targets"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
     # Link to existing K8s cluster
@@ -335,7 +336,13 @@ class BenchmarkTarget(Base):
         """Number of proxy deployments for this target (used in list view)."""
         return len(self.proxy_deployments) if self.proxy_deployments else 0
 
+    @property
+    def cluster_name(self) -> str | None:
+        """Name of the associated Kubernetes cluster, if loaded."""
+        return self.cluster.name if self.cluster else None
+
     __table_args__ = (
+        UniqueConstraint("cluster_id", "name", name="uq_benchmark_targets_cluster_name"),
         Index("idx_benchmark_target_cluster", "cluster_id"),
         Index("idx_benchmark_target_status", "status"),
     )

@@ -412,7 +412,7 @@ export const queryKeys = {
     summary: () => ['benchmarks', 'summary'] as const,
     targets: {
       all: ['benchmarks', 'targets'] as const,
-      list: (params?: { status?: string; cluster_id?: number }) =>
+      list: (params?: { status?: string; cluster_id?: number; name?: string }) =>
         ['benchmarks', 'targets', 'list', params] as const,
       detail: (targetId: number) => ['benchmarks', 'targets', 'detail', targetId] as const,
       proxies: (targetId: number) => ['benchmarks', 'targets', targetId, 'proxies'] as const,

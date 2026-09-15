@@ -24,6 +24,7 @@ from .client import BNKForgeClient
 from .config import MCPConfig, load_config
 from .observability import ObservabilityMCPProxy
 from .tools import (
+    register_benchmarks,
     register_bnk_operations,
     register_cloud_auth,
     register_cluster_management,
@@ -107,6 +108,7 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
     register_config_management(ObservabilityMCPProxy(mcp, "config_management"), api_client)
     register_iac_operations(ObservabilityMCPProxy(mcp, "iac_operations"), api_client)
     register_cloud_auth(ObservabilityMCPProxy(mcp, "cloud_auth"), api_client)
+    register_benchmarks(ObservabilityMCPProxy(mcp, "benchmarks"), api_client)
 
     logger.info("All tool modules registered.")
 

@@ -399,6 +399,7 @@ class BenchmarkTargetResponse(BaseModel):
     validation_msg: str | None
     tags: dict | None
     proxy_count: int = 0
+    cluster_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
