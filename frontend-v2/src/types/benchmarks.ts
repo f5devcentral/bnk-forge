@@ -330,6 +330,7 @@ export interface BenchmarkTarget {
   validation_msg: string | null;
   tags: Record<string, unknown> | null;
   proxy_count: number;
+  cluster_name?: string | null;
   created_at: string;
   updated_at: string;
 }

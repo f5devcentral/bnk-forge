@@ -216,9 +216,14 @@ export function BenchmarkTargetsTab() {
             ← Back
           </Button>
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-foreground truncate">
-              {targetDetail.name}
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-foreground truncate">
+                {targetDetail.name}
+              </h3>
+              <Badge variant="outline" className="text-xs font-normal">
+                {targetDetail.cluster_name || clusters.find(c => c.id === targetDetail.cluster_id)?.name || `Cluster #${targetDetail.cluster_id}`}
+              </Badge>
+            </div>
             <p className="text-sm text-muted-foreground truncate">{targetDetail.description || 'No description'}</p>
           </div>
           <Badge variant={tBadge.variant}>{tBadge.label}</Badge>
@@ -247,6 +252,12 @@ export function BenchmarkTargetsTab() {
         {/* Target Info */}
         <SectionCard title="Target details" compact>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">Cluster</span>
+              <p className="font-mono text-xs mt-1 text-foreground/80">
+                {targetDetail.cluster_name || clusters.find(c => c.id === targetDetail.cluster_id)?.name || `Cluster #${targetDetail.cluster_id}`}
+              </p>
+            </div>
             <div>
               <span className="text-xs uppercase tracking-wider text-muted-foreground">LLM endpoint</span>
               <p className="font-mono text-xs mt-1 text-foreground/80">{targetDetail.llm_base_url}</p>
@@ -548,6 +559,7 @@ export function BenchmarkTargetsTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Cluster</TableHead>
                   <TableHead>LLM endpoint</TableHead>
                   <TableHead>Model</TableHead>
                   <TableHead>Proxies</TableHead>
@@ -559,9 +571,15 @@ export function BenchmarkTargetsTab() {
               <TableBody>
                 {targets.map(target => {
                   const tBadge = targetBadge(target.status);
+                  const clusterLabel = target.cluster_name || clusters.find(c => c.id === target.cluster_id)?.name || `Cluster #${target.cluster_id}`;
                   return (
                     <TableRow key={target.id} className="cursor-pointer" onClick={() => { setActiveRunGroupId(null); setSelectedTargetId(target.id); }}>
                       <TableCell className="font-medium text-foreground">{target.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {clusterLabel}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="font-mono text-xs text-foreground/80">{target.llm_base_url}</TableCell>
                       <TableCell className="text-xs text-foreground/80">{target.llm_model}</TableCell>
                       <TableCell>
