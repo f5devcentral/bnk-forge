@@ -6,9 +6,13 @@ Two defects are locked here:
 1. ClusterScanner.scan() never wrote ``last_synced_at``, so a registered
    cluster stayed "never synced" forever (NULL) even after the scan ran and
    after repeated no-op PUTs. These tests prove the scan now stamps
-   ``last_synced_at`` on completion, that the stamp is only written on success
-   (a scan that raises early must NOT stamp), and that it persists across a
-   commit (the async registration/PUT task path).
+   ``last_synced_at`` on completion, that the stamp is only written when the
+   scan GENUINELY REACHED the cluster (``fetch_scan_data`` reports ``reached`` —
+   from the version/namespace/API-group preflight), so an expired-token or
+   unreachable cluster (every fetcher swallows its error → a fully-shaped EMPTY
+   dict) does NOT stamp a fresh time over an empty panel, that a scan raising
+   early must NOT stamp, and that the stamp persists across a commit (the async
+   registration/PUT task path).
 
 2. Over a fetch that surfaces Multus pods in a namespace the scan actually reads
    (kube-system), real analyze_multus counts them (not 0) and the scan records
@@ -23,10 +27,21 @@ import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+# The expired-token / unreachable-cluster shape: every fetcher swallowed its
+# exception and returned an empty default, so ``reached`` is False and no
+# version / namespaces / API groups came back. This is exactly what
+# fetch_scan_data returns for a 401 or an unreachable API server — a scan over
+# this MUST NOT stamp last_synced_at (#194).
+#
+# ``multus_pods`` mirrors #203's fetch-dict shape (it adds a namespace-scoped
+# multus_pods key). It is unused on THIS branch (analyze_multus still reads
+# kube_system_pods here) but keeps the fixture forward-compatible so the eventual
+# #203 merge does not KeyError.
 _EMPTY_FETCH_DATA = {
-    "version_info": {}, "nodes": [], "namespaces": [], "crds": [],
+    "reached": False,
+    "version_info": None, "nodes": [], "namespaces": [], "crds": [],
     "crd_names": set(), "crd_groups": set(), "cert_manager_pods": [],
-    "helm_releases": [], "kube_system_pods": [], "daemonsets": [],
+    "helm_releases": [], "kube_system_pods": [], "multus_pods": [], "daemonsets": [],
     "storage_classes": [], "gateways": [], "gatewayclasses": [],
     "f5_tenant_pods": [], "f5_utils_pods": [], "dpf_operator_configs": [],
     "dpudevices": [], "dpusets": [], "dpuclusters": [], "dpuservices": [],
@@ -35,6 +50,24 @@ _EMPTY_FETCH_DATA = {
     "cis_as3_configmaps": [], "cis_f5_ingresses": [], "openshift_routes": [],
     "cneinstances": [], "vlans": [],
 }
+
+
+def _reached_fetch_data(**overrides):
+    """A genuinely-empty-but-REACHABLE cluster's fetch dict (#194).
+
+    ``reached`` is True and the version/namespace preflight came back, so a scan
+    over this SHOULD stamp last_synced_at even though every inventory list is
+    empty — that is the "scanned and genuinely empty" case the reporter needs to
+    be able to tell apart from "never scanned".
+    """
+    data = dict(_EMPTY_FETCH_DATA)
+    data.update({
+        "reached": True,
+        "version_info": {"git_version": "v1.29.0"},
+        "namespaces": ["default", "kube-system"],
+    })
+    data.update(overrides)
+    return data
 
 # Analysis functions patched to no-ops when a test isolates one code path.
 _ANALYZERS = [
@@ -91,21 +124,45 @@ def _run_scan(db, cluster, *, fetch_data=None, skip_analyzers=(), fetch_side_eff
 
 class TestLastSyncedAtStamp:
     def test_scan_stamps_last_synced_at(self, db, make_k8s_cluster):
-        """A completed scan sets last_synced_at (was permanently NULL — #194)."""
+        """A scan that reached the cluster sets last_synced_at (was permanently NULL — #194).
+
+        Uses a genuinely-empty-but-REACHABLE fetch: every inventory list is
+        empty but the version/namespace preflight succeeded, so the scan stamps.
+        This is the "scanned and genuinely empty" case the reporter must be able
+        to tell apart from "never scanned".
+        """
         cluster = make_k8s_cluster()
         assert cluster.last_synced_at is None  # never scanned
 
-        result = _run_scan(db, cluster)
+        result = _run_scan(db, cluster, fetch_data=_reached_fetch_data())
 
         db.refresh(cluster)
         assert isinstance(cluster.last_synced_at, datetime)
         # Result metadata still reports the scan timing.
         assert "scanned_at" in result["scan_metadata"]
 
+    def test_unreachable_scan_does_not_stamp_last_synced_at(self, db, make_k8s_cluster):
+        """The expired-token / unreachable case must NOT stamp (#194).
+
+        Every fetcher swallows its exception and returns an empty default, so an
+        expired-token or unreachable cluster yields a fully-shaped EMPTY fetch
+        with ``reached`` False. Stamping last_synced_at here would write a fresh
+        sync time over a panel that has no data — strictly worse than the NULL
+        that honestly says "we have never gotten data from this cluster".
+        """
+        cluster = make_k8s_cluster()
+        assert cluster.last_synced_at is None
+
+        # dict(_EMPTY_FETCH_DATA) → reached=False (the default _run_scan fetch).
+        _run_scan(db, cluster)
+
+        db.refresh(cluster)
+        assert cluster.last_synced_at is None  # still never-synced
+
     def test_last_synced_at_persists_across_commit(self, db, make_k8s_cluster):
         """The stamp survives the commit the async registration/PUT task does."""
         cluster = make_k8s_cluster()
-        _run_scan(db, cluster)
+        _run_scan(db, cluster, fetch_data=_reached_fetch_data())
         db.commit()  # mirrors scan_cluster_async's own commit
 
         db.expire_all()
@@ -141,14 +198,24 @@ class TestPodInventoryPopulated:
         """
         cluster = make_k8s_cluster()
 
-        fetch = dict(_EMPTY_FETCH_DATA)
+        multus_pods = [
+            {"name": f"multus-{i}", "phase": "Running"} for i in range(6)
+        ]
+        fetch = _reached_fetch_data()
         fetch["crd_names"] = {"network-attachment-definitions.k8s.cni.cncf.io"}
         fetch["daemonsets"] = [
             {"name": "multus", "namespace": "kube-system", "desired": 6, "ready": 6},
         ]
-        fetch["kube_system_pods"] = [
-            {"name": f"multus-{i}", "phase": "Running"} for i in range(6)
-        ]
+        # The primary Multus DaemonSet is in kube-system, so the pods the scan
+        # counts live in kube-system. Seed BOTH keys with the same list:
+        #  - kube_system_pods  → analyze_multus reads this on THIS branch.
+        #  - multus_pods       → analyze_multus reads this after #203 merges
+        #    (its _fetch_multus_pods returns the kube_system_pods list verbatim
+        #    when the DaemonSet lives in kube-system). Mirroring both keeps
+        #    running_pods == 6 both before and after the #203 merge, surviving
+        #    #203's filter (name contains "multus" AND phase == "Running").
+        fetch["kube_system_pods"] = multus_pods
+        fetch["multus_pods"] = multus_pods
 
         from services.scanner.constants import PrerequisiteStatus
 

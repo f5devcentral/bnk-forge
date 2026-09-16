@@ -217,42 +217,6 @@ class TestClusterUpdate:
         mock_enqueue.assert_called_once_with(cluster.id)
 
 
-class TestClusterResync:
-    """POST /api/k8s/clusters/{id}/resync — explicit inventory-sync trigger (#194)."""
-
-    @patch("routes.k8s.clusters.enqueue_cluster_scan")
-    @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_resync_enqueues_scan(self, mock_svc_cls, mock_enqueue, client, admin_headers,
-                                  sample_user, sample_project, make_k8s_cluster):
-        """Admin can force a resync; the endpoint enqueues a background scan."""
-        cluster = make_k8s_cluster(project=sample_project, name="resync-me")
-        mock_svc = MagicMock()
-        mock_svc.get_cluster_details.return_value = {"id": cluster.id}
-        mock_svc_cls.return_value = mock_svc
-
-        response = client.post(f"/api/k8s/clusters/{cluster.id}/resync", headers=admin_headers)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["cluster_id"] == cluster.id
-        mock_enqueue.assert_called_once_with(cluster.id)
-
-    @patch("routes.k8s.clusters.enqueue_cluster_scan")
-    def test_resync_unknown_cluster_404(self, mock_enqueue, client, admin_headers, sample_user):
-        """Resync of an unknown cluster is a clean 404 — no scan enqueued."""
-        response = client.post("/api/k8s/clusters/99999/resync", headers=admin_headers)
-        assert response.status_code == 404
-        mock_enqueue.assert_not_called()
-
-    def test_viewer_cannot_resync(self, client, viewer_headers, all_test_users,
-                                  sample_project, make_k8s_cluster):
-        """Viewer cannot trigger a resync — returns 403."""
-        cluster = make_k8s_cluster(project=sample_project)
-        response = client.post(f"/api/k8s/clusters/{cluster.id}/resync", headers=viewer_headers)
-        assert response.status_code == 403
-
-
 class TestClusterDelete:
     """DELETE /api/k8s/clusters/{id}."""
 
