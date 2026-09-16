@@ -16521,8 +16521,11 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
-            /** Provider */
-            provider: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "aws" | "azure" | "gcp" | "ibm" | "ssh";
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -16741,7 +16744,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Provider */
-            provider?: string | null;
+            provider?: ("aws" | "azure" | "gcp" | "ibm" | "ssh") | null;
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
