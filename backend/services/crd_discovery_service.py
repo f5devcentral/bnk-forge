@@ -303,7 +303,7 @@ class CrdDiscoveryService(KubernetesServiceBase):
         try:
             api_client = self.load_kubeconfig(cluster)
             ext_api = client.ApiextensionsV1Api(api_client)
-            result = ext_api.list_custom_resource_definition(_request_timeout=(3, 8))
+            result = ext_api.list_custom_resource_definition(_request_timeout=(5, 15))
             raw = []
             for item in (result.items or []):
                 if hasattr(item, "to_dict"):

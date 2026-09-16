@@ -349,7 +349,11 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         # `upgrade --install` is idempotent: installs if missing, upgrades if
         # present.  Avoids "release name already in use" failures on Forge's
         # Redeploy flow when a prior partial install left a release behind.
-        command = ['upgrade', '--install', release_name, chart, '--output', 'json']
+        command = [
+            'upgrade', '--install', release_name, chart,
+            '--output', 'json',
+            '--disable-openapi-validation',
+        ]
 
         if version:
             command.extend(['--version', version])
@@ -440,7 +444,10 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         if chart:
             command.append(chart)
 
-        command.extend(['--output', 'json'])
+        command.extend([
+            '--output', 'json',
+            '--disable-openapi-validation',
+        ])
 
         if version:
             command.extend(['--version', version])
