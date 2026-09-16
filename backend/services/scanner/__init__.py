@@ -268,9 +268,14 @@ class ClusterScanner:
     ) -> None:
         """Write scan-derived metadata back to the cluster record.
 
-        Updates version, node_count, zones, last_synced_at, connectivity,
-        integration, and access_method so fleet/list/detail views can read
-        them without extra cloud/operator lookups.
+        Updates version, node_count, zones, connectivity, integration, and
+        access_method so fleet/list/detail views can read them without extra
+        cloud/operator lookups. ``last_synced_at`` and ``connectivity_status``
+        are stamped only when the scan actually reached the API server (the
+        fetch returned a server version): every fetcher swallows its exception
+        and returns an empty default, so an unreachable or expired-token cluster
+        yields a fully shaped empty scan, and stamping it would show a fresh
+        sync time and "connected" over a panel with no data (#194).
         """
         from services.operator_registry import is_operator_live_connected
 
@@ -281,8 +286,9 @@ class ClusterScanner:
         cluster.zones = sorted({
             n.get("zone") for n in nodes if n.get("zone")
         }) or getattr(cluster, "zones", None)
-        cluster.last_synced_at = now
-        cluster.connectivity_status = "connected"
+        if cluster_info.get("version"):
+            cluster.last_synced_at = now
+            cluster.connectivity_status = "connected"
         cluster.access_method = "ssh_tunnel" if getattr(cluster, "ssh_tunnel_enabled", False) else "kubeconfig"
 
         try:
