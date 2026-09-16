@@ -22,8 +22,10 @@ import { bnkResourceCategories } from './bnk-constants';
 export const BNK_CRD_GROUPS = [
   'gateway.networking.k8s.io', // Gateway API — Gateway, HTTPRoute, ReferenceGrant, ...
   'k8s.f5net.com',             // F5 BNK data-plane CRDs (default _f5_resource group)
-  'k8s.f5.com',                // FLO-managed CRDs (CNEInstance, ...)
+  'k8s.f5.com',                // FLO-managed CRDs (CNEInstance, F5EPP, ...)
+  'gateway.k8s.f5.com',        // BNK 2.4 Gateway API & Tenant (Infra, GatewaySettings, EgressGateway, SecPolicy, NetPolicy)
   'gateway.k8s.f5net.com',     // Gateway extensions (BNKSecPolicy, BNKNetPolicy, L4Route)
+  'inference.networking.k8s.io', // AI Gateway (InferencePool, InferenceModelRewrite)
   'fic.f5.com',                // F5 IPAM Controller CRDs (IPAMRange, ...)
 ];
 

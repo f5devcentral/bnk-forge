@@ -293,15 +293,19 @@ def build_route_ref_map(topology: list[dict]) -> dict[tuple[str, str], list[dict
 
 # CRD types fetched for all BNK insight views.
 BNK_RESOURCE_TYPES: list[str] = [
-    # Gateway API
+    # Gateway API core + extensions
     "gatewayclass", "gateway", "httproute", "grpcroute",
     "tcproute", "udproute", "tlsroute", "l4route", "referencegrant",
-    # BNK policies
-    "bnksecpolicy", "bnknetpolicy",
-    # F5 CRDs
+    # BNK 2.4+ Gateway & Tenant CRDs
+    "gatewaysettings", "egressgateway", "infra",
+    # Policies (2.4 + legacy)
+    "secpolicy", "netpolicy", "bnksecpolicy", "bnknetpolicy",
+    # F5 CRDs & AI Gateway
     "f5bigfwpolicy", "f5bigcneirule", "f5biganalyzer",
     "f5bigcneaddresslist", "f5bigcneportlist",
-    # Data plane
+    "f5epp", "inferencepool", "inferencemodelrewrite",
+    "f5bigpersistenceprofile", "observer",
+    # Data plane (legacy 2.3 + shared)
     "f5spkvlan", "cneinstance", "f5spkstaticroute",
     "f5spksnatpool", "f5spkegress",
     # Logging

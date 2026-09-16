@@ -97,6 +97,38 @@ def _f5_resource(kind: str, plural: str, display_name: str,
     )
 
 
+def _f5_gateway_resource(kind: str, plural: str, display_name: str,
+                         description: str, api_version: str = "v1alpha1",
+                         namespaced: bool = True) -> K8sResourceType:
+    """Helper for modern F5 Gateway API resources (gateway.k8s.f5.com)."""
+    return K8sResourceType(
+        api_group=ApiGroups.F5_GATEWAY,
+        api_version=api_version,
+        kind=kind,
+        plural=plural,
+        namespaced=namespaced,
+        display_name=display_name,
+        description=description,
+        category=ResourceCategory.F5_BNK
+    )
+
+
+def _gaie_resource(kind: str, plural: str, display_name: str,
+                   description: str, api_version: str = "v1alpha2",
+                   namespaced: bool = True) -> K8sResourceType:
+    """Helper for Gateway API Inference Extension resources (inference.networking.k8s.io)."""
+    return K8sResourceType(
+        api_group=ApiGroups.GAIE_INFERENCE,
+        api_version=api_version,
+        kind=kind,
+        plural=plural,
+        namespaced=namespaced,
+        display_name=display_name,
+        description=description,
+        category=ResourceCategory.GATEWAY_API
+    )
+
+
 def _certmanager_resource(kind: str, plural: str, display_name: str,
                           description: str, namespaced: bool = True) -> K8sResourceType:
     """Helper for cert-manager resources."""
@@ -285,6 +317,13 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
                                         "Gateway API cross-namespace reference permissions",
                                         api_version="v1beta1"),
 
+    # --- Gateway API Inference Extension (GAIE v1.4.0) ---
+    "inferencepool": _gaie_resource("InferencePool", "inferencepools", "Inference Pool (GAIE)",
+                                    "Gateway API Inference Extension target pool for LLM serving engines"),
+    "inferencemodelrewrite": _gaie_resource("InferenceModelRewrite", "inferencemodelrewrites",
+                                            "Inference Model Rewrite (GAIE)",
+                                            "Gateway API Inference Extension model header rewriter"),
+
     # =========================================================================
     # CERT-MANAGER RESOURCES
     # =========================================================================
@@ -383,8 +422,12 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         "F5BigLogProfile", "f5-big-log-profiles", "F5 Log Profile",
         "F5 BNK log profile configuration for traffic logging",
         api_version="v2"),
+    "f5bigpersistenceprofile": _f5_resource(
+        "F5BigPersistenceProfile", "f5-big-persistence-profiles", "F5 Persistence Profile",
+        "Traffic persistence profile including Model Context Protocol (MCP) and Cookie/Source persistence",
+        api_version="v1"),
 
-    # --- Gateway extensions (k8s.f5net.com) ---
+    # --- Gateway extensions (legacy <=2.3: gateway.k8s.f5net.com) ---
     "f5bnkgateway": _f5_resource(
         "F5BnkGateway", "f5-bnkgateways", "F5 BNK Gateway (IPAM)",
         "F5 BNK Gateway for IPAM-based IP address management on Gateway API"),
@@ -397,6 +440,31 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         display_name="L4 Route",
         description="F5 BNK Layer 4 route for TCP/UDP traffic (gateway.k8s.f5net.com)",
         category=ResourceCategory.F5_BNK
+    ),
+
+    # =========================================================================
+    # F5 BNK RESOURCES — Modern Gateway & Underlay CRDs (gateway.k8s.f5.com)
+    # Introduced in BNK 2.4.0 GA: Infra, GatewaySettings, EgressGateway, Policies
+    # =========================================================================
+    "infra": _f5_gateway_resource(
+        "Infra", "infras", "F5 Infra Underlay",
+        "Consolidated underlay infrastructure: IPAM pools, network attachments, VRFs, VLANs, and static routes"
+    ),
+    "gatewaysettings": _f5_gateway_resource(
+        "GatewaySettings", "gatewaysettings", "F5 Gateway Settings",
+        "Tenant-level Gateway settings: SNAT pools, listener networks, and egress configs"
+    ),
+    "egressgateway": _f5_gateway_resource(
+        "EgressGateway", "egressgateways", "F5 Egress Gateway",
+        "Outbound pod traffic steering with isolated SNAT and VRF pathing"
+    ),
+    "secpolicy": _f5_gateway_resource(
+        "SecPolicy", "secpolicies", "F5 Security Policy",
+        "F5 BNK firewall and security policy attachment for Gateways"
+    ),
+    "netpolicy": _f5_gateway_resource(
+        "NetPolicy", "netpolicies", "F5 Network Policy",
+        "F5 BNK network extensions (iRules, persistence profiles, TCP settings)"
     ),
 
     # =========================================================================
@@ -414,11 +482,31 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         category=ResourceCategory.F5_BNK
     ),
 
-    # --- AI/ML ---
+    # --- AI/ML & Telemetry ---
     "f5biganalyzer": _f5_resource(
         "F5BigAnalyzer", "f5-big-analyzers", "F5 AI Analyzer",
         "AI-powered load balancing analyzer for LLM inference workloads (EA feature)",
         api_version="v1alpha1"),
+    "f5epp": K8sResourceType(
+        api_group=ApiGroups.F5_K8S,
+        api_version="v1",
+        kind="F5EPP",
+        plural="f5epps",
+        namespaced=True,
+        display_name="F5 Endpoint Picker",
+        description="AI inference routing analyzer server with KV-cache awareness, prompt prefix affinity, and prefill-decode disaggregation",
+        category=ResourceCategory.F5_BNK
+    ),
+    "observer": K8sResourceType(
+        api_group=ApiGroups.F5_K8S,
+        api_version="v1",
+        kind="Observer",
+        plural="observers",
+        namespaced=True,
+        display_name="F5 Observer Telemetry",
+        description="Multi-tenant performance monitoring and Prometheus metric extraction",
+        category=ResourceCategory.F5_BNK
+    ),
 
     # --- IPAM (fic.f5.com) ---
     "ipamrange": K8sResourceType(
