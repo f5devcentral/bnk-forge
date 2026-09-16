@@ -66,6 +66,28 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     return cast(str, jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=JWT_ALGORITHM))
 
 
+AGENT_TOKEN_LIFETIME = timedelta(days=365)
+
+
+def mint_agent_token(
+    agent_id: int, agent_name: str, expires_delta: timedelta | None = None
+) -> tuple[str, datetime]:
+    """Mint the bearer token a benchmark agent presents on its WebSocket and ingest calls.
+
+    The token is bound to one agent: ``agent_id`` must match the path id the agent
+    connects as, ``role=agent`` grants only the agent-facing writes, and ``sub`` is
+    the agent name. Used by SSH host provisioning and by the operator-facing
+    ``POST /api/benchmarks/agents/{id}/token`` route for agents that run
+    outside Forge (awsbnkctl, customer hosts). Returns the token and its expiry.
+    """
+    lifetime = expires_delta or AGENT_TOKEN_LIFETIME
+    expires_at = datetime.now(UTC) + lifetime
+    token = create_access_token(
+        {"agent_id": agent_id, "role": "agent", "sub": agent_name}, expires_delta=lifetime
+    )
+    return token, expires_at
+
+
 def decode_token(token: str) -> dict[str, Any]:
     """Decode and validate a JWT token. Raises UnauthorizedError on failure."""
     try:

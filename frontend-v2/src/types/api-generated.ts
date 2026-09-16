@@ -11246,6 +11246,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/benchmarks/agents/{agent_id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint Benchmark Agent Token
+         * @description Mint an agent-bound bearer token for a registered benchmark agent.
+         *
+         *     External agents (awsbnkctl, customer hosts) register with an operator token,
+         *     then need a token that carries the ``agent_id`` claim the agent WebSocket
+         *     requires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the
+         *     same token written to /etc/forge/agent.env; this route hands it to agents
+         *     Forge does not provision. Operator role, plus project ownership for
+         *     project-scoped agents (same gate as deregistration). Each call mints a new
+         *     token; earlier tokens stay valid until they expire.
+         */
+        post: operations["mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/benchmarks/agent-hosts": {
         parameters: {
             query?: never;
@@ -13597,6 +13625,23 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * BenchmarkAgentTokenResponse
+         * @description Response for POST /api/benchmarks/agents/{agent_id}/token.
+         */
+        BenchmarkAgentTokenResponse: {
+            /** Agent Id */
+            agent_id: number;
+            /** Agent Name */
+            agent_name: string;
+            /** Token */
+            token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /**
          * BenchmarkCompareRequest
@@ -43513,6 +43558,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkAgentTokenResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
