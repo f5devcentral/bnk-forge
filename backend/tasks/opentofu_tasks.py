@@ -745,6 +745,12 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
                 apply_code, apply_logs, outputs = engine.run_apply(
                     work_dir, env, module=module, on_output=streamer.begin(all_logs),
                 )
+                # #195 F1: fold the first apply's output into all_logs *now*, before
+                # the retry block. This both preserves it (it was previously dropped
+                # when the retry reassigned apply_logs) and keeps every retry
+                # streamer.begin(all_logs) base from rewinding task.logs behind the
+                # output that first apply already streamed and committed.
+                all_logs += apply_logs
 
                 # Bounded stale-plan recovery: clear stale plan, re-plan once, then retry apply.
                 # This prevents repeated failures when remote state changed after plan creation.
@@ -807,8 +813,9 @@ def run_opentofu_apply(self, task_db_id: int, module_id: int, keep_workspace: bo
                     apply_code, apply_logs, outputs = engine.run_apply(
                         work_dir, env, module=module, on_output=streamer.begin(all_logs),
                     )
-
-                all_logs += apply_logs
+                    # Fold the retry apply's output in here (the first apply's was
+                    # already folded in above, #195 F1).
+                    all_logs += apply_logs
 
                 task.exit_code = apply_code
                 task.logs = all_logs

@@ -83,3 +83,31 @@ class TestTofuLogStreamer:
         sink("a line")  # must not raise
 
         db.rollback.assert_called_once()
+
+    def test_retry_with_shorter_base_never_rewinds_persisted_logs(self):
+        """#195 F1: a step whose base is shorter than what was already persisted
+        must NOT truncate task.logs mid-run (strict-growth invariant).
+
+        Reproduces the stale-plan retry path shape: the first apply streams and
+        commits output onto ``task.logs``; a later ``begin(base)`` is then handed
+        a base that omits that output. The persisted log must hold at its
+        high-water mark instead of shrinking.
+        """
+        task = MagicMock()
+        db = MagicMock()
+        streamer = TofuLogStreamer(task, db, interval=0)
+
+        # First step persists a long log.
+        sink = streamer.begin("HEADER\n--- APPLY ---\n")
+        sink("apply-line-1")
+        sink("apply-line-2")
+        high_water = len(task.logs)
+        assert high_water > 0
+
+        # A retry begins from a base that DROPS the first apply's streamed output
+        # (the F1 bug: begin(all_logs) before all_logs += apply_logs).
+        sink2 = streamer.begin("HEADER\n")
+        sink2("retry-line")
+
+        # The persisted log must never have shrunk below the high-water mark.
+        assert len(task.logs) >= high_water, "task.logs rewound on the retry path"

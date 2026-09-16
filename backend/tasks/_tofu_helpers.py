@@ -63,6 +63,12 @@ class TofuLogStreamer:
         self._base = ""
         self._buf: list[str] = []
         self._last = 0.0
+        # High-water mark of persisted log length. task.logs must only ever grow
+        # during a run (the strict-growth invariant behind logs_full_size); a
+        # step whose base is shorter than what we already persisted — e.g. a
+        # stale-plan retry whose begin() base omits the first apply's already-
+        # streamed output (#195 F1) — must NOT rewind it.
+        self._persisted_len = 0
 
     def begin(self, base: str) -> Callable[[str], None]:
         """Start streaming a step whose output extends ``base``; return the sink."""
@@ -79,9 +85,17 @@ class TofuLogStreamer:
             self._flush()
 
     def _flush(self) -> None:
+        content = self._base + "".join(self._buf)
+        # Never shrink the persisted log: a retry whose base predates output
+        # already streamed and committed would otherwise truncate task.logs
+        # mid-run, violating strict growth (#195 F1). The task's own final
+        # ``task.logs = all_logs`` write remains the source of truth.
+        if len(content) < self._persisted_len:
+            return
         try:
-            self._task.logs = self._base + "".join(self._buf)
+            self._task.logs = content
             self._db.commit()
+            self._persisted_len = len(content)
         except Exception:  # noqa: BLE001 — a log flush must never fail the step
             self._db.rollback()
 
