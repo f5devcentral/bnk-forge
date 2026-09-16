@@ -236,6 +236,14 @@ class BenchmarkAgentResponse(BaseModel):
         from_attributes = True
 
 
+class BenchmarkAgentTokenResponse(BaseModel):
+    """Response for POST /api/benchmarks/agents/{agent_id}/token."""
+    agent_id: int
+    agent_name: str
+    token: str
+    expires_at: datetime
+
+
 # =============================================================================
 # Comparison Schemas — proxy-vs-proxy side-by-side
 # =============================================================================

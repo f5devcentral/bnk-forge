@@ -139,15 +139,11 @@ def _upload_agent_script(ssh: SSHSession, agent: BenchmarkAgent, db: Session, ha
 
 
 def _mint_agent_token(agent: BenchmarkAgent) -> str:
-    """Mint a 365-day JWT for this agent."""
-    from datetime import timedelta
+    """Mint the agent-bound JWT written to the host (see auth_service.mint_agent_token)."""
+    from services.auth_service import mint_agent_token
 
-    from services.auth_service import create_access_token
-
-    return create_access_token(
-        {"agent_id": agent.id, "role": "agent", "sub": agent.name},
-        expires_delta=timedelta(days=365),
-    )
+    token, _expires_at = mint_agent_token(agent.id, agent.name)
+    return token
 
 
 def _write_env_and_service(
