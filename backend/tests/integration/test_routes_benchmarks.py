@@ -23,6 +23,7 @@ Auth rules (global AuthMiddleware enforces JWT on ALL /api/ routes):
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -2523,3 +2524,53 @@ def test_complete_run_counts_aiperf_error_records_as_failures(db):
     assert run.success_rate_pct == 88.6
     assert run.result_json["failed"] == 114
     assert run.result_json["success_rate_pct"] == 88.6
+
+
+class TestMintBenchmarkAgentToken:
+    """POST /api/benchmarks/agents/{id}/token (require_operator).
+
+    External agents (awsbnkctl) register with an operator token and then need an
+    agent-bound token for the WebSocket, which requires an ``agent_id`` claim
+    under BENCHMARK_AGENT_AUTH_REQUIRED. This route mints exactly that token.
+    """
+
+    def test_operator_mints_agent_bound_token(self, client, operator_headers, db):
+        from services.auth_service import decode_token
+
+        agent = _make_agent(db, name="ext-agent")
+        resp = client.post(f"/api/benchmarks/agents/{agent.id}/token", headers=operator_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_id"] == agent.id
+        assert data["agent_name"] == "ext-agent"
+        payload = decode_token(data["token"])
+        assert payload["agent_id"] == agent.id
+        assert payload["role"] == "agent"
+        assert payload["sub"] == "ext-agent"
+        # expires_at in the body matches the token's exp claim (365 days).
+        expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+        assert abs(expires_at.timestamp() - payload["exp"]) < 2
+        assert expires_at - datetime.now(UTC) > timedelta(days=364)
+
+    def test_minted_token_is_accepted_by_the_agent_websocket_gate(self, client, operator_headers, db, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from routes.benchmarks import _agent_ws_authorized
+
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
+        agent = _make_agent(db, name="ws-agent")
+        token = client.post(f"/api/benchmarks/agents/{agent.id}/token", headers=operator_headers).json()["token"]
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+        assert _agent_ws_authorized(ws, agent.id) is None
+        # Bound to this agent only: connecting as another id is rejected.
+        assert _agent_ws_authorized(ws, agent.id + 1) == 4401
+
+    def test_viewer_cannot_mint(self, client, viewer_headers, all_test_users, db):
+        agent = _make_agent(db, name="viewer-agent")
+        resp = client.post(f"/api/benchmarks/agents/{agent.id}/token", headers=viewer_headers)
+        assert resp.status_code == 403
+
+    def test_unknown_agent_404(self, client, operator_headers, db):
+        resp = client.post("/api/benchmarks/agents/999999/token", headers=operator_headers)
+        assert resp.status_code == 404

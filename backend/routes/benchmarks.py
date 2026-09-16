@@ -38,6 +38,7 @@ from schemas.benchmarks import (
     BenchmarkAgentHostResponse,
     BenchmarkAgentRegister,
     BenchmarkAgentResponse,
+    BenchmarkAgentTokenResponse,
     BenchmarkCompareRequest,
     BenchmarkCompareResponse,
     BenchmarkConfigCreate,
@@ -450,6 +451,35 @@ def get_benchmark_agent(agent_id: int, db: Session = Depends(get_db)):
     """Get a registered test client agent by ID."""
     svc = BenchmarkService(db)
     return svc.get_agent(agent_id)
+
+
+@router.post("/api/benchmarks/agents/{agent_id}/token", response_model=BenchmarkAgentTokenResponse)
+@handle_route_errors("mint benchmark agent token")
+def mint_benchmark_agent_token(
+    agent_id: int,
+    user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Mint an agent-bound bearer token for a registered benchmark agent.
+
+    External agents (awsbnkctl, customer hosts) register with an operator token,
+    then need a token that carries the ``agent_id`` claim the agent WebSocket
+    requires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the
+    same token written to /etc/forge/agent.env; this route hands it to agents
+    Forge does not provision. Operator role, plus project ownership for
+    project-scoped agents (same gate as deregistration). Each call mints a new
+    token; earlier tokens stay valid until they expire.
+    """
+    from services.auth_service import mint_agent_token
+
+    svc = BenchmarkService(db)
+    agent = svc.get_agent(agent_id)
+    if agent.project_id:
+        _check_project_access(agent.project_id, user, db)
+    token, expires_at = mint_agent_token(agent.id, agent.name)
+    return BenchmarkAgentTokenResponse(
+        agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at
+    )
 
 
 @router.delete("/api/benchmarks/agents/{agent_id}", status_code=204)

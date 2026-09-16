@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -27414,6 +27414,46 @@
         }
       }
     },
+    "/api/benchmarks/agents/{agent_id}/token": {
+      "post": {
+        "summary": "Mint Benchmark Agent Token",
+        "description": "Mint an agent-bound bearer token for a registered benchmark agent.\n\nExternal agents (awsbnkctl, customer hosts) register with an operator token,\nthen need a token that carries the ``agent_id`` claim the agent WebSocket\nrequires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the\nsame token written to /etc/forge/agent.env; this route hands it to agents\nForge does not provision. Operator role, plus project ownership for\nproject-scoped agents (same gate as deregistration). Each call mints a new\ntoken; earlier tokens stay valid until they expire.",
+        "operationId": "mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkAgentTokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/benchmarks/agent-hosts": {
       "post": {
         "summary": "Create Agent Host",
@@ -33488,6 +33528,36 @@
         ],
         "title": "BenchmarkAgentResponse",
         "description": "Response for a registered test client agent."
+      },
+      "BenchmarkAgentTokenResponse": {
+        "properties": {
+          "agent_id": {
+            "type": "integer",
+            "title": "Agent Id"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_id",
+          "agent_name",
+          "token",
+          "expires_at"
+        ],
+        "title": "BenchmarkAgentTokenResponse",
+        "description": "Response for POST /api/benchmarks/agents/{agent_id}/token."
       },
       "BenchmarkCompareRequest": {
         "properties": {
