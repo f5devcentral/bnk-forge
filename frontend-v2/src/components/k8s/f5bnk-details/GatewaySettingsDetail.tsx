@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Network, Server, Settings, Globe } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
+import type { BnkEgressConfig, BnkNamedRef, BnkSourceNatPool } from '@/types/kubernetes';
 
 export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
@@ -10,8 +11,8 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
   const conditions = status.conditions || [];
 
   const ingressConfig = spec.ingressConfig;
-  const sourceNATPools: any[] = spec.sourceNATPools || [];
-  const egressConfigs: any[] = spec.egressConfigs || [];
+  const sourceNATPools: BnkSourceNatPool[] = spec.sourceNATPools || [];
+  const egressConfigs: BnkEgressConfig[] = spec.egressConfigs || [];
 
   return (
     <div className="space-y-4">
@@ -30,7 +31,7 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
                 <div className="space-y-1 pt-1">
                   <span className="text-muted-foreground block text-[11px]">Network References:</span>
                   <div className="flex flex-wrap gap-1.5 pl-2">
-                    {ingressConfig.defaultListenerNetwork.networkRefs.map((net: any, idx: number) => (
+                    {ingressConfig.defaultListenerNetwork.networkRefs.map((net: BnkNamedRef, idx: number) => (
                       <Badge key={idx} variant="outline" className="text-[10px] font-mono flex items-center gap-1">
                         <Network className="h-2.5 w-2.5 text-info" />
                         {typeof net === 'string' ? net : net.name}
@@ -43,7 +44,7 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
                 <div className="space-y-1 pt-1">
                   <span className="text-muted-foreground block text-[11px]">IPAM References:</span>
                   <div className="flex flex-wrap gap-1.5 pl-2">
-                    {ingressConfig.defaultListenerNetwork.ipamRefs.map((ipam: any, idx: number) => (
+                    {ingressConfig.defaultListenerNetwork.ipamRefs.map((ipam: BnkNamedRef, idx: number) => (
                       <Badge key={idx} variant="secondary" className="text-[10px] font-mono flex items-center gap-1">
                         <Globe className="h-2.5 w-2.5 text-success" />
                         {typeof ipam === 'string' ? ipam : ipam.name}
@@ -58,7 +59,7 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
           {/* Source NAT Pools */}
           {sourceNATPools.length > 0 && (
             <Section title={`Source NAT Pools (${sourceNATPools.length})`}>
-              {sourceNATPools.map((pool: any, idx: number) => (
+              {sourceNATPools.map((pool, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -84,7 +85,7 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
           {/* Egress Configs */}
           {egressConfigs.length > 0 && (
             <Section title={`Egress Configurations (${egressConfigs.length})`}>
-              {egressConfigs.map((eg: any, idx: number) => (
+              {egressConfigs.map((eg, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -100,7 +101,7 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
                   {eg.networkRefs && (
                     <div className="text-[11px] text-muted-foreground pl-5 flex gap-2 items-center">
                       <span>Networks:</span>
-                      {eg.networkRefs.map((nr: any, nIdx: number) => (
+                      {eg.networkRefs.map((nr, nIdx) => (
                         <code key={nIdx} className="font-mono">{typeof nr === 'string' ? nr : nr.name}</code>
                       ))}
                     </div>

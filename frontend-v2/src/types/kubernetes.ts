@@ -230,6 +230,50 @@ export type K8sResourceStatus = Record<string, any>;
 // ─── Gateway API & CRD Sub-Resource Types ──────────────────────────────
 // Used to eliminate `any` in detail panel components that render CRD spec/status fields.
 
+// ── BNK 2.4 gateway.k8s.f5.com sub-resources ──
+
+/** Reference to a sibling object by name; the API accepts a bare string or an object. */
+export type BnkNamedRef = string | { name: string };
+
+export interface BnkInfraNetwork {
+  name: string;
+  type?: string;
+  vlan?: { tag?: number; mtu?: number; networkAttachmentRef?: { name?: string } };
+  vxlan?: { port?: number; vni?: number };
+}
+
+export interface BnkInfraIpam {
+  name: string;
+  az?: string;
+  cidr?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  networkRef?: { name?: string };
+}
+
+export interface BnkInfraStaticRoute {
+  destination?: string;
+  gateway?: string;
+  vrf?: string;
+}
+
+export type BnkInfraVrf = string | { name: string };
+
+export interface BnkSourceNatPool {
+  name: string;
+  mode?: string;
+  addresses?: string[] | string;
+}
+
+export interface BnkEgressConfig {
+  name: string;
+  snatMode?: string;
+  networkRefs?: BnkNamedRef[];
+}
+
+/** F5EPP status.endpoints entry; some controller builds emit bare address strings. */
+export type BnkEppEndpoint = string | { address?: string; name?: string; state?: string };
+
 /** Gateway API parentRef / targetRef (shared across HTTPRoute, L4Route, NetworkPolicy, SecurityPolicy) */
 export interface K8sGatewayRef {
   name: string;

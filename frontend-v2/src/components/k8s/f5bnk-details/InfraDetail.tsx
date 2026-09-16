@@ -3,15 +3,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Network, Globe, Route, Layers } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
+import type { BnkInfraIpam, BnkInfraNetwork, BnkInfraStaticRoute, BnkInfraVrf } from '@/types/kubernetes';
 
 export function InfraDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
   const status = resource.status || {};
   const conditions = status.conditions || [];
-  const networks: any[] = spec.networks || [];
-  const ipams: any[] = spec.ipams || [];
-  const staticRoutes: any[] = spec.staticRoutes || [];
-  const vrfs: any[] = spec.vrfs || [];
+  const networks: BnkInfraNetwork[] = spec.networks || [];
+  const ipams: BnkInfraIpam[] = spec.ipams || [];
+  const staticRoutes: BnkInfraStaticRoute[] = spec.staticRoutes || [];
+  const vrfs: BnkInfraVrf[] = spec.vrfs || [];
   const egressDefaults = spec.egressDefaults;
 
   return (
@@ -26,7 +27,7 @@ export function InfraDetail({ resource }: DetailPanelProps) {
           {/* Networks */}
           {networks.length > 0 && (
             <Section title={`Networks (${networks.length})`}>
-              {networks.map((net: any, idx: number) => (
+              {networks.map((net, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -62,7 +63,7 @@ export function InfraDetail({ resource }: DetailPanelProps) {
           {/* IPAM Pools */}
           {ipams.length > 0 && (
             <Section title={`IPAM Pools (${ipams.length})`}>
-              {ipams.map((ipam: any, idx: number) => (
+              {ipams.map((ipam, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -92,7 +93,7 @@ export function InfraDetail({ resource }: DetailPanelProps) {
           {/* Static Routes */}
           {staticRoutes.length > 0 && (
             <Section title={`Static Routes (${staticRoutes.length})`}>
-              {staticRoutes.map((rt: any, idx: number) => (
+              {staticRoutes.map((rt, idx) => (
                 <div key={idx} className="flex items-center justify-between p-1.5 rounded border bg-background/50">
                   <div className="flex items-center gap-2">
                     <Route className="h-3 w-3 text-muted-foreground" />
@@ -116,7 +117,7 @@ export function InfraDetail({ resource }: DetailPanelProps) {
                   <Layers className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">VRFs:</span>
                   <div className="flex flex-wrap gap-1">
-                    {vrfs.map((vrf: any, idx: number) => (
+                    {vrfs.map((vrf, idx) => (
                       <Badge key={idx} variant="outline" className="text-[10px] font-mono">
                         {typeof vrf === 'string' ? vrf : vrf.name}
                       </Badge>

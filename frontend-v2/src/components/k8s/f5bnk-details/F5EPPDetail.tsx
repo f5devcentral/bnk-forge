@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Cpu, Server } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
+import type { BnkEppEndpoint } from '@/types/kubernetes';
 
 export function F5EPPDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
@@ -58,13 +59,13 @@ export function F5EPPDetail({ resource }: DetailPanelProps) {
           {status.endpoints && (
             <Section title="Active Endpoints">
               <div className="space-y-1">
-                {Array.isArray(status.endpoints) && status.endpoints.map((ep: any, idx: number) => (
+                {Array.isArray(status.endpoints) && (status.endpoints as BnkEppEndpoint[]).map((ep, idx) => (
                   <div key={idx} className="flex items-center justify-between p-1.5 rounded border bg-background/50 text-xs">
                     <div className="flex items-center gap-1.5">
                       <Cpu className="h-3 w-3 text-primary" />
-                      <code className="font-mono">{ep.address || ep.name || String(ep)}</code>
+                      <code className="font-mono">{typeof ep === 'string' ? ep : ep.address || ep.name || ''}</code>
                     </div>
-                    {ep.state && <Badge variant="outline" className="text-[10px]">{ep.state}</Badge>}
+                    {typeof ep !== 'string' && ep.state && <Badge variant="outline" className="text-[10px]">{ep.state}</Badge>}
                   </div>
                 ))}
               </div>
