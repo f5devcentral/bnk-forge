@@ -74,6 +74,7 @@ export interface BenchmarkRun {
   config_id: number | null;
   agent_id: number | null;
   target_id?: number | null;
+  cluster_name?: string | null;
   proxy_deployment_id?: number | null;
   scenario_key?: string | null;
   status: BenchmarkRunStatus;
@@ -320,6 +321,7 @@ export interface BenchmarkTarget {
   name: string;
   description: string | null;
   cluster_id: number;
+  cluster_name?: string | null;
   llm_base_url: string;
   llm_model: string;
   llm_namespace: string;
