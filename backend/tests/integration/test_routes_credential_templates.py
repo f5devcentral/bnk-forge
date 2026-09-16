@@ -121,6 +121,37 @@ class TestCreateCredentialTemplate:
         assert data["provider"] == "ibm"
         assert data["has_ibmcloud_api_key"] is True
 
+    @patch("routes.credential_templates.CredentialTemplateService")
+    def test_create_rejects_misspelled_provider_with_422(self, mock_svc_cls, client, operator_headers, all_test_users):
+        """Issue #191: provider='ibmcloud' is a 422 at the API boundary, not a
+        silently-empty template — and the service is never reached.
+
+        The provider is a ``Literal`` field, so the 422 is field-scoped: the
+        error enumerates the supported set (proving the message is real, not
+        vacuous — ``azure``/``ssh`` are not substrings of the offender) and
+        must NOT echo the request body, which carries the plaintext secret."""
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+
+        secret = "pltxt-ibm-api-key-DO-NOT-LEAK-9f3a7c"
+        response = client.post(
+            "/api/credential-templates",
+            json={"name": "IBM ROKs Testing", "provider": "ibmcloud",
+                  "region": "us-east", "ibmcloud_api_key": secret},
+            headers=operator_headers,
+        )
+        assert response.status_code == 422
+        body = response.json()
+        detail = str(body["detail"])
+        # Field-scoped: the offending input is echoed, the supported set named.
+        assert "ibmcloud" in detail
+        assert "azure" in detail  # non-vacuous: not a substring of "ibmcloud"
+        assert "ssh" in detail
+        # Body-leak guard (finding 1): the plaintext credential must never
+        # appear anywhere in the error response — no whole-body echo.
+        assert secret not in response.text
+        mock_svc.create_template.assert_not_called()
+
 
 class TestGetCredentialTemplate:
     """GET /api/credential-templates/{id}."""
