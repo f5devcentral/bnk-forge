@@ -88,7 +88,42 @@ BNK_231_RELEASE = {
     "feature_flags": {"ipv6": False, "tmm_node_labels": True},
 }
 
-SEED_RELEASES = [BNK_21_PROFILE, BNK_22_PROFILE, BNK_231_RELEASE]
+# BNK 2.4.0 GA — verified against CloudDocs 2.4.0 release notes
+BNK_24_RELEASE = {
+    "name": "bnk-2.4",
+    "display_name": "BNK 2.4 (GA)",
+    "description": "BNK 2.4 General Availability release with GAIE and F5 Endpoint Picker",
+    "is_default": False,
+    "is_active": True,
+    "source_type": "manual",
+    "bnk_manifest_version": "2.4.0-3.3175.0+0.0.380",
+    "bnk_cr_kind": "CNEInstance",
+    "flo_version": "v2.30.0-0.5.2",
+    "k8s_version": "1.32.0",
+    "doca_version": "3.2.0",
+    "containerd_version": "1.7.23",
+    "runc_version": "1.2.1",
+    "calico_version": "3.28.1",
+    "cert_manager_version": "v1.16.2",
+    "gateway_api_version": "1.2.0",
+    "multus_version": "4.1.0",
+    "sriov_version": "1.4.0",
+    "storage_class_type": "local-path",
+    "storage_provisioner": "rancher.io/local-path",
+    "feature_flags": {
+        "ipv6": True,
+        "tmm_node_labels": True,
+        "infra_crd": True,
+        "gateway_settings": True,
+        "egress_gateway": True,
+        "epp_ai": True,
+        "agentic_mcp": True,
+        "gaie_inference": True,
+        "observer_telemetry": True,
+    },
+}
+
+SEED_RELEASES = [BNK_21_PROFILE, BNK_22_PROFILE, BNK_231_RELEASE, BNK_24_RELEASE]
 
 
 class BnkDeployableReleaseService:

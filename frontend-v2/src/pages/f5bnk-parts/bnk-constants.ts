@@ -7,7 +7,7 @@ import {
   Shield, Globe, Route, Network, Lock, Server, Activity, Settings,
   Map, Code, ShieldAlert, List, FileText, GitBranch,
   ArrowUpCircle, Stethoscope, Wand2, Workflow,
-  Bot, Radar, BookOpen,
+  Bot, Radar, BookOpen, Layers, Cpu, Database,
 } from 'lucide-react';
 
 // Special view identifiers (not actual K8s resource types)
@@ -59,6 +59,7 @@ export const bnkResourceCategories = [
     icon: Globe,
     items: [
       { key: 'gateway', label: 'Gateways', icon: Globe },
+      { key: 'gatewaysettings', label: 'Gateway Settings (2.4)', icon: Settings },
       { key: 'gatewayclass', label: 'Gateway Classes', icon: Shield },
       { key: 'httproute', label: 'HTTP Routes', icon: Route },
       { key: 'grpcroute', label: 'GRPC Routes', icon: Network },
@@ -75,12 +76,15 @@ export const bnkResourceCategories = [
     icon: Shield,
     items: [
       { key: VIEW_POLICY_BUILDER, label: 'Policy Builder', icon: Wand2 },
-      { key: 'bnksecpolicy', label: 'Security Policies', icon: Shield },
-      { key: 'bnknetpolicy', label: 'Network Policies', icon: Network },
+      { key: 'secpolicy', label: 'Security Policies (2.4)', icon: Shield },
+      { key: 'netpolicy', label: 'Network Policies (2.4)', icon: Network },
+      { key: 'egressgateway', label: 'Egress Gateways (2.4)', icon: Network },
+      { key: 'bnksecpolicy', label: 'Security Policies (Legacy)', icon: Shield },
+      { key: 'bnknetpolicy', label: 'Network Policies (Legacy)', icon: Network },
+      { key: 'f5spkegress', label: 'Egress Config (Legacy)', icon: Network },
       { key: 'f5bigfwpolicy', label: 'Firewall Policies', icon: Shield },
       { key: 'f5bigfwrulelist', label: 'Firewall Rule Lists', icon: List },
       { key: 'f5bigddosglobal', label: 'DDoS Protection', icon: ShieldAlert },
-      { key: 'f5spkegress', label: 'Egress Config', icon: Network },
       { key: 'f5spksnatpool', label: 'SNAT Pools', icon: Server },
       { key: 'f5bigcneirule', label: 'iRules', icon: Code },
     ],
@@ -90,12 +94,14 @@ export const bnkResourceCategories = [
     icon: Settings,
     items: [
       { key: VIEW_CONFIG_BUILDER, label: 'Configuration Builder', icon: Wand2 },
+      { key: 'infra', label: 'Infra Underlay (2.4)', icon: Layers },
       { key: 'cneinstance', label: 'CNE Instances', icon: Server },
       { key: 'f5spkglobaloptions', label: 'Global Options', icon: Settings },
-      { key: 'f5spkvlan', label: 'VLANs', icon: Network },
+      { key: 'f5spkvlan', label: 'VLANs (Legacy)', icon: Network },
       { key: 'f5spkstaticroute', label: 'Static Routes', icon: Route },
       { key: 'ipamrange', label: 'IPAM Ranges', icon: Network },
       { key: 'f5bnkgateway', label: 'BNK Gateway (IPAM)', icon: Globe },
+      { key: 'f5bigpersistenceprofile', label: 'Persistence Profiles', icon: Database },
       { key: 'f5bigloghslpub', label: 'HSL Publishers', icon: Activity },
       { key: 'f5biglogprofile', label: 'Log Profiles', icon: FileText },
       { key: 'f5bigcneaddresslist', label: 'Address Lists', icon: Network },
@@ -108,6 +114,9 @@ export const bnkResourceCategories = [
     items: [
       { key: VIEW_A2A_DISCOVERY, label: 'Agent Discovery', icon: Radar },
       { key: VIEW_AI_ANALYZERS, label: 'AI Analyzers', icon: Activity },
+      { key: 'inferencepool', label: 'Inference Pools (GAIE)', icon: Cpu },
+      { key: 'inferencemodelrewrite', label: 'Model Rewrites (GAIE)', icon: Route },
+      { key: 'f5epp', label: 'F5 EPP Analyzers', icon: Activity },
       { key: VIEW_A2A_TEMPLATES, label: 'A2A Templates', icon: Wand2 },
       { key: VIEW_A2A_IRULE_LIBRARY, label: 'iRule Library', icon: Code },
       { key: VIEW_A2A_REFERENCE, label: 'Protocol Reference', icon: BookOpen },

@@ -28,8 +28,11 @@ from services.bnk.topology import (
 
 
 def _resource(name: str, namespace: str = "f5-bnk", **kw) -> dict:
+    meta = {"name": name, "namespace": namespace, "creationTimestamp": "2026-01-01T00:00:00Z"}
+    if "annotations" in kw:
+        meta["annotations"] = kw["annotations"]
     return {
-        "metadata": {"name": name, "namespace": namespace, "creationTimestamp": "2026-01-01T00:00:00Z"},
+        "metadata": meta,
         "spec": kw.get("spec", {}),
         "status": kw.get("status", {}),
     }
@@ -650,3 +653,125 @@ class TestBuildDataPlane:
         assert len(dp["egresses"]) == 1
         assert len(dp["logging"]["hslPublishers"]) == 1
         assert len(dp["logging"]["logProfiles"]) == 1
+
+    def test_builds_24_infra_and_gatewaysettings(self):
+        resources = _empty_resources()
+        resources["infra"] = [_resource("infra-main", spec={
+            "networks": [{"name": "net-external", "type": "vlan", "vlan": {"mtu": 9000, "tag": 100, "networkAttachmentRef": {"name": "net-att"}}}]
+        }, status={"conditions": [{"type": "Programmed", "status": "True"}]})]
+        resources["gatewaysettings"] = [_resource("gw-settings", spec={
+            "ingressConfig": {"defaultListenerNetwork": {"networkRefs": [{"name": "net-external"}]}}
+        })]
+        resources["egressgateway"] = [_resource("egress-gw", spec={
+            "gatewayClassName": "f5-gateway",
+            "sourceSelector": {"selectionMode": "NamespaceSelector", "namespaces": {"matchNames": ["tenant-a"]}},
+            "infrastructure": {"parametersRef": {"group": "gateway.k8s.f5.com", "kind": "GatewaySettings", "name": "gw-settings"}},
+        })]
+
+        dp = _build_data_plane(resources)
+        assert len(dp["infra"]) == 1
+        assert dp["infra"][0]["name"] == "infra-main"
+        assert len(dp["gatewaySettings"]) == 1
+        assert dp["gatewaySettings"][0]["name"] == "gw-settings"
+        assert len(dp["egressGateways"]) == 1
+        assert dp["egressGateways"][0]["name"] == "egress-gw"
+        assert dp["egressGateways"][0]["capturedNamespaces"] == ["tenant-a"]
+        # Egress gateways should also be present in combined egresses
+        assert len(dp["egresses"]) == 1
+        assert dp["egresses"][0]["kind"] == "EgressGateway"
+        # Since vlans is empty, projected_vlans should populate from infra.spec.networks
+        assert len(dp["vlans"]) == 1
+        assert dp["vlans"][0]["name"] == "net-external"
+        assert dp["vlans"][0]["mtu"] == 9000
+
+
+class TestBNK24Topology:
+    def test_gateway_enriches_gateway_settings(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_resource("gw-prod", spec={
+            "gatewayClassName": "f5-gateway",
+            "infrastructure": {"parametersRef": {"kind": "GatewaySettings", "name": "prod-settings"}},
+            "listeners": [{"name": "http", "port": 80, "protocol": "HTTP"}],
+        })]
+        resources["gatewaysettings"] = [_resource("prod-settings", spec={
+            "ingressConfig": {"defaultListenerNetwork": {"networkRefs": [{"name": "ext-net"}]}},
+            "sourceNATPools": [{"name": "snat-pool-1"}],
+        })]
+        resources["secpolicy"] = [_resource("sec-1", spec={
+            "targetRefs": [{"name": "gw-prod", "kind": "Gateway"}],
+            "firewallPolicy": "fw-edge",
+        }, status={"conditions": [{"type": "Programmed", "status": "True"}]})]
+        resources["f5bigfwpolicy"] = [_resource("fw-edge", spec={
+            "rule": [{"name": "drop-bad", "action": "drop", "ipProtocol": "tcp", "logging": True}],
+        })]
+
+        result = analyze_topology({"resources": resources})
+        gw_node = result["topology"][0]
+        assert gw_node["name"] == "gw-prod"
+        assert gw_node["gatewaySettings"] is not None
+        assert gw_node["gatewaySettings"]["name"] == "prod-settings"
+        assert len(gw_node["gatewaySettings"]["sourceNATPools"]) == 1
+
+        # Check 2.4 secpolicy match
+        assert len(gw_node["securityPolicies"]) == 1
+        assert gw_node["securityPolicies"][0]["name"] == "sec-1"
+        assert len(gw_node["securityPolicies"][0]["firewallPolicies"]) == 1
+        assert gw_node["securityPolicies"][0]["firewallPolicies"][0]["rules"][0]["action"] == "drop"
+
+        # Check counts
+        counts = result["counts"]
+        assert counts["gatewaySettings"] == 1
+        assert counts["securityPolicies"] == 1
+
+    def test_mcp_route_detection(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_resource("gw-mcp", spec={
+            "listeners": [{"name": "https", "port": 443, "protocol": "HTTPS"}],
+        })]
+        resources["httproute"] = [
+            _resource("route-mcp-annotated", spec={
+                "parentRefs": [{"name": "gw-mcp", "sectionName": "https"}],
+                "rules": [{"backendRefs": [{"name": "mcp-server", "port": 8080}]}],
+            }, annotations={
+                "bnk.f5.com/protocol": "mcp",
+                "bnk.f5.com/auth": "bearer",
+                "bnk.f5.com/mcp-tools": "read_doc, query_db",
+            }),
+            _resource("route-mcp-path", spec={
+                "parentRefs": [{"name": "gw-mcp", "sectionName": "https"}],
+                "rules": [{
+                    "matches": [{"path": {"type": "PathPrefix", "value": "/mcp"}}],
+                    "backendRefs": [{"name": "mcp-server-2", "port": 8080}],
+                }],
+            }),
+            _resource("route-standard", spec={
+                "parentRefs": [{"name": "gw-mcp", "sectionName": "https"}],
+                "rules": [{
+                    "matches": [{"path": {"type": "PathPrefix", "value": "/api"}}],
+                    "backendRefs": [{"name": "api-server", "port": 8080}],
+                }],
+            }),
+        ]
+
+        result = analyze_topology({"resources": resources})
+        gw_node = result["topology"][0]
+        routes = gw_node["listeners"][0]["routes"]
+        assert len(routes) == 3
+
+        # Annotated MCP route
+        r0 = next(r for r in routes if r["name"] == "route-mcp-annotated")
+        assert r0["isMcp"] is True
+        assert r0["mcpInfo"]["auth"] == "bearer"
+        assert r0["mcpInfo"]["tools"] == ["read_doc", "query_db"]
+
+        # Path matched MCP route
+        r1 = next(r for r in routes if r["name"] == "route-mcp-path")
+        assert r1["isMcp"] is True
+        assert r1["mcpInfo"]["auth"] == "unknown"
+        assert r1["mcpInfo"]["tools"] == []
+
+        # Standard non-MCP route
+        r2 = next(r for r in routes if r["name"] == "route-standard")
+        assert r2["isMcp"] is False
+        assert r2["mcpInfo"] is None
+

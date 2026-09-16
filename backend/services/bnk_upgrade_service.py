@@ -112,11 +112,20 @@ class _VersionRange:
 # Ranges are checked in order — first match wins.
 # Keep them sorted newest-first so the most recent match is found first.
 _VERSION_RANGES: list[_VersionRange] = [
+    # BNK 2.4 — FLO chart 2.30.x (prefix 2.30)
+    # Source: CloudDocs BNK 2.4.0 GA release notes (FLO v2.30.0-0.5.2)
+    _VersionRange(
+        min_version=parse_version("2.30.0"),
+        max_version=parse_version("3.0.0"),
+        label="BNK 2.4 GA",
+        min_k8s="1.30",
+        max_k8s="1.35",
+    ),
     # BNK 2.3 — FLO chart 2.21.x (new 2.x.x scheme)
     # Source: IBM-F5 manifest 2.3.0 + live FLO 2.21.13 on a known-2.3 cluster
     _VersionRange(
         min_version=parse_version("2.20.0"),
-        max_version=parse_version("3.0.0"),
+        max_version=parse_version("2.30.0"),
         label="BNK 2.3 GA",
         min_k8s="1.30",
         # Upstream-validated through 1.31; widened to 1.33 to cover real-world

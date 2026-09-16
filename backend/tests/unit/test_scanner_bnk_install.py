@@ -486,3 +486,27 @@ class TestAnalyzeBnkInstall:
         )
         assert result["status"] == "not_installed"
         assert result["install_shape"] == "unknown"
+        assert result["crds"]["api_generation"] == "none"
+        assert result["crds"]["has_gateway_24"] is False
+
+    def test_api_generation_classification(self):
+        crd_24 = _make_crd("infras.gateway.k8s.f5.com", "gateway.k8s.f5.com", "Infra")
+        crd_23 = _make_crd("bnksecpolicies.gateway.k8s.f5net.com", "gateway.k8s.f5net.com", "BNKSecPolicy")
+
+        # 2.4 only
+        res_24 = analyze_bnk_install([crd_24], {"infras"}, {"gateway.k8s.f5.com"}, [], [], [], [], [], [])
+        assert res_24["crds"]["api_generation"] == "2.4"
+        assert res_24["crds"]["has_gateway_24"] is True
+        assert res_24["crds"]["has_gateway_ext"] is False
+
+        # 2.3 only
+        res_23 = analyze_bnk_install([crd_23], {"bnksecpolicies"}, {"gateway.k8s.f5net.com"}, [], [], [], [], [], [])
+        assert res_23["crds"]["api_generation"] == "2.3"
+        assert res_23["crds"]["has_gateway_24"] is False
+        assert res_23["crds"]["has_gateway_ext"] is True
+
+        # Mixed (in flight upgrade)
+        res_mixed = analyze_bnk_install([crd_24, crd_23], {"infras", "bnksecpolicies"}, {"gateway.k8s.f5.com", "gateway.k8s.f5net.com"}, [], [], [], [], [], [])
+        assert res_mixed["crds"]["api_generation"] == "mixed"
+        assert res_mixed["crds"]["has_gateway_24"] is True
+        assert res_mixed["crds"]["has_gateway_ext"] is True

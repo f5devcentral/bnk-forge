@@ -25,6 +25,11 @@ import { L4RouteDetail } from '../L4RouteDetail';
 import { IpamRangeDetail } from '../IpamRangeDetail';
 import { BnkGatewayDetail } from '../BnkGatewayDetail';
 import { ServiceDetail } from '../ServiceDetail';
+import { InfraDetail } from '../InfraDetail';
+import { GatewaySettingsDetail } from '../GatewaySettingsDetail';
+import { EgressGatewayDetail } from '../EgressGatewayDetail';
+import { F5EPPDetail } from '../F5EPPDetail';
+import { InferencePoolDetail } from '../InferencePoolDetail';
 
 // Shared helpers
 import { InfoRow, Section, ConditionsTab, getConditionIcon, getConditionColor } from '../shared';
@@ -709,3 +714,198 @@ describe('ServiceDetail', () => {
     expect(screen.getByText('Endpoints ready')).toBeInTheDocument();
   });
 });
+
+// ============================================================================
+// BNK 2.4 Components
+// ============================================================================
+
+describe('InfraDetail', () => {
+  const resource = makeResource({
+    kind: 'Infra',
+    spec: {
+      networks: [
+        {
+          name: 'net-external',
+          type: 'vlan',
+          vlan: { tag: 100, mtu: 9000, networkAttachmentRef: { name: 'cne-nad' } },
+        },
+      ],
+      ipams: [
+        {
+          name: 'ipam-prod',
+          cidr: '10.100.0.0/16',
+          az: 'us-west-2a',
+          rangeStart: '10.100.1.10',
+          rangeEnd: '10.100.1.200',
+        },
+      ],
+      staticRoutes: [
+        { destination: '192.168.0.0/16', gateway: '10.100.1.1', vrf: 'default' },
+      ],
+      vrfs: [{ name: 'tenant-a' }],
+      egressDefaults: { snatMode: 'Automap' },
+    },
+    status: {
+      conditions: [{ type: 'Programmed', status: 'True', message: 'Infra ready' }],
+    },
+  });
+
+  it('renders networks and VLAN configurations', () => {
+    render(<InfraDetail resource={resource} />);
+    expect(screen.getByText('net-external')).toBeInTheDocument();
+    expect(screen.getByText('vlan')).toBeInTheDocument();
+    expect(screen.getByText('100')).toBeInTheDocument();
+    expect(screen.getByText('9000')).toBeInTheDocument();
+    expect(screen.getByText('cne-nad')).toBeInTheDocument();
+  });
+
+  it('renders IPAM pools with CIDR and AZ', () => {
+    render(<InfraDetail resource={resource} />);
+    expect(screen.getByText('ipam-prod')).toBeInTheDocument();
+    expect(screen.getByText('10.100.0.0/16')).toBeInTheDocument();
+    expect(screen.getByText('AZ: us-west-2a')).toBeInTheDocument();
+  });
+
+  it('renders static routes and VRFs', () => {
+    render(<InfraDetail resource={resource} />);
+    expect(screen.getByText('192.168.0.0/16')).toBeInTheDocument();
+    expect(screen.getByText('10.100.1.1')).toBeInTheDocument();
+    expect(screen.getByText('tenant-a')).toBeInTheDocument();
+    expect(screen.getByText('Automap')).toBeInTheDocument();
+  });
+});
+
+describe('GatewaySettingsDetail', () => {
+  const resource = makeResource({
+    kind: 'GatewaySettings',
+    spec: {
+      ingressConfig: {
+        snatMode: 'Auto',
+        defaultListenerNetwork: {
+          networkRefs: [{ name: 'net-external' }],
+          ipamRefs: [{ name: 'ipam-prod' }],
+        },
+      },
+      sourceNATPools: [
+        { name: 'snat-pool-1', mode: 'Auto', addresses: ['10.100.1.50'] },
+      ],
+      egressConfigs: [
+        { name: 'egress-cfg-1', snatMode: 'Automap', networkRefs: [{ name: 'net-external' }] },
+      ],
+    },
+  });
+
+  it('renders ingress configuration with network and ipam references', () => {
+    render(<GatewaySettingsDetail resource={resource} />);
+    expect(screen.getAllByText('Auto').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('net-external').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('ipam-prod')).toBeInTheDocument();
+  });
+
+  it('renders source NAT pools and egress configurations', () => {
+    render(<GatewaySettingsDetail resource={resource} />);
+    expect(screen.getByText('snat-pool-1')).toBeInTheDocument();
+    expect(screen.getByText('10.100.1.50')).toBeInTheDocument();
+    expect(screen.getByText('egress-cfg-1')).toBeInTheDocument();
+    expect(screen.getByText('Automap')).toBeInTheDocument();
+  });
+});
+
+describe('EgressGatewayDetail', () => {
+  const resource = makeResource({
+    kind: 'EgressGateway',
+    spec: {
+      gatewayClassName: 'f5-gateway',
+      infrastructure: {
+        parametersRef: { kind: 'GatewaySettings', name: 'gw-settings-prod' },
+      },
+      sourceSelector: {
+        selectionMode: 'NamespaceSelector',
+        namespaces: {
+          matchNames: ['tenant-payments', 'tenant-orders'],
+          matchLabels: { tier: 'backend' },
+        },
+      },
+    },
+  });
+
+  it('renders gateway class and parameters ref', () => {
+    render(<EgressGatewayDetail resource={resource} />);
+    expect(screen.getByText('f5-gateway')).toBeInTheDocument();
+    expect(screen.getByText('gw-settings-prod')).toBeInTheDocument();
+    expect(screen.getByText('GatewaySettings')).toBeInTheDocument();
+  });
+
+  it('renders source capture namespaces and labels', () => {
+    render(<EgressGatewayDetail resource={resource} />);
+    expect(screen.getByText('tenant-payments')).toBeInTheDocument();
+    expect(screen.getByText('tenant-orders')).toBeInTheDocument();
+    expect(screen.getByText('tier=backend')).toBeInTheDocument();
+  });
+});
+
+describe('F5EPPDetail', () => {
+  const resource = makeResource({
+    kind: 'F5EPP',
+    spec: {
+      modelName: 'meta-llama/Llama-3-8b',
+      engine: 'vllm',
+      mode: 'disaggregated',
+      blockSize: 16,
+      tokenizer: 'hf-internal-testing/llama-tokenizer',
+      natsURL: 'nats://nats.f5-cne-system:4222',
+      poolRef: 'inference-pool-prod',
+    },
+    status: {
+      endpoints: [
+        { address: '10.244.1.15:8000', state: 'Ready' },
+      ],
+    },
+  });
+
+  it('renders EPP analyzer configuration', () => {
+    render(<F5EPPDetail resource={resource} />);
+    expect(screen.getByText('meta-llama/Llama-3-8b')).toBeInTheDocument();
+    expect(screen.getByText('vllm')).toBeInTheDocument();
+    expect(screen.getByText('disaggregated')).toBeInTheDocument();
+    expect(screen.getByText('inference-pool-prod')).toBeInTheDocument();
+    expect(screen.getByText('16')).toBeInTheDocument();
+    expect(screen.getByText('nats://nats.f5-cne-system:4222')).toBeInTheDocument();
+  });
+
+  it('renders active endpoints', () => {
+    render(<F5EPPDetail resource={resource} />);
+    expect(screen.getByText('10.244.1.15:8000')).toBeInTheDocument();
+    expect(screen.getByText('Ready')).toBeInTheDocument();
+  });
+});
+
+describe('InferencePoolDetail', () => {
+  const resource = makeResource({
+    kind: 'InferencePool',
+    spec: {
+      modelName: 'mistralai/Mistral-7B-v0.1',
+      targetPortNumber: 8000,
+      failureMode: 'FailOpen',
+      endpointPickerRef: { kind: 'F5EPP', name: 'epp-mistral' },
+      selector: {
+        matchLabels: { app: 'vllm-mistral', role: 'worker' },
+      },
+    },
+  });
+
+  it('renders inference pool configuration', () => {
+    render(<InferencePoolDetail resource={resource} />);
+    expect(screen.getByText('mistralai/Mistral-7B-v0.1')).toBeInTheDocument();
+    expect(screen.getByText('8000')).toBeInTheDocument();
+    expect(screen.getByText('FailOpen')).toBeInTheDocument();
+    expect(screen.getByText('epp-mistral')).toBeInTheDocument();
+  });
+
+  it('renders pod selectors', () => {
+    render(<InferencePoolDetail resource={resource} />);
+    expect(screen.getByText('app=vllm-mistral')).toBeInTheDocument();
+    expect(screen.getByText('role=worker')).toBeInTheDocument();
+  });
+});
+

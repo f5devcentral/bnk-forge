@@ -506,6 +506,7 @@ export interface TopologyGateway {
 export interface TopologyVlan {
   name: string;
   namespace: string;
+  kind?: string;
   interfaces: unknown[];
   selfipV4s: string[];
   prefixLen: number | null;
@@ -530,6 +531,7 @@ export interface TopologyStaticRoute {
   namespace: string;
   destination: string;
   gateway: string;
+  kind?: string;
 }
 
 export interface TopologySnatPool {
@@ -541,6 +543,7 @@ export interface TopologySnatPool {
 export interface TopologyEgress {
   name: string;
   namespace: string;
+  kind?: string;
   snatType: string;
   egressSnatpool: string | null;
   firewallEnforcedPolicy: string | null;

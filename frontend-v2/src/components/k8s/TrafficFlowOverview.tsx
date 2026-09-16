@@ -628,7 +628,7 @@ function EgressFlowRow({
           <div className="flex items-center gap-2 flex-wrap">
             <ClickableName
               name={egress.name}
-              kind="F5SPKEgress"
+              kind={egress.kind || "F5SPKEgress"}
               namespace={egress.namespace}
               onSelect={onSelectResource}
               className="text-sm"
@@ -848,7 +848,7 @@ function InfrastructureCard({
               <div key={vlan.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Wifi className="h-3 w-3 shrink-0" />
-                  <ClickableName name={vlan.name} kind="F5SPKVlan" namespace={vlan.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={vlan.name} kind={vlan.kind || "F5SPKVlan"} namespace={vlan.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
                   {vlan.selfipV4s.join(', ') || 'no self-IPs'} · {vlan.ready ? 'ready' : 'pending'}
@@ -870,7 +870,7 @@ function InfrastructureCard({
               <div key={sr.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Route className="h-3 w-3 shrink-0" />
-                  <ClickableName name={sr.name} kind="F5SPKStaticRoute" namespace={sr.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={sr.name} kind={sr.kind || "F5SPKStaticRoute"} namespace={sr.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
                   {sr.destination} → {sr.gateway}

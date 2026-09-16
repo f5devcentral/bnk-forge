@@ -688,3 +688,52 @@ class TestAnalyzeHealthConnectivityIntegration:
         result = analyze_health(data)
         assert result["connectivity"]["status"] == "unreachable"
         assert result["integration"]["status"] == "critical"
+
+
+class TestBNK24Health:
+    def test_infra_health_evaluated_when_vlans_absent(self):
+        data = _make_data()
+        data["resources"]["f5spkvlan"] = []
+        data["resources"]["infra"] = [{
+            "metadata": {"name": "infra-main", "namespace": "f5-bnk"},
+            "spec": {"networks": [{"name": "ext"}], "ipams": []},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["gatewaysettings"] = [{
+            "metadata": {"name": "gw-settings", "namespace": "f5-bnk"},
+            "spec": {},
+        }]
+        result = analyze_health(data)
+        net_h = result["networking"]
+        assert "infra" in net_h
+        assert net_h["infra"]["total"] == 1
+        assert net_h["infra"]["severity"] == "healthy"
+        assert net_h["gatewaySettings"] == 1
+        assert net_h["severity"] == "healthy"
+
+    def test_24_security_and_ai_health(self):
+        data = _make_data()
+        data["resources"]["secpolicy"] = [{
+            "metadata": {"name": "sp-24", "namespace": "f5-bnk"},
+            "spec": {},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["f5epp"] = [{
+            "metadata": {"name": "epp-1", "namespace": "f5-bnk"},
+            "spec": {},
+        }]
+        data["resources"]["inferencepool"] = [{
+            "metadata": {"name": "pool-llama", "namespace": "f5-bnk"},
+            "spec": {"modelName": "meta-llama/Llama-3-8b", "targetPortNumber": 8000},
+        }]
+        result = analyze_health(data)
+        sec_h = result["security"]
+        assert sec_h["securityPolicies"] == 1
+        assert sec_h["severity"] == "healthy"
+
+        ai_h = result["ai"]
+        assert ai_h["f5epps"] == 1
+        assert ai_h["inferencePools"] == 1
+        assert len(ai_h["inferencePoolDetails"]) == 1
+        assert ai_h["inferencePoolDetails"][0]["modelName"] == "meta-llama/Llama-3-8b"
+
