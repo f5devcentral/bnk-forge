@@ -48,11 +48,18 @@ def _v1_daemonset(name: str, namespace: str, desired: int = 3, ready: int = 3):
     return ds
 
 
-def _run_fetch(*, multus_namespace: str, pods_by_ns: dict[str, list]):
+def _run_fetch(
+    *,
+    multus_namespace: str,
+    pods_by_ns: dict[str, list],
+    ds_specs: list[tuple[str, str]] | None = None,
+):
     """Run the real fetch_scan_data with the k8s API mocked.
 
-    ``pods_by_ns`` maps namespace -> list of V1Pod mocks; the DaemonSet is
-    reported in ``multus_namespace``. Returns the fetched data dict.
+    ``pods_by_ns`` maps namespace -> list of V1Pod mocks. By default a single
+    DaemonSet named ``multus`` is reported in ``multus_namespace``; pass
+    ``ds_specs`` (a list of ``(name, namespace)`` tuples) to report a specific
+    set of DaemonSets instead. Returns the fetched data dict and the CoreV1 mock.
     """
     core_v1 = MagicMock()
 
@@ -65,9 +72,11 @@ def _run_fetch(*, multus_namespace: str, pods_by_ns: dict[str, list]):
 
     apps_v1 = MagicMock()
 
+    specs = ds_specs if ds_specs is not None else [("multus", multus_namespace)]
+
     def _list_ds(**kwargs):
         resp = MagicMock()
-        resp.items = [_v1_daemonset("multus", multus_namespace)]
+        resp.items = [_v1_daemonset(name, ns) for name, ns in specs]
         return resp
 
     apps_v1.list_daemon_set_for_all_namespaces.side_effect = _list_ds
@@ -194,3 +203,203 @@ def test_multus_namespace_selector_prefers_exact_multus():
         {"name": "multus", "namespace": "openshift-multus"},
     ]
     assert _multus_daemonset_namespace(daemonsets) == "openshift-multus"
+
+
+# ---------------------------------------------------------------------------
+# bonnyr-f5 #203 review (m-1): ranked, list-order-independent DaemonSet pick
+# ---------------------------------------------------------------------------
+
+
+class TestPickPrimaryMultusDaemonset:
+    """The shared ``pick_primary_multus_daemonset`` ranks candidates:
+    exact ``multus`` > ``kube-multus-ds`` > sorted-name tiebreak — never
+    exact-match-then-first (which is list-order dependent and never fires on a
+    Forge/vanilla cluster, whose installer names the DaemonSet ``kube-multus-ds``)."""
+
+    def test_forge_vanilla_cluster_picks_kube_multus_ds(self):
+        """Forge's own installer creates ``kube-multus-ds`` (no exact ``multus``);
+        it must be selected over a generic sibling regardless of list order."""
+        from services.scanner.prereqs import pick_primary_multus_daemonset
+
+        daemonsets = [
+            {"name": "multus-additional-cni-plugins", "namespace": "kube-system"},
+            {"name": "kube-multus-ds", "namespace": "kube-system"},
+        ]
+        assert pick_primary_multus_daemonset(daemonsets)["name"] == "kube-multus-ds"
+        # order independence: reversed list yields the same pick
+        assert (
+            pick_primary_multus_daemonset(list(reversed(daemonsets)))["name"]
+            == "kube-multus-ds"
+        )
+
+    def test_exact_multus_outranks_kube_multus_ds(self):
+        from services.scanner.prereqs import pick_primary_multus_daemonset
+
+        daemonsets = [
+            {"name": "kube-multus-ds", "namespace": "kube-system"},
+            {"name": "multus", "namespace": "openshift-multus"},
+        ]
+        assert pick_primary_multus_daemonset(daemonsets)["name"] == "multus"
+
+    def test_generic_siblings_broken_by_sorted_name(self):
+        """With only non-preferred candidates, the tiebreak is sorted name —
+        stable regardless of API list order (not first-in-list)."""
+        from services.scanner.prereqs import pick_primary_multus_daemonset
+
+        a = {"name": "multus-zeta", "namespace": "ns-z"}
+        b = {"name": "multus-alpha", "namespace": "ns-a"}
+        assert pick_primary_multus_daemonset([a, b])["name"] == "multus-alpha"
+        assert pick_primary_multus_daemonset([b, a])["name"] == "multus-alpha"
+
+    def test_no_multus_daemonset_returns_none(self):
+        from services.scanner.prereqs import pick_primary_multus_daemonset
+
+        assert pick_primary_multus_daemonset([]) is None
+        assert (
+            pick_primary_multus_daemonset(
+                [{"name": "kube-proxy", "namespace": "kube-system"}]
+            )
+            is None
+        )
+
+    def test_tolerates_name_none_and_missing(self):
+        """Safe idiom: a DaemonSet with ``name: None`` or no name key must not
+        raise (the other picker idiom, ``.get('name','').lower()``, would)."""
+        from services.scanner.prereqs import pick_primary_multus_daemonset
+
+        daemonsets = [
+            {"name": None, "namespace": "weird-ns"},
+            {"namespace": "no-name-ns"},
+            {"name": "multus", "namespace": "openshift-multus"},
+        ]
+        assert pick_primary_multus_daemonset(daemonsets)["name"] == "multus"
+
+
+# ---------------------------------------------------------------------------
+# bonnyr-f5 #203 review (m-2): fetch + analyze route through the SAME picker
+# ---------------------------------------------------------------------------
+
+
+class TestPickersAgree:
+    """If the fetch-side namespace picker and the analyze-side DaemonSet pick
+    ever diverged, fetch would query namespace A while analyze reported
+    namespace B and ``running_pods`` would silently drop to 0 (#202 re-armed).
+    Both now call ``pick_primary_multus_daemonset``; these tests pin agreement."""
+
+    def test_fetch_and_analyze_agree_multi_ds_multi_namespace(self):
+        from services.scanner.fetch import _multus_daemonset_namespace
+        from services.scanner.prereqs import analyze_multus
+
+        daemonsets = [
+            {"name": "multus-additional-cni-plugins", "namespace": "sib-ns",
+             "desired": 6, "ready": 6},
+            {"name": "kube-multus-ds", "namespace": "kube-system",
+             "desired": 2, "ready": 2},
+            {"name": "multus", "namespace": "openshift-multus",
+             "desired": 3, "ready": 3},
+        ]
+        fetched_ns = _multus_daemonset_namespace(daemonsets)
+        reported = analyze_multus(
+            [], {"network-attachment-definitions.k8s.cni.cncf.io"}, [], daemonsets
+        )["daemonset"]
+        assert fetched_ns == reported["namespace"] == "openshift-multus"
+
+    def test_fetch_and_analyze_agree_on_forge_cluster(self):
+        """Forge/vanilla topology (kube-multus-ds only): both sides still agree."""
+        from services.scanner.fetch import _multus_daemonset_namespace
+        from services.scanner.prereqs import analyze_multus
+
+        daemonsets = [
+            {"name": "multus-additional-cni-plugins", "namespace": "kube-system",
+             "desired": 3, "ready": 3},
+            {"name": "kube-multus-ds", "namespace": "kube-system",
+             "desired": 3, "ready": 3},
+        ]
+        fetched_ns = _multus_daemonset_namespace(daemonsets)
+        reported = analyze_multus(
+            [], {"network-attachment-definitions.k8s.cni.cncf.io"}, [], daemonsets
+        )["daemonset"]
+        assert fetched_ns == reported["namespace"] == "kube-system"
+        assert reported["name"] == "kube-multus-ds"
+
+    def test_both_callers_tolerate_name_none(self):
+        """Consistent null-handling: neither caller raises on ``name: None``."""
+        from services.scanner.fetch import _multus_daemonset_namespace
+        from services.scanner.prereqs import analyze_multus
+
+        daemonsets = [
+            {"name": None, "namespace": "weird-ns"},
+            {"name": "multus", "namespace": "openshift-multus",
+             "desired": 3, "ready": 3},
+        ]
+        assert _multus_daemonset_namespace(daemonsets) == "openshift-multus"
+        reported = analyze_multus(
+            [], {"network-attachment-definitions.k8s.cni.cncf.io"}, [], daemonsets
+        )["daemonset"]
+        assert reported["namespace"] == "openshift-multus"
+
+    def test_analyze_tolerates_daemonset_without_namespace_key(self):
+        """The reported daemonset info uses ``.get`` — a DaemonSet dict missing
+        ``namespace`` yields ``None``, not a KeyError."""
+        from services.scanner.prereqs import analyze_multus
+
+        daemonsets = [{"name": "multus"}]  # no namespace/desired/ready
+        reported = analyze_multus(
+            [], {"network-attachment-definitions.k8s.cni.cncf.io"}, [], daemonsets
+        )["daemonset"]
+        assert reported["name"] == "multus"
+        assert reported["namespace"] is None
+
+
+def test_forge_cluster_end_to_end_fetches_kube_multus_ds_namespace():
+    """End-to-end (real fetch path): a Forge cluster reporting ``kube-multus-ds``
+    (plus a sibling) queries kube-system and counts its running pods — the exact
+    ``multus`` match never fires here, so this exercises the ranked pick."""
+    pods_by_ns = {
+        "kube-system": [
+            _v1_pod("kube-multus-ds-1", "kube-system"),
+            _v1_pod("kube-multus-ds-2", "kube-system"),
+            _v1_pod("multus-additional-cni-plugins-a", "kube-system"),
+        ],
+    }
+    data, _ = _run_fetch(
+        multus_namespace="kube-system",
+        pods_by_ns=pods_by_ns,
+        ds_specs=[
+            ("multus-additional-cni-plugins", "kube-system"),
+            ("kube-multus-ds", "kube-system"),
+        ],
+    )
+    result = analyze_multus(
+        [], _NAD_CRD["crd_names"], data["multus_pods"], data["daemonsets"]
+    )
+    assert result["daemonset"]["name"] == "kube-multus-ds"
+    assert result["daemonset"]["namespace"] == "kube-system"
+    assert result["running_pods"] == 3
+
+
+def test_sibling_in_other_namespace_excluded_from_count():
+    """m-3: only the primary DaemonSet's own namespace is fetched, so a
+    ``multus``-named sibling living elsewhere is EXCLUDED from running_pods —
+    matching the rewritten comment (primary@openshift-multus 3 + sibling@sib-ns 6
+    → 3)."""
+    pods_by_ns = {
+        "openshift-multus": [
+            _v1_pod("multus-a", "openshift-multus"),
+            _v1_pod("multus-b", "openshift-multus"),
+            _v1_pod("multus-c", "openshift-multus"),
+        ],
+        "sib-ns": [_v1_pod(f"multus-sib-{i}", "sib-ns") for i in range(6)],
+    }
+    data, _ = _run_fetch(
+        multus_namespace="openshift-multus",
+        pods_by_ns=pods_by_ns,
+        ds_specs=[
+            ("multus", "openshift-multus"),
+            ("multus-additional-cni-plugins", "sib-ns"),
+        ],
+    )
+    result = analyze_multus(
+        [], _NAD_CRD["crd_names"], data["multus_pods"], data["daemonsets"]
+    )
+    assert result["running_pods"] == 3

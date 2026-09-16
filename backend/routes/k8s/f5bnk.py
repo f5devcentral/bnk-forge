@@ -53,6 +53,7 @@ from services.bnk_data_service import (
 from services.kubernetes_service import KubernetesService
 from services.operator_registry import is_operator_live_connected
 from services.proxy_discovery_service import (
+    _extract_backends_from_configmaps,
     _safe_list_all_custom,
     _safe_list_all_ingresses,
 )
@@ -462,6 +463,47 @@ def translate_proxy_to_bnk(
             if parent.get("name") in matching_gw_names:
                 source_httproutes.append(route)
                 break
+
+    # If neither Ingresses nor HTTPRoutes matched (e.g. Deployment kind or standalone proxy):
+    if not source_ingresses and not source_httproutes:
+        core = k8s_client.CoreV1Api(api_client)
+        ns = body.namespace or "default"
+        extracted = _extract_backends_from_configmaps(
+            core, ns, body.proxy_type, class_name
+        )
+        if not extracted and ns != "perf-proxies":
+            extracted = _extract_backends_from_configmaps(
+                core, "perf-proxies", body.proxy_type, class_name
+            )
+
+        if extracted:
+            primary_ns = extracted[0].get("namespace") or ns
+            paths = [
+                {
+                    "path": "/",
+                    "pathType": "Prefix",
+                    "backend": {
+                        "service": {
+                            "name": b["service"],
+                            "port": {"number": b.get("port", 80)},
+                        }
+                    },
+                }
+                for b in extracted
+            ]
+            source_ingresses = [{
+                "metadata": {
+                    "name": class_name,
+                    "namespace": primary_ns,
+                },
+                "spec": {
+                    "rules": [{
+                        "http": {
+                            "paths": paths,
+                        }
+                    }],
+                },
+            }]
 
     # --- Call pure translator ---
     result = translate_to_bnk(

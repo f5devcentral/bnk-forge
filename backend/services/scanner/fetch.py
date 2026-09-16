@@ -20,6 +20,7 @@ from services.bnk_pod_discovery import discover_f5_pods
 from services.kubernetes._resources import resolve_resource_type
 from services.scanner.constants import SCANNER_RELEVANT_CRD_GROUPS
 from services.scanner.nodes import parse_node
+from services.scanner.prereqs import pick_primary_multus_daemonset
 
 logger = logging.getLogger(__name__)
 
@@ -283,22 +284,20 @@ def _fetch_pods_in_ns(api_client, namespace: str) -> list[dict[str, Any]]:
 
 
 def _multus_daemonset_namespace(daemonsets: list[dict[str, Any]]) -> str | None:
-    """Return the namespace of the Multus DaemonSet, or None if not present.
+    """Return the namespace of the primary Multus DaemonSet, or None.
 
     The DaemonSet is discovered cluster-wide via
     ``list_daemon_set_for_all_namespaces``, so its namespace is authoritative:
     ``kube-system`` on vanilla k8s, ``openshift-multus`` on ROKS/OpenShift.
+
+    The DaemonSet is chosen by the shared ``pick_primary_multus_daemonset`` so
+    that the namespace queried here is always the same DaemonSet that
+    ``analyze_multus`` reports — divergence would silently zero ``running_pods``
+    (Issue #202 re-armed).
     """
-    multus = [ds for ds in daemonsets if "multus" in (ds.get("name") or "").lower()]
-    if not multus:
+    primary = pick_primary_multus_daemonset(daemonsets)
+    if primary is None:
         return None
-    # bonnyr-f5 #203 review (MINOR 2): prefer the DaemonSet named EXACTLY "multus"
-    # over siblings like "multus-additional-cni-plugins" so the namespace choice is
-    # deterministic regardless of list order and matches analyze_multus's pick.
-    primary = next(
-        (ds for ds in multus if (ds.get("name") or "").lower() == "multus"),
-        multus[0],
-    )
     return primary.get("namespace")
 
 

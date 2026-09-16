@@ -13888,6 +13888,8 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -13993,6 +13995,8 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -14130,6 +14134,8 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -14194,6 +14200,8 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -22503,6 +22511,8 @@ export interface components {
             status: string;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy */
             proxy: string | null;
             /** Model */
@@ -43129,6 +43139,7 @@ export interface operations {
                 tool?: string | null;
                 model?: string | null;
                 status?: string | null;
+                cluster_id?: number | null;
                 limit?: number;
                 offset?: number;
             };

@@ -5,6 +5,7 @@ Core KubernetesService: cluster loading, kubeconfig, connection testing.
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any
 
 from kubernetes import client
@@ -18,7 +19,6 @@ from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
-from services.reachability import with_breaker
 
 # EKS/GCP bearer tokens are valid for ~15 minutes. Generating them on every
 # kubeconfig load is expensive (boto3/google-auth crypto + STS calls) and shows
@@ -46,7 +46,9 @@ class KubernetesServiceBase:
     def load_kubeconfig(self, cluster: KubernetesCluster) -> client.ApiClient:
         """
         Load kubeconfig for a cluster.
-        Creates temporary kubeconfig file and returns configured API client.
+        Parses the decrypted kubeconfig in-memory via
+        ``load_kube_config_from_dict`` (no temporary file on disk) and returns
+        a configured API client.
 
         For EKS clusters, mints a bearer token via boto3 and rewrites the
         kubeconfig user to use it as a static token, so the API container
@@ -206,9 +208,11 @@ class KubernetesServiceBase:
         # a single broken request into ~75s of blocking. The breaker assumes one
         # call = one wire attempt; per-call _request_timeout enforces the upper
         # bound on the wire attempt itself.
+        import urllib3.util
         cfg = client.Configuration.get_default_copy()
-        cfg.retries = 0
-        return client.ApiClient(cfg)
+        cfg.retries = urllib3.util.Retry(total=0, connect=0, read=0, redirect=0)
+        cfg.connection_pool_maxsize = 32
+        return client.ApiClient(cfg, pool_threads=32)
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:
@@ -323,7 +327,8 @@ class KubernetesServiceBase:
 
         The token is a Google OAuth2 access token (~1 hour TTL) with the
         ``cloud-platform`` scope, which GKE accepts as a bearer token.
-        Cached in-memory for 45 minutes to prevent redundant network calls.
+        Cached in-memory until shortly before the token's real expiry (with a
+        5-minute safety buffer) to prevent redundant network calls.
 
         Returns the token string, or None on failure.
         """
@@ -364,7 +369,17 @@ class KubernetesServiceBase:
 
             token = credentials.token
             if token and client_email:
-                cls._gcp_token_cache[client_email] = (token, now + 2700)
+                # Derive the cache TTL from the token's real expiry (google-auth
+                # stores it as a naive UTC datetime), mirroring the Azure path, with
+                # a 5-minute safety buffer and a 60s floor. Fall back to a 1-hour
+                # assumption if the expiry is unavailable.
+                expiry = getattr(credentials, "expiry", None)
+                if isinstance(expiry, datetime):
+                    expires_in = (expiry - datetime.utcnow()).total_seconds()
+                else:
+                    expires_in = 3600
+                ttl = max(60, expires_in - 300)
+                cls._gcp_token_cache[client_email] = (token, now + ttl)
             logger.info(
                 "Generated GCP access token for service account %s",
                 client_email or "<unknown>",
@@ -418,7 +433,6 @@ class KubernetesServiceBase:
         """Delegate to shared cluster_utils._maybe_open_ssh_tunnel()."""
         return _maybe_open_ssh_tunnel(cluster)
 
-    @with_breaker("cluster", target_id_arg="cluster_id")
     def test_connection(self, cluster_id: int) -> dict[str, Any]:
         """Test connection to cluster."""
         try:
@@ -426,13 +440,20 @@ class KubernetesServiceBase:
             api_client = self.load_kubeconfig(cluster)
             v1 = client.CoreV1Api(api_client)
 
-            # Bound the wire attempt: connect=3s, read=8s. Without _request_timeout
+            # Bound the wire attempt: connect=5s, read=15s. Without _request_timeout
             # a kubernetes-client call inherits the OS TCP timeout (75s+).
-            v1.list_namespace(limit=1, _request_timeout=(3, 8))
+            v1.list_namespace(limit=1, _request_timeout=(5, 15))
 
             # Get server version
             version_api = client.VersionApi(api_client)
-            version_info = version_api.get_code(_request_timeout=(3, 8))
+            version_info = version_api.get_code(_request_timeout=(5, 15))
+
+            try:
+                from services.reachability import get_reachability_registry
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=True)
+            except Exception:
+                pass
 
             return {
                 "success": True,
@@ -445,6 +466,12 @@ class KubernetesServiceBase:
             }
         except ApiException as e:
             logger.error(f"Kubernetes API error during connection test: {e}")
+            try:
+                from services.reachability import categorize_exception, get_reachability_registry
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
+            except Exception:
+                pass
             return {
                 "success": False,
                 "message": f"Kubernetes API error: {e.reason}",
@@ -452,6 +479,12 @@ class KubernetesServiceBase:
             }
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
+            try:
+                from services.reachability import categorize_exception, get_reachability_registry
+                reg = get_reachability_registry()
+                reg.record_real_call("cluster", cluster_id, success=False, error_category=categorize_exception(e))
+            except Exception:
+                pass
             return {
                 "success": False,
                 "message": str(e)

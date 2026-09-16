@@ -170,6 +170,46 @@ def _extract_cert_manager_version(pods: list[dict]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def pick_primary_multus_daemonset(daemonsets: list[dict]) -> dict | None:
+    """Select the primary Multus DaemonSet from a cluster-wide list.
+
+    This is the single source of truth for "which DaemonSet is Multus" — used
+    by both the fetch side (to decide which namespace to query for pods) and
+    the analyze side (to report the DaemonSet). If the two ever disagreed, the
+    fetch would query namespace A while the analyzer reported namespace B and
+    ``running_pods`` would silently drop to 0 (Issue #202 re-armed), so both
+    callers MUST route through here.
+
+    Candidates are any DaemonSet whose name contains ``multus``. They are ranked
+    deterministically, highest first:
+
+      1. named exactly ``multus`` (upstream OpenShift/ROKS primary),
+      2. named ``kube-multus-ds`` (the upstream/Forge-installer name — see
+         ``modules/bare_metal/install_multus.py``; the vanilla pod names are
+         ``kube-multus-ds-*``),
+      3. any remaining ``multus``-named DaemonSet, broken by sorted name so the
+         result never depends on API list order.
+
+    Returns the chosen DaemonSet dict, or ``None`` if no candidate matches.
+    Tolerates ``name`` being absent or ``None`` (treated as an empty string).
+    """
+    candidates = [
+        ds for ds in daemonsets if "multus" in (ds.get("name") or "").lower()
+    ]
+    if not candidates:
+        return None
+
+    def _rank(ds: dict) -> tuple[int, str]:
+        name = (ds.get("name") or "").lower()
+        if name == "multus":
+            return (0, name)
+        if name == "kube-multus-ds":
+            return (1, name)
+        return (2, name)
+
+    return min(candidates, key=_rank)
+
+
 def analyze_multus(
     crds: list[dict],
     crd_names: set[str],
@@ -184,38 +224,36 @@ def analyze_multus(
     """
     has_nad_crd = "network-attachment-definitions.k8s.cni.cncf.io" in crd_names
 
-    multus_ds_all = [
-        ds for ds in daemonsets if "multus" in ds.get("name", "").lower()
-    ]
-    # bonnyr-f5 #203 review (MINOR 2): prefer the DaemonSet named EXACTLY "multus"
-    # over siblings like "multus-additional-cni-plugins", so the reported
-    # DaemonSet is deterministic regardless of list order.
-    primary_ds = next(
-        (d for d in multus_ds_all if d.get("name", "").lower() == "multus"),
-        multus_ds_all[0] if multus_ds_all else None,
-    )
+    # Shared with fetch._multus_daemonset_namespace: whichever DaemonSet this
+    # picks is the same one whose namespace was queried for pods, so the
+    # reported DaemonSet and the counted pods always describe the same object.
+    primary_ds = pick_primary_multus_daemonset(daemonsets)
 
-    # bonnyr-f5 #203 review (MINOR 1): running_pods is intentionally the broad
-    # Multus-networking pod set — any Running pod whose name carries "multus". On a
-    # cluster with a separate "multus-additional-cni-plugins" DaemonSet this
-    # includes those pods too, so the count can exceed the primary DaemonSet's
-    # ready number. That is by design for this display metric: precise
-    # per-DaemonSet attribution needs pod ownerReferences we do not fetch, and a
-    # name-prefix heuristic mis-handles real-world names (a "multus" DaemonSet
-    # whose pods are named "kube-multus-ds-*"), so the tolerant name match is kept.
+    # running_pods counts Running pods whose name carries "multus" *within the
+    # primary DaemonSet's own namespace* — that is the only namespace fetch
+    # queries (fetch._fetch_multus_pods). Consequences of that scope:
+    #   * a "multus"-named sibling DaemonSet in a DIFFERENT namespace (e.g. one
+    #     whose pods land outside openshift-multus) is NOT counted here;
+    #   * a sibling co-located in the SAME namespace — real OpenShift runs
+    #     "multus" and "multus-additional-cni-plugins" together in
+    #     openshift-multus — IS counted, so this can exceed the primary
+    #     DaemonSet's ready number.
+    # It is a display metric ("N Multus pods running"), not per-DaemonSet
+    # attribution: a name match over one namespace, deliberately not pod
+    # ownerReferences / DaemonSet selector matching (which we do not fetch).
     running_multus_pods = [
         p
         for p in multus_pods
-        if "multus" in p.get("name", "").lower() and p.get("phase") == "Running"
+        if "multus" in (p.get("name") or "").lower() and p.get("phase") == "Running"
     ]
 
     multus_daemonset_info = None
     if primary_ds:
         multus_daemonset_info = {
-            "name": primary_ds["name"],
-            "namespace": primary_ds["namespace"],
-            "desired": primary_ds["desired"],
-            "ready": primary_ds["ready"],
+            "name": primary_ds.get("name"),
+            "namespace": primary_ds.get("namespace"),
+            "desired": primary_ds.get("desired"),
+            "ready": primary_ds.get("ready"),
         }
 
     if has_nad_crd and (running_multus_pods or primary_ds):

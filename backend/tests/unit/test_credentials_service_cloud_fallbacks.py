@@ -81,7 +81,20 @@ class TestCredentialsServiceCloudFallbacks:
         result = get_azure_service_principal_info(project_without_template, db)
         assert result == ("tenant-123", "my-client-id", "my-client-secret")
 
-    def test_get_gcp_service_account_info_does_not_fall_back_when_template_id_set_to_non_gcp(self):
+    def test_get_gcp_service_account_info_does_not_fall_back_when_template_id_set_to_non_gcp(self, monkeypatch):
+        # Set ambient env creds to a sentinel so this test is hermetic: it must
+        # FAIL CLOSED (return None) even when global GCP creds are present in the
+        # environment. Without the fail-closed fix, the mismatched explicit
+        # template would fall through and return this ambient identity.
+        monkeypatch.setenv(
+            "GCP_SERVICE_ACCOUNT_KEY",
+            json.dumps({"type": "service_account", "project_id": "ambient-must-not-be-used"}),
+        )
+        monkeypatch.setenv(
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+            json.dumps({"type": "service_account", "project_id": "ambient-must-not-be-used"}),
+        )
+
         db = MagicMock()
         non_gcp_template = CloudCredentialTemplate(
             id=99,
@@ -105,7 +118,18 @@ class TestCredentialsServiceCloudFallbacks:
         result = get_gcp_service_account_info(project_with_aws_template, db)
         assert result is None
 
-    def test_get_azure_service_principal_info_does_not_fall_back_when_template_id_set_to_non_azure(self):
+    def test_get_azure_service_principal_info_does_not_fall_back_when_template_id_set_to_non_azure(self, monkeypatch):
+        # Set ambient env creds to sentinels so this test is hermetic: it must
+        # FAIL CLOSED (return None) even when global Azure creds are present in
+        # the environment. Without the fail-closed fix, the mismatched explicit
+        # template would fall through and return this ambient identity.
+        for var in ("AZURE_TENANT_ID", "ARM_TENANT_ID"):
+            monkeypatch.setenv(var, "ambient-tenant-must-not-be-used")
+        for var in ("AZURE_CLIENT_ID", "ARM_CLIENT_ID"):
+            monkeypatch.setenv(var, "ambient-client-must-not-be-used")
+        for var in ("AZURE_CLIENT_SECRET", "ARM_CLIENT_SECRET"):
+            monkeypatch.setenv(var, "ambient-secret-must-not-be-used")
+
         db = MagicMock()
         non_azure_template = CloudCredentialTemplate(
             id=88,
