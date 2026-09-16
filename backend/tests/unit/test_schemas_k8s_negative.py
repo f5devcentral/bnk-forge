@@ -43,9 +43,13 @@ class TestClusterCreateRequestNegative:
         with pytest.raises(ValidationError):
             ClusterCreateRequest(name=123, kubeconfig="data")  # type: ignore[arg-type]
 
-    def test_invalid_aws_region_rejected(self):
+    def test_invalid_aws_region_type_rejected(self):
         with pytest.raises(ValidationError):
-            ClusterCreateRequest(name="dev", kubeconfig="data", cloud_provider="aws", region="xx-fake-1")
+            ClusterCreateRequest(name="dev", kubeconfig="data", cloud_provider="aws", region=123)  # type: ignore[arg-type]
+
+    def test_aws_shaped_region_accepted(self):
+        req = ClusterCreateRequest(name="dev", kubeconfig="data", cloud_provider="aws", region="xx-fake-1")
+        assert req.region == "xx-fake-1"
 
 
 class TestClusterUpdateRequestNegative:
@@ -53,9 +57,13 @@ class TestClusterUpdateRequestNegative:
         req = ClusterUpdateRequest()
         assert req.name is None
 
-    def test_invalid_region_rejected(self):
+    def test_invalid_region_type_rejected(self):
         with pytest.raises(ValidationError):
-            ClusterUpdateRequest(cloud_provider="aws", region="xx-fake-1")
+            ClusterUpdateRequest(cloud_provider="aws", region=123)  # type: ignore[arg-type]
+
+    def test_aws_shaped_region_accepted(self):
+        req = ClusterUpdateRequest(cloud_provider="aws", region="xx-fake-1")
+        assert req.region == "xx-fake-1"
 
     def test_ssh_port_wrong_type_rejected(self):
         with pytest.raises(ValidationError):

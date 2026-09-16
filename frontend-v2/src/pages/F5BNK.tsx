@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,8 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
+import { useBnkData } from '@/hooks/k8s/useBnk';
+import { queryKeys } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -41,10 +43,8 @@ import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer'
 import { ResourceDeleteDialog } from '@/components/k8s/ResourceDeleteDialog';
 import { ResourceEditDialog } from '@/components/k8s/ResourceEditDialog';
 import { ResourceCreateDialog } from '@/components/k8s/ResourceCreateDialog';
-import { F5BNKPolicyViewer } from '@/components/k8s/F5BNKPolicyViewer';
 import { F5AIAnalyzerViewer } from '@/components/k8s/F5AIAnalyzerViewer';
 import { F5iRuleViewer } from '@/components/k8s/F5iRuleViewer';
-import { F5BNKTopologyViewer } from '@/components/k8s/F5BNKTopologyViewer';
 import { BackendsCollection } from '@/components/k8s/BackendsCollection';
 import { PolicyBuilder } from '@/components/k8s/PolicyBuilder';
 import { ConfigBuilder } from '@/components/k8s/ConfigBuilder';
@@ -52,6 +52,8 @@ import { BNKHealthDashboard } from '@/components/k8s/BNKHealthDashboard';
 import { BNKUpgradePanel } from '@/components/k8s/BNKUpgradePanel';
 import { BNKReleaseRegistry } from '@/components/k8s/BNKReleaseRegistry';
 import { TrafficFlowOverview } from '@/components/k8s/TrafficFlowOverview';
+import { F5BNKTopologyViewer, type TopologyResourceSelection } from '@/components/k8s/F5BNKTopologyViewer';
+import { F5BNKPolicyViewer } from '@/components/k8s/F5BNKPolicyViewer';
 import { RunbookWizard } from '@/components/runbooks/RunbookWizard';
 import { QKViewPanel } from '@/components/k8s/QKViewPanel';
 import { LicensingPanel } from '@/components/k8s/LicensingPanel';
@@ -68,7 +70,6 @@ import { STORAGE_KEYS } from '@/lib/storage-keys';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import type { K8sResource } from '@/types/kubernetes';
-import type { TopologyResourceSelection } from '@/components/k8s/F5BNKTopologyViewer';
 
 import {
   VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_UPGRADE, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA,
@@ -148,12 +149,13 @@ function DiagnosticsView({ clusterId, descClass }: { clusterId: number; descClas
 interface SpecialViewProps {
   clusterId: number;
   namespace: string | undefined;
+  searchQuery?: string;
   onTopologySelect?: (selection: TopologyResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
   onRedirectToFleetDpf?: (clusterId: number) => void;
 }
 
-function renderSpecialView(viewType: string, { clusterId, namespace, onTopologySelect, onNavigateView, onRedirectToFleetDpf }: SpecialViewProps) {
+function renderSpecialView(viewType: string, { clusterId, namespace, searchQuery, onTopologySelect, onNavigateView, onRedirectToFleetDpf }: SpecialViewProps) {
   const descClass = 'text-sm text-muted-foreground';
 
   switch (viewType) {
@@ -161,10 +163,46 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
       return (
         <div className="p-6 overflow-y-auto">
           <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-2">Traffic Flow</h2>
-            <p className={descClass}>How traffic flows through BNK — infrastructure, gateways, routes, and backends with configuration insights</p>
+            <h2 className="text-xl font-semibold mb-2">Traffic Flow Pipeline</h2>
+            <p className={descClass}>End-to-end data plane pipeline from client ingress through Gateway listeners to backend workloads</p>
           </div>
-          <TrafficFlowOverview clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} onNavigateView={onNavigateView} />
+          <TrafficFlowOverview
+            clusterId={clusterId}
+            namespace={namespace}
+            searchQuery={searchQuery}
+            onSelectResource={onTopologySelect}
+            onNavigateView={onNavigateView}
+          />
+        </div>
+      );
+
+    case VIEW_TOPOLOGY:
+      return (
+        <div className="p-6 overflow-y-auto">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold mb-2">Object Topology Graph</h2>
+            <p className={descClass}>Declarative Kubernetes resource graph connecting Gateways, Routes, Security Extensions, and Analyzers</p>
+          </div>
+          <F5BNKTopologyViewer
+            clusterId={clusterId}
+            namespace={namespace}
+            onSelectResource={onTopologySelect}
+          />
+        </div>
+      );
+
+    case VIEW_POLICY_MAP:
+      return (
+        <div className="p-6 overflow-y-auto">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold mb-2">Policy & Security Matrix</h2>
+            <p className={descClass}>Association mapping of BNK Security Policies, Firewall Rules, and DDoS profiles attached to listeners</p>
+          </div>
+          <F5BNKPolicyViewer
+            clusterId={clusterId}
+            namespace={namespace}
+            onSelectResource={onTopologySelect}
+          />
         </div>
       );
 
@@ -176,30 +214,6 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
             <p className={descClass}>Real-time health status for all F5 BNK platform components — auto-refreshes every 30 seconds</p>
           </div>
           <BNKHealthDashboard clusterId={clusterId} namespace={namespace} />
-        </div>
-      );
-
-    case VIEW_TOPOLOGY:
-      return (
-        <div className="p-6">
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-2">Gateway Topology</h2>
-            <p className={descClass}>Complete object graph — click any resource name to view its details</p>
-          </div>
-          <F5BNKTopologyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
-        </div>
-      );
-
-    case VIEW_POLICY_MAP:
-      return (
-        <div className="p-6">
-          <div className="max-w-6xl mx-auto">
-            <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-2">Policy Associations</h2>
-              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners and egress traffic</p>
-            </div>
-            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
-          </div>
         </div>
       );
 
@@ -329,10 +343,50 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
 // Main Component
 // ---------------------------------------------------------------------------
 
+function mapParamToViewOrResource(param?: string | null): string | null {
+  if (!param) return null;
+  const p = param.toLowerCase().trim();
+  if (p === 'topology' || p === 'view-topology') return VIEW_TOPOLOGY;
+  if (p === 'traffic-flow' || p === 'trafficflow' || p === 'view-traffic-flow' || p === 'pipeline') return VIEW_TRAFFIC_FLOW;
+  if (p === 'health' || p === 'view-health' || p === 'dashboard' || p === 'health-dashboard') return VIEW_HEALTH;
+  if (p === 'policy-map' || p === 'policymap' || p === 'view-policy-map' || p === 'matrix') return VIEW_POLICY_MAP;
+  if (p === 'diagnostics' || p === 'view-diagnostics' || p === 'qkview') return VIEW_DIAGNOSTICS;
+  if (p === 'upgrade' || p === 'view-upgrade' || p === 'releases') return VIEW_UPGRADE;
+  if (p === 'backends' || p === 'view-backends') return VIEW_BACKENDS;
+  if (p === 'policy-builder' || p === 'policybuilder' || p === 'view-policy-builder') return VIEW_POLICY_BUILDER;
+  if (p === 'config-builder' || p === 'configbuilder' || p === 'view-config-builder') return VIEW_CONFIG_BUILDER;
+  if (p === 'a2a' || p === 'a2a-discovery' || p === 'view-a2a-discovery' || p === 'agent-discovery') return VIEW_A2A_DISCOVERY;
+  if (p === 'a2a-templates' || p === 'view-a2a-templates' || p === 'templates') return VIEW_A2A_TEMPLATES;
+  if (p === 'a2a-irule-library' || p === 'view-a2a-irule-library' || p === 'a2a-irules') return VIEW_A2A_IRULE_LIBRARY;
+  if (p === 'a2a-reference' || p === 'view-a2a-reference' || p === 'protocol-reference') return VIEW_A2A_REFERENCE;
+  if (p === 'ai-analyzers' || p === 'aianalyzers' || p === 'view-ai-analyzers' || p === 'f5biganalyzer') return VIEW_AI_ANALYZERS;
+
+  // CRD aliases
+  if (p === 'egress' || p === 'f5-spk-egress' || p === 'f5spkegress' || p === 'f5-spk-egresses') return 'f5spkegress';
+  if (p === 'snatpool' || p === 'f5spksnatpool' || p === 'f5-spk-snatpools') return 'f5spksnatpool';
+  if (p === 'gateway' || p === 'gateways') return 'gateway';
+  if (p === 'gatewayclass' || p === 'gatewayclasses') return 'gatewayclass';
+  if (p === 'httproute' || p === 'httproutes') return 'httproute';
+  if (p === 'grpcroute' || p === 'grpcroutes') return 'grpcroute';
+  if (p === 'tcproute' || p === 'tcproutes') return 'tcproute';
+  if (p === 'udproute' || p === 'udproutes') return 'udproute';
+  if (p === 'tlsroute' || p === 'tlsroutes') return 'tlsroute';
+  if (p === 'l4route' || p === 'l4routes') return 'l4route';
+  if (p === 'bnkgateway' || p === 'f5bnkgateway' || p === 'f5-bnkgateways' || p === 'f5-bnkgateway') return 'f5bnkgateway';
+  if (p === 'bnksecpolicy' || p === 'securitypolicy') return 'bnksecpolicy';
+  if (p === 'bnknetpolicy' || p === 'networkpolicy') return 'bnknetpolicy';
+  if (p === 'f5bigfwpolicy' || p === 'firewallpolicy') return 'f5bigfwpolicy';
+  if (p === 'f5bigfwrulelist' || p === 'firewallrules') return 'f5bigfwrulelist';
+  if (p === 'f5bigcneirule' || p === 'irules' || p === 'irule') return 'f5bigcneirule';
+
+  return p;
+}
+
 export default function F5BNK() {
   const borderDefault = 'border-border';
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const redirectToFleetDpf = useCallback((clusterId: number) => {
     navigate(`/fleet?tab=dpf&cluster=${clusterId}`, { replace: true });
   }, [navigate]);
@@ -343,10 +397,20 @@ export default function F5BNK() {
   const allClusters = allClustersResponse?.clusters ?? [];
 
   const [selectedProject, setSelectedProject] = useState<number | null>(() => {
+    const fromUrl = searchParams.get('project');
+    if (fromUrl) {
+      const parsed = parseInt(fromUrl);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.BNK_PROJECT);
     return stored ? parseInt(stored) : null;
   });
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
+    const fromUrl = searchParams.get('cluster');
+    if (fromUrl) {
+      const parsed = parseInt(fromUrl);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.BNK_CLUSTER);
     return stored ? parseInt(stored) : null;
   });
@@ -383,22 +447,61 @@ export default function F5BNK() {
 
   // Resource type & sidebar state
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
+    const fromUrl = mapParamToViewOrResource(
+      searchParams.get('view') || searchParams.get('resource') || searchParams.get('tab')
+    );
+    if (fromUrl) {
+      if (fromUrl === VIEW_DPF_INFRA) {
+        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        return VIEW_TOPOLOGY;
+      }
+      return fromUrl;
+    }
+
     const initialView = localStorage.getItem('bnk-forge-bnk-initial-view');
     if (initialView) {
       localStorage.removeItem('bnk-forge-bnk-initial-view');
       // DPF moved to Fleet — redirect if deep-link targets it
       if (initialView === VIEW_DPF_INFRA) {
-        // Navigate after mount via useEffect (can't call navigate in useState initializer)
         setTimeout(() => navigate('/fleet?tab=dpf'), 0);
-        return VIEW_HEALTH;
+        return VIEW_TOPOLOGY;
       }
       return initialView;
     }
-    return VIEW_HEALTH;
+    return VIEW_TOPOLOGY;
   });
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    return searchParams.get('name') || searchParams.get('search') || '';
+  });
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_MS.SEARCH);
-  const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
+  const [selectedNamespace, setSelectedNamespace] = useState<string>(() => {
+    return searchParams.get('namespace') || 'all';
+  });
+
+  // Sync state when URL searchParams change
+  useEffect(() => {
+    const urlCluster = searchParams.get('cluster');
+    if (urlCluster) {
+      const parsed = parseInt(urlCluster);
+      if (!Number.isNaN(parsed)) {
+        setSelectedCluster((prev) => (prev !== parsed ? parsed : prev));
+      }
+    }
+    const targetViewOrResource = mapParamToViewOrResource(
+      searchParams.get('view') || searchParams.get('resource') || searchParams.get('tab')
+    );
+    if (targetViewOrResource) {
+      setSelectedResourceType((prev) => (prev !== targetViewOrResource ? targetViewOrResource : prev));
+    }
+    const urlNs = searchParams.get('namespace');
+    if (urlNs) {
+      setSelectedNamespace((prev) => (prev !== urlNs ? urlNs : prev));
+    }
+    const urlName = searchParams.get('name') || searchParams.get('search');
+    if (urlName !== null && urlName !== undefined) {
+      setSearchQuery((prev) => (prev !== urlName ? urlName : prev));
+    }
+  }, [searchParams]);
 
   // Selected resource for detail panel
   const [selectedResource, setSelectedResource] = useState<K8sResource | null>(null);
@@ -484,6 +587,7 @@ export default function F5BNK() {
     }),
     enabled: !!selectedCluster && !!selectedResourceType && !isSpecialView(selectedResourceType) && clusterReachable,
     staleTime: 30000,
+    placeholderData: (previousData) => previousData,
   });
 
   const { data: namespacesResponse } = useClusterNamespaces(selectedCluster || 0, {
@@ -535,6 +639,8 @@ export default function F5BNK() {
     //   - 'licensing' → BNK licensing status
     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
     queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
     queryClient.invalidateQueries({ queryKey: ['runbooks'] });
     queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     queryClient.invalidateQueries({ queryKey: ['qkview'] });
@@ -798,6 +904,16 @@ export default function F5BNK() {
 
   const resolvedNamespace = selectedNamespace === 'all' ? undefined : selectedNamespace;
 
+  // Prefetch the unified BNK data bundle in the background while the user is
+  // on any BNK tab. This warms the cache for Traffic Flow / Topology / Policy
+  // so tab switching feels instant; the lightweight /f5bnk/health endpoint
+  // still drives the Health Dashboard landing view.
+  useBnkData(
+    selectedCluster ?? 0,
+    { namespace: resolvedNamespace },
+    { enabled: !!selectedCluster, pollingEnabled: false }
+  );
+
   return (
     <ResourceExplorerLayout>
       {/* Header */}
@@ -806,7 +922,10 @@ export default function F5BNK() {
         subtitle="BIG-IP Next for Kubernetes — gateways, policies, and traffic flow"
         projects={projects || []}
         selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
+        onProjectChange={(id) => {
+          setSelectedProject(id);
+          setSelectedCluster(null);
+        }}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
@@ -901,7 +1020,7 @@ export default function F5BNK() {
                 }}
               >
                 {isSpecialView(selectedResourceType)
-                  ? renderSpecialView(selectedResourceType, { clusterId: selectedCluster, namespace: resolvedNamespace, onTopologySelect: handleTopologySelect, onNavigateView: handleNavigateView, onRedirectToFleetDpf: redirectToFleetDpf })
+                  ? renderSpecialView(selectedResourceType, { clusterId: selectedCluster, namespace: resolvedNamespace, searchQuery: debouncedSearch, onTopologySelect: handleTopologySelect, onNavigateView: handleNavigateView, onRedirectToFleetDpf: redirectToFleetDpf })
                   : renderResourceListContent()
                 }
               </ConnectivityGate>
@@ -982,6 +1101,8 @@ export default function F5BNK() {
                   setResourceToDelete(null);
                   setSelectedResource(null);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
                   notify.error(parsed.title, parsed.message, { category: 'cluster' });
@@ -1013,6 +1134,8 @@ export default function F5BNK() {
                     setEditDialogOpen(false);
                     setResourceToEdit(null);
                     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                   }
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
@@ -1051,6 +1174,8 @@ export default function F5BNK() {
                 } else {
                   setCreateDialogOpen(false);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
                 }
               } catch (error: unknown) {
                 const parsed = parseApiError(error);

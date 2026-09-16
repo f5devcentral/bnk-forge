@@ -53,6 +53,9 @@ export const credentialsApi = {
   listAWSRegions: () =>
     apiClient.get<{ provider: string; regions: CloudRegionOption[] }>('/api/cloud-auth/aws/regions').then((res) => res.data),
 
+  listAzureRegions: () =>
+    apiClient.get<{ provider: string; regions: CloudRegionOption[] }>('/api/cloud-auth/azure/regions').then((res) => res.data),
+
   listIBMCosInstances: (ibmcloudApiKey: string) =>
     apiClient.post<{ instances: IBCosInstanceOption[] }>('/api/cloud-auth/ibm/cos-instances/query', { ibmcloud_api_key: ibmcloudApiKey }).then((res) => res.data),
 

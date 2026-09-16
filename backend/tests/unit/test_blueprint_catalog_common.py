@@ -15,8 +15,8 @@ class TestResolveCategoryReturnsManifestValue:
         assert _resolve_category(manifest) == "bnk"
 
     def test_returns_category_regardless_of_source_path(self):
-        manifest = {"category": "infra"}
-        assert _resolve_category(manifest, source_path="infra/aws/some/module") == "infra"
+        manifest = {"category": "security"}
+        assert _resolve_category(manifest, source_path="infra/aws/some/module") == "security"
 
 
 class TestResolveCategoryFallsBackToBnk:

@@ -35,6 +35,7 @@ export function useClusterResources(
     queryKey: queryKeys.k8s.clusters.resources(clusterId, resourceType, params),
     queryFn: () => api.getClusterResources(clusterId, resourceType, params),
     enabled: options?.enabled !== false && !!clusterId && !!resourceType && reachable,
+    staleTime: QUERY_STALE_TIME.DEFAULT,
     refetchInterval: options?.pollingEnabled ? 20000 : false, // Poll every 20 seconds when enabled (reduced from 5s)
     placeholderData: (previousData) => previousData,
   });

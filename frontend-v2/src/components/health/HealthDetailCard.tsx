@@ -49,6 +49,9 @@ import {
   Info,
   AlertCircle,
   Container,
+  MapPin,
+  Server,
+  Layers,
 } from 'lucide-react';
 import { useRestartPod } from '@/hooks/useK8s';
 import { notify } from '@/lib/notify';
@@ -58,6 +61,7 @@ import type {
   HealthPodDetail,
 } from '@/types';
 import { SEVERITY_CONFIG } from '@/lib/health-severity';
+import { formatAvailabilityZone } from '@/lib/cloud-providers';
 
 // --- Severity config (shared via PLAT-REL-001 / UX-OPS-002) ---
 
@@ -78,6 +82,12 @@ interface HealthDetailCardProps {
   podDetails: HealthPodDetail[];
   /** Available remediation actions */
   remediationActions: HealthRemediationAction[];
+  /** Namespaces the component's pods run in */
+  namespaces?: string[];
+  /** Availability zones the component's pods run in */
+  zones?: string[];
+  /** Node names the component's pods are scheduled on */
+  nodes?: string[];
   /** K8s cluster ID for API calls */
   clusterId: number;
   /** Additional content to render in the collapsed view */
@@ -95,6 +105,9 @@ export function HealthDetailCard({
   explanation,
   podDetails,
   remediationActions,
+  namespaces = [],
+  zones = [],
+  nodes = [],
   clusterId,
   children,
   onViewLogs,
@@ -256,6 +269,8 @@ export function HealthDetailCard({
                         <TableRow>
                           <TableHead className="py-1.5 px-2 h-auto">Pod</TableHead>
                           <TableHead className="py-1.5 px-2 h-auto">Node</TableHead>
+                          <TableHead className="py-1.5 px-2 h-auto">Zone</TableHead>
+                          <TableHead className="py-1.5 px-2 h-auto">Type</TableHead>
                           <TableHead className="py-1.5 px-2 h-auto">Status</TableHead>
                           <TableHead className="py-1.5 px-2 h-auto text-right">Containers</TableHead>
                           <TableHead className="py-1.5 px-2 h-auto text-right">Restarts</TableHead>
@@ -279,6 +294,16 @@ export function HealthDetailCard({
                                 </span>
                               </TableCell>
                               <TableCell className="py-1.5 px-2">
+                                <span className="truncate block max-w-[120px] text-[10px] text-muted-foreground" title={formatAvailabilityZone(pod.nodeZone)}>
+                                  {formatAvailabilityZone(pod.nodeZone)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="py-1.5 px-2">
+                                <span className="truncate block max-w-[100px] text-[10px] text-muted-foreground">
+                                  {pod.nodeInstanceType || '--'}
+                                </span>
+                              </TableCell>
+                              <TableCell className="py-1.5 px-2">
                                 <Badge variant={phaseVariant} className="text-[10px] px-1.5 py-0">
                                   {pod.phase}
                                 </Badge>
@@ -298,6 +323,57 @@ export function HealthDetailCard({
                       </TableBody>
                     </Table>
                   </div>
+                </div>
+              )}
+
+              {/* Placement context */}
+              {(namespaces.length > 0 || zones.length > 0 || nodes.length > 0) && (
+                <div className="space-y-2">
+                  {namespaces.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium mb-1.5 text-muted-foreground flex items-center gap-1.5">
+                        <Layers className="h-3 w-3" />
+                        Namespaces
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {namespaces.map((ns) => (
+                          <Badge key={ns} variant="outline" className="text-[10px] font-normal">
+                            {ns}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {zones.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium mb-1.5 text-muted-foreground flex items-center gap-1.5">
+                        <MapPin className="h-3 w-3" />
+                        Availability Zones
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {zones.map((zone) => (
+                          <Badge key={zone} variant="outline" className="text-[10px] font-normal">
+                            {formatAvailabilityZone(zone)}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {nodes.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium mb-1.5 text-muted-foreground flex items-center gap-1.5">
+                        <Server className="h-3 w-3" />
+                        Nodes
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {nodes.map((node) => (
+                          <Badge key={node} variant="outline" className="text-[10px] font-normal">
+                            {node}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -103,6 +103,64 @@ class TestSystemAdmin:
 
         assert response.status_code == 200
 
+    def test_bnk_consumption_requires_auth(self, client):
+        """GET /api/system/bnk-consumption requires auth."""
+        response = client.get("/api/system/bnk-consumption")
+        assert response.status_code == 401
+
+    def test_bnk_consumption_viewer_allowed(self, client, viewer_headers, all_test_users):
+        """Viewer can retrieve BNK consumption."""
+        mock_consumption = {
+            "timestamp": "2026-09-01T12:00:00Z",
+            "fleet_summary": {
+                "total_clusters": 2,
+                "reachable_clusters": 2,
+                "bnk_installed_clusters": 1,
+                "total_bnk_pods": 5,
+                "control_plane_pods": 2,
+                "data_plane_pods": 3,
+                "total_cpu_millicores": 1700,
+                "total_memory_bytes": 3400000000,
+                "dpf_detected_clusters": 0,
+                "dpu_count": 0,
+            },
+            "clusters": [],
+        }
+        with patch("routes.system.SystemService") as MockService:
+            MockService.return_value.get_bnk_consumption.return_value = mock_consumption
+            response = client.get("/api/system/bnk-consumption", headers=viewer_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["fleet_summary"]["total_clusters"] == 2
+
+    def test_bnk_consumption_admin_allowed(self, client, admin_headers, sample_user):
+        """Admin can retrieve BNK consumption."""
+        mock_consumption = {
+            "timestamp": "2026-09-01T12:00:00Z",
+            "fleet_summary": {
+                "total_clusters": 2,
+                "reachable_clusters": 2,
+                "bnk_installed_clusters": 1,
+                "total_bnk_pods": 5,
+                "control_plane_pods": 2,
+                "data_plane_pods": 3,
+                "total_cpu_millicores": 1700,
+                "total_memory_bytes": 3400000000,
+                "dpf_detected_clusters": 0,
+                "dpu_count": 0,
+            },
+            "clusters": [],
+        }
+        with patch("routes.system.SystemService") as MockService:
+            MockService.return_value.get_bnk_consumption.return_value = mock_consumption
+            response = client.get("/api/system/bnk-consumption", headers=admin_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["fleet_summary"]["total_clusters"] == 2
+        assert data["timestamp"] == "2026-09-01T12:00:00Z"
+
 
 # ============================================================================
 # Recent Errors

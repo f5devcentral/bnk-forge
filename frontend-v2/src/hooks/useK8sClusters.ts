@@ -105,30 +105,33 @@ export function useTestClusterConnection() {
   });
 }
 
-export function useDetectEKSClusters() {
+export function useDetectClusters() {
   const queryClient = useQueryClient();
 
   return useAppMutation({
-    mutationFn: (projectId: number) => api.detectEKSClusters(projectId),
+    mutationFn: (projectId: number) => api.detectClustersFromCredentials(projectId),
     onSuccess: (data, projectId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 
       if (data.registered.length > 0) {
-        notify.success(data.message, `Registered ${data.registered.length} EKS cluster(s)`, { category: 'cluster' });
+        notify.success(data.message, `Registered ${data.registered.length} cluster(s)`, { category: 'cluster' });
       } else if (data.skipped.length > 0) {
-        notify.info(data.message, 'All EKS clusters are already registered', { category: 'cluster' });
+        notify.info(data.message, 'All discovered clusters are already registered', { category: 'cluster' });
       } else {
         notify.info(data.message, undefined, { category: 'cluster' });
       }
 
       if (data.errors.length > 0) {
         notify.warning(`${data.errors.length} cluster(s) failed to register`, 'Check console for details', { category: 'cluster' });
-        logger.error('EKS detection errors:', data.errors);
+        logger.error('Credential-driven cluster detection errors:', data.errors);
       }
     },
   });
 }
+
+/** @deprecated Use useDetectClusters() for credential-template-driven discovery. */
+export const useDetectEKSClusters = useDetectClusters;
 
 export function useRefreshClusterKubeconfig() {
   const queryClient = useQueryClient();

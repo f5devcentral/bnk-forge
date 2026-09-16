@@ -95,3 +95,53 @@ def _extract_error_message(error: BaseException | None) -> str | None:
         if isinstance(msg, str):
             return msg[:1000]
     return str(error)[:1000]
+
+
+def record_azure_observation(
+    template_id: int | None,
+    *,
+    success: bool,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Stamp an Azure API outcome onto the credential template row."""
+    if not template_id:
+        return
+    try:
+        from database import SessionLocal
+        from models import CloudCredentialTemplate
+    except Exception as exc:
+        logger.debug("cloud_observation skipped (import error): %s", exc)
+        return
+
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == template_id)
+            .first()
+        )
+        if row is None:
+            return
+        now = datetime.now(UTC)
+        if success:
+            row.last_successful_call_at = now
+            row.last_error_at = None
+            row.last_error_code = None
+            row.last_error_message = None
+        else:
+            row.last_error_at = now
+            row.last_error_code = (error_code or "Error")[:64]
+            row.last_error_message = (error_message or "Azure operation failed")[:1000]
+        db.commit()
+    except Exception as exc:
+        logger.debug("cloud_observation write failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass

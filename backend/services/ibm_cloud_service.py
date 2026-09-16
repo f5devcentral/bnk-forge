@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import requests
+import yaml
 from sqlalchemy.orm import Session
 
 from core.encryption import decrypt_value, encrypt_value
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 IBM_IAM_TOKEN_URL = "https://iam.cloud.ibm.com/identity/token"
 IBM_SEARCH_URL = "https://api.global-search-tagging.cloud.ibm.com/v3/resources/search"
 IBM_RESOURCE_KEYS_URL = "https://resource-controller.cloud.ibm.com/v2/resource_keys"
+IBM_CONTAINERS_V1_URL = "https://containers.cloud.ibm.com/global/v1/clusters"
 
 IBM_REGIONS: list[dict[str, str]] = [
     {"value": "au-syd", "label": "Australia (Sydney)"},
@@ -364,3 +367,110 @@ class IBMCloudService:
                 logger.warning(f"Failed to cache IBM IAM token on template {template.id}: {e}")
 
         return access_token
+
+
+# ---------------------------------------------------------------------------
+# ROKS / IBM Cloud Kubernetes Service cluster discovery
+# ---------------------------------------------------------------------------
+
+def list_roks_clusters_from_template(template: CloudCredentialTemplate) -> list[dict[str, Any]]:
+    """List IBM Cloud Kubernetes Service (IKS/ROKS) clusters via *template*.
+
+    Returns cluster info dicts containing the keys required for kubeconfig
+    generation and registration.
+    """
+    from core.encryption import decrypt_value
+
+    api_key = decrypt_value(template.ibmcloud_api_key_encrypted) if template.ibmcloud_api_key_encrypted else None
+    if not api_key:
+        raise ValueError("IBM Cloud API key is required to list clusters")
+
+    svc = IBMCloudService(None)
+    access_token = svc._exchange_api_key(api_key, template=template)
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+    response = requests.get(
+        IBM_CONTAINERS_V1_URL,
+        headers=headers,
+        timeout=30,
+    )
+    if response.status_code in {401, 403}:
+        raise RuntimeError("IBM Cloud API key is not authorized to list clusters")
+    if not response.ok:
+        raise RuntimeError(f"IBM Cloud cluster list failed with status {response.status_code}")
+
+    clusters = []
+    for item in response.json() or []:
+        name = item.get("name")
+        if not name:
+            continue
+        clusters.append({
+            "name": name,
+            "id": item.get("id"),
+            "region": item.get("region") or template.region,
+            "resource_group": item.get("resourceGroup"),
+            "server_url": item.get("serverURL") or item.get("publicServiceEndpointURL"),
+            "master_status": item.get("masterStatus"),
+        })
+
+    return clusters
+
+
+def describe_roks_cluster(name: str, access_token: str) -> dict[str, Any]:
+    """Fetch full details for an IBM Cloud Kubernetes Service cluster.
+
+    Includes certificate authority and server URL needed for kubeconfig.
+    """
+    config_url = f"{IBM_CONTAINERS_V1_URL}/{name}/config"
+    response = requests.get(
+        config_url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+    if not response.ok:
+        raise RuntimeError(f"IBM Cloud cluster config fetch failed: {response.status_code}")
+    return response.json()
+
+
+def generate_roks_kubeconfig(cluster_name: str, server_url: str, ca_cert: str, token: str) -> str:
+    """Generate a portable kubeconfig YAML for an IBM ROKS/IKS cluster.
+
+    Uses a static IAM bearer token. Callers are responsible for refreshing
+    the token via ``refresh_kubeconfig_iam_token`` before the token expires.
+    """
+    kubeconfig = {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [
+            {
+                "name": cluster_name,
+                "cluster": {
+                    "server": server_url,
+                    "certificate-authority-data": ca_cert,
+                },
+            }
+        ],
+        "contexts": [
+            {
+                "name": cluster_name,
+                "context": {
+                    "cluster": cluster_name,
+                    "user": cluster_name,
+                },
+            }
+        ],
+        "current-context": cluster_name,
+        "users": [
+            {
+                "name": cluster_name,
+                "user": {"token": token},
+            }
+        ],
+    }
+    return yaml.dump(kubeconfig, default_flow_style=False)

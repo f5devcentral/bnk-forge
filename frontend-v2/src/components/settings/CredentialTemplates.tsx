@@ -59,6 +59,7 @@ import { notify, notifyError } from '@/lib/notify';
 import { api } from '@/lib/api';
 import { loadIbmRegionsFromApiKey } from '@/lib/ibm-cloud';
 import type { CloudCredentialTemplate, CloudCredentialTemplateCreate, CloudRegionOption, IBCosInstanceOption } from '@/types';
+import type { ApiCredentialTemplateCreate } from '@/types/api-schemas';
 import { RegionSelector } from '@/components/aws/RegionSelector';
 import { CloudRegionSelector } from '@/components/cloud/CloudRegionSelector';
 import { SSOAuthDialog } from './SSOAuthDialog';
@@ -66,21 +67,26 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { resolveCredStatus } from './resolveCredStatus';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
+// Typed against the generated `provider` union so an invalid entry (or one
+// that drifts from the backend Literal) is a compile error. `ssh` is a valid
+// provider but intentionally not offered in this create UI; the type still
+// permits it, so adding it later is a one-line change with no cast.
+type TemplateProvider = ApiCredentialTemplateCreate['provider'];
 const TEMPLATE_PROVIDER_OPTIONS = [
   { value: 'aws', label: 'Amazon Web Services (AWS)' },
   { value: 'gcp', label: 'Google Cloud Platform (GCP)' },
   { value: 'azure', label: 'Microsoft Azure' },
   { value: 'ibm', label: 'IBM Cloud' },
-] as const;
+] as const satisfies ReadonlyArray<{ value: TemplateProvider; label: string }>;
 
 /**
- * Single authoritative AWS credential status badge.
+ * Single authoritative cloud credential status badge.
  *
  * Delegates to resolveCredStatus() which collapses the lease prediction
- * (aws_credentials_expiry) and the observation columns (last boto3 call)
+ * (aws_credentials_expiry / azure_sso_token_expiry) and observation columns
  * into one priority-ordered result: failed > expired > warning > ok > unknown.
  */
-function AwsCredStatusBadge({ template }: { template: CloudCredentialTemplate }) {
+function CloudCredStatusBadge({ template }: { template: CloudCredentialTemplate }) {
   const { level, headline, detail } = resolveCredStatus(template);
   if (level === 'unknown') return null;
 
@@ -125,11 +131,13 @@ export default function CredentialTemplates() {
   const [ssoAuthDialogOpen, setSsoAuthDialogOpen] = useState(false);
   const [ssoAuthTemplateId, setSsoAuthTemplateId] = useState<number | null>(null);
   const [ssoAuthTemplateName, setSsoAuthTemplateName] = useState<string>('');
+  const [ssoAuthTemplateProvider, setSsoAuthTemplateProvider] = useState<string>('aws');
   const [testingTemplateId, setTestingTemplateId] = useState<number | null>(null);
   const [ibmRegionOptions, setIbmRegionOptions] = useState<CloudRegionOption[]>([]);
   const [ibmRegionError, setIbmRegionError] = useState<string | null>(null);
   const [ibmCosInstanceOptions, setIbmCosInstanceOptions] = useState<IBCosInstanceOption[]>([]);
   const [ibmCosInstanceError, setIbmCosInstanceError] = useState<string | null>(null);
+  const [azureRegionOptions, setAzureRegionOptions] = useState<CloudRegionOption[]>([]);
 
   // Form state
   const [formData, setFormData] = useState<CloudCredentialTemplateCreate>({
@@ -147,12 +155,24 @@ export default function CredentialTemplates() {
     aws_sso_region: '',
     aws_sso_account_id: '',
     aws_sso_role_name: '',
+    azure_auth_method: 'service_principal',
+    azure_subscription_id: '',
+    azure_tenant_id: '',
+    azure_client_id: '',
+    azure_client_secret: '',
     ibmcloud_api_key: '',
     ibm_cos_instance_name: '',
     gcp_project_id: '',
     gcp_credentials: '',
     is_default: false,
   });
+
+  // Load Azure regions once
+  useEffect(() => {
+    api.listAzureRegions().then((res) => {
+      if (res.regions) setAzureRegionOptions(res.regions);
+    }).catch(() => {});
+  }, []);
 
   // Fetch templates
   const { data: templates, isLoading } = useQuery({
@@ -275,6 +295,11 @@ export default function CredentialTemplates() {
       aws_sso_region: '',
       aws_sso_account_id: '',
       aws_sso_role_name: '',
+      azure_auth_method: 'service_principal',
+      azure_subscription_id: '',
+      azure_tenant_id: '',
+      azure_client_id: '',
+      azure_client_secret: '',
       ibmcloud_api_key: '',
       ibm_cos_instance_name: '',
       gcp_project_id: '',
@@ -308,6 +333,11 @@ export default function CredentialTemplates() {
       aws_sso_region: template.aws_sso_region || '',
       aws_sso_account_id: template.aws_sso_account_id || '',
       aws_sso_role_name: template.aws_sso_role_name || '',
+      azure_auth_method: template.azure_auth_method || 'service_principal',
+      azure_subscription_id: template.azure_subscription_id || '',
+      azure_tenant_id: template.azure_tenant_id || '',
+      azure_client_id: template.azure_client_id || '',
+      azure_client_secret: '', // Don't populate existing secrets
       ibmcloud_api_key: '',
       ibm_cos_instance_name: template.ibm_cos_instance_name || '',
       gcp_project_id: template.gcp_project_id || '',
@@ -342,6 +372,15 @@ export default function CredentialTemplates() {
         updateData.aws_sso_account_id = formData.aws_sso_account_id;
         updateData.aws_sso_role_name = formData.aws_sso_role_name;
       }
+    }
+
+    if (formData.provider === 'azure') {
+      updateData.azure_auth_method = formData.azure_auth_method;
+      updateData.region = formData.region;
+      if (formData.azure_subscription_id) updateData.azure_subscription_id = formData.azure_subscription_id;
+      if (formData.azure_tenant_id) updateData.azure_tenant_id = formData.azure_tenant_id;
+      if (formData.azure_client_id) updateData.azure_client_id = formData.azure_client_id;
+      if (formData.azure_client_secret) updateData.azure_client_secret = formData.azure_client_secret;
     }
 
     if (formData.provider === 'ibm') {
@@ -726,6 +765,91 @@ export default function CredentialTemplates() {
         </>
       )}
 
+      {formData.provider === 'azure' && (
+        <>
+          <div>
+            <Label>Authentication Method *</Label>
+            <RadioGroup
+              value={formData.azure_auth_method || 'service_principal'}
+              onValueChange={(value) => setFormData({ ...formData, azure_auth_method: value })}
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="service_principal" id="azure_service_principal" />
+                <Label htmlFor="azure_service_principal" className="font-normal cursor-pointer">
+                  Service Principal (App Registration)
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="sso" id="azure_sso" />
+                <Label htmlFor="azure_sso" className="font-normal cursor-pointer">
+                  Microsoft Entra ID SSO (Device Code)
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
+
+          <div>
+            <Label htmlFor="azure_tenant_id">Tenant ID (Directory ID) *</Label>
+            <Input
+              id="azure_tenant_id"
+              value={formData.azure_tenant_id || ''}
+              onChange={(e) => setFormData({ ...formData, azure_tenant_id: e.target.value })}
+              placeholder="e.g., 00000000-0000-0000-0000-000000000000 or common"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="azure_subscription_id">Subscription ID</Label>
+            <Input
+              id="azure_subscription_id"
+              value={formData.azure_subscription_id || ''}
+              onChange={(e) => setFormData({ ...formData, azure_subscription_id: e.target.value })}
+              placeholder="e.g., 00000000-0000-0000-0000-000000000000"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="azure_client_id">
+              {formData.azure_auth_method === 'sso' ? 'Client ID (App ID, optional)' : 'Client ID (App ID) *'}
+            </Label>
+            <Input
+              id="azure_client_id"
+              value={formData.azure_client_id || ''}
+              onChange={(e) => setFormData({ ...formData, azure_client_id: e.target.value })}
+              placeholder={formData.azure_auth_method === 'sso' ? 'Leave blank for Azure CLI default' : 'e.g., 00000000-0000-0000-0000-000000000000'}
+            />
+          </div>
+
+          {formData.azure_auth_method !== 'sso' && (
+            <div>
+              <Label htmlFor="azure_client_secret">
+                Client Secret {editingTemplate && '(leave blank to keep existing)'} *
+              </Label>
+              <Input
+                id="azure_client_secret"
+                type="password"
+                value={formData.azure_client_secret || ''}
+                onChange={(e) => setFormData({ ...formData, azure_client_secret: e.target.value })}
+                placeholder={editingTemplate ? '(existing secret hidden)' : 'Enter client secret'}
+              />
+            </div>
+          )}
+
+          <div>
+            <Label htmlFor="region">Default Location / Region</Label>
+            <CloudRegionSelector
+              provider="azure"
+              value={formData.region || ''}
+              onValueChange={(value) => setFormData({ ...formData, region: value })}
+              options={azureRegionOptions}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Projects using this template will inherit this location by default
+            </p>
+          </div>
+        </>
+      )}
+
       {/* SSH credentials are now managed in the dedicated SSH Credentials section above */}
 
       <div className="flex items-center space-x-2">
@@ -863,6 +987,37 @@ export default function CredentialTemplates() {
                               )}
                             </>
                           )}
+                          {template.provider === 'azure' && (
+                            <>
+                              <div>Method: {template.azure_auth_method === 'sso' ? 'Entra ID SSO' : 'Service Principal'}</div>
+                              {template.region && <div>Region: {template.region}</div>}
+                              {template.azure_tenant_id && <div>Tenant: {template.azure_tenant_id}</div>}
+                              {template.azure_subscription_id && <div>Subscription: {template.azure_subscription_id}</div>}
+                              {template.has_azure_client_secret && (
+                                <div className="flex items-center gap-1 text-success">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Secret Configured
+                                </div>
+                              )}
+                              {template.azure_sso_authenticated_at && (
+                                <div className="flex items-center gap-1 text-primary">
+                                  <Shield className="h-3 w-3" />
+                                  SSO Authenticated
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {template.provider === 'gcp' && (
+                            <>
+                              {template.gcp_project_id && <div>Project: {template.gcp_project_id}</div>}
+                              {template.has_gcp_credentials && (
+                                <div className="flex items-center gap-1 text-success">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Credentials Configured
+                                </div>
+                              )}
+                            </>
+                          )}
                           {isLegacySsh && (
                             <>
                               <div className="flex items-center gap-1">
@@ -902,10 +1057,10 @@ export default function CredentialTemplates() {
                         </div>
                       </TableCell>
 
-                      {/* Status badge (AWS only) */}
+                      {/* Status badge (AWS / Azure) */}
                       <TableCell>
-                        {template.provider === 'aws' && (
-                          <AwsCredStatusBadge template={template} />
+                        {(template.provider === 'aws' || template.provider === 'azure') && (
+                          <CloudCredStatusBadge template={template} />
                         )}
                       </TableCell>
 
@@ -930,7 +1085,7 @@ export default function CredentialTemplates() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {(template.provider === 'aws' || template.provider === 'ibm') && (
+                            {(template.provider === 'aws' || template.provider === 'ibm' || template.provider === 'azure') && (
                               <DropdownMenuItem
                                 onClick={() => testMutation.mutate(template.id)}
                                 disabled={testMutation.isPending}
@@ -943,25 +1098,28 @@ export default function CredentialTemplates() {
                                 Test connection
                               </DropdownMenuItem>
                             )}
-                             {template.provider === 'aws' &&
-                              (template.aws_sso_enabled ||
-                                template.aws_auth_method === 'sso' ||
-                                !!(template.aws_sso_start_url && template.aws_sso_region && template.aws_sso_account_id && template.aws_sso_role_name)) && (
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSsoAuthTemplateId(template.id);
-                                  setSsoAuthTemplateName(template.name);
-                                  setSsoAuthDialogOpen(true);
-                                }}
-                              >
-                                <Shield className="h-4 w-4 mr-2" />
-                                Authenticate SSO
-                              </DropdownMenuItem>
-                            )}
+                             {((template.provider === 'aws' &&
+                               (template.aws_sso_enabled ||
+                                 template.aws_auth_method === 'sso' ||
+                                 !!(template.aws_sso_start_url && template.aws_sso_region && template.aws_sso_account_id && template.aws_sso_role_name))) ||
+                               (template.provider === 'azure' &&
+                                 template.azure_auth_method === 'sso')) && (
+                               <DropdownMenuItem
+                                 onClick={() => {
+                                   setSsoAuthTemplateId(template.id);
+                                   setSsoAuthTemplateName(template.name);
+                                   setSsoAuthTemplateProvider(template.provider);
+                                   setSsoAuthDialogOpen(true);
+                                 }}
+                               >
+                                 <Shield className="h-4 w-4 mr-2" />
+                                 Authenticate SSO
+                               </DropdownMenuItem>
+                             )}
                             {/* Legacy SSH templates are read-only — managed in SSH Credentials */}
                             {!isLegacySsh && (
                               <>
-                                {(template.provider === 'aws' || template.provider === 'ibm') && (
+                                {(template.provider === 'aws' || template.provider === 'ibm' || template.provider === 'azure') && (
                                   <DropdownMenuSeparator />
                                 )}
                                 <DropdownMenuItem onClick={() => handleEdit(template)}>
@@ -1068,6 +1226,7 @@ export default function CredentialTemplates() {
             onOpenChange={setSsoAuthDialogOpen}
             templateId={ssoAuthTemplateId}
             templateName={ssoAuthTemplateName}
+            provider={ssoAuthTemplateProvider}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ['credential-templates'] });
             }}

@@ -95,6 +95,8 @@ class LogRow(BaseModel):
     status: str
     req_body: str
     resp_body: str
+    cluster_id: int | None = None
+    cluster_name: str | None = None
 
 
 class LlmLogsResponse(_Envelope):

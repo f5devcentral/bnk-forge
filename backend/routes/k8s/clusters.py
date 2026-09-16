@@ -44,6 +44,7 @@ from schemas.k8s import (
     NodeReadinessProbeResponse,
     ResourceTypeCatalogResponse,
 )
+from services.cluster_discovery_service import ClusterDiscoveryService
 from services.cluster_management_service import ClusterManagementService
 from services.kubernetes_service import KubernetesService
 from tasks.cluster_scan_task import enqueue_cluster_scan
@@ -62,6 +63,17 @@ router = APIRouter(prefix="/api", tags=["k8s-clusters"])
 def detect_and_register_eks_clusters(project_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)):
     """Detect deployed managed-cluster modules in the project and register them (owner or admin only)."""
     return ClusterManagementService(db).detect_managed_clusters(project_id)
+
+
+@router.post("/projects/{project_id}/k8s/clusters/detect-credentials")
+@handle_route_errors("detect clusters from credentials")
+def detect_and_register_clusters_from_credentials(
+    project_id: int,
+    user: User = Depends(require_project_owner),
+    db: Session = Depends(get_db)
+):
+    """Discover Kubernetes clusters via the project's cloud credential templates."""
+    return ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
 
 
 @router.post("/projects/{project_id}/k8s/clusters", response_model=ClusterCreateResponse)
@@ -89,6 +101,14 @@ def batch_connectivity_check(db: Session = Depends(get_db)):
     return ConnectivityProbeService(db).probe_all_clusters()
 
 
+@router.get("/projects/{project_id}/connectivity", response_model=BatchConnectivityResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("project batch connectivity check")
+def project_batch_connectivity_check(project_id: int, db: Session = Depends(get_db)):
+    """Probe connectivity for all clusters in a project in parallel."""
+    from services.connectivity_probe_service import ConnectivityProbeService
+    return ConnectivityProbeService(db).probe_project_clusters(project_id)
+
+
 @router.get("/projects/{project_id}/k8s/clusters", response_model=ClusterListResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("list project clusters")
 def list_project_clusters(project_id: int, db: Session = Depends(get_db)):
@@ -113,9 +133,15 @@ def update_cluster(cluster_id: int, cluster_data: ClusterUpdateRequest, user: Us
     return result
 
 
+@router.delete("/projects/{project_id}/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
 @router.delete("/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
 @handle_route_errors("delete cluster")
-def delete_cluster(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def delete_cluster(
+    cluster_id: int,
+    project_id: int | None = None,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
     """Delete cluster configuration (owner or admin only)."""
     result = ClusterManagementService(db).delete_cluster(cluster_id)
     db.commit()

@@ -6,6 +6,7 @@ exclusively from Celery tasks (opentofu_tasks.py) which are the outermost caller
 """
 
 import logging
+from typing import Any
 
 import yaml
 from sqlalchemy.orm import Session
@@ -255,3 +256,85 @@ def unregister_eks_cluster(db: Session, eks_module: ProjectModule) -> bool:
 
     logger.info(f"No registered cluster found for module {eks_module.id}")
     return False
+
+
+# ---------------------------------------------------------------------------
+# Credential-template-driven discovery
+# ---------------------------------------------------------------------------
+
+def _boto3_session_from_template(template) -> Any:
+    """Build a boto3 Session from a CloudCredentialTemplate.
+
+    Reuses the same credential-resolution rules as CredentialTemplateService
+    so credential-template discovery never duplicates auth logic.
+    """
+    import boto3
+
+    if template.aws_auth_method == 'access_keys':
+        from core.encryption import decrypt_value
+
+        secret_key = decrypt_value(template.aws_secret_access_key_encrypted) \
+            if template.aws_secret_access_key_encrypted else None
+        session_token = decrypt_value(template.aws_session_token_encrypted) \
+            if template.aws_session_token_encrypted else None
+        return boto3.Session(
+            aws_access_key_id=template.aws_access_key_id,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
+            region_name=template.region or None,
+        )
+
+    if template.aws_auth_method == 'profile':
+        return boto3.Session(profile_name=template.aws_profile, region_name=template.region or None)
+
+    # SSO / default session — picks up whatever the SSO flow already populated.
+    return boto3.Session(region_name=template.region or None)
+
+
+def list_eks_clusters_from_template(template) -> list[dict[str, Any]]:
+    """List EKS clusters reachable via *template* credentials.
+
+    Returns a list of cluster info dicts with the keys required by
+    ``generate_eks_kubeconfig`` plus metadata for registration.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from core.aws_config import adaptive_retry_config
+
+    session = _boto3_session_from_template(template)
+    region = template.region or session.region_name
+    if not region:
+        raise ValueError("AWS region is required to list EKS clusters")
+
+    try:
+        eks = session.client('eks', region_name=region, config=adaptive_retry_config())
+        response = eks.list_clusters()
+        cluster_names = response.get('clusters', [])
+    except (ClientError, BotoCoreError) as e:
+        raise RuntimeError(f"Failed to list EKS clusters in {region}: {e}") from e
+
+    clusters = []
+    for name in cluster_names:
+        try:
+            detail = eks.describe_cluster(name=name)['cluster']
+        except (ClientError, BotoCoreError) as e:
+            logger.warning(f"Skipping EKS cluster {name}: describe_cluster failed: {e}")
+            continue
+
+        endpoint = detail.get('endpoint')
+        ca_data = detail.get('certificateAuthority', {}).get('data')
+        if not endpoint or not ca_data:
+            logger.warning(f"Skipping EKS cluster {name}: missing endpoint or CA data")
+            continue
+
+        clusters.append({
+            "name": name,
+            "endpoint": endpoint,
+            "certificate_authority_data": ca_data,
+            "region": region,
+            "version": detail.get('version'),
+            "arn": detail.get('arn'),
+            "account_id": detail.get('arn', '').split(":")[4] if detail.get('arn') else None,
+        })
+
+    return clusters

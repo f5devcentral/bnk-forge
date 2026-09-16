@@ -45,6 +45,9 @@ const mockBnkData = {
         explanation: 'FLO operator is running normally',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: ['us-east-1a'],
+        nodes: ['worker-1'],
       },
       controller: {
         total: 1,
@@ -53,6 +56,9 @@ const mockBnkData = {
         explanation: 'CNE Controller is running',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: [],
+        nodes: [],
       },
       crdInstaller: {
         total: 1,
@@ -61,6 +67,9 @@ const mockBnkData = {
         explanation: 'CRD Installer completed',
         podDetails: [],
         remediationActions: [],
+        namespaces: ['f5-utils'],
+        zones: [],
+        nodes: [],
       },
       analyzer: {
         total: 0,
@@ -69,6 +78,9 @@ const mockBnkData = {
         explanation: '',
         podDetails: [],
         remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
       },
     },
     dataPlane: {
@@ -81,8 +93,34 @@ const mockBnkData = {
         totalRestarts: 0,
         severity: 'healthy' as const,
         explanation: 'All TMM pods are running',
-        podDetails: [],
+        podDetails: [
+          {
+            podName: 'f5-tmm-abc12',
+            namespace: 'f5-bnk',
+            nodeName: 'worker-1',
+            nodeZone: 'us-east-1a',
+            nodeInstanceType: 'm5.large',
+            phase: 'Running',
+            restartCount: 0,
+            containersReady: '2/2',
+            issue: '',
+          },
+          {
+            podName: 'f5-tmm-def34',
+            namespace: 'f5-bnk',
+            nodeName: 'worker-2',
+            nodeZone: 'us-east-1b',
+            nodeInstanceType: 'm5.large',
+            phase: 'Running',
+            restartCount: 0,
+            containersReady: '2/2',
+            issue: '',
+          },
+        ],
         remediationActions: [],
+        namespaces: ['f5-bnk'],
+        zones: ['us-east-1a', 'us-east-1b'],
+        nodes: ['worker-1', 'worker-2'],
       },
       cneInstance: {
         name: 'bnk-instance',
@@ -152,6 +190,19 @@ const mockBnkData = {
       tmm_running: 2,
       tmm_containers: '4/4',
     },
+    connectivity: {
+      status: 'connected',
+      message: 'Kubernetes API is accessible',
+      checkedAt: '2026-01-01T00:00:00Z',
+    },
+    integration: {
+      status: 'healthy',
+      operatorConnected: true,
+      operatorMode: 'direct_ws',
+      operatorVersion: '1.2.3',
+      lastSeen: '2026-01-01T00:00:00Z',
+      message: 'Operator op-1 is connected',
+    },
   },
   // Minimal topology/policy data that the unified endpoint includes
   topology: [],
@@ -180,15 +231,34 @@ const mockDriftStatus = {
 // Setup
 // ---------------------------------------------------------------------------
 
+function mockHealthHandler(healthData: Record<string, unknown> | null | undefined, status = 200) {
+  return http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/(health|data)/, ({ request }) => {
+    if (status >= 400) {
+      return HttpResponse.json(healthData, { status });
+    }
+    if (request.url.includes('/f5bnk/data')) {
+      return HttpResponse.json({
+        health: healthData,
+        topology: [],
+        dataPlane: [],
+        policyAssociations: [],
+        trafficStats: { source: 'tmctl', available: false },
+      });
+    }
+    return HttpResponse.json(healthData);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 
   server.use(
-    http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-      return HttpResponse.json(mockBnkData);
-    }),
+    mockHealthHandler(mockBnkData.health),
     http.get(/\/api\/clusters\/\d+\/drift\/status/, () => {
       return HttpResponse.json(mockDriftStatus);
+    }),
+    http.get(/\/api\/licensing\/\d+\/cwc-status/, () => {
+      return HttpResponse.json({ status: 'unknown', expiry: null });
     }),
   );
 });
@@ -203,9 +273,18 @@ describe('BNKHealthDashboard', () => {
   describe('loading state', () => {
     it('shows loading spinner while fetching health data', () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, async () => {
+        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/(health|data)/, async ({ request }) => {
           await new Promise((r) => setTimeout(r, 10000));
-          return HttpResponse.json(mockBnkData);
+          if (request.url.includes('/f5bnk/data')) {
+            return HttpResponse.json({
+              health: mockBnkData.health,
+              topology: [],
+              dataPlane: [],
+              policyAssociations: [],
+              trafficStats: { source: 'tmctl', available: false },
+            });
+          }
+          return HttpResponse.json(mockBnkData.health);
         }),
       );
 
@@ -219,9 +298,7 @@ describe('BNKHealthDashboard', () => {
   describe('error state', () => {
     it('shows error message when API fails', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json({ error: 'Connection refused' }, { status: 500 });
-        }),
+        mockHealthHandler({ error: 'Connection refused' }, 500),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -233,9 +310,7 @@ describe('BNKHealthDashboard', () => {
 
     it('shows Retry button on error', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json({ error: 'Timeout' }, { status: 500 });
-        }),
+        mockHealthHandler({ error: 'Timeout' }, 500),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -291,12 +366,7 @@ describe('BNKHealthDashboard', () => {
 
     it('shows "BNK Platform Critical" for critical overall status', async () => {
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json({
-            ...mockBnkData,
-            health: { ...mockBnkData.health, overall: 'critical' },
-          });
-        }),
+        mockHealthHandler({ ...mockBnkData.health, overall: 'critical' }),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -387,27 +457,25 @@ describe('BNKHealthDashboard', () => {
 
     it('renders Analyzer card when analyzer count > 0', async () => {
       const dataWithAnalyzer = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          platform: {
-            ...mockBnkData.health.platform,
-            analyzer: {
-              total: 1,
-              running: 1,
-              severity: 'healthy' as const,
-              explanation: 'Analyzer is running',
-              podDetails: [],
-              remediationActions: [],
-            },
+        ...mockBnkData.health,
+        platform: {
+          ...mockBnkData.health.platform,
+          analyzer: {
+            total: 1,
+            running: 1,
+            severity: 'healthy' as const,
+            explanation: 'Analyzer is running',
+            podDetails: [],
+            remediationActions: [],
+            namespaces: ['f5-bnk'],
+            zones: [],
+            nodes: [],
           },
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(dataWithAnalyzer);
-        }),
+        mockHealthHandler(dataWithAnalyzer),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -430,15 +498,10 @@ describe('BNKHealthDashboard', () => {
     });
 
     it('hides FLO Operator card when installShape is absent', async () => {
-      const noShapeData = {
-        ...mockBnkData,
-        health: { ...mockBnkData.health, installShape: undefined },
-      };
+      const noShapeData = { ...mockBnkData.health, installShape: undefined };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(noShapeData);
-        }),
+        mockHealthHandler(noShapeData),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -450,15 +513,10 @@ describe('BNKHealthDashboard', () => {
     });
 
     it('hides FLO Operator card when installShape is "unknown" (e.g. transient cluster-connectivity issue)', async () => {
-      const unknownShapeData = {
-        ...mockBnkData,
-        health: { ...mockBnkData.health, installShape: 'unknown' },
-      };
+      const unknownShapeData = { ...mockBnkData.health, installShape: 'unknown' };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(unknownShapeData);
-        }),
+        mockHealthHandler(unknownShapeData),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -471,18 +529,13 @@ describe('BNKHealthDashboard', () => {
 
     it('hides FLO Operator card when installShape is "helm"', async () => {
       const helmData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          installShape: 'helm',
-          installMethod: 'Helm / manual',
-        },
+        ...mockBnkData.health,
+        installShape: 'helm',
+        installMethod: 'Helm / manual',
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(helmData);
-        }),
+        mockHealthHandler(helmData),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -495,18 +548,13 @@ describe('BNKHealthDashboard', () => {
 
     it('shows the install method badge when installMethod is present', async () => {
       const helmData = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          installShape: 'helm',
-          installMethod: 'Helm / manual',
-        },
+        ...mockBnkData.health,
+        installShape: 'helm',
+        installMethod: 'Helm / manual',
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(helmData);
-        }),
+        mockHealthHandler(helmData),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -557,25 +605,20 @@ describe('BNKHealthDashboard', () => {
   describe('severity sorting', () => {
     it('sorts critical cards before healthy cards', async () => {
       const dataWithCritical = {
-        ...mockBnkData,
-        health: {
-          ...mockBnkData.health,
-          overall: 'critical' as const,
-          platform: {
-            ...mockBnkData.health.platform,
-            flo: {
-              ...mockBnkData.health.platform.flo,
-              severity: 'critical' as const,
-              explanation: 'FLO pod is crash-looping',
-            },
+        ...mockBnkData.health,
+        overall: 'critical' as const,
+        platform: {
+          ...mockBnkData.health.platform,
+          flo: {
+            ...mockBnkData.health.platform.flo,
+            severity: 'critical' as const,
+            explanation: 'FLO pod is crash-looping',
           },
         },
       };
 
       server.use(
-        http.get(/\/api\/k8s\/clusters\/\d+\/f5bnk\/data/, () => {
-          return HttpResponse.json(dataWithCritical);
-        }),
+        mockHealthHandler(dataWithCritical),
       );
 
       render(<BNKHealthDashboard clusterId={1} />);
@@ -721,6 +764,119 @@ describe('BNKHealthDashboard', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/Updated/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ─── Placement Enrichment ──────────────────────────────────────────
+
+  describe('placement enrichment', () => {
+    it('shows namespace, zone, and node chips when expanded', async () => {
+      const user = _userEvent.setup();
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('TMM (Data Plane)')).toBeInTheDocument();
+      });
+
+      // Expand the TMM card
+      const tmmHeader = screen.getByLabelText(/TMM.*health.*Healthy/i);
+      await user.click(tmmHeader);
+
+      // Namespace chips
+      expect(screen.getByText('Namespaces')).toBeInTheDocument();
+      expect(screen.getByText('f5-bnk')).toBeInTheDocument();
+      // Zone chips
+      expect(screen.getByText('Availability Zones')).toBeInTheDocument();
+      expect(screen.getAllByText('us-east-1a').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('us-east-1b').length).toBeGreaterThanOrEqual(1);
+      // Node chips
+      expect(screen.getByText('Nodes')).toBeInTheDocument();
+      expect(screen.getAllByText('worker-1').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('worker-2').length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shows node zone and instance type in pod details table', async () => {
+      const user = _userEvent.setup();
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('TMM (Data Plane)')).toBeInTheDocument();
+      });
+
+      const tmmHeader = screen.getByLabelText(/TMM.*health.*Healthy/i);
+      await user.click(tmmHeader);
+
+      await waitFor(() => {
+        expect(screen.getByText('Pod Details')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText('us-east-1a').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('m5.large').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ─── Connectivity / Integration Indicators ─────────────────────────
+
+  describe('connectivity and integration indicators', () => {
+    it('shows Connected badge when connectivity status is connected', async () => {
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Connected')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Operator Connected badge for healthy direct_ws integration', async () => {
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Operator Connected')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Kubeconfig badge when integration mode is kubeconfig', async () => {
+      const kubeconfigData = {
+        ...mockBnkData.health,
+        integration: {
+          status: 'healthy',
+          operatorConnected: false,
+          operatorMode: 'kubeconfig',
+          operatorVersion: null,
+          lastSeen: null,
+          message: 'Cluster managed via kubeconfig',
+        },
+      };
+
+      server.use(
+        mockHealthHandler(kubeconfigData),
+      );
+
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Kubeconfig')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Unreachable badge when connectivity status is unreachable', async () => {
+      const unreachableData = {
+        ...mockBnkData.health,
+        connectivity: {
+          status: 'unreachable',
+          message: 'Kubernetes API is unreachable',
+          checkedAt: '2026-01-01T00:00:00Z',
+        },
+      };
+
+      server.use(
+        mockHealthHandler(unreachableData),
+      );
+
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Unreachable')).toBeInTheDocument();
       });
     });
   });

@@ -16,6 +16,7 @@ import SystemUpgrade from '@/components/settings/SystemUpgrade';
 import AuditLog from '@/components/settings/AuditLog';
 import { AlertChannels } from '@/components/settings/AlertChannels';
 import { BackupPanel } from '@/components/settings/BackupPanel';
+import { McpPanel } from '@/components/system/McpPanel';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import { Label } from '@/components/ui/label';
@@ -33,6 +34,7 @@ import {
   ScrollText,
   Bell,
   HardDrive,
+  Bot,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -46,7 +48,7 @@ const URL_TAB_REDIRECTS: Record<string, string> = {
   'helm-repos': '/catalog?tab=helm-repos',
 };
 
-const VALID_TABS = ['monitor', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
+const VALID_TABS = ['monitor', 'mcp', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
 
 export default function System() {
   const { theme, setTheme } = useUIStore();
@@ -90,6 +92,7 @@ export default function System() {
           onChange={handleTabChange}
           tabs={[
             { key: 'monitor', label: 'System Monitor', icon: Monitor },
+            { key: 'mcp', label: 'MCP Server', icon: Bot },
             { key: 'audit', label: 'Audit Log', icon: ScrollText },
             { key: 'alerts', label: 'Alerts', icon: Bell },
             { key: 'defaults', label: 'Defaults', icon: Settings2 },
@@ -103,6 +106,10 @@ export default function System() {
           <PerformanceMonitor />
           <DatabaseManagement />
           <ContainerManagement />
+        </TabsContent>
+
+        <TabsContent value="mcp" className="mt-6">
+          <McpPanel />
         </TabsContent>
 
         <TabsContent value="audit" className="mt-6">

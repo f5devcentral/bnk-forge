@@ -76,10 +76,10 @@ export function QKViewPanel({ clusterId }: QKViewPanelProps) {
   const { data: checkData, isLoading: checkLoading } = useQKViewCheck(clusterId);
   const cwcAvailable = checkData?.available === true;
 
-  // Setup status — only check when CWC is available
+  // Setup status — run concurrently when clusterId is valid
   const { data: setupData, isLoading: setupLoading } = useCWCAPISetupStatus(
     clusterId,
-    cwcAvailable,
+    clusterId > 0,
   );
   const setupComplete = setupData?.setup_complete === true;
 
@@ -89,7 +89,7 @@ export function QKViewPanel({ clusterId }: QKViewPanelProps) {
     cwcAvailable && setupComplete,
   );
 
-  if (checkLoading || (cwcAvailable && setupLoading)) {
+  if ((checkLoading && !checkData) || (cwcAvailable && setupLoading && !setupData)) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -179,7 +179,7 @@ export function QKViewPanel({ clusterId }: QKViewPanelProps) {
       )}
 
       {/* List */}
-      {listLoading ? (
+      {listLoading && qkviews.length === 0 ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <span className="ml-2 text-sm text-muted-foreground">Loading QKViews...</span>

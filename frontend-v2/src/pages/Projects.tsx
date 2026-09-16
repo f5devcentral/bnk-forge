@@ -299,9 +299,9 @@ export default function Projects() {
                               {project.description}
                             </span>
                           )}
-                          {project.owner_username && project.user_id !== currentUser?.id && (
+                          {project.user_id !== currentUser?.id && (
                             <span className="text-xs text-muted-foreground mt-0.5">
-                              Owner: {project.owner_username}
+                              Owner: {project.owner_username || 'System / CLI'}
                             </span>
                           )}
                         </div>

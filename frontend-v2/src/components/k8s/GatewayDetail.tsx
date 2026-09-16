@@ -9,7 +9,9 @@
 
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Globe, Lock, Network, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
+import { Globe, Lock, Network, AlertCircle } from 'lucide-react';
+import { useMemo } from 'react';
+import { ConditionsList } from '@/components/k8s/ConditionsList';
 import type { K8sResource, K8sCondition, K8sGatewayListener, K8sGatewayAddress } from '@/types';
 
 interface GatewayDetailProps {
@@ -55,31 +57,21 @@ export function GatewayDetail({ resource }: GatewayDetailProps) {
     }
   };
 
-  const getConditionIcon = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'true':
-        return <CheckCircle2 className="h-4 w-4 text-success" />;
-      case 'false':
-        return <XCircle className="h-4 w-4 text-destructive" />;
-      case 'unknown':
-        return <AlertCircle className="h-4 w-4 text-warning" />;
-      default:
-        return <Clock className="h-4 w-4 text-muted-foreground" />;
+  const listenerStatusMap = useMemo(() => {
+    const map = new Map<string, { attachedRoutes?: number; conditions: K8sCondition[] }>();
+    const listenersStatus = (status.listeners || []) as Array<{
+      name: string;
+      attachedRoutes?: number;
+      conditions?: K8sCondition[];
+    }>;
+    for (const ls of listenersStatus) {
+      map.set(ls.name, {
+        attachedRoutes: ls.attachedRoutes,
+        conditions: ls.conditions || [],
+      });
     }
-  };
-
-  const getConditionColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'true':
-        return 'text-success';
-      case 'false':
-        return 'text-destructive';
-      case 'unknown':
-        return 'text-warning';
-      default:
-        return 'text-muted-foreground';
-    }
-  };
+    return map;
+  }, [status.listeners]);
 
   return (
     <div className="space-y-4">
@@ -149,6 +141,7 @@ export function GatewayDetail({ resource }: GatewayDetailProps) {
           ) : (
             listeners.map((listener: K8sGatewayListener, idx: number) => {
               const Icon = getListenerIcon(listener.protocol);
+              const lsStatus = listenerStatusMap.get(listener.name);
               return (
                 <div
                   key={idx}
@@ -186,7 +179,23 @@ export function GatewayDetail({ resource }: GatewayDetailProps) {
                         </Badge>
                       </div>
                     )}
+                    {lsStatus?.attachedRoutes !== undefined && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Attached Routes:</span>
+                        <span className="font-medium text-foreground/80">
+                          {lsStatus.attachedRoutes}
+                        </span>
+                      </div>
+                    )}
                   </div>
+                  {lsStatus && lsStatus.conditions.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <h5 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Conditions
+                      </h5>
+                      <ConditionsList conditions={lsStatus.conditions} />
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -201,40 +210,7 @@ export function GatewayDetail({ resource }: GatewayDetailProps) {
               <p className="text-xs text-muted-foreground">No status conditions available</p>
             </div>
           ) : (
-            conditions.map((condition: K8sCondition, idx: number) => (
-              <div
-                key={idx}
-                className="p-3 rounded-lg border bg-muted/50 border-border"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  {getConditionIcon(condition.status)}
-                  <span className={`font-medium text-sm ${getConditionColor(condition.status)}`}>
-                    {condition.type}
-                  </span>
-                </div>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Status:</span>
-                    <span className={`font-medium ${getConditionColor(condition.status)}`}>
-                      {condition.status}
-                    </span>
-                  </div>
-                  {condition.reason && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Reason:</span>
-                      <span className="text-foreground/80">{condition.reason}</span>
-                    </div>
-                  )}
-                  {condition.message && (
-                    <div className="mt-2">
-                      <p className="text-xs text-muted-foreground">
-                        {condition.message}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
+            <ConditionsList conditions={conditions} />
           )}
         </TabsContent>
       </Tabs>

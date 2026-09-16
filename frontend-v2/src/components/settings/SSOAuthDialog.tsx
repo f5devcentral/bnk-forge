@@ -19,6 +19,7 @@ interface SSOAuthDialogProps {
   onOpenChange: (open: boolean) => void;
   templateId: number;
   templateName: string;
+  provider?: string;
   onSuccess?: () => void;
 }
 
@@ -27,6 +28,7 @@ export function SSOAuthDialog({
   onOpenChange,
   templateId,
   templateName,
+  provider = 'aws',
   onSuccess,
 }: SSOAuthDialogProps) {
   const [step, setStep] = useState<'initiating' | 'waiting' | 'success' | 'error'>('initiating');
@@ -109,7 +111,8 @@ export function SSOAuthDialog({
       // Success — either fresh auth or already-authenticated dedup
       isPollingRef.current = false;
       setStep('success');
-      notify.success('AWS SSO authentication successful!', undefined, { category: 'security' });
+      const providerLabel = provider === 'azure' ? 'Azure' : 'AWS';
+      notify.success(`${providerLabel} SSO authentication successful!`, undefined, { category: 'security' });
       onSuccess?.();
 
       // Close dialog after a moment
@@ -141,7 +144,7 @@ export function SSOAuthDialog({
       setError(errorMessage);
       setStep('error');
     }
-  }, [templateId, deviceCode, onSuccess, onOpenChange]);
+  }, [templateId, deviceCode, onSuccess, onOpenChange, provider]);
 
   // Initiate SSO flow when dialog opens
   useEffect(() => {
@@ -198,7 +201,7 @@ export function SSOAuthDialog({
     <Dialog open={open} onOpenChange={resetAndClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>AWS SSO Authentication</DialogTitle>
+          <DialogTitle>{provider === 'azure' ? 'Azure' : 'AWS'} SSO Authentication</DialogTitle>
           <DialogDescription>
             Authenticating template: {templateName}
           </DialogDescription>
@@ -267,7 +270,7 @@ export function SSOAuthDialog({
             <CheckCircle className="h-16 w-16 text-success" />
             <p className="text-lg font-medium">Authentication Successful!</p>
             <p className="text-sm text-muted-foreground text-center">
-              AWS SSO credentials have been stored securely.
+              {provider === 'azure' ? 'Azure' : 'AWS'} SSO credentials have been stored securely.
             </p>
           </div>
         )}

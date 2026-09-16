@@ -50,6 +50,31 @@ const mockBnkData = {
   topologyCounts: { gateways: 1, routes: 1 },
   policyAssociations: [{ policy: 'p-1', gateways: ['gw-1'] }],
   policyCount: 1,
+  trafficStats: {
+    source: 'tmctl',
+    podName: 'f5-tmm-abc',
+    sampledAt: '2026-09-01T00:00:00Z',
+    available: true,
+    error: null,
+    listeners: [],
+    egresses: [],
+    firewallRules: [],
+  },
+};
+
+const mockBnkHealth = {
+  overall: 'healthy',
+  installShape: 'flo',
+  installMethod: 'FLO deploy flow',
+  connectivity: { status: 'connected', message: 'Kubernetes API is accessible', checkedAt: '2026-09-01T00:00:00Z' },
+  integration: { status: 'healthy', operatorConnected: false, operatorMode: 'kubeconfig', operatorVersion: null, lastSeen: null, message: 'Cluster managed via kubeconfig' },
+  platform: { severity: 'healthy' },
+  dataPlane: { severity: 'healthy' },
+  networking: { severity: 'healthy' },
+  security: { severity: 'healthy' },
+  ai: { severity: 'healthy', analyzers: 0, analyzerDetails: [] },
+  counts: { tmm_containers: 1, gateways: 0, httpRoutes: 0, vlans: 0 },
+  cluster_id: 1,
 };
 
 // Register BNK data handler
@@ -57,6 +82,9 @@ function setupBnkHandlers() {
   server.use(
     http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', () => {
       return HttpResponse.json(mockBnkData);
+    }),
+    http.get('*/api/k8s/clusters/:clusterId/f5bnk/health', () => {
+      return HttpResponse.json(mockBnkHealth);
     }),
     http.get('*/api/k8s/clusters/:clusterId/bnk/upgrade/versions', () => {
       return HttpResponse.json({
@@ -155,13 +183,13 @@ describe('useBnkData', () => {
 // ============================================================================
 
 describe('useF5BNKHealth', () => {
-  it('returns health slice from unified data', async () => {
+  it('fetches health data directly from /f5bnk/health', async () => {
     setupBnkHandlers();
     const { result } = renderHook(() => useF5BNKHealth(1), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toMatchObject({ status: 'healthy' });
+    expect(result.current.data).toMatchObject({ status: 'healthy', cluster_id: 1 });
   });
 });
 
@@ -176,6 +204,7 @@ describe('useF5GatewayTopology', () => {
       topology: expect.any(Array),
       dataPlane: expect.any(Array),
       counts: { gateways: 1, routes: 1 },
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });
@@ -191,6 +220,7 @@ describe('useF5PolicyGatewayAssociations', () => {
     expect(result.current.data).toMatchObject({
       associations: expect.any(Array),
       count: 1,
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });

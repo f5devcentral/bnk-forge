@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@/test/test-utils';
+import userEvent from '@testing-library/user-event';
 import type { K8sResource } from '@/types';
 
 // Import all detail components
@@ -23,6 +24,7 @@ import { GatewayClassDetail } from '../GatewayClassDetail';
 import { L4RouteDetail } from '../L4RouteDetail';
 import { IpamRangeDetail } from '../IpamRangeDetail';
 import { BnkGatewayDetail } from '../BnkGatewayDetail';
+import { ServiceDetail } from '../ServiceDetail';
 
 // Shared helpers
 import { InfoRow, Section, ConditionsTab, getConditionIcon, getConditionColor } from '../shared';
@@ -653,5 +655,57 @@ describe('BnkGatewayDetail', () => {
     expect(screen.getByText('BNK Gateway (IPAM)')).toBeInTheDocument();
     expect(screen.getByText('my-range')).toBeInTheDocument();
     expect(screen.getByText('my-gateway')).toBeInTheDocument();
+  });
+});
+
+// ============================================================================
+// ServiceDetail
+// ============================================================================
+
+describe('ServiceDetail', () => {
+  const resource = makeResource({
+    kind: 'Service',
+    spec: {
+      type: 'ClusterIP',
+      clusterIP: '10.0.0.1',
+      ports: [
+        { port: 80, targetPort: 8080, protocol: 'TCP', name: 'http' },
+        { port: 443, targetPort: 8443, protocol: 'TCP', name: 'https' },
+      ],
+      selector: { app: 'api', version: 'v1' },
+    },
+    status: {
+      conditions: [{ type: 'Ready', status: 'True', reason: 'Ready', message: 'Endpoints ready' }],
+    },
+  });
+
+  it('renders service type and cluster IP', () => {
+    render(<ServiceDetail resource={resource} />);
+    expect(screen.getByText('Service')).toBeInTheDocument();
+    expect(screen.getByText('ClusterIP')).toBeInTheDocument();
+    expect(screen.getByText('10.0.0.1')).toBeInTheDocument();
+  });
+
+  it('renders ports with target ports and protocols', () => {
+    render(<ServiceDetail resource={resource} />);
+    expect(screen.getByText('80 → 8080')).toBeInTheDocument();
+    expect(screen.getByText('443 → 8443')).toBeInTheDocument();
+    expect(screen.getByText('http')).toBeInTheDocument();
+    expect(screen.getByText('https')).toBeInTheDocument();
+    expect(screen.getAllByText('TCP').length).toBe(2);
+  });
+
+  it('renders selector labels', () => {
+    render(<ServiceDetail resource={resource} />);
+    expect(screen.getByText('app=api')).toBeInTheDocument();
+    expect(screen.getByText('version=v1')).toBeInTheDocument();
+  });
+
+  it('shows status conditions in status tab', async () => {
+    render(<ServiceDetail resource={resource} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Status' }));
+    expect(screen.getAllByText('Ready').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Endpoints ready')).toBeInTheDocument();
   });
 });

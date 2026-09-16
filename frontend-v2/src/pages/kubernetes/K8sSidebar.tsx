@@ -61,7 +61,10 @@ export function K8sSidebar({
   isResourceSummaryLoading,
   showOnlyUnhealthy = false,
 }: K8sSidebarProps) {
-  const { data: crdsData } = useCrds(clusterId ?? 0, { enabled: !!clusterId });
+  const { data: crdsData } = useCrds(clusterId ?? 0, {
+    enabled: !!clusterId,
+    group: ['gateway.networking.k8s.io', 'cert-manager.io'],
+  });
 
   const categoryTree = useMemo(
     () => buildK8sCategories(crdsData?.crds ?? []),

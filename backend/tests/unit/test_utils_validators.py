@@ -10,8 +10,11 @@ import pytest
 from utils.validators import (
     VALID_AWS_REGIONS,
     validate_aws_region,
+    validate_azure_region,
     validate_cidr,
     validate_cidr_fields,
+    validate_gcp_region,
+    validate_ibm_region,
 )
 
 # ── CIDR Validation ───────────────────────────────────────────────────
@@ -106,18 +109,16 @@ class TestValidateAwsRegion:
     def test_empty_string_allowed(self):
         validate_aws_region("")
 
-    def test_invalid_aws_region_raises(self):
-        with pytest.raises(ValueError, match="Invalid AWS region"):
-            validate_aws_region("us-narnia-1")
+    def test_unknown_aws_shaped_region_accepted(self):
+        """Any AWS-shaped region should be accepted (new/private regions)."""
+        validate_aws_region("us-narnia-1")
+        validate_aws_region("ap-southeast-99")
 
     def test_freeform_label_passes_through(self):
-        """Non-AWS-pattern strings (e.g., 'on-prem') should not raise."""
+        """Non-AWS-pattern strings (e.g., 'on-prem', 'eu-fr2') should not raise."""
         validate_aws_region("on-prem")
         validate_aws_region("datacenter-nyc")
-
-    def test_custom_field_name_in_error(self):
-        with pytest.raises(ValueError, match="cloud_region"):
-            validate_aws_region("xx-fake-1", field_name="cloud_region")
+        validate_aws_region("eu-fr2")
 
     def test_valid_regions_set_is_not_empty(self):
         """Sanity check that the region set is populated."""
@@ -126,3 +127,58 @@ class TestValidateAwsRegion:
     def test_govcloud_regions_included(self):
         assert "us-gov-west-1" in VALID_AWS_REGIONS
         assert "us-gov-east-1" in VALID_AWS_REGIONS
+
+
+class TestValidateIbmRegion:
+    """Tests for validate_ibm_region()."""
+
+    def test_valid_ibm_regions_accepted(self):
+        for region in ["us-south", "eu-de", "jp-tok", "br-sao"]:
+            validate_ibm_region(region)
+
+    def test_none_and_empty_allowed(self):
+        validate_ibm_region(None)
+        validate_ibm_region("")
+
+    def test_unknown_ibm_shaped_region_accepted(self):
+        """Any IBM-shaped region should be accepted (new MZRs)."""
+        validate_ibm_region("eu-abc")
+
+    def test_freeform_label_passes_through(self):
+        """Free-form labels (e.g., 'eu-fr2', 'on-prem') should not raise."""
+        validate_ibm_region("eu-fr2")
+        validate_ibm_region("on-prem")
+
+
+class TestValidateAzureRegion:
+    """Tests for validate_azure_region()."""
+
+    def test_valid_azure_regions_accepted(self):
+        for region in ["westus", "westus2", "francecentral", "australiacentral2"]:
+            validate_azure_region(region)
+
+    def test_none_and_empty_allowed(self):
+        validate_azure_region(None)
+        validate_azure_region("")
+
+    def test_freeform_label_passes_through(self):
+        """Any free-form label (e.g., 'eu-fr2', 'on-prem') should be accepted."""
+        validate_azure_region("eu-fr2")
+        validate_azure_region("on-prem")
+
+
+class TestValidateGcpRegion:
+    """Tests for validate_gcp_region()."""
+
+    def test_valid_gcp_regions_accepted(self):
+        for region in ["us-central1", "europe-west1", "asia-southeast1", "africa-south1"]:
+            validate_gcp_region(region)
+
+    def test_none_and_empty_allowed(self):
+        validate_gcp_region(None)
+        validate_gcp_region("")
+
+    def test_freeform_label_passes_through(self):
+        """Any free-form label (e.g., 'eu-fr2', 'on-prem') should be accepted."""
+        validate_gcp_region("eu-fr2")
+        validate_gcp_region("on-prem")

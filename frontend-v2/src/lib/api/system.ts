@@ -16,6 +16,7 @@ import type {
   UpgradeResponse,
   UpgradeState,
   UpgradeVerification,
+  BnkConsumptionResponse,
 } from '@/types/system';
 
 export const systemApi = {
@@ -68,6 +69,10 @@ export const systemApi = {
   /** UP-003: Get persisted upgrade state for recovery after page refresh */
   getUpgradeStatus: () =>
     apiClient.get<UpgradeState>('/api/system/upgrade/status').then((res) => res.data),
+
+  // BNK Resource Consumption Dashboard
+  getBnkConsumption: () =>
+    apiClient.get<BnkConsumptionResponse>('/api/system/bnk-consumption').then((res) => res.data),
 
   // MCP Server
   getMCPStatus: () =>

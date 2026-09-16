@@ -432,6 +432,13 @@ class ClusterManagementService(BaseService):
             "platform_constraints": context.platform_constraints,
             "region": cluster.region, "default_namespace": cluster.default_namespace,
             "status": cluster.status, "version": cluster.version,
+            "node_count": cluster.node_count,
+            "account_id": cluster.account_id,
+            "discovery_status": cluster.discovery_status,
+            "connectivity_status": cluster.connectivity_status,
+            "integration_status": cluster.integration_status,
+            "zones": list(cluster.zones or []),
+            "access_method": cluster.access_method,
             "project_id": cluster.project_id,
             # ADR-478/494: release FK ids — deployable = intent; running = observed by scan.
             "deployable_release_id": cluster.deployable_release_id,

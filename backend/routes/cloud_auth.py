@@ -195,6 +195,16 @@ def list_aws_regions():
     return {"provider": "aws", "regions": regions}
 
 
+@router.get("/azure/regions", response_model=CloudRegionsResponse)
+@handle_route_errors("list Azure regions")
+def list_azure_regions():
+    """List Azure regions in the canonical {value, label} shape."""
+    from services.azure_auth_service import AzureAuthService
+    service = AzureAuthService()
+    regions = service.get_common_azure_regions()
+    return {"provider": "azure", "regions": regions}
+
+
 @router.post("/ibm/cos-instances/query", response_model=IBCosInstancesResponse)
 @handle_route_errors("query IBM COS instances")
 def query_ibm_cos_instances(request: IBCosInstancesQueryRequest, db: Session = Depends(get_db)):

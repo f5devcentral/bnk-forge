@@ -135,7 +135,7 @@ export default function LlmLogs() {
     const seen = new Set<string>();
     const merged: LlmLogRow[] = [];
     for (const r of [...(logs.data?.rows ?? []), ...olderRows]) {
-      const id = `${r.ts}-${r.model}-${r.total_tk}`;
+      const id = `${r.cluster_id ?? ''}-${r.ts}-${r.model}-${r.total_tk}`;
       if (seen.has(id)) continue;
       seen.add(id);
       merged.push(r);
@@ -156,7 +156,7 @@ export default function LlmLogs() {
   const nextEnd = cursor ?? logs.data?.next_end ?? null;
 
   const loadOlder = useCallback(async () => {
-    if (!f.clusterId || !nextEnd) return;
+    if (!nextEnd) return;
     setLoadingOlder(true);
     try {
       const res = await llmObservabilityApi.getLogs(f.clusterId, { ...logParams, end: nextEnd });
@@ -316,7 +316,14 @@ export default function LlmLogs() {
                     <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
                       {fmtTime(row.ts)}
                     </TableCell>
-                    <TableCell className="max-w-[280px] truncate text-foreground/90">{row.message || '—'}</TableCell>
+                    <TableCell className="max-w-[280px] truncate text-foreground/90">
+                      {row.cluster_name && (
+                        <Badge variant="outline" className="mr-1.5 text-[10px] font-mono py-0 px-1 text-muted-foreground">
+                          {row.cluster_name}
+                        </Badge>
+                      )}
+                      {row.message || '—'}
+                    </TableCell>
                     {visibleCols.model && <TableCell className="text-xs text-foreground/80">{row.model}</TableCell>}
                     <TableCell className="text-right tabular-nums text-foreground/80">{fmtLatencyMs(row.latency_ms)}</TableCell>
                     {visibleCols.tokens && (
@@ -471,6 +478,11 @@ function LogDetailDrawer({
               <SheetTitle className="flex items-center gap-2">
                 <span className="truncate">{row.model}</span>
                 <StatusBadge status={row.status} />
+                {row.cluster_name && (
+                  <Badge variant="outline" className="font-mono text-[10px] font-normal text-muted-foreground">
+                    {row.cluster_name}
+                  </Badge>
+                )}
               </SheetTitle>
             </SheetHeader>
 

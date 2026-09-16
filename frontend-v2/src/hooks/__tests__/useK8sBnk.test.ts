@@ -34,6 +34,21 @@ const mockBnkData = {
   policyCount: 1,
 };
 
+const mockBnkHealth = {
+  overall: 'healthy',
+  installShape: 'flo',
+  installMethod: 'FLO deploy flow',
+  connectivity: { status: 'connected', message: 'Kubernetes API is accessible', checkedAt: '2026-09-01T00:00:00Z' },
+  integration: { status: 'healthy', operatorConnected: false, operatorMode: 'kubeconfig', operatorVersion: null, lastSeen: null, message: 'Cluster managed via kubeconfig' },
+  platform: { severity: 'healthy' },
+  dataPlane: { severity: 'healthy' },
+  networking: { severity: 'healthy' },
+  security: { severity: 'healthy' },
+  ai: { severity: 'healthy', analyzers: 0, analyzerDetails: [] },
+  counts: { tmm_containers: 1, gateways: 0, httpRoutes: 0, vlans: 0 },
+  cluster_id: 1,
+};
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -51,6 +66,9 @@ function setupBnkDataHandler() {
   server.use(
     http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', () => {
       return HttpResponse.json(mockBnkData);
+    }),
+    http.get('*/api/k8s/clusters/:clusterId/f5bnk/health', () => {
+      return HttpResponse.json(mockBnkHealth);
     })
   );
 }
@@ -101,7 +119,7 @@ describe('useBnkData', () => {
 // ========================================================================
 
 describe('useF5BNKHealth', () => {
-  it('returns health slice of BNK data', async () => {
+  it('fetches health data directly from /f5bnk/health', async () => {
     setupBnkDataHandler();
 
     const { result } = renderHook(
@@ -113,7 +131,7 @@ describe('useF5BNKHealth', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(result.current.data).toMatchObject({ overall_status: 'healthy' });
+    expect(result.current.data).toMatchObject({ overall_status: 'healthy', cluster_id: 1 });
   });
 });
 
