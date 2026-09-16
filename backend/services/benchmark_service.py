@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -889,7 +889,29 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int) -> bool:
+    def get_first_pending_run_for_agent(self, agent_id: int) -> BenchmarkRun | None:
+        """Find the earliest pending run assigned to an agent that has no sibling currently running."""
+        running = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+            )
+            .first()
+        )
+        if running:
+            return None
+        return (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+            )
+            .order_by(BenchmarkRun.id)
+            .first()
+        )
+
+    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
@@ -899,14 +921,40 @@ class BenchmarkService(BaseService):
         UPDATE (WHERE status='pending') means exactly one caller flips it to RUNNING
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
+
+        ``group_id`` adds the group-sequential guard (MAJOR-2 / MAJOR-A):
+        Under PostgreSQL READ COMMITTED, evaluating NOT EXISTS without a lock can
+        suffer write-skew if concurrent transactions claim different sibling rows.
+        To guarantee mutual exclusion across transactions, we acquire an exclusive row
+        lock on the group (``with_for_update()``) before evaluating the conditional
+        UPDATE requiring that NO sibling of that group is currently RUNNING.
+        This serializes all sibling claims within a group so two children can never
+        both be claimed/RUNNING simultaneously. Standalone (group-less) runs omit
+        ``group_id`` and rely on the single-row atomic guard.
         """
         now = datetime.now(UTC)
+        filters = [
+            BenchmarkRun.id == run_id,
+            BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+        ]
+        if group_id is not None:
+            # Lock the group row to serialize sibling claims across concurrent transactions
+            # under PostgreSQL READ COMMITTED (MAJOR-A / INV-8).
+            # SQLite (test env) ignores with_for_update() and serializes via its database write lock.
+            self.db.query(BenchmarkRunGroup).filter(BenchmarkRunGroup.id == group_id).with_for_update().first()
+            sibling = aliased(BenchmarkRun)
+            running_sibling = (
+                self.db.query(sibling.id)
+                .filter(
+                    sibling.run_group_id == group_id,
+                    sibling.status == BenchmarkRunStatus.RUNNING,
+                )
+                .exists()
+            )
+            filters.append(~running_sibling)
         result = (
             self.db.query(BenchmarkRun)
-            .filter(
-                BenchmarkRun.id == run_id,
-                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
-            )
+            .filter(*filters)
             .update(
                 {
                     BenchmarkRun.status: BenchmarkRunStatus.RUNNING,
@@ -937,6 +985,31 @@ class BenchmarkService(BaseService):
             },
             synchronize_session=False,
         )
+
+    def mark_run_group_running_if_pending(self, group_id: int) -> bool:
+        """Atomically transition a run-group PENDING→RUNNING if it has a running child.
+
+        Returns True iff this call transitioned the row (rowcount == 1).
+        """
+        if not self.find_running_group_child(group_id):
+            return False
+        now = datetime.now(UTC)
+        result = (
+            self.db.query(BenchmarkRunGroup)
+            .filter(
+                BenchmarkRunGroup.id == group_id,
+                BenchmarkRunGroup.status == BenchmarkRunStatus.PENDING,
+            )
+            .update(
+                {
+                    BenchmarkRunGroup.status: BenchmarkRunStatus.RUNNING,
+                    BenchmarkRunGroup.started_at: now,
+                    BenchmarkRunGroup.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        return result == 1
 
     def maybe_finalize_run_group(self, group_id: int) -> BenchmarkRunGroup | None:
         """Recompute group counts; roll up aggregate metrics when all children terminal.
