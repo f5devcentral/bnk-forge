@@ -614,6 +614,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Cluster
+         * @description Delete cluster configuration (owner or admin only).
+         */
+        delete: operations["delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/refresh-kubeconfig": {
         parameters: {
             query?: never;
@@ -14606,6 +14626,10 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
             /** Reachable */
             reachable: boolean;
             /** Bnk Installed */
@@ -25715,10 +25739,44 @@ export interface operations {
     };
     delete_cluster_api_k8s_clusters__cluster_id__delete: {
         parameters: {
+            query?: {
+                project_id?: number | null;
+            };
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
+        parameters: {
             query?: never;
             header?: never;
             path: {
                 cluster_id: number;
+                project_id: number | null;
             };
             cookie?: never;
         };
