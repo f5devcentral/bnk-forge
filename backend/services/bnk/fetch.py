@@ -6,7 +6,6 @@ modules (health, topology, etc.) consume the dict returned by
 ``fetch_all_bnk_data`` and are pure data transformations.
 """
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -33,9 +32,7 @@ _BNK_POD_DISCOVERY_CACHE_TTL = 60
 # Shared executor for BNK CRD/pod fetches. A per-request executor with
 # max_workers=20 explodes the process thread count when multiple BNK pages
 # are open (100+ threads observed on a laptop). Because this pool is shared
-# across all requests, we can keep more workers available without thread
-# explosion; the limit is network/batch parallelism to the K8s API.
-_BNK_FETCH_WORKERS = min(16, (os.cpu_count() or 4) + 4)
+_BNK_FETCH_WORKERS = 64
 _bnk_fetch_executor: ThreadPoolExecutor | None = None
 
 
@@ -82,7 +79,7 @@ def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
     """Fetch cluster nodes and return a name-indexed enrichment map."""
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        nodes = v1.list_node(_request_timeout=10).items or []
+        nodes = v1.list_node(_request_timeout=(5, 15)).items or []
         result: dict[str, dict[str, Any]] = {}
         for node in nodes:
             enriched = _node_enrichment(node)
@@ -115,7 +112,7 @@ def _cached_discover_f5_pods(
     if cached is not None:
         return cached
 
-    result = discover_f5_pods(api_client, extra_namespaces=extra_namespaces)
+    result = discover_f5_pods(api_client, include_sweep=False, extra_namespaces=extra_namespaces)
     cache.set(cache_key, result, ttl_seconds=_BNK_POD_DISCOVERY_CACHE_TTL)
     return result
 
@@ -187,7 +184,7 @@ def fetch_all_bnk_data(
                 jobs = batch_api.list_namespaced_job(
                     namespace=ns,
                     label_selector=_CRD_INSTALLER_LABEL,
-                    _request_timeout=10,
+                    _request_timeout=(5, 15),
                 ).items
                 if jobs:
                     job = jobs[0]
@@ -212,10 +209,27 @@ def fetch_all_bnk_data(
     job_future = executor.submit(fetch_crd_installer_job)
     nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 
-    resources = {rt: fut.result() for rt, fut in crd_futures.items()}
-    tenant_pods, utils_pods = pods_future.result()
-    crd_installer_job = job_future.result()
-    nodes = nodes_future.result() if nodes_future is not None else {}
+    resources = {}
+    for rt, fut in crd_futures.items():
+        try:
+            resources[rt] = fut.result(timeout=10)
+        except Exception:
+            resources[rt] = []
+
+    try:
+        tenant_pods, utils_pods = pods_future.result(timeout=25)
+    except Exception:
+        tenant_pods, utils_pods = [], []
+
+    try:
+        crd_installer_job = job_future.result(timeout=10)
+    except Exception:
+        crd_installer_job = None
+
+    try:
+        nodes = nodes_future.result(timeout=10) if nodes_future is not None else {}
+    except Exception:
+        nodes = {}
 
     classified = classify_f5_pods(tenant_pods, utils_pods)
 

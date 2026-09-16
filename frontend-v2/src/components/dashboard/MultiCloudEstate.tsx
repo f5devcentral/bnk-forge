@@ -188,7 +188,7 @@ export function MultiCloudEstate({
         name: 'Microsoft Azure (AKS)',
         shortLabel: 'AZR',
         matchKey: 'azure',
-        badgeClass: 'border-accent/40 text-accent bg-accent/10 font-semibold text-[10px] px-1.5 py-0.5',
+        badgeClass: 'border-sky-500/40 text-sky-600 dark:text-sky-400 bg-sky-500/10 font-semibold text-[10px] px-1.5 py-0.5',
         badgeVariant: 'outline',
       },
       {

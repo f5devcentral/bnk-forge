@@ -129,13 +129,23 @@ def _build_bnk_context(cluster: KubernetesCluster, db: Session) -> dict[str, Any
             ),
         }
     else:
+        if connectivity_status == "connected":
+            integration_status = "healthy"
+            integration_msg = "Cluster managed via kubeconfig"
+        elif connectivity_status == "unreachable":
+            integration_status = "warning"
+            integration_msg = "Cluster managed via kubeconfig (Kubernetes API unreachable)"
+        else:
+            integration_status = "unknown"
+            integration_msg = "Cluster managed via kubeconfig (Connectivity unverified)"
+
         integration = {
-            "status": "healthy",
+            "status": integration_status,
             "operatorConnected": False,
             "operatorMode": "kubeconfig",
             "operatorVersion": None,
             "lastSeen": _dt_to_str(cluster.last_synced_at),
-            "message": "Cluster managed via kubeconfig",
+            "message": integration_msg,
         }
 
     return {"connectivity": connectivity, "integration": integration}

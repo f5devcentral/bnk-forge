@@ -17,7 +17,7 @@ import os
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -140,11 +140,13 @@ class SystemService:
                 c.name,
                 getattr(c, "node_count", None),
                 c.status or "unknown",
+                getattr(c, "cloud_provider", None),
+                getattr(c, "region", None),
             )
             for c in clusters
         ]
 
-        def _collect_cluster(cluster_id: int, cluster_name: str, node_count: int | None, cluster_status: str) -> dict[str, Any]:
+        def _collect_cluster(cluster_id: int, cluster_name: str, node_count: int | None, cluster_status: str, cloud_provider: str | None, region: str | None) -> dict[str, Any]:
             from database import SessionLocal
 
             with SessionLocal() as thread_db:
@@ -189,46 +191,57 @@ class SystemService:
                     pod_metrics_response=pod_metrics_response,
                     dpf_summary=dpf_summary,
                     reachable=reachable,
+                    cloud_provider=cloud_provider,
+                    region=region,
                 )
 
         # Collect per-cluster data in parallel with a per-cluster timeout.
         # Without timeouts a single unreachable cluster can stall the whole
         # fleet view for minutes (e.g. metrics-server not installed).
         cluster_results: list[dict[str, Any]] = []
-        per_cluster_timeout = 30  # seconds
+        fleet_timeout = 60  # seconds
+        completed_futures: set[Any] = set()
         with ThreadPoolExecutor(max_workers=min(len(cluster_payloads) or 1, 8)) as executor:
             futures = {
-                executor.submit(_collect_cluster, c_id, c_name, c_nodes, c_status): (c_id, c_name, c_nodes, c_status)
-                for (c_id, c_name, c_nodes, c_status) in cluster_payloads
+                executor.submit(_collect_cluster, c_id, c_name, c_nodes, c_status, c_provider, c_region): (c_id, c_name, c_nodes, c_status, c_provider, c_region)
+                for (c_id, c_name, c_nodes, c_status, c_provider, c_region) in cluster_payloads
             }
-            for future in futures:
-                c_id, c_name, c_nodes, c_status = futures[future]
-                try:
-                    cluster_results.append(future.result(timeout=per_cluster_timeout))
-                except FuturesTimeoutError:
-                    logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) timed out after {per_cluster_timeout}s")
-                    cluster_results.append(aggregate_cluster_consumption(
-                        cluster_id=c_id,
-                        cluster_name=c_name,
-                        node_count=c_nodes,
-                        status=c_status,
-                        bnk_data=None,
-                        pod_metrics_response={"available": False, "error": "Timed out collecting cluster consumption"},
-                        dpf_summary={"detected": False, "dpu_count": 0},
-                        reachable=False,
-                    ))
-                except Exception as exc:
-                    logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) failed: {exc}")
-                    cluster_results.append(aggregate_cluster_consumption(
-                        cluster_id=c_id,
-                        cluster_name=c_name,
-                        node_count=c_nodes,
-                        status=c_status,
-                        bnk_data=None,
-                        pod_metrics_response={"available": False, "error": str(exc)},
-                        dpf_summary={"detected": False, "dpu_count": 0},
-                        reachable=False,
-                    ))
+            try:
+                for future in as_completed(futures, timeout=fleet_timeout):
+                    completed_futures.add(future)
+                    c_id, c_name, c_nodes, c_status, c_provider, c_region = futures[future]
+                    try:
+                        cluster_results.append(future.result())
+                    except Exception as exc:
+                        logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) failed: {exc}")
+                        cluster_results.append(aggregate_cluster_consumption(
+                            cluster_id=c_id,
+                            cluster_name=c_name,
+                            node_count=c_nodes,
+                            status=c_status,
+                            bnk_data=None,
+                            pod_metrics_response={"available": False, "error": str(exc)},
+                            dpf_summary={"detected": False, "dpu_count": 0},
+                            reachable=False,
+                            cloud_provider=c_provider,
+                            region=c_region,
+                        ))
+            except FuturesTimeoutError:
+                for future, (c_id, c_name, c_nodes, c_status, c_provider, c_region) in futures.items():
+                    if future not in completed_futures:
+                        logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) timed out after {fleet_timeout}s")
+                        cluster_results.append(aggregate_cluster_consumption(
+                            cluster_id=c_id,
+                            cluster_name=c_name,
+                            node_count=c_nodes,
+                            status=c_status,
+                            bnk_data=None,
+                            pod_metrics_response={"available": False, "error": "Timed out collecting cluster consumption"},
+                            dpf_summary={"detected": False, "dpu_count": 0},
+                            reachable=False,
+                            cloud_provider=c_provider,
+                            region=c_region,
+                        ))
 
         result = {
             "timestamp": datetime.now(UTC).isoformat(),
