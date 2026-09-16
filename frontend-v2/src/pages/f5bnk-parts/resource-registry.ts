@@ -11,7 +11,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { K8sResource } from '@/types/kubernetes';
 import {
   Shield, Globe, Route, Network, Server, Activity, Settings,
-  Code, ShieldAlert, FileText, Map, Eye,
+  Code, ShieldAlert, FileText, Map, Eye, Layers, Cpu, Database,
 } from 'lucide-react';
 
 // Detail panel components
@@ -39,6 +39,11 @@ import {
   BnkGatewayDetail,
   FirewallRuleListDetail,
   ServiceDetail,
+  InfraDetail,
+  GatewaySettingsDetail,
+  EgressGatewayDetail,
+  F5EPPDetail,
+  InferencePoolDetail,
 } from '@/components/k8s/f5bnk-details';
 
 import { VIEW_POLICY_MAP, VIEW_AI_ANALYZERS } from './bnk-constants';
@@ -245,6 +250,65 @@ const registry: Record<string, ResourceRegistryEntry> = {
     ],
     icon: Server,
   },
+  Infra: {
+    detailComponent: InfraDetail,
+    contextActions: [
+      { label: 'View Underlay Networks', icon: Layers, type: 'select' },
+    ],
+    icon: Layers,
+  },
+  GatewaySettings: {
+    detailComponent: GatewaySettingsDetail,
+    contextActions: [
+      { label: 'View Ingress & SNAT Config', icon: Settings, type: 'select' },
+    ],
+    icon: Settings,
+  },
+  EgressGateway: {
+    detailComponent: EgressGatewayDetail,
+    contextActions: [
+      { label: 'View Egress Steering', icon: Network, type: 'select' },
+    ],
+    icon: Network,
+  },
+  SecPolicy: {
+    detailComponent: SecurityPolicyDetail,
+    contextActions: [
+      { label: 'View Gateway Associations', icon: Globe, type: 'navigate', targetView: VIEW_POLICY_MAP },
+    ],
+    icon: Shield,
+  },
+  NetPolicy: {
+    detailComponent: NetworkPolicyDetail,
+    contextActions: [
+      { label: 'View Extensions', icon: Settings, type: 'select' },
+    ],
+    icon: Network,
+  },
+  F5EPP: {
+    detailComponent: F5EPPDetail,
+    contextActions: [
+      { label: 'View AI Dashboard', icon: Activity, type: 'navigate', targetView: VIEW_AI_ANALYZERS },
+    ],
+    icon: Activity,
+  },
+  InferencePool: {
+    detailComponent: InferencePoolDetail,
+    contextActions: [
+      { label: 'View AI Dashboard', icon: Activity, type: 'navigate', targetView: VIEW_AI_ANALYZERS },
+    ],
+    icon: Cpu,
+  },
+  InferenceModelRewrite: {
+    detailComponent: null,
+    contextActions: [],
+    icon: Route,
+  },
+  F5BigPersistenceProfile: {
+    detailComponent: null,
+    contextActions: [],
+    icon: Database,
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -287,12 +351,12 @@ export function getDetailQuickActions(kind: string): ResourceContextAction[] {
   }
 
   // Policy map navigation for gateways and policies
-  if (kind === 'Gateway' || kind === 'F5BigFwPolicy' || kind === 'BNKSecPolicy') {
+  if (kind === 'Gateway' || kind === 'F5BigFwPolicy' || kind === 'BNKSecPolicy' || kind === 'SecPolicy') {
     actions.push({ label: 'Policy Map', icon: Map, type: 'navigate', targetView: VIEW_POLICY_MAP });
   }
 
   // AI dashboard navigation
-  if (kind === 'F5BigAnalyzer') {
+  if (kind === 'F5BigAnalyzer' || kind === 'F5EPP' || kind === 'InferencePool') {
     actions.push({ label: 'AI Dashboard', icon: Activity, type: 'navigate', targetView: VIEW_AI_ANALYZERS });
   }
 

@@ -28,12 +28,17 @@ GATEWAY_API_STANDARD_CRDS = frozenset(
 
 # F5 CRD groups
 F5_CRD_GROUPS = frozenset(
-    {"k8s.f5.com", "k8s.f5net.com", "gateway.k8s.f5net.com", "fic.f5.com"}
+    {"k8s.f5.com", "k8s.f5net.com", "gateway.k8s.f5.com", "gateway.k8s.f5net.com", "fic.f5.com"}
 )
 
 # Gateway API CRD groups
 GATEWAY_API_CRD_GROUPS = frozenset(
-    {"gateway.networking.k8s.io", "gateway.k8s.f5net.com"}
+    {
+        "gateway.networking.k8s.io",
+        "gateway.k8s.f5.com",
+        "gateway.k8s.f5net.com",
+        "inference.networking.k8s.io",
+    }
 )
 
 # ---------------------------------------------------------------------------
