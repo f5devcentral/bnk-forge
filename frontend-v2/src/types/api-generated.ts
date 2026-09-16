@@ -614,7 +614,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/k8s/clusters/{cluster_id}/resync": {
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -623,20 +623,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        post?: never;
         /**
-         * Resync Cluster
-         * @description Force a fresh inventory sync for a cluster (owner or admin only).
-         *
-         *     Issue #194: an explicit, documented rescan trigger. Operators previously
-         *     relied on a no-op ``PUT`` to force a refresh; this endpoint makes that
-         *     intent first-class and reliable. It enqueues a background scan (the same
-         *     task registration/PUT use) and returns immediately — the scan stamps
-         *     ``last_synced_at`` on completion. An unknown cluster 404s via the
-         *     ``require_cluster_owner`` dependency before this body runs, so there is no
-         *     silently-swallowed background no-op.
+         * Delete Cluster
+         * @description Delete cluster configuration (owner or admin only).
          */
-        post: operations["resync_cluster_api_k8s_clusters__cluster_id__resync_post"];
-        delete?: never;
+        delete: operations["delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5282,66 +5274,6 @@ export interface paths {
          * @description Remove AWS credentials from a project
          */
         delete: operations["delete_project_aws_credentials_api_cloud_auth_aws_credentials__project_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud-auth/azure/sso/initiate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Initiate Azure Sso
-         * @description Initiate Azure Entra ID device code authorization flow.
-         */
-        post: operations["initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud-auth/azure/sso/poll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Poll Azure Sso
-         * @description Poll Azure Entra ID token endpoint for device code completion.
-         */
-        post: operations["poll_azure_sso_api_cloud_auth_azure_sso_poll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud-auth/azure/subscriptions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * List Azure Subscriptions
-         * @description List Azure subscriptions accessible by the access token.
-         */
-        post: operations["list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -13015,46 +12947,6 @@ export interface components {
             };
         };
         /**
-         * AzureSSOInitiateRequest
-         * @description Request model for initiating Azure SSO device authorization
-         */
-        AzureSSOInitiateRequest: {
-            /**
-             * Tenant Id
-             * @default common
-             */
-            tenant_id: string | null;
-            /** Client Id */
-            client_id?: string | null;
-            /** Template Id */
-            template_id?: number | null;
-        };
-        /**
-         * AzureSSOPollRequest
-         * @description Request model for polling Azure SSO token
-         */
-        AzureSSOPollRequest: {
-            /** Device Code */
-            device_code: string;
-            /**
-             * Tenant Id
-             * @default common
-             */
-            tenant_id: string | null;
-            /** Client Id */
-            client_id?: string | null;
-            /** Template Id */
-            template_id?: number | null;
-        };
-        /**
-         * AzureSubscriptionsRequest
-         * @description Request model for listing Azure subscriptions
-         */
-        AzureSubscriptionsRequest: {
-            /** Access Token */
-            access_token: string;
-        };
-        /**
          * BackupCreateRequest
          * @description Request to create a backup archive.
          */
@@ -13888,8 +13780,6 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
-            /** Cluster Name */
-            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -13995,8 +13885,6 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
-            /** Cluster Name */
-            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -14134,8 +14022,6 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
-            /** Cluster Name */
-            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -14200,8 +14086,6 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
-            /** Cluster Name */
-            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -16533,7 +16417,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16623,7 +16507,7 @@ export interface components {
             /** Has Gcp Credentials */
             has_gcp_credentials: boolean;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -16749,7 +16633,7 @@ export interface components {
             /** Gcp Project Id */
             gcp_project_id?: string | null;
             /** Azure Auth Method */
-            azure_auth_method?: string | null;
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
@@ -22511,8 +22395,6 @@ export interface components {
             status: string;
             /** Target Id */
             target_id: number | null;
-            /** Cluster Name */
-            cluster_name?: string | null;
             /** Proxy */
             proxy: string | null;
             /** Model */
@@ -25857,7 +25739,9 @@ export interface operations {
     };
     delete_cluster_api_k8s_clusters__cluster_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                project_id?: number | null;
+            };
             header?: never;
             path: {
                 cluster_id: number;
@@ -25886,12 +25770,13 @@ export interface operations {
             };
         };
     };
-    resync_cluster_api_k8s_clusters__cluster_id__resync_post: {
+    delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 cluster_id: number;
+                project_id: number | null;
             };
             cookie?: never;
         };
@@ -33663,105 +33548,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AzureSSOInitiateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    poll_azure_sso_api_cloud_auth_azure_sso_poll_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AzureSSOPollRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AzureSubscriptionsRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -43139,7 +42925,6 @@ export interface operations {
                 tool?: string | null;
                 model?: string | null;
                 status?: string | null;
-                cluster_id?: number | null;
                 limit?: number;
                 offset?: number;
             };

@@ -154,9 +154,15 @@ def resync_cluster(cluster_id: int, user: User = Depends(require_cluster_owner),
     }
 
 
+@router.delete("/projects/{project_id}/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
 @router.delete("/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
 @handle_route_errors("delete cluster")
-def delete_cluster(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def delete_cluster(
+    cluster_id: int,
+    project_id: int | None = None,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
     """Delete cluster configuration (owner or admin only)."""
     result = ClusterManagementService(db).delete_cluster(cluster_id)
     db.commit()

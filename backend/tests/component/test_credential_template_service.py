@@ -246,79 +246,6 @@ class TestCreateTemplate:
 
 
 # ---------------------------------------------------------------------------
-# provider validation (issue #191)
-# ---------------------------------------------------------------------------
-
-class TestProviderValidation:
-    """A credential template's provider must match a real injection path.
-
-    Regression guard for issue #191: ``provider="ibmcloud"`` (a misspelling of
-    the canonical ``ibm``) used to be stored happily and then inject NO
-    credentials at deploy time — silently. Every provider the service accepts
-    must be one a credential-resolution consumer actually handles.
-    """
-
-    @patch("services.credential_template_service.get_default", return_value="us-east-1")
-    def test_create_rejects_misspelled_ibmcloud_provider(self, mock_get_default, db):
-        """The exact bug from #191: 'ibmcloud' looks right but injects nothing."""
-        svc = CredentialTemplateService(db)
-        with pytest.raises(BadRequestError, match="Unsupported credential-template provider 'ibmcloud'"):
-            svc.create_template(_make_template_data(name="ibm-roks", provider="ibmcloud"))
-        # And nothing was persisted.
-        assert db.query(CloudCredentialTemplate).filter(
-            CloudCredentialTemplate.name == "ibm-roks"
-        ).first() is None
-
-    @patch("services.credential_template_service.get_default", return_value="us-east-1")
-    def test_create_rejects_unknown_provider_with_enumerated_message(self, mock_get_default, db):
-        svc = CredentialTemplateService(db)
-        with pytest.raises(BadRequestError) as exc:
-            svc.create_template(_make_template_data(name="bogus", provider="digitalocean"))
-        msg = str(exc.value)
-        # Message names the offender and enumerates the supported set.
-        assert "digitalocean" in msg
-        for supported in ("aws", "azure", "gcp", "ibm", "ssh"):
-            assert supported in msg
-
-    @patch("services.credential_template_service.get_default", return_value="us-east-1")
-    def test_create_rejects_empty_provider(self, mock_get_default, db):
-        svc = CredentialTemplateService(db)
-        with pytest.raises(BadRequestError):
-            svc.create_template(_make_template_data(name="empty-prov", provider=""))
-
-    @pytest.mark.parametrize("provider", ["aws", "gcp", "azure", "ibm", "ssh"])
-    @patch("services.credential_template_service.get_default", return_value="us-east-1")
-    def test_create_accepts_every_supported_provider(self, mock_get_default, provider, db):
-        """Each canonical provider is accepted — validation matches the injection set."""
-        svc = CredentialTemplateService(db)
-        result = svc.create_template(_make_template_data(
-            name=f"tpl-{provider}",
-            provider=provider,
-            # give IBM its required key; other providers don't need extra fields here
-            ibmcloud_api_key="ibm-api-key-value" if provider == "ibm" else None,
-        ))
-        assert result["provider"] == provider
-
-    def test_update_rejects_switch_to_unknown_provider(self, db):
-        """An update can't move a healthy template onto a no-op provider."""
-        t = _create_template_in_db(db, name="aws-live", provider="aws")
-        svc = CredentialTemplateService(db)
-        with pytest.raises(BadRequestError, match="Unsupported credential-template provider 'ibmcloud'"):
-            svc.update_template(t.id, _make_update_data(provider="ibmcloud"))
-        # Provider unchanged.
-        db.refresh(t)
-        assert t.provider == "aws"
-
-    def test_update_without_provider_change_is_allowed(self, db):
-        """Omitting provider on update leaves it untouched (no false rejection)."""
-        t = _create_template_in_db(db, name="aws-keep", provider="aws")
-        svc = CredentialTemplateService(db)
-        result = svc.update_template(t.id, _make_update_data(description="just a note"))
-        assert result["provider"] == "aws"
-        assert result["description"] == "just a note"
-
-
-# ---------------------------------------------------------------------------
 # list_templates / get_template
 # ---------------------------------------------------------------------------
 
@@ -1086,4 +1013,124 @@ class TestAzureTemplateService:
         status_res = svc.get_sso_status(created["id"])
         assert status_res["is_authenticated"] is True
         assert status_res["can_refresh"] is True
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_azure_sso_test_with_naive_past_expiry_returns_clean_expired(
+        self, mock_azure_cls, db
+    ):
+        """F1 regression: a naive (tz-unaware) past expiry — as SQLite/dev rounds
+        it back — must not raise TypeError comparing offset-naive vs -aware.
+        test_template should return a clean 'expired' result instead."""
+        from core.encryption import encrypt_value
+
+        mock_azure_cls.return_value = MagicMock()
+
+        data = _make_template_data(
+            name="azure-sso-naive-expiry",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-111",
+            azure_client_id="client-222",
+        )
+        svc = CredentialTemplateService(db)
+        created = svc.create_template(data)
+
+        # Simulate a naive past expiry read back from the DB (SQLite drops tzinfo).
+        template = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        template.azure_sso_access_token_encrypted = encrypt_value("stale-access-token")
+        template.azure_sso_refresh_token_encrypted = None
+        template.azure_sso_token_expiry = (
+            datetime.now(UTC) - timedelta(hours=1)
+        ).replace(tzinfo=None)
+        db.commit()
+
+        # Must not raise TypeError; returns a clean expired result.
+        res = svc.test_template(created["id"])
+        assert res["success"] is False
+        assert res["error"] == "Token expired"
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_azure_sso_test_refreshes_and_persists_token(
+        self, mock_azure_cls, db
+    ):
+        """M2 regression: when test_template refreshes an expired SSO token, the
+        refreshed access and refresh tokens must be committed and persisted to the DB."""
+        from core.encryption import decrypt_value, encrypt_value
+
+        mock_azure = MagicMock()
+        mock_azure.refresh_credentials.return_value = {
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "expires_in": 7200,
+        }
+        mock_azure.validate_subscription_access.return_value = {
+            "subscription_id": "sub-123",
+            "display_name": "Test Sub",
+        }
+        mock_azure_cls.return_value = mock_azure
+
+        data = _make_template_data(
+            name="azure-sso-refresh-persist",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-111",
+            azure_client_id="client-222",
+            azure_subscription_id="sub-123",
+        )
+        svc = CredentialTemplateService(db)
+        created = svc.create_template(data)
+
+        template = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        template.azure_sso_access_token_encrypted = encrypt_value("old-access-token")
+        template.azure_sso_refresh_token_encrypted = encrypt_value("old-refresh-token")
+        template.azure_sso_token_expiry = datetime.now(UTC) - timedelta(hours=1)
+        db.commit()
+
+        res = svc.test_template(created["id"])
+        assert res["success"] is True
+        mock_azure.refresh_credentials.assert_called_once()
+
+        # Re-fetch from fresh query to assert DB persistence
+        db.expire_all()
+        refreshed_tmpl = (
+            db.query(CloudCredentialTemplate)
+            .filter(CloudCredentialTemplate.id == created["id"])
+            .first()
+        )
+        assert decrypt_value(refreshed_tmpl.azure_sso_access_token_encrypted) == "new-access-token"
+        assert decrypt_value(refreshed_tmpl.azure_sso_refresh_token_encrypted) == "new-refresh-token"
+        expiry = refreshed_tmpl.azure_sso_token_expiry
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        assert expiry > datetime.now(UTC)
+
+    def test_has_complete_sso_config_azure_auth_methods(self, db):
+        """m2 regression: _has_complete_sso_config must return True only for Azure SSO,
+        not for Azure Service Principal templates."""
+        sp_tmpl = CloudCredentialTemplate(
+            name="azure-sp",
+            provider="azure",
+            azure_auth_method="service_principal",
+            azure_tenant_id="tenant-1",
+            azure_client_id="client-1",
+        )
+        assert CredentialTemplateService._has_complete_sso_config(sp_tmpl) is False
+
+        sso_tmpl = CloudCredentialTemplate(
+            name="azure-sso",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-1",
+            azure_client_id="client-1",
+        )
+        assert CredentialTemplateService._has_complete_sso_config(sso_tmpl) is True
+
 

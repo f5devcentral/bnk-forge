@@ -75,3 +75,12 @@ class TestGlobalSearch:
             assert data["ingresses"][0]["matched_host"] == "api.example.com"
             assert data["ingresses"][0]["target_service"] == "api-gateway:8080"
             assert data["ingresses"][0]["cluster_name"] == "eks-prod-us-east-1"
+
+    def test_search_requires_authentication(self, client):
+        """The route is gated by require_viewer: an unauthenticated request is
+        rejected (401) and never reaches the scan. Previously only asserted by
+        inspecting the Depends(require_viewer) on the route decorator."""
+        with patch("routes.k8s.search._scan_cluster_for_query") as scan:
+            response = client.get("/api/k8s/search?q=anything")
+            assert response.status_code == 401
+            scan.assert_not_called()

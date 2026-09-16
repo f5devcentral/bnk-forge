@@ -43,6 +43,29 @@ logger = logging.getLogger(__name__)
 SUPPORTED_PROVIDERS = {"aws", "ibm", "azure", "gcp"}
 
 
+def _normalize_api_server_host(server: str) -> str:
+    """Build a single well-formed ``https://<host>:443`` URL from *server*.
+
+    Azure's AKS credentials normally hand back a bare hostname, but if a scheme
+    (``https://``/``http://``) or an explicit ``:port`` ever leaks into that
+    value, naively composing ``f"https://{server}:443"`` double-prefixes into a
+    malformed URL. Normalize defensively so a bare host, a scheme-prefixed host,
+    or a ``host:port`` all yield one correct URL.
+    """
+    host = server.strip()
+    for scheme in ("https://", "http://"):
+        if host.startswith(scheme):
+            host = host[len(scheme):]
+            break
+    host = host.rstrip("/")
+    # Strip a trailing :<port> if present (an AKS hostname never contains a colon).
+    if ":" in host:
+        candidate_host, _, port = host.rpartition(":")
+        if candidate_host and port.isdigit():
+            host = candidate_host
+    return f"https://{host}:443"
+
+
 def register_discovered_cluster(
     db: Session,
     project_id: int,
@@ -409,7 +432,7 @@ class ClusterDiscoveryService(BaseService):
                     self.db,
                     project_id=project_id,
                     name=name,
-                    api_server=f"https://{creds['server']}:443",
+                    api_server=_normalize_api_server_host(creds["server"]),
                     cloud_provider="azure",
                     region=cluster.get("location"),
                     kubeconfig_yaml=kubeconfig_yaml,

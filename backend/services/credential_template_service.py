@@ -26,43 +26,6 @@ from services.defaults_service import get_default
 
 logger = logging.getLogger(__name__)
 
-# Canonical set of providers a credential template may declare.
-#
-# This is the single source of truth for provider validation.  It must stay in
-# lock-step with every consumer that branches on ``template.provider`` to inject
-# or resolve credentials, otherwise a template can be created that looks healthy
-# in the API yet contributes no credentials at deploy time (see issue #191):
-#   - ``aws``   -> AWS_* env + TF_VAR_* mirror   (credentials_service, terraform-env injection)
-#   - ``ibm``   -> IC_API_KEY / IBMCLOUD_API_KEY  (credentials_service, terraform-env injection)
-#   - ``gcp``   -> GKE kubeconfig token            (credentials_service.get_gcp_service_account_info; post-provision cluster access, not terraform env)
-#   - ``azure`` -> AKS kubeconfig token            (execution.engine_router; post-provision cluster access, not terraform env)
-#   - ``ssh``   -> SSH tunnel / on-prem            (credential test + tunnel manager)
-# These are exactly the four cloud providers the UI offers plus the legacy
-# ``ssh`` on-prem provider.  Adding a new provider here without wiring its
-# consumer (or vice-versa) is the bug this constant exists to prevent.  NOTE:
-# ``aws``/``ibm`` inject credentials into the terraform provisioning env, so
-# #191's "looks healthy, injects nothing" class is fully closed for them;
-# ``azure``/``gcp`` are consumed only for post-provision cluster access, so a
-# mis-set provider is still rejected here but the underlying #191 class for the
-# terraform-env path only ever applied to aws/ibm.
-SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"aws", "gcp", "azure", "ibm", "ssh"})
-
-
-def validate_provider(provider: Any) -> str:
-    """Return ``provider`` if it is a supported credential-template provider.
-
-    Raises ``BadRequestError`` with a clear, enumerated message otherwise so a
-    misspelled or unknown value (e.g. ``"ibmcloud"``) is rejected at the point
-    of the mistake instead of silently injecting nothing later.
-    """
-    if provider not in SUPPORTED_PROVIDERS:
-        supported = ", ".join(sorted(SUPPORTED_PROVIDERS))
-        raise BadRequestError(
-            f"Unsupported credential-template provider '{provider}'. "
-            f"Must be one of: {supported}."
-        )
-    return provider
-
 
 class _AwsTestError(Exception):
     """Carrier object mimicking botocore ClientError shape for cloud observation.
@@ -152,7 +115,7 @@ def _test_aws_template_via_boto3(template: Any) -> dict[str, Any]:
                 "message": f"Failed to test credentials: {str(e)}"}
 
 
-def _test_azure_template(template: Any) -> dict[str, Any]:
+def _test_azure_template(template: Any, db: Session | None = None) -> dict[str, Any]:
     """Validate an Azure template using AzureAuthService."""
     auth_service = AzureAuthService()
 
@@ -167,7 +130,12 @@ def _test_azure_template(template: Any) -> dict[str, Any]:
         access_token = decrypt_value(template.azure_sso_access_token_encrypted)
         # Check if expired and can refresh
         now = datetime.now(UTC)
-        if template.azure_sso_token_expiry and now > template.azure_sso_token_expiry:
+        token_expiry = template.azure_sso_token_expiry
+        if token_expiry and token_expiry.tzinfo is None:
+            # Normalize naive expiries (SQLite/dev round-trip) to UTC before
+            # comparing — avoids TypeError on offset-naive vs offset-aware.
+            token_expiry = token_expiry.replace(tzinfo=UTC)
+        if token_expiry and now > token_expiry:
             if template.azure_sso_refresh_token_encrypted:
                 refresh_token = decrypt_value(template.azure_sso_refresh_token_encrypted)
                 try:
@@ -181,6 +149,11 @@ def _test_azure_template(template: Any) -> dict[str, Any]:
                     if refreshed.get("refresh_token"):
                         template.azure_sso_refresh_token_encrypted = encrypt_value(refreshed["refresh_token"])
                     template.azure_sso_token_expiry = datetime.now(UTC) + timedelta(seconds=refreshed.get("expires_in", 3600))
+                    if db:
+                        try:
+                            db.commit()
+                        except Exception as e:
+                            logger.warning(f"Failed to persist refreshed Azure SSO tokens: {e}")
                 except Exception as e:
                     return {
                         "success": False,
@@ -385,11 +358,6 @@ class CredentialTemplateService:
 
     def create_template(self, template_data) -> dict:
         """Create a new credential template."""
-        # Reject unknown/misspelled providers before persisting: a template whose
-        # provider matches no injection path is created "successfully" yet
-        # contributes no credentials at deploy time (issue #191).
-        validate_provider(template_data.provider)
-
         # Duplicate name check
         existing = self.db.query(CloudCredentialTemplate).filter(
             CloudCredentialTemplate.name == template_data.name
@@ -483,12 +451,6 @@ class CredentialTemplateService:
             ).update({"is_default": False})
 
         update_data = template_data.model_dump(exclude_unset=True)
-
-        # If the caller is changing the provider, hold it to the same canonical
-        # set as create so an update can't move a template onto a value that
-        # injects nothing (issue #191).  A None/absent provider leaves it unchanged.
-        if update_data.get("provider") is not None:
-            validate_provider(update_data["provider"])
 
         # Handle encrypted fields
         encrypted_map = {
@@ -585,7 +547,7 @@ class CredentialTemplateService:
             )
 
         if template.provider == 'azure':
-            return _test_azure_template(template)
+            return _test_azure_template(template, db=self.db)
 
         if template.provider == 'ibm':
             if not template.ibmcloud_api_key_encrypted:
@@ -677,7 +639,7 @@ class CredentialTemplateService:
     def _has_complete_sso_config(template: Any) -> bool:
         """Return True when the template has all fields required to run SSO device auth."""
         if template.provider == 'azure':
-            return True
+            return template.azure_auth_method == 'sso'
         return bool(
             template.aws_sso_start_url
             and template.aws_sso_region

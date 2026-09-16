@@ -5,6 +5,7 @@ Thin HTTP handlers delegating to CredentialTemplateService.
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -14,18 +15,8 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
-from services.credential_template_service import (
-    SUPPORTED_PROVIDERS,
-    CredentialTemplateService,
-)
-from utils.validators import (
-    validate_aws_region,
-    validate_azure_region,
-    validate_gcp_region,
-    validate_ibm_region,
-)
-
-_SUPPORTED_PROVIDERS_MSG = ", ".join(sorted(SUPPORTED_PROVIDERS))
+from services.credential_template_service import CredentialTemplateService
+from utils.validators import validate_aws_region, validate_azure_region, validate_gcp_region, validate_ibm_region
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +44,7 @@ class CredentialTemplateBase(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -75,10 +66,6 @@ class CredentialTemplateBase(BaseModel):
 
     @model_validator(mode="after")
     def _validate_regions(self):
-        if self.provider not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"Unsupported provider '{self.provider}'. Must be one of: {_SUPPORTED_PROVIDERS_MSG}."
-            )
         if self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
             validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
@@ -114,7 +101,7 @@ class CredentialTemplateUpdate(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -136,12 +123,6 @@ class CredentialTemplateUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_regions(self):
-        # provider is optional on update; only validate when the caller is
-        # actually changing it, so an unknown value can't be persisted (issue #191).
-        if self.provider is not None and self.provider not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"Unsupported provider '{self.provider}'. Must be one of: {_SUPPORTED_PROVIDERS_MSG}."
-            )
         validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
         if self.region and self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
@@ -175,7 +156,7 @@ class CredentialTemplateResponse(BaseModel):
     aws_credentials_expiry: datetime | None
     gcp_project_id: str | None
     has_gcp_credentials: bool
-    azure_auth_method: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None

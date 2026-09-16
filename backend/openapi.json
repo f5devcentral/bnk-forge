@@ -1357,6 +1357,22 @@
               "type": "integer",
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
           }
         ],
         "responses": {
@@ -1383,14 +1399,14 @@
         }
       }
     },
-    "/api/k8s/clusters/{cluster_id}/resync": {
-      "post": {
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+      "delete": {
         "tags": [
           "k8s-clusters"
         ],
-        "summary": "Resync Cluster",
-        "description": "Force a fresh inventory sync for a cluster (owner or admin only).\n\nIssue #194: an explicit, documented rescan trigger. Operators previously\nrelied on a no-op ``PUT`` to force a refresh; this endpoint makes that\nintent first-class and reliable. It enqueues a background scan (the same\ntask registration/PUT use) and returns immediately \u2014 the scan stamps\n``last_synced_at`` on completion. An unknown cluster 404s via the\n``require_cluster_owner`` dependency before this body runs, so there is no\nsilently-swallowed background no-op.",
-        "operationId": "resync_cluster_api_k8s_clusters__cluster_id__resync_post",
+        "summary": "Delete Cluster",
+        "description": "Delete cluster configuration (owner or admin only).",
+        "operationId": "delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete",
         "parameters": [
           {
             "name": "cluster_id",
@@ -1399,6 +1415,22 @@
             "schema": {
               "type": "integer",
               "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           }
         ],
@@ -13792,126 +13824,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/cloud-auth/azure/sso/initiate": {
-      "post": {
-        "tags": [
-          "cloud-auth"
-        ],
-        "summary": "Initiate Azure Sso",
-        "description": "Initiate Azure Entra ID device code authorization flow.",
-        "operationId": "initiate_azure_sso_api_cloud_auth_azure_sso_initiate_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AzureSSOInitiateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/cloud-auth/azure/sso/poll": {
-      "post": {
-        "tags": [
-          "cloud-auth"
-        ],
-        "summary": "Poll Azure Sso",
-        "description": "Poll Azure Entra ID token endpoint for device code completion.",
-        "operationId": "poll_azure_sso_api_cloud_auth_azure_sso_poll_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AzureSSOPollRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/cloud-auth/azure/subscriptions": {
-      "post": {
-        "tags": [
-          "cloud-auth"
-        ],
-        "summary": "List Azure Subscriptions",
-        "description": "List Azure subscriptions accessible by the access token.",
-        "operationId": "list_azure_subscriptions_api_cloud_auth_azure_subscriptions_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AzureSubscriptionsRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -28035,22 +27947,6 @@
             }
           },
           {
-            "name": "cluster_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cluster Id"
-            }
-          },
-          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -32627,115 +32523,6 @@
         ],
         "title": "AssignedLabelsRequest"
       },
-      "AzureSSOInitiateRequest": {
-        "properties": {
-          "tenant_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 256
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tenant Id",
-            "default": "common"
-          },
-          "client_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 256
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Id"
-          },
-          "template_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Id"
-          }
-        },
-        "type": "object",
-        "title": "AzureSSOInitiateRequest",
-        "description": "Request model for initiating Azure SSO device authorization"
-      },
-      "AzureSSOPollRequest": {
-        "properties": {
-          "device_code": {
-            "type": "string",
-            "maxLength": 512,
-            "title": "Device Code"
-          },
-          "tenant_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 256
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tenant Id",
-            "default": "common"
-          },
-          "client_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 256
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Id"
-          },
-          "template_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "device_code"
-        ],
-        "title": "AzureSSOPollRequest",
-        "description": "Request model for polling Azure SSO token"
-      },
-      "AzureSubscriptionsRequest": {
-        "properties": {
-          "access_token": {
-            "type": "string",
-            "maxLength": 4096,
-            "title": "Access Token"
-          }
-        },
-        "type": "object",
-        "required": [
-          "access_token"
-        ],
-        "title": "AzureSubscriptionsRequest",
-        "description": "Request model for listing Azure subscriptions"
-      },
       "BackupCreateRequest": {
         "properties": {
           "passphrase": {
@@ -35509,17 +35296,6 @@
             ],
             "title": "Target Id"
           },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
-          },
           "proxy_deployment_id": {
             "anyOf": [
               {
@@ -35927,17 +35703,6 @@
               }
             ],
             "title": "Target Id"
-          },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
           },
           "proxy_deployment_id": {
             "anyOf": [
@@ -36396,17 +36161,6 @@
             "type": "integer",
             "title": "Cluster Id"
           },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
-          },
           "llm_base_url": {
             "type": "string",
             "title": "Llm Base Url"
@@ -36557,17 +36311,6 @@
           "cluster_id": {
             "type": "integer",
             "title": "Cluster Id"
-          },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
           },
           "llm_base_url": {
             "type": "string",
@@ -43262,7 +43005,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
@@ -43658,7 +43405,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
@@ -44151,7 +43902,11 @@
           "azure_auth_method": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "service_principal",
+                  "sso"
+                ]
               },
               {
                 "type": "null"
@@ -60428,17 +60183,6 @@
               }
             ],
             "title": "Target Id"
-          },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
           },
           "proxy": {
             "anyOf": [

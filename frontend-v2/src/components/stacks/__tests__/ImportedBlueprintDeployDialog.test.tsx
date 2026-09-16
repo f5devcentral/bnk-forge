@@ -910,4 +910,27 @@ describe('ImportedBlueprintDeployDialog', () => {
     });
     expect(createProjectCalls).toBe(0);
   });
+
+  it('fails closed and renders error view when template loading fails (Minor-3 / INV-6)', async () => {
+    server.use(
+      http.get('*/api/stacks/releases/:id', () => {
+        return HttpResponse.json({ error: 'Not found' }, { status: 404 });
+      }),
+    );
+
+    render(
+      <ImportedBlueprintDeployDialog
+        slug="release-nonexistent"
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load blueprint template details/i)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /Deploy Blueprint/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Close/i }).length).toBeGreaterThanOrEqual(1);
+  });
 });

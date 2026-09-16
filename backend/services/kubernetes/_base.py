@@ -25,6 +25,11 @@ from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeco
 # up prominently under concurrent BNK page loads. Cache per cluster for 10 min.
 _TOKEN_TTL_SECONDS = 600
 
+# EKS/GCP bearer tokens are valid for ~15 minutes. Generating them on every
+# kubeconfig load is expensive (boto3/google-auth crypto + STS calls) and shows
+# up prominently under concurrent BNK page loads. Cache per cluster for 10 min.
+_TOKEN_TTL_SECONDS = 600
+
 logger = logging.getLogger(__name__)
 
 

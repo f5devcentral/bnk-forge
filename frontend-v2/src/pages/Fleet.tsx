@@ -3307,8 +3307,8 @@ function FleetsView() {
 // Main page
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// D-022 P6 IA: Top-level tabs: Overview, BNK Resources, and Fleets (Fleets last).
-type FleetView = 'overview' | 'bnk' | 'fleets' | 'inventory' | 'bulkops' | 'compliance';
+// D-022 P6 IA: 'dpf' removed — DPU Infrastructure relocated to /infrastructure.
+type FleetView = 'overview' | 'inventory' | 'bulkops' | 'compliance' | 'fleets' | 'bnk';
 
 export default function Fleet() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -3319,20 +3319,20 @@ export default function Fleet() {
 
   // backward compat with ?view=overview etc. (dpf deep-links now redirect to /infrastructure)
   const urlView = searchParams.get('view') ?? searchParams.get('tab');
-  const validViews: FleetView[] = ['overview', 'bnk', 'fleets', 'inventory', 'bulkops', 'compliance'];
+  const validViews: FleetView[] = ['fleets', 'bnk', 'inventory', 'bulkops', 'compliance', 'overview'];
   const initialView: FleetView =
-    urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'overview';
+    urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'fleets';
   const [activeView, setActiveView] = useState<FleetView>(initialView);
 
   const handleSelectView = useCallback(
     (view: string) => {
-      const v = validViews.includes(view as FleetView) ? (view as FleetView) : 'overview';
+      const v = validViews.includes(view as FleetView) ? (view as FleetView) : 'fleets';
       setActiveView(v);
       // Clear the fleet drill-down when switching top-level tabs.
       const next = new URLSearchParams(searchParams);
       next.delete('fleet');
       next.delete('detail_tab');
-      if (v === 'overview') {
+      if (v === 'fleets') {
         next.delete('view');
         next.delete('tab');
       } else {
@@ -3346,8 +3346,11 @@ export default function Fleet() {
   );
 
   const { refresh, isRefreshing } = usePageRefresh();
-
-  const { data: bnkConsumption, isLoading: bnkLoading, error: bnkError } = useBnkConsumption();
+  const {
+    data: bnkConsumption,
+    isLoading: bnkLoading,
+    error: bnkError,
+  } = useBnkConsumption({ enabled: activeView === 'bnk' });
 
   const subtitle = 'Group clusters into fleets and operate them at scale — health, policy, compliance, and staged operations.';
 
@@ -3366,39 +3369,40 @@ export default function Fleet() {
         <FleetDetailShell fleetId={fleetDetailId} />
       ) : (
         <Tabs value={activeView} onValueChange={handleSelectView}>
+          {/* D-022 P6 IA: 'DPU Infrastructure' tab removed — relocated to /infrastructure.
+              Top-level tabs: Fleets list + fleet-wide BNK Resources. */}
           <ResourceViewTabs
             variant="inline"
             aria-label="Fleet views"
             active={activeView}
             onChange={(key) => handleSelectView(key)}
             tabs={[
-              { key: 'overview', label: 'Overview', icon: Activity },
-              { key: 'bnk', label: 'BNK Resources', icon: Gauge },
               { key: 'fleets', label: 'Fleets', icon: Flag },
+              { key: 'bnk', label: 'BNK Resources', icon: Gauge },
             ]}
           />
 
-          <TabsContent value="overview" className="mt-6">
-            <OverviewView />
+          <TabsContent value="fleets" className="mt-6">
+            <FleetsView />
           </TabsContent>
 
           <TabsContent value="bnk" className="mt-6">
             <BnkResourcesPanel data={bnkConsumption} isLoading={bnkLoading} error={bnkError} />
           </TabsContent>
 
-          <TabsContent value="fleets" className="mt-6">
+          {/* Legacy deep-links: ?view=inventory|bulkops|compliance|overview are forwarded to
+              the Fleets list tab (the views now live inside FleetDetailShell). */}
+          <TabsContent value="inventory" className="mt-6">
             <FleetsView />
           </TabsContent>
-
-          {/* Legacy deep-links: ?view=inventory|bulkops|compliance are forwarded to their views */}
-          <TabsContent value="inventory" className="mt-6">
-            <InventoryView />
-          </TabsContent>
           <TabsContent value="bulkops" className="mt-6">
-            <BulkOpsView />
+            <FleetsView />
           </TabsContent>
           <TabsContent value="compliance" className="mt-6">
-            <ComplianceView />
+            <FleetsView />
+          </TabsContent>
+          <TabsContent value="overview" className="mt-6">
+            <FleetsView />
           </TabsContent>
         </Tabs>
       )}

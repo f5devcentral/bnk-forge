@@ -276,6 +276,20 @@ class TestClusterDelete:
         response = client.delete(f"/api/k8s/clusters/{cluster.id}", headers=viewer_headers)
         assert response.status_code == 403
 
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_delete_cluster_project_scoped_route(self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster):
+        """Admin can delete a cluster via the project-scoped route alias."""
+        cluster = make_k8s_cluster(project=sample_project, name="delete-cluster-scoped")
+        mock_svc = MagicMock()
+        mock_svc.delete_cluster.return_value = {"success": True, "message": "Cluster deleted"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.delete(f"/api/projects/{sample_project.id}/k8s/clusters/{cluster.id}", headers=admin_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        mock_svc.delete_cluster.assert_called_once_with(cluster.id)
+
 
 class TestClusterTestConnection:
     """POST /api/k8s/clusters/{id}/test."""

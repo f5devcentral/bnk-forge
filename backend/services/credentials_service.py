@@ -279,6 +279,11 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                     return env
 
                 if template.provider == 'azure':
+                    # NOTE: Only the service-principal path injects a credential
+                    # (ARM_CLIENT_SECRET) for terraform. SSO-authenticated Azure
+                    # templates deliberately inject no credential here — SSO is
+                    # for validation/console access, while terraform provisioning
+                    # uses the service-principal secret. This asymmetry is by design.
                     if template.azure_subscription_id:
                         env['ARM_SUBSCRIPTION_ID'] = template.azure_subscription_id
                         env['AZURE_SUBSCRIPTION_ID'] = template.azure_subscription_id
@@ -490,3 +495,4 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
         return (env_tenant, env_client_id, env_client_secret)
 
     return None
+
