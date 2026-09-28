@@ -5,6 +5,7 @@ Thin HTTP handlers delegating to CredentialTemplateService.
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/api/credential-templates", tags=["credential-templat
 class CredentialTemplateBase(BaseModel):
     name: str
     description: str | None = None
-    provider: str
+    provider: Literal["aws", "azure", "gcp", "ibm", "ssh"]
     aws_auth_method: str | None = None
     aws_profile: str | None = None
     region: str | None = None
@@ -77,7 +78,7 @@ class CredentialTemplateCreate(CredentialTemplateBase):
 class CredentialTemplateUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    provider: str | None = None
+    provider: Literal["aws", "azure", "gcp", "ibm", "ssh"] | None = None
     aws_auth_method: str | None = None
     aws_profile: str | None = None
     region: str | None = None
