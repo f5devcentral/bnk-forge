@@ -5,6 +5,7 @@ Thin HTTP handlers delegating to CredentialTemplateService.
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -15,7 +16,7 @@ from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator, require_viewer
 from services.credential_template_service import CredentialTemplateService
-from utils.validators import validate_aws_region
+from utils.validators import validate_aws_region, validate_azure_region, validate_gcp_region, validate_ibm_region
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,11 @@ class CredentialTemplateBase(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: str | None = None
     azure_credentials: str | None = None
     ibmcloud_api_key: str | None = None
     ibmcloud_resource_group: str | None = "default"
@@ -65,8 +69,14 @@ class CredentialTemplateBase(BaseModel):
         if self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
             validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
-        if self.provider == "ibm" and not self.ibmcloud_api_key:
-            raise ValueError("IBM Cloud API key is required for IBM credential templates")
+        if self.provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+            if not self.ibmcloud_api_key:
+                raise ValueError("IBM Cloud API key is required for IBM credential templates")
+        if self.provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 
@@ -91,8 +101,11 @@ class CredentialTemplateUpdate(BaseModel):
     aws_sso_role_name: str | None = None
     gcp_credentials: str | None = None
     gcp_project_id: str | None = None
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
     azure_subscription_id: str | None = None
     azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: str | None = None
     azure_credentials: str | None = None
     ibmcloud_api_key: str | None = None
     ibmcloud_resource_group: str | None = None
@@ -113,6 +126,12 @@ class CredentialTemplateUpdate(BaseModel):
         validate_aws_region(self.aws_sso_region, field_name="aws_sso_region")
         if self.region and self.provider == "aws":
             validate_aws_region(self.region, field_name="region")
+        if self.region and self.provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+        if self.region and self.provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.region and self.provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 
@@ -137,9 +156,14 @@ class CredentialTemplateResponse(BaseModel):
     aws_credentials_expiry: datetime | None
     gcp_project_id: str | None
     has_gcp_credentials: bool
-    azure_subscription_id: str | None
-    azure_tenant_id: str | None
-    has_azure_credentials: bool
+    azure_auth_method: Literal["service_principal", "sso"] | None = None
+    azure_subscription_id: str | None = None
+    azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    has_azure_client_secret: bool = False
+    has_azure_credentials: bool = False
+    azure_sso_authenticated_at: datetime | None = None
+    azure_sso_token_expiry: datetime | None = None
     has_ibmcloud_api_key: bool
     ibmcloud_resource_group: str | None = None
     ibm_cos_instance_name: str | None = None

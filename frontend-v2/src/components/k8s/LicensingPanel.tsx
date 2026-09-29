@@ -279,7 +279,7 @@ export function LicensingPanel({ clusterId }: LicensingPanelProps) {
     }
   }, [fetchReport, clusterId]);
 
-  if (statusLoading || cwcLoading) {
+  if ((statusLoading || cwcLoading) && !cwcStatus && licenseInfo.state === 'unknown') {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

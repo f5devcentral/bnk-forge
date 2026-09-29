@@ -6,7 +6,6 @@ bnk_data_service instead of relying on operator health reports.
 Operators are optional enrichment, not the data source.
 """
 import logging
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -21,13 +20,14 @@ from core.k8s_types import ApiGroups
 from database import get_db
 from models.kubernetes import KubernetesCluster
 from routes.auth import require_operator, require_viewer
+from services.bnk.helpers import extract_bnk_version
 from services.bnk_data_service import analyze_health, fetch_all_bnk_data
 from services.connectivity_probe_service import _parse_api_server, _probe_tcp
 from services.dpf.fetch import detect_dpf
 from services.kubernetes_service import KubernetesService
 from services.operator_registry import (
+    is_operator_live_connected,
     list_operators,
-    operator_connections,
 )
 from services.platform_context_service import PlatformContextService
 
@@ -157,27 +157,6 @@ def _derive_status_from_health(health: dict) -> str:
     return "unknown"
 
 
-def _extract_bnk_version(data: dict) -> str | None:
-    """
-    Extract BNK version from TMM pod container images.
-
-    TMM image tags follow the pattern: `<registry>/spk-tmm:v2.5.0-0.0.5`
-    We extract the semver portion (e.g., "2.5.0").
-    Falls back to FLO/controller images if TMM not found.
-    """
-    classified = data.get("classified_pods", {})
-    # Try TMM first, then FLO, then controller
-    for pod_type in ("tmm", "flo", "controller"):
-        for pod in classified.get(pod_type, []):
-            for container in pod.get("containers", []):
-                image = container.get("image", "")
-                # Match version tag: :v1.2.3 or :1.2.3 (with optional build suffix)
-                m = re.search(r":v?(\d+\.\d+\.\d+)", image)
-                if m:
-                    return m.group(1)
-    return None
-
-
 def _extract_uptime_seconds(data: dict) -> int:
     """
     Compute cluster uptime from the oldest running TMM or FLO pod start time.
@@ -214,7 +193,7 @@ def _extract_health_metrics(health: dict, data: dict) -> dict:
     counts = health.get("counts", {})
 
     # BNK version from pod images
-    bnk_version = _extract_bnk_version(data)
+    bnk_version = extract_bnk_version(data)
 
     # Uptime from oldest running BNK pod
     uptime_secs = _extract_uptime_seconds(data)
@@ -672,12 +651,7 @@ def get_fleet_health(db: Session = Depends(get_db)):
         # Enrich with operator metadata if linked
         linked_op = op_by_cluster.get(cluster.id)
         if linked_op:
-            is_connected_ws = operator_connections.is_connected(linked_op.operator_id)
-            is_connected_polling = False
-            if linked_op.connectivity_mode == "polling" and linked_op.last_heartbeat_at:
-                heartbeat_age = (datetime.now(UTC) - linked_op.last_heartbeat_at).total_seconds()
-                is_connected_polling = heartbeat_age < 60
-            _is_connected = is_connected_ws or is_connected_polling
+            _is_connected = is_operator_live_connected(linked_op)
 
             operator_version = linked_op.operator_version
             connectivity_mode = linked_op.connectivity_mode or "direct_ws"
@@ -735,6 +709,10 @@ def get_fleet_health(db: Session = Depends(get_db)):
             "dpu_cluster_count": result.get("dpu_cluster_count", 0),
             "detected_platform_profile": platform_context.detected_platform_profile,
             "detected_platform_provider": platform_context.detected_platform_provider,
+            "cloud_provider": cluster.cloud_provider,
+            "region": cluster.region,
+            "account_id": cluster.account_id,
+            "discovery_status": cluster.discovery_status,
         })
 
     response = {

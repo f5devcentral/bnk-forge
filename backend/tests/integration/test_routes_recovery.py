@@ -1,5 +1,6 @@
 """Integration tests for BNK recovery routes."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 
@@ -59,6 +60,37 @@ class TestRecoveryStatusEndpoint:
         assert data["vlans_failed"] is True
         assert data["platform_healthy"] is False
 
+    @patch("routes.k8s.recovery._check_vlans_failed")
+    @patch("routes.k8s.recovery._check_cwc_cert_stale")
+    @patch("routes.k8s.recovery.KubernetesService")
+    def test_status_cache_hit_returns_valid_response(
+        self,
+        mock_k8s_svc,
+        mock_cert_check,
+        mock_vlan_check,
+        client,
+        operator_headers,
+        all_test_users,
+    ):
+        """A cached status round-trips through JSON (as Redis does) and still validates."""
+        store: dict[str, str] = {}
+        fake_cache = MagicMock()
+        fake_cache.set.side_effect = lambda k, v, ttl_seconds=300: store.__setitem__(k, json.dumps(v, default=str))
+        fake_cache.get.side_effect = lambda k: json.loads(store[k]) if k in store else None
+        mock_k8s_svc.return_value.get_cluster.return_value = MagicMock()
+        mock_k8s_svc.return_value.load_kubeconfig.return_value = MagicMock()
+        mock_cert_check.return_value = (False, "OK", "ok")
+        mock_vlan_check.return_value = (False, "OK")
+
+        with patch("routes.k8s.recovery.cache", fake_cache):
+            first = client.get("/api/k8s/clusters/1/recovery/status", headers=operator_headers)
+            second = client.get("/api/k8s/clusters/1/recovery/status", headers=operator_headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json() == first.json()
+        assert mock_cert_check.call_count == 1
+
     def test_status_requires_auth(self, client):
         resp = client.get("/api/k8s/clusters/1/recovery/status")
         assert resp.status_code == 401
@@ -93,9 +125,14 @@ class TestCWCCertResyncEndpoint:
             "ca.crt": "ca-data",
         }
         mock_restart.return_value = "f5-spk-cwc-old-pod"
+        deleted_after_copy: list[bool] = []
 
-        resp = client.post("/api/k8s/clusters/1/recovery/cwc-certs", headers=operator_headers)
+        with patch("routes.k8s.recovery.cache") as mock_cache:
+            mock_cache.delete.side_effect = lambda _k: deleted_after_copy.append(mock_copy.called)
+            resp = client.post("/api/k8s/clusters/1/recovery/cwc-certs", headers=operator_headers)
         assert resp.status_code == 200
+        # Caches are invalidated only after the certs were changed.
+        assert deleted_after_copy and all(deleted_after_copy)
         data = resp.json()
 
         assert data["success"] is True
@@ -107,6 +144,39 @@ class TestCWCCertResyncEndpoint:
         mock_copy.assert_called_once()
         mock_restart.assert_called_once()
         mock_cleanup.assert_called_once()
+
+    @patch("routes.k8s.recovery._detect_cwc_namespace", return_value="f5-utils")
+    @patch("routes.k8s.recovery._restart_cwc_pod")
+    @patch("routes.k8s.recovery._copy_cert_to_cwc_license_secret")
+    @patch("routes.k8s.recovery._wait_for_secret")
+    @patch("routes.k8s.recovery.KubernetesService")
+    def test_resync_invalidates_caches_when_restart_raises(
+        self,
+        mock_k8s_svc,
+        mock_wait,
+        mock_copy,
+        mock_restart,
+        _mock_detect,
+        client,
+        operator_headers,
+        all_test_users,
+    ):
+        """An unexpected error after the secret was rewritten still clears the caches."""
+        from kubernetes.client.rest import ApiException
+
+        mock_k8s_svc.return_value.get_cluster.return_value = MagicMock()
+        mock_k8s_svc.return_value.load_kubeconfig.return_value = MagicMock()
+        mock_wait.return_value = {"tls.crt": "c", "tls.key": "k", "ca.crt": "ca"}
+        mock_restart.side_effect = ApiException(status=500, reason="boom")
+
+        with patch("routes.k8s.recovery.cache") as mock_cache:
+            resp = client.post("/api/k8s/clusters/1/recovery/cwc-certs", headers=operator_headers)
+
+        assert resp.status_code >= 400
+        mock_copy.assert_called_once()
+        deleted = {c.args[0] for c in mock_cache.delete.call_args_list}
+        assert "recovery:status:1" in deleted
+        assert "cwc:available:1" in deleted
 
     @patch("routes.k8s.recovery._detect_cwc_namespace", return_value="f5-utils")
     @patch("routes.k8s.recovery._wait_for_secret")
@@ -193,12 +263,14 @@ class TestPlatformRestartEndpoint:
         mock_core_v1.list_namespaced_pod.return_value.items = [ctrl_pod]
         mock_k8s_client.CoreV1Api.return_value = mock_core_v1
 
-        resp = client.post(
-            "/api/k8s/clusters/1/recovery/platform-restart",
-            headers=operator_headers,
-            json={"restart_controller": True, "restart_flo": False, "restart_tmm": False},
-        )
+        with patch("routes.k8s.recovery.cache") as mock_cache:
+            resp = client.post(
+                "/api/k8s/clusters/1/recovery/platform-restart",
+                headers=operator_headers,
+                json={"restart_controller": True, "restart_flo": False, "restart_tmm": False},
+            )
         assert resp.status_code == 200
+        mock_cache.delete_pattern.assert_called_once_with("bnk:data:1:*")
         data = resp.json()
 
         assert data["success"] is True

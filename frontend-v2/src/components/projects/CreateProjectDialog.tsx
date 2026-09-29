@@ -749,6 +749,7 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
                       render={({ field }) => (
                         projectType === 'cloud-ibm' ? (
                           <CloudRegionSelector
+                            id="region"
                             provider="ibm"
                             value={field.value || ''}
                             onValueChange={field.onChange}
@@ -757,6 +758,7 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
                           />
                         ) : (
                           <RegionSelector
+                            id="region"
                             value={field.value || ''}
                             onValueChange={(value) => {
                               field.onChange(value);
@@ -920,14 +922,18 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
                           render={({ field }) => (
                             projectType === 'cloud-ibm' ? (
                               <CloudRegionSelector
+                                id="s3_state_region"
                                 provider="ibm"
-                                value={field.value || region || ''}
+                                value={field.value || ''}
+                                placeholder={region || undefined}
                                 onValueChange={field.onChange}
                                 options={ibmRegions}
                               />
                             ) : (
                               <RegionSelector
-                                value={field.value || region || ''}
+                                id="s3_state_region"
+                                value={field.value || ''}
+                                placeholder={region || undefined}
                                 onValueChange={field.onChange}
                               />
                             )

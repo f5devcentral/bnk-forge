@@ -162,6 +162,24 @@ describe('QKViewPanel', () => {
       });
     });
 
+    it('does not query CWC setup status when CWC is unavailable', async () => {
+      const setupCalls: string[] = [];
+      server.use(
+        http.get(/\/api\/qkview\/check/, () => HttpResponse.json(mockCheckUnavailable)),
+        http.get(/\/api\/licensing\/\d+\/cwc-setup-status/, ({ request }) => {
+          setupCalls.push(request.url);
+          return HttpResponse.json(mockSetupRequired);
+        }),
+      );
+
+      render(<QKViewPanel clusterId={1} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/CWC Not Available/)).toBeInTheDocument();
+      });
+      expect(setupCalls).toEqual([]);
+    });
+
     it('shows CWC error message from API', async () => {
       setupHandlers({ available: false });
 
