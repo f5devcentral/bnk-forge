@@ -13862,6 +13862,8 @@ export interface components {
              * @default 0
              */
             proxy_count: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -13926,6 +13928,8 @@ export interface components {
              * @default 0
              */
             proxy_count: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -43004,6 +43008,8 @@ export interface operations {
             query?: {
                 status?: string | null;
                 cluster_id?: number | null;
+                /** @description Exact match filter by target name */
+                name?: string | null;
             };
             header?: never;
             path?: never;
