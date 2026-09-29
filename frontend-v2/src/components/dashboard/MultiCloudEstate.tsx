@@ -397,7 +397,7 @@ export function MultiCloudEstate({
         <div className="flex items-center justify-between text-xs text-muted-foreground mt-3 pt-2.5 border-t border-border/50">
           {cluster ? (
             <Link
-              to={`/kubernetes?cluster=${cluster.id}&view=advanced`}
+              to={`/kubernetes?cluster=${cluster.id}${cluster.project_id ? `&project=${cluster.project_id}` : ''}&view=advanced`}
               className="flex items-center text-primary font-medium hover:underline gap-1"
             >
               <span>Explore K8s</span>
@@ -561,7 +561,7 @@ export function MultiCloudEstate({
           }}
           secondaryAction={{
             label: 'Create Project',
-            onClick: () => navigate('/projects/new'),
+            onClick: () => navigate('/projects?action=create'),
           }}
           illustration={false}
         />

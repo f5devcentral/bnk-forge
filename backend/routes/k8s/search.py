@@ -8,8 +8,7 @@ Provides unified, multi-cluster search for:
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from fastapi import APIRouter, Depends, Query
 from kubernetes import client as k8s_client
@@ -23,10 +22,15 @@ from models.kubernetes import KubernetesCluster
 from models.project import Project, ProjectModule
 from routes.auth import require_viewer
 from services.kubernetes import KubernetesService
+from services.reachability import ReachabilityState, registry
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/k8s", tags=["k8s-search"])
+
+# Overall wall-clock budget for the live cluster scan. Clusters still running
+# when it expires are reported in ``timed_out_clusters``.
+SCAN_DEADLINE_SECONDS = 6.0
 
 
 class IngressSearchResult(BaseModel):
@@ -37,6 +41,7 @@ class IngressSearchResult(BaseModel):
     all_hosts: list[str] = Field(default_factory=list)
     cluster_id: int
     cluster_name: str
+    project_id: int | None = None
     cloud_provider: str | None = None
     region: str | None = None
     target_service: str | None = None
@@ -46,6 +51,7 @@ class IngressSearchResult(BaseModel):
 class ClusterSearchResult(BaseModel):
     id: int
     name: str
+    project_id: int | None = None
     cloud_provider: str | None = None
     region: str | None = None
     status: str
@@ -69,6 +75,7 @@ class GlobalSearchResultResponse(BaseModel):
     ingresses: list[IngressSearchResult] = Field(default_factory=list)
     clusters: list[ClusterSearchResult] = Field(default_factory=list)
     projects: list[ProjectSearchResult] = Field(default_factory=list)
+    timed_out_clusters: list[str] = Field(default_factory=list)
 
 
 def _scan_cluster_for_query(
@@ -178,13 +185,13 @@ def _scan_cluster_for_query(
                         target_service="Gateway Route",
                         status="active",
                     ))
-        except ApiException:
-            pass  # HTTPRoute CRD not installed
+        except Exception as e:  # CRD not installed, or the list timed out
+            logger.debug(f"HTTPRoute scan error on cluster {cluster_name}: {e}")
 
-        # BNK VirtualServers (k8s.f5.com)
+        # CIS VirtualServers (cis.f5.com)
         try:
             vs_items = custom_api.list_cluster_custom_object(
-                group="k8s.f5.com",
+                group="cis.f5.com",
                 version="v1",
                 plural="virtualservers",
                 _request_timeout=3,
@@ -212,8 +219,8 @@ def _scan_cluster_for_query(
                         target_service=vip or "BNK VIP",
                         status="active",
                     ))
-        except ApiException:
-            pass  # VirtualServer CRD not installed
+        except Exception as e:
+            logger.debug(f"VirtualServer scan error on cluster {cluster_name}: {e}")
 
         # F5 SPK Egresses (f5-spk-egresses.k8s.f5net.com)
         try:
@@ -284,8 +291,8 @@ def _scan_cluster_for_query(
                                 target_service=kd,
                                 status="active",
                             ))
-                except ApiException:
-                    pass
+                except Exception as e:
+                    logger.debug(f"{kd} scan error on cluster {cluster_name}: {e}")
         except Exception as e:
             logger.debug(f"Gateways scan error on cluster {cluster_name}: {e}")
     except Exception as e:
@@ -375,6 +382,7 @@ def global_search(
                 ClusterSearchResult(
                     id=c.id,
                     name=c.name,
+                    project_id=c.project_id,
                     cloud_provider=c.cloud_provider,
                     region=c.region,
                     status=c.status or "active",
@@ -382,8 +390,13 @@ def global_search(
                     detected_platform_profile=detected_profile,
                 )
             )
-        if (c.status or "active").lower() == "active":
-            active_clusters_to_scan.append(c)
+        if (c.status or "active").lower() != "active":
+            continue
+        # Skip clusters the reachability probe already marks down.
+        state = registry.get_state("cluster", c.id)
+        if state and state.get("state") == ReachabilityState.UNREACHABLE:
+            continue
+        active_clusters_to_scan.append(c)
 
     # 2. DB Search: Projects & OpenTofu Modules
     all_db_projects = (
@@ -424,10 +437,12 @@ def global_search(
 
     # 3. Parallel Live Cluster Scanning
     found_ingresses: list[IngressSearchResult] = []
+    timed_out_clusters: list[str] = []
 
     if active_clusters_to_scan:
-        with ThreadPoolExecutor(max_workers=min(10, len(active_clusters_to_scan))) as executor:
-            futures = [
+        executor = ThreadPoolExecutor(max_workers=min(10, len(active_clusters_to_scan)))
+        try:
+            futures = {
                 executor.submit(
                     _scan_cluster_for_query,
                     cluster.id,
@@ -435,26 +450,27 @@ def global_search(
                     cluster.cloud_provider,
                     cluster.region,
                     clean_q,
-                )
+                ): cluster
                 for cluster in active_clusters_to_scan
-            ]
-            try:
-                for future in as_completed(futures, timeout=6.0):
-                    try:
-                        cluster_results = future.result()
-                        found_ingresses.extend(cluster_results)
-                    except Exception as e:
-                        logger.debug(f"Search thread failed: {e}")
-            except (TimeoutError, FuturesTimeoutError, Exception) as e:
-                logger.debug(f"Search cluster scanning interrupted or timed out: {e}")
-                # Harvest whichever futures have already completed
-                for future in futures:
-                    if future.done() and not future.cancelled():
-                        try:
-                            cluster_results = future.result()
-                            found_ingresses.extend(cluster_results)
-                        except Exception:
-                            pass
+            }
+            done, _ = wait(futures, timeout=SCAN_DEADLINE_SECONDS)
+            for future, cluster in futures.items():
+                if future not in done:
+                    timed_out_clusters.append(cluster.name)
+                    continue
+                try:
+                    cluster_results = future.result()
+                except Exception as e:
+                    logger.debug(f"Search thread failed: {e}")
+                    continue
+                for r in cluster_results:
+                    r.project_id = cluster.project_id
+                found_ingresses.extend(cluster_results)
+            if timed_out_clusters:
+                logger.debug(f"Search scan deadline hit; timed out: {timed_out_clusters}")
+        finally:
+            # Don't block the response on stragglers; queued scans are dropped.
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # Deduplicate live resource results
     seen_keys: set[tuple[str, int, str, str]] = set()
@@ -470,4 +486,5 @@ def global_search(
         ingresses=deduped_ingresses[:limit],
         clusters=matching_clusters[:limit],
         projects=matching_projects[:limit],
+        timed_out_clusters=timed_out_clusters,
     )

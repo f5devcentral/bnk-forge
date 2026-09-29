@@ -4,7 +4,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { render } from '@/test/test-utils';
+import { server } from '@/test/mocks/server';
 import { HeroOmniSearch } from '../HeroOmniSearch';
 import type { Project } from '@/types/project';
 import type { KubernetesCluster } from '@/types/k8s';
@@ -122,5 +124,35 @@ describe('HeroOmniSearch', () => {
 
     await user.click(screen.getByText('ecommerce-api'));
     expect(mockNavigate).toHaveBeenCalledWith('/projects/1');
+  });
+
+  it('deep-links a resource hit with its project', async () => {
+    const user = userEvent.setup();
+    render(<HeroOmniSearch projects={mockProjects} clusters={mockClusters} debounceMs={0} />);
+
+    await user.type(screen.getByPlaceholderText(/search fqdn/i), 'api.example.com');
+    await waitFor(() => expect(screen.getByText(/prod-ingress/i)).toBeInTheDocument());
+    await user.click(screen.getByText(/prod-ingress/i));
+
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/kubernetes?cluster=1&project=3&'));
+  });
+
+  it('does not query the backend below three characters', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/api/k8s/search', () => {
+        calls += 1;
+        return HttpResponse.json({ query: '', ingresses: [], clusters: [], projects: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<HeroOmniSearch projects={mockProjects} clusters={mockClusters} debounceMs={0} />);
+
+    await user.type(screen.getByPlaceholderText(/search fqdn/i), 'ap');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls).toBe(0);
+
+    await user.type(screen.getByPlaceholderText(/search fqdn/i), 'i');
+    await waitFor(() => expect(calls).toBe(1));
   });
 });

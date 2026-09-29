@@ -62,6 +62,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
+import { useLinkedClusterProject } from '@/hooks/useLinkedClusterProject';
 import { STORAGE_KEYS } from '@/lib/storage-keys';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { DEBOUNCE_MS } from '@/lib/constants';
@@ -146,7 +147,10 @@ export default function KubernetesV2() {
 
     if (clusterParam) {
       const parsed = parseInt(clusterParam);
-      if (!Number.isNaN(parsed)) setSelectedCluster(parsed);
+      if (!Number.isNaN(parsed)) {
+        setSelectedCluster(parsed);
+        setLinkedCluster(parsed);
+      }
     }
     if (projectParam) {
       const parsed = parseInt(projectParam);
@@ -157,7 +161,7 @@ export default function KubernetesV2() {
       if (lower === 'ingresses') setSelectedResourceType('ingress');
       else if (lower === 'services') setSelectedResourceType('service');
       else if (lower === 'httproutes') setSelectedResourceType('httproute');
-      else if (lower === 'virtualservers') setSelectedResourceType('virtualserver');
+      else if (lower === 'virtualservers' || lower === 'virtualserver') setSelectedResourceType('cis_virtualserver');
       else setSelectedResourceType(lower);
     }
     if (namespaceParam) {
@@ -177,6 +181,8 @@ export default function KubernetesV2() {
       paramsToClean.forEach((p) => next.delete(p));
       setSearchParams(next, { replace: true });
     }
+    // setLinkedCluster is a state setter from useLinkedClusterProject below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, setSearchParams]);
 
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
@@ -196,7 +202,7 @@ export default function KubernetesV2() {
       if (lower === 'ingresses') return 'ingress';
       if (lower === 'services') return 'service';
       if (lower === 'httproutes') return 'httproute';
-      if (lower === 'virtualservers') return 'virtualserver';
+      if (lower === 'virtualservers' || lower === 'virtualserver') return 'cis_virtualserver';
       return lower;
     }
     return localStorage.getItem(STORAGE_KEYS.K8S_RESOURCE_TYPE) || 'pod';
@@ -334,6 +340,14 @@ export default function KubernetesV2() {
     }
   }, [selectedCluster, selectedProject, allClusters]);
 
+  const { linkPending, setLinkedCluster } = useLinkedClusterProject(null, {
+    allClusters,
+    allClustersLoaded: allClustersResponse !== undefined,
+    visibleClusters: clusters ?? [],
+    selectedProject,
+    setSelectedProject,
+  });
+
   // Auto-select a cluster when a project is in scope and either no cluster
   // is selected yet, or the previously stored selection isn't in this
   // project's cluster list. If the project has exactly one cluster, pick
@@ -341,7 +355,7 @@ export default function KubernetesV2() {
   // dropdown — this just removes the dead state where a project page
   // lands with a cluster dropdown that needs manual selection.
   useEffect(() => {
-    if (!selectedProject) return;
+    if (!selectedProject || linkPending) return;
     const projectClusters = clusters ?? [];
     if (projectClusters.length === 0) return;
     const stillValid = selectedCluster
@@ -350,7 +364,7 @@ export default function KubernetesV2() {
     if (!stillValid) {
       setSelectedCluster(projectClusters[0].id);
     }
-  }, [selectedProject, clusters, selectedCluster]);
+  }, [selectedProject, clusters, selectedCluster, linkPending]);
   const visibleClusters = useMemo(() => {
     if (!selectedProject) return clusters ?? [];
     if ((clusters ?? []).length > 0) return clusters ?? [];

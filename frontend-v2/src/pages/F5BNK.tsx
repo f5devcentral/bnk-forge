@@ -38,6 +38,7 @@ import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
+import { useLinkedClusterProject } from '@/hooks/useLinkedClusterProject';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer';
 import { ResourceDeleteDialog } from '@/components/k8s/ResourceDeleteDialog';
@@ -445,6 +446,14 @@ export default function F5BNK() {
     setSelectedCluster,
   });
 
+  const { linkPending } = useLinkedClusterProject(Number(searchParams.get('cluster')) || null, {
+    allClusters,
+    allClustersLoaded: allClustersResponse !== undefined,
+    visibleClusters,
+    selectedProject,
+    setSelectedProject,
+  });
+
   // Resource type & sidebar state
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
     const fromUrl = mapParamToViewOrResource(
@@ -554,6 +563,7 @@ export default function F5BNK() {
 
   // Clear cluster selection when project changes
   useEffect(() => {
+    if (linkPending) return;
     if (selectedProject && selectedCluster) {
       const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
       if (!clusterExistsInProject && visibleClusters.length > 0) {
@@ -562,7 +572,7 @@ export default function F5BNK() {
         setSelectedCluster(null);
       }
     }
-  }, [selectedProject, visibleClusters, selectedCluster]);
+  }, [linkPending, selectedProject, visibleClusters, selectedCluster]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
