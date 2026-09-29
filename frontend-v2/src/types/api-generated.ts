@@ -493,7 +493,7 @@ export interface paths {
         put?: never;
         /**
          * Detect And Register Clusters From Credentials
-         * @description Discover Kubernetes clusters via the project's cloud credential templates.
+         * @description Discover Kubernetes clusters via the project's bound cloud credential template.
          */
         post: operations["detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post"];
         delete?: never;
@@ -1488,7 +1488,7 @@ export interface paths {
          *     so switching between Health, Topology, and Policy Map tabs is instant.
          *
          *     Query parameters:
-         *       - force: bypass the 15-second BNK data / TMM traffic-stats cache.
+         *       - force: bypass the BNK data, pod discovery and TMM traffic-stats caches.
          */
         get: operations["get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get"];
         put?: never;
@@ -18244,7 +18244,7 @@ export interface components {
              * Operatormode
              * @enum {string}
              */
-            operatorMode: "direct_ws" | "polling" | "kubeconfig";
+            operatorMode: "direct_ws" | "reverse_ssh" | "polling" | "ngrok_tunnel" | "in_cluster" | "kubeconfig";
             /** Operatorversion */
             operatorVersion?: string | null;
             /** Lastseen */

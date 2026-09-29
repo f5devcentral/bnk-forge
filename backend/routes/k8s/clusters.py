@@ -72,8 +72,12 @@ def detect_and_register_clusters_from_credentials(
     user: User = Depends(require_project_owner),
     db: Session = Depends(get_db)
 ):
-    """Discover Kubernetes clusters via the project's cloud credential templates."""
-    return ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
+    """Discover Kubernetes clusters via the project's bound cloud credential template."""
+    result = ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
+    db.commit()
+    for cluster in result["registered"]:
+        enqueue_cluster_scan(cluster["id"])
+    return result
 
 
 @router.post("/projects/{project_id}/k8s/clusters", response_model=ClusterCreateResponse)

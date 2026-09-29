@@ -9,7 +9,7 @@ def test_generate_aks_kubeconfig():
     """AKS kubeconfig embeds a bearer token and contains no local file refs."""
     kubeconfig_yaml = generate_aks_kubeconfig(
         cluster_name="aks-prod",
-        server="aks-prod.hcp.eastus.azmk8s.io",
+        server="https://aks-prod.hcp.eastus.azmk8s.io:443",
         ca_data="LS0tLS1CRUdJTi4u.",
         token="test-aad-token",
     )

@@ -14,7 +14,7 @@ from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.cache import cache
-from core.encryption import decrypt_value
+from core.encryption import decrypt_value, decrypt_value_or_none, encrypt_value
 from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
@@ -230,10 +230,12 @@ class KubernetesServiceBase:
         access_key = aws_env.get("AWS_ACCESS_KEY_ID") or "default"
         cluster_id = getattr(cluster, "id", getattr(cluster, "name", "default"))
         cache_key = f"eks_token:{cluster_id}:{region}:{access_key}"
+        # The token is a bearer credential; it is stored encrypted in Redis.
         cached = cache.get(cache_key)
-        if cached:
+        cached_token = decrypt_value_or_none(cached) if isinstance(cached, str) else None
+        if cached_token:
             logger.debug("Using cached EKS token for cluster %s", getattr(cluster, "name", "unknown"))
-            return cached
+            return cached_token
 
         try:
             import boto3
@@ -313,7 +315,7 @@ class KubernetesServiceBase:
         # Encode as k8s-aws-v1 token
         token = "k8s-aws-v1." + base64.urlsafe_b64encode(signed_url.encode("utf-8")).rstrip(b"=").decode("utf-8")
 
-        cache.set(cache_key, token, ttl_seconds=_TOKEN_TTL_SECONDS)
+        cache.set(cache_key, encrypt_value(token), ttl_seconds=_TOKEN_TTL_SECONDS)
         logger.info("Generated EKS bearer token for cluster %s (region=%s)", cluster_name, region)
         return token
 

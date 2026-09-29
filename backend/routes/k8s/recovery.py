@@ -363,8 +363,16 @@ def get_recovery_status(
         vlans_detail=vlans_detail,
         platform_healthy=not cert_stale and not vlans_failed,
     )
-    cache.set(cache_key, res, ttl_seconds=60)
+    cache.set(cache_key, res.model_dump(), ttl_seconds=60)
     return res
+
+
+def _invalidate_cwc_caches(cluster_id: int) -> None:
+    """Drop cached CWC-derived status once the certs have been changed."""
+    cache.delete(f"recovery:status:{cluster_id}")
+    cache.delete(f"cwc:setup_status:{cluster_id}")
+    cache.delete(f"cwc:available:{cluster_id}")
+    cache.delete(f"license:status:{cluster_id}")
 
 
 @router.post(
@@ -387,11 +395,6 @@ def resync_cwc_certs(
       3. Restart CWC pod (so it re-reads the updated secret)
       4. Clean up stale agent pods (they may have old certs cached)
     """
-    cache.delete(f"recovery:status:{cluster_id}")
-    cache.delete(f"cwc:setup_status:{cluster_id}")
-    cache.delete(f"cwc:available:{cluster_id}")
-    cache.delete(f"license:status:{cluster_id}")
-
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -430,6 +433,7 @@ def resync_cwc_certs(
         _copy_cert_to_cwc_license_secret(api_client, cert_data, cwc_ns)
         steps.append({"step": "update_cwc_license_certs", "status": "ok"})
     except QKViewError as e:
+        _invalidate_cwc_caches(cluster_id)
         return CWCCertResyncResponse(
             success=False,
             message=f"Failed to update cwc-license-certs: {e}",
@@ -464,6 +468,7 @@ def resync_cwc_certs(
         })
         # Non-fatal — agent pod will be recreated on next request
 
+    _invalidate_cwc_caches(cluster_id)
     return CWCCertResyncResponse(
         success=True,
         message=(
@@ -616,6 +621,7 @@ def platform_restart(
 
     cache.delete(f"recovery:status:{cluster_id}")
     cache.delete(f"bnk:pods:{cluster_id}")
+    cache.delete_pattern(f"bnk:data:{cluster_id}:*")
     cache.delete(f"tmm:debug:pods:{cluster_id}")
 
     component_list = ", ".join(r["component"] for r in restarted if r["status"] == "restarted")

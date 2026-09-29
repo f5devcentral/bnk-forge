@@ -282,7 +282,9 @@ class ClusterScanner:
             n.get("zone") for n in nodes if n.get("zone")
         }) or getattr(cluster, "zones", None)
         cluster.last_synced_at = now
-        cluster.connectivity_status = "connected"
+        # The version probe is the scan's reachability signal: it fails only when
+        # the API server could not be reached or authenticated.
+        cluster.connectivity_status = "connected" if cluster_info.get("version") else "unreachable"
         cluster.access_method = "ssh_tunnel" if getattr(cluster, "ssh_tunnel_enabled", False) else "kubeconfig"
 
         try:
@@ -304,8 +306,8 @@ class ClusterScanner:
 
         try:
             self.db.flush()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to persist scan metadata for cluster %s: %s", cluster.id, exc)
 
 
 __all__ = [
