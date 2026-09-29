@@ -41595,6 +41595,8 @@ export interface operations {
             query?: {
                 status?: string | null;
                 cluster_id?: number | null;
+                /** @description Exact match filter by target name */
+                name?: string | null;
             };
             header?: never;
             path?: never;

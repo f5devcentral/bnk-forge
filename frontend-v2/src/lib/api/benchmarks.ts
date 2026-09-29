@@ -112,7 +112,7 @@ export const benchmarksApi = {
 
   // ── Targets (K8s cluster + LLM endpoint) — Phase 4b ──────────────────
 
-  listTargets: (params?: { status?: string; cluster_id?: number }) =>
+  listTargets: (params?: { status?: string; cluster_id?: number; name?: string }) =>
     apiClient.get<BenchmarkTargetListResponse>('/api/benchmarks/targets', { params }).then((res) => res.data),
 
   getTarget: (targetId: number) =>

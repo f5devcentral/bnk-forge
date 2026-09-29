@@ -27973,6 +27973,24 @@
               ],
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact match filter by target name",
+              "title": "Name"
+            },
+            "description": "Exact match filter by target name"
           }
         ],
         "responses": {

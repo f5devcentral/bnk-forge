@@ -217,7 +217,7 @@ export function BenchmarkTargetsTab({ selectedClusterId }: BenchmarkTargetsTabPr
         {/* Header with back button */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => setSelectedTargetId(null)}>
+            <Button variant="ghost" size="sm" onClick={() => { setSelectedTargetId(null); setActiveRunGroupId(null); }}>
               ← Back to targets
             </Button>
             <h3 className="text-lg font-semibold text-foreground">{targetDetail.name}</h3>
@@ -259,6 +259,12 @@ export function BenchmarkTargetsTab({ selectedClusterId }: BenchmarkTargetsTabPr
               <p className="flex items-center gap-1.5 text-xs font-medium mt-1 text-foreground">
                 <Server className="h-3.5 w-3.5 text-primary shrink-0" />
                 {clusterName}
+              </p>
+            </div>
+            <div>
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">Cluster</span>
+              <p className="font-mono text-xs mt-1 text-foreground/80">
+                {targetDetail.cluster_name || clusters.find(c => c.id === targetDetail.cluster_id)?.name || `Cluster #${targetDetail.cluster_id}`}
               </p>
             </div>
             <div>
