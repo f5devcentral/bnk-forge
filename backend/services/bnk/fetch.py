@@ -38,6 +38,8 @@ _BNK_FETCH_DEADLINE_SECONDS = 30
 # Shared executor for BNK CRD/pod fetches. A per-request executor with
 # max_workers=20 explodes the process thread count when multiple BNK pages
 # are open (100+ threads observed on a laptop). Because this pool is shared
+# across all requests, it can hold more workers without that thread explosion;
+# the limit is network/batch parallelism to the K8s API.
 _BNK_FETCH_WORKERS = 64
 _bnk_fetch_executor: ThreadPoolExecutor | None = None
 
