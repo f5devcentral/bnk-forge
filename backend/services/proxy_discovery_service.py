@@ -321,7 +321,10 @@ class ProxyDiscoveryService:
         }
 
         # Query active ProxyDeployments scoped strictly to the scanned cluster (INV-1)
-        db_deploy_map: dict[str, Any] = {}
+        # Keyed by (target proxy namespace, helm release): a Deployment is Forge's
+        # proxy only in the namespace Forge installed it into (as in
+        # _has_target_deployment_match), not a same-named workload elsewhere.
+        db_deploy_map: dict[tuple[str, str], Any] = {}
         if self.db and cluster_id is not None:
             try:
                 db_deploys = (
@@ -338,9 +341,8 @@ class ProxyDiscoveryService:
                 )
                 for d in db_deploys:
                     if d.helm_release:
-                        db_deploy_map[d.helm_release.lower()] = d
-                    if d.proxy_url:
-                        db_deploy_map[d.proxy_url.lower()] = d
+                        proxy_ns = d.target.proxy_namespace or "perf-proxies"
+                        db_deploy_map[(proxy_ns, d.helm_release.lower())] = d
             except Exception as e:
                 logger.debug("Failed to query ProxyDeployment records for inventory: %s", e)
 
@@ -380,8 +382,8 @@ class ProxyDiscoveryService:
 
             # Check matching DB proxy deployment for backend enrichment
             matched_db_deploy = (
-                db_deploy_map.get(dep_name.lower())
-                or db_deploy_map.get(labels.get("app.kubernetes.io/instance", "").lower())
+                db_deploy_map.get((dep_ns, dep_name.lower()))
+                or db_deploy_map.get((dep_ns, labels.get("app.kubernetes.io/instance", "").lower()))
             )
             if matched_db_deploy and matched_db_deploy.target:
                 tgt = matched_db_deploy.target

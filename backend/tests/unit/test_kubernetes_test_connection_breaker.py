@@ -58,3 +58,20 @@ def test_open_breaker_skips_kubeconfig_load():
     with pytest.raises(BreakerOpenError):
         svc.test_connection(_CLUSTER_ID)
     assert svc.load_kubeconfig.call_count == loads
+
+
+@pytest.mark.unit
+def test_auth_failure_on_half_open_trial_closes_the_breaker():
+    from kubernetes.client.exceptions import ApiException
+
+    core = MagicMock()
+    core.list_namespace.side_effect = ConnectionRefusedError("refused")
+    svc = _svc()
+    with patch("services.kubernetes._base.client.CoreV1Api", return_value=core):
+        for _ in range(5):
+            svc.test_connection(_CLUSTER_ID)
+        registry._breaker_for("cluster", _CLUSTER_ID).opened_at -= 3600  # sleep window over
+        core.list_namespace.side_effect = ApiException(status=401)
+        assert svc.test_connection(_CLUSTER_ID)["success"] is False  # half-open trial: 401
+        assert svc.test_connection(_CLUSTER_ID)["success"] is False  # not BreakerOpenError
+    assert core.list_namespace.call_count == 7

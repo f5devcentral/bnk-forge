@@ -748,6 +748,48 @@ class TestDiscoverInventoryDeployments:
         filter_call = db.query.return_value.join.return_value.filter
         filter_call.assert_called_once()
 
+    def test_db_row_matches_only_deployment_in_target_proxy_namespace(self):
+        """A same-named Deployment outside the target's proxy namespace is not
+        Forge's proxy: no invented target backend, no borrowed proxy_url."""
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        row = MagicMock()
+        row.helm_release = "perf-haproxy-demo"
+        row.proxy_url = "http://perf-haproxy-demo.perf-proxies:10080"
+        row.external_url = None
+        row.target.proxy_namespace = "perf-proxies"
+        row.target.llm_base_url = "http://vllm.llm:8000"
+        row.target.llm_namespace = "llm"
+        row.target.name = "t1"
+        db = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.all.return_value = [row]
+
+        def _dep(ns):
+            dep = MagicMock()
+            dep.metadata.name = "perf-haproxy-demo"
+            dep.metadata.namespace = ns
+            dep.metadata.labels = {"app.kubernetes.io/instance": "perf-haproxy-demo"}
+            container = MagicMock()
+            container.image = "docker.io/haproxytech/haproxy-alpine:3.3.1"
+            dep.spec.template.spec.containers = [container]
+            dep.spec.template.spec.volumes = []
+            return dep
+
+        with patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_ingresses", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_deployments",
+                   return_value=[_dep("default"), _dep("perf-proxies")]), \
+             patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[]), \
+             patch.object(ProxyDiscoveryService, "_find_proxy_service_for_deployment", return_value=(None, None)):
+            items = ProxyDiscoveryService(db).discover_inventory(MagicMock(), cluster_id=1)
+
+        by_ns = {i["namespace"]: i for i in items}
+        assert by_ns["default"]["backends"] == []
+        assert by_ns["default"]["proxy_url"] is None
+        assert by_ns["perf-proxies"]["backends"][0]["via"] == "Benchmark Target (t1)"
+        assert by_ns["perf-proxies"]["proxy_url"] == row.proxy_url
+
     def test_envoy_configmap_linear_extraction_and_size_cap(self):
         """Major 2: Envoy ConfigMaps are parsed line-by-line in linear time with size bounding."""
         from services.proxy_discovery_service import _extract_backends_from_configmaps

@@ -102,7 +102,13 @@ class _Breaker:
 
     def record_failure(self, category: ErrorCategory | None) -> None:
         # Auth failures must NOT count — otherwise breaker stays open on bad token.
+        # They prove the endpoint answered, so a half-open trial closes the breaker.
         if category in (ErrorCategory.AUTH, ErrorCategory.AUTHZ):
+            self.half_open_inflight = False
+            if self.state is BreakerState.HALF_OPEN:
+                logger.info("Breaker closed (target_name=%s) after auth failure", self.target_name)
+                self.consecutive_failures = 0
+                self.state = BreakerState.CLOSED
             return
         self.consecutive_failures += 1
         self.half_open_inflight = False
