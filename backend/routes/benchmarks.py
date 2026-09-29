@@ -551,6 +551,7 @@ def delete_benchmark_agent(
         _check_project_access(agent.project_id, user, db)
     svc.delete_agent(agent_id)
     db.commit()
+    close_agent_connection(agent_id)
 
 
 # ============================================================================
@@ -1620,7 +1621,9 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
                     "Agent %d WS rejected: token agent_id=%s is not this registered agent",
                     agent_id, token_agent_id,
                 )
-                return 4001
+                # 4401, not 4001: the token itself is valid but no longer names this
+                # agent, so the agent must re-mint rather than reconnect.
+                return 4401
     else:
         from services.auth_service import token_user_state
 
@@ -1846,6 +1849,32 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
             return False
     # No agent has connected yet (no loop captured) → nothing to send to.
     return False
+
+
+async def _close_agent_ws(agent_id: int) -> None:
+    ws = _agent_ws_connections.pop(agent_id, None)
+    if ws is not None:
+        try:
+            await ws.close(code=4401)
+        except Exception:
+            pass
+
+
+def close_agent_connection(agent_id: int) -> None:
+    """Drop a deleted agent's live WebSocket (close 4401) from a SYNC route handler.
+
+    Deleting the agent revokes its tokens; without this an already-open socket
+    would keep working until it reconnected. Scheduled on the loop that owns the
+    socket, like dispatch_to_agent.
+    """
+    loop = _main_loop
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(_close_agent_ws(agent_id), loop).result(timeout=5)
+        except Exception:
+            logger.warning("Could not close WebSocket for deleted agent %d", agent_id)
+    else:
+        _agent_ws_connections.pop(agent_id, None)
 
 
 # ============================================================================

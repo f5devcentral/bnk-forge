@@ -2589,7 +2589,11 @@ class TestMintBenchmarkAgentToken:
         other = _make_agent(db, name="l2-agent-other")
         token = self._mint(client, admin_headers, agent.id).json()["token"]
         assert _agent_ws_authorized(self._ws(token), agent.id) is None
-        assert _agent_ws_authorized(self._ws(token), other.id) == 4001
+        # 4401 (re-mint), not 4001 (reconnect): the token is valid but not this agent's.
+        assert _agent_ws_authorized(self._ws(token), other.id) == 4401
+        assert client.delete(f"/api/benchmarks/agents/{agent.id}", headers=admin_headers).status_code == 204
+        assert _agent_ws_authorized(self._ws(token), agent.id) == 4401
+        assert _agent_ws_authorized(self._ws("not.a.token"), agent.id) == 4001
 
     def test_viewer_cannot_mint(self, client, viewer_headers, all_test_users, db):
         agent = _make_agent(db, name="viewer-agent")
@@ -2679,3 +2683,30 @@ class TestMintBenchmarkAgentToken:
         assert resp.status_code == 201
         run = db.query(BenchmarkRun).filter(BenchmarkRun.id == resp.json()["id"]).one()
         assert run.agent_id == agent.id
+
+    def test_delete_closes_the_agents_live_websocket(self, client, admin_headers, sample_user, db, monkeypatch):
+        import asyncio
+        import threading
+        from unittest.mock import AsyncMock
+
+        import routes.benchmarks as bm
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setattr(bm, "_main_loop", loop)
+            agent = _make_agent(db, name="live-agent")
+            keep = _make_agent(db, name="live-agent-keep")
+            ws, other_ws = MagicMock(close=AsyncMock()), MagicMock(close=AsyncMock())
+            monkeypatch.setitem(bm._agent_ws_connections, agent.id, ws)
+            monkeypatch.setitem(bm._agent_ws_connections, keep.id, other_ws)
+            assert client.delete(f"/api/benchmarks/agents/{agent.id}", headers=admin_headers).status_code == 204
+            ws.close.assert_awaited_once_with(code=4401)
+            assert agent.id not in bm._agent_ws_connections
+            other_ws.close.assert_not_awaited()
+            assert bm._agent_ws_connections[keep.id] is other_ws
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=5)
+            loop.close()
