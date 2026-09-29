@@ -182,6 +182,15 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
     return null;
   }
 
+  // Fall back to node capacity only when no cluster reports pod metrics.
+  const withoutMetrics = filteredClusters.filter((c) => !c.metrics_available).length;
+  const showCapacity = filteredClusters.length > 0 && withoutMetrics === filteredClusters.length;
+  const usageSubtext = showCapacity
+    ? 'Node capacity (metrics-server unavailable)'
+    : withoutMetrics > 0
+      ? `Across all BNK pods · ${withoutMetrics} cluster${withoutMetrics > 1 ? 's' : ''} without metrics not included`
+      : 'Across all BNK pods';
+
   return (
     <div className="space-y-6" data-testid="bnk-resources-panel">
       {/* Cloud Provider Filter */}
@@ -271,30 +280,14 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
         <OverviewTile
           icon={Cpu}
           label="CPU"
-          value={
-            summary.total_cpu_millicores > 0
-              ? formatCPU(summary.total_cpu_millicores)
-              : formatCPU(summary.node_capacity_cpu_millicores)
-          }
-          subtext={
-            summary.total_cpu_millicores > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
-          }
+          value={formatCPU(showCapacity ? summary.node_capacity_cpu_millicores : summary.total_cpu_millicores)}
+          subtext={usageSubtext}
         />
         <OverviewTile
           icon={Database}
           label="Memory"
-          value={
-            summary.total_memory_bytes > 0
-              ? formatMemory(summary.total_memory_bytes)
-              : formatMemory(summary.node_capacity_memory_bytes)
-          }
-          subtext={
-            summary.total_memory_bytes > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
-          }
+          value={formatMemory(showCapacity ? summary.node_capacity_memory_bytes : summary.total_memory_bytes)}
+          subtext={usageSubtext}
         />
       </div>
 

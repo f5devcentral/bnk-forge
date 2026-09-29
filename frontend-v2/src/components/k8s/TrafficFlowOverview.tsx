@@ -191,30 +191,18 @@ function StatChip({
   );
 }
 
-type StageColor = 'info' | 'secondary' | 'success' | 'warning' | 'muted';
-
-/** Section header for a flow stage — color-coded by stage role */
+/** Section header for a flow stage — token-pure, distinguished by icon + label, not color */
 function StageHeader({
   title,
   icon: Icon,
-  color = 'muted',
 }: {
   title: string;
   icon: typeof Globe;
-  color?: StageColor;
 }) {
-  const colorClass = {
-    info: 'bg-info/10 text-info border-info/20',
-    secondary: 'bg-secondary/50 text-secondary-foreground border-secondary/20',
-    success: 'bg-success/10 text-success border-success/20',
-    warning: 'bg-warning/10 text-warning border-warning/20',
-    muted: 'bg-muted/50 text-muted-foreground border-border',
-  }[color];
-
   return (
-    <div className={cn('flex items-center gap-1.5 px-2 py-1 rounded-md mb-2 border', colorClass)}>
-      <Icon className="h-3.5 w-3.5 opacity-80" />
-      <span className="text-[11px] font-semibold uppercase tracking-wider">
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md mb-2 bg-muted/50">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </span>
     </div>
@@ -421,7 +409,7 @@ function GatewayFlowRow({
       <div className="flex items-stretch p-4 gap-0 min-h-[120px]">
         {/* Listeners */}
         <div className="w-[25%] min-w-0">
-          <StageHeader title="Listeners" icon={Layers} color="info" />
+          <StageHeader title="Listeners" icon={Layers} />
           <div className="space-y-1">
             {gateway.listeners.map(listener => {
               const listenerKey = `${gateway.namespace}/${gateway.name}/${listener.name}`;
@@ -479,7 +467,7 @@ function GatewayFlowRow({
 
         {/* Routes */}
         <div className="w-[35%] min-w-0">
-          <StageHeader title="Routes" icon={Route} color="secondary" />
+          <StageHeader title="Routes" icon={Route} />
           <div className="space-y-1">
             {visibleRoutes.map(route => (
                 <div key={`${route.namespace}/${route.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
@@ -530,7 +518,7 @@ function GatewayFlowRow({
 
         {/* Backends */}
         <div className="w-[25%] min-w-0">
-          <StageHeader title="Backends" icon={Server} color="success" />
+          <StageHeader title="Backends" icon={Server} />
           <div className="space-y-1">
             {visibleBackends.map(name => {
               const parts = name.split('/');
@@ -568,7 +556,7 @@ function GatewayFlowRow({
 
         {/* Security summary — compact sidebar */}
         <div className="w-[15%] ml-3 pl-3 border-l shrink-0 border-border">
-          <StageHeader title="Security" icon={Shield} color="warning" />
+          <StageHeader title="Security" icon={Shield} />
           <div className="space-y-1.5">
             {flow.securityPolicyCount > 0
               ? <AttachmentBadge label={`fw polic${flow.securityPolicyCount !== 1 ? 'ies' : 'y'}`} count={flow.securityPolicyCount} icon={Shield} />

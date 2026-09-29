@@ -279,6 +279,27 @@ class TestDetectClustersFromCredentials:
         assert len(data["registered"]) == 1
         mock_svc.detect_clusters_from_credentials.assert_called_once_with(sample_project.id)
 
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterDiscoveryService")
+    def test_detect_credentials_enqueues_scan_for_registered(
+        self, mock_svc_cls, mock_enqueue, client, admin_headers, sample_user, sample_project
+    ):
+        """Registered clusters are committed and get a background scan."""
+        mock_svc_cls.return_value.detect_clusters_from_credentials.return_value = {
+            "success": True,
+            "message": "Discovered 2 cluster(s)",
+            "registered": [{"id": 7, "name": "eks-prod", "provider": "aws", "status": "registered"}],
+            "skipped": [{"provider": "aws", "name": "eks-old", "reason": "already_registered"}],
+            "errors": [],
+        }
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(7)
+
     def test_detect_credentials_viewer_forbidden(self, client, viewer_headers, all_test_users, sample_project):
         """Viewer cannot trigger credential-driven discovery — returns 403."""
         response = client.post(

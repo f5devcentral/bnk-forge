@@ -313,8 +313,8 @@ class ClusterScanner:
 
         try:
             self.db.flush()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to persist scan metadata for cluster %s: %s", cluster.id, exc)
 
 
 __all__ = [

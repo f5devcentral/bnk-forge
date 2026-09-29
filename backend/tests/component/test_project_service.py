@@ -661,6 +661,24 @@ class TestProjectServiceUpdate:
         project = db.query(Project).filter(Project.id == created["project_id"]).first()
         assert project.target_platform_profile == "generic_onprem"
 
+    @patch("services.project_service.invalidate_cache")
+    @patch("services.project_service.cache")
+    def test_sso_azure_template_cannot_be_bound(self, mock_cache, mock_inv, db):
+        from models import CloudCredentialTemplate
+
+        template = CloudCredentialTemplate(name="Azure SSO Bind", provider="azure", azure_auth_method="sso")
+        db.add(template)
+        db.commit()
+        svc = ProjectService(db)
+        with pytest.raises(BadRequestError, match="uses Entra ID SSO"):
+            svc.create_project(_make_create_data(
+                name="Azure SSO Project", project_type="cloud-azure", cloud_provider="azure",
+                credential_template_id=template.id,
+            ))
+        created = svc.create_project(_make_create_data(name="Azure Rebind Project"))
+        with pytest.raises(BadRequestError, match="uses Entra ID SSO"):
+            svc.update_project(created["project_id"], _make_update_data(credential_template_id=template.id))
+
 
 class TestProjectServiceDelete:
     @patch("services.project_service.invalidate_cache")

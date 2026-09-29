@@ -933,4 +933,21 @@ describe('ImportedBlueprintDeployDialog', () => {
     expect(screen.queryByRole('button', { name: /Deploy Blueprint/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Close/i }).length).toBeGreaterThanOrEqual(1);
   });
+
+  it('fails closed when required inputs fail to load', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('*/api/stacks/releases/:id/required-inputs', () =>
+        HttpResponse.json({ error: 'boom' }, { status: 500 }),
+      ),
+    );
+
+    render(<ImportedBlueprintDeployDialog slug="release-31" open onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load blueprint inputs.')).toBeInTheDocument();
+    });
+    await user.type(screen.getByLabelText(/Project Name/i), 'No Inputs Project');
+    expect(screen.getByRole('button', { name: /Deploy Blueprint/i })).toBeDisabled();
+  });
 });

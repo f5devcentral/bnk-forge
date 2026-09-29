@@ -17,8 +17,7 @@ import os
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -118,6 +117,7 @@ class SystemService:
 
     _BNK_CONSUMPTION_CACHE_KEY = "system:bnk_consumption"
     _BNK_CONSUMPTION_TTL_SECONDS = 60
+    _BNK_CONSUMPTION_DEADLINE_SECONDS = 60
 
     def get_bnk_consumption(self) -> dict[str, Any]:
         """
@@ -195,53 +195,44 @@ class SystemService:
                     region=region,
                 )
 
-        # Collect per-cluster data in parallel with a per-cluster timeout.
-        # Without timeouts a single unreachable cluster can stall the whole
-        # fleet view for minutes (e.g. metrics-server not installed).
+        # Collect per-cluster data in parallel under one overall deadline.
+        # Without it a single unreachable cluster can stall the whole fleet
+        # view for minutes (e.g. metrics-server not installed). Hung workers
+        # are abandoned rather than joined.
         cluster_results: list[dict[str, Any]] = []
-        fleet_timeout = 60  # seconds
-        completed_futures: set[Any] = set()
-        with ThreadPoolExecutor(max_workers=min(len(cluster_payloads) or 1, 8)) as executor:
+        deadline = self._BNK_CONSUMPTION_DEADLINE_SECONDS
+        executor = ThreadPoolExecutor(max_workers=min(len(cluster_payloads) or 1, 8))
+        try:
             futures = {
                 executor.submit(_collect_cluster, c_id, c_name, c_nodes, c_status, c_provider, c_region): (c_id, c_name, c_nodes, c_status, c_provider, c_region)
                 for (c_id, c_name, c_nodes, c_status, c_provider, c_region) in cluster_payloads
             }
-            try:
-                for future in as_completed(futures, timeout=fleet_timeout):
-                    completed_futures.add(future)
-                    c_id, c_name, c_nodes, c_status, c_provider, c_region = futures[future]
+            done, _ = wait(futures, timeout=deadline)
+            for future, (c_id, c_name, c_nodes, c_status, c_provider, c_region) in futures.items():
+                if future not in done:
+                    logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) timed out after {deadline}s")
+                    error = "Timed out collecting cluster consumption"
+                else:
                     try:
                         cluster_results.append(future.result())
+                        continue
                     except Exception as exc:
                         logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) failed: {exc}")
-                        cluster_results.append(aggregate_cluster_consumption(
-                            cluster_id=c_id,
-                            cluster_name=c_name,
-                            node_count=c_nodes,
-                            status=c_status,
-                            bnk_data=None,
-                            pod_metrics_response={"available": False, "error": str(exc)},
-                            dpf_summary={"detected": False, "dpu_count": 0},
-                            reachable=False,
-                            cloud_provider=c_provider,
-                            region=c_region,
-                        ))
-            except FuturesTimeoutError:
-                for future, (c_id, c_name, c_nodes, c_status, c_provider, c_region) in futures.items():
-                    if future not in completed_futures:
-                        logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) timed out after {fleet_timeout}s")
-                        cluster_results.append(aggregate_cluster_consumption(
-                            cluster_id=c_id,
-                            cluster_name=c_name,
-                            node_count=c_nodes,
-                            status=c_status,
-                            bnk_data=None,
-                            pod_metrics_response={"available": False, "error": "Timed out collecting cluster consumption"},
-                            dpf_summary={"detected": False, "dpu_count": 0},
-                            reachable=False,
-                            cloud_provider=c_provider,
-                            region=c_region,
-                        ))
+                        error = str(exc)
+                cluster_results.append(aggregate_cluster_consumption(
+                    cluster_id=c_id,
+                    cluster_name=c_name,
+                    node_count=c_nodes,
+                    status=c_status,
+                    bnk_data=None,
+                    pod_metrics_response={"available": False, "error": error},
+                    dpf_summary={"detected": False, "dpu_count": 0},
+                    reachable=False,
+                    cloud_provider=c_provider,
+                    region=c_region,
+                ))
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         result = {
             "timestamp": datetime.now(UTC).isoformat(),

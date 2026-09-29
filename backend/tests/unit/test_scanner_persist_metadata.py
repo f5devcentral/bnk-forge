@@ -7,8 +7,8 @@ import pytest
 from services.scanner import ClusterScanner
 
 
-def _scanner():
-    db = MagicMock()
+def _scanner(db: MagicMock | None = None):
+    db = db or MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     with patch.object(ClusterScanner, "__init__", lambda self, _db: setattr(self, "db", _db)):
         return ClusterScanner(db)
@@ -48,3 +48,13 @@ def test_reached_scan_stamps_sync_time_and_connected():
     assert cluster.connectivity_status == "connected"
     assert cluster.version == "v1.30.14"
     assert cluster.node_count == 3
+
+
+@pytest.mark.unit
+def test_flush_error_is_logged(caplog):
+    db = MagicMock()
+    db.flush.side_effect = RuntimeError("db gone")
+
+    _scanner(db)._persist_cluster_metadata(_cluster(), {"version": "v1.30.1"}, [])
+
+    assert "db gone" in caplog.text

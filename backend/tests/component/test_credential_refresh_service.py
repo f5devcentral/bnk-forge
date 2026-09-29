@@ -284,3 +284,68 @@ class TestUnsupportedProviders:
         svc = CredentialRefreshService()
         result = svc.refresh_azure_credentials(MagicMock(), {}, MagicMock())
         assert result is False
+
+
+# ── Azure SSO refresh ───────────────────────────────────────────────
+
+class TestRefreshAzureTemplate:
+    def _template(self, db, minutes_left):
+        from core.encryption import encrypt_value
+        from models import CloudCredentialTemplate
+        t = CloudCredentialTemplate(
+            name=f"azure-sso-refresh-{minutes_left}",
+            provider="azure",
+            azure_auth_method="sso",
+            azure_tenant_id="tenant-1",
+            azure_sso_access_token_encrypted=encrypt_value("access"),
+            azure_sso_refresh_token_encrypted=encrypt_value("refresh"),
+            azure_sso_token_expiry=datetime.now(UTC) + timedelta(minutes=minutes_left),
+            azure_sso_authenticated_at=datetime.now(UTC),
+        )
+        db.add(t)
+        db.commit()
+        return t
+
+    def _notifications(self, db, template):
+        from models import Notification
+        return db.query(Notification).filter(Notification.resource_id == template.id).all()
+
+    @patch("services.azure_auth_service.AzureAuthService")
+    def test_healthy_token_is_left_alone(self, mock_azure_cls, db):
+        t = self._template(db, minutes_left=60)
+        assert CredentialRefreshService().check_and_refresh_template(t, db) is False
+        mock_azure_cls.return_value.refresh_credentials.assert_not_called()
+        assert self._notifications(db, t) == []
+
+    @patch("services.azure_auth_service.AzureAuthService")
+    def test_routine_refresh_creates_no_notification(self, mock_azure_cls, db):
+        mock_azure_cls.return_value.refresh_credentials.return_value = {
+            "access_token": "new", "refresh_token": "new-refresh", "expires_in": 3600,
+        }
+        t = self._template(db, minutes_left=5)
+        assert CredentialRefreshService().check_and_refresh_template(t, db) is True
+        assert self._notifications(db, t) == []
+
+    @patch("services.azure_auth_service.AzureAuthService")
+    def test_transient_failure_notifies_once(self, mock_azure_cls, db):
+        from services.azure_auth_service import AzureAuthError
+        mock_azure_cls.return_value.refresh_credentials.side_effect = AzureAuthError(
+            "Network error refreshing Azure token")
+        t = self._template(db, minutes_left=5)
+        svc = CredentialRefreshService()
+        svc.check_and_refresh_template(t, db)
+        svc.check_and_refresh_template(t, db)
+        assert len(self._notifications(db, t)) == 1
+        assert t.azure_sso_refresh_token_encrypted is not None
+        assert t.last_error_code == "AzureSSORefreshFailed"
+
+    @patch("services.azure_auth_service.AzureAuthService")
+    def test_invalid_grant_ends_sso_session(self, mock_azure_cls, db):
+        from services.azure_auth_service import AzureAuthError
+        mock_azure_cls.return_value.refresh_credentials.side_effect = AzureAuthError(
+            "Failed to refresh Azure token: AADSTS70043", details={"oauth_error": "invalid_grant"})
+        t = self._template(db, minutes_left=5)
+        CredentialRefreshService().check_and_refresh_template(t, db)
+        assert t.azure_sso_refresh_token_encrypted is None
+        assert t.azure_sso_access_token_encrypted is None
+        assert len(self._notifications(db, t)) == 1

@@ -1221,3 +1221,107 @@ class TestAzureTemplateService:
         assert CredentialTemplateService._has_complete_sso_config(sso_tmpl) is True
 
 
+
+class TestAzureAuthMethodGuards:
+    def _sso_template(self, db, **overrides):
+        from core.encryption import encrypt_value
+        fields = {
+            "name": "azure-sso-guard",
+            "provider": "azure",
+            "azure_auth_method": "sso",
+            "azure_tenant_id": "tenant-1",
+            "azure_sso_access_token_encrypted": encrypt_value("access"),
+            "azure_sso_refresh_token_encrypted": encrypt_value("refresh"),
+            "azure_sso_token_expiry": datetime.now(UTC) + timedelta(hours=1),
+            "azure_sso_authenticated_at": datetime.now(UTC),
+        }
+        fields.update(overrides)
+        t = CloudCredentialTemplate(**fields)
+        db.add(t)
+        db.commit()
+        return t
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_initiate_sso_rejects_service_principal_template(self, mock_azure_cls, db):
+        t = _create_template_in_db(db, name="azure-sp", provider="azure",
+                                   azure_auth_method="service_principal", aws_access_key_id=None)
+        svc = CredentialTemplateService(db)
+        with pytest.raises(BadRequestError, match="Azure SSO is not enabled"):
+            svc.initiate_sso(t.id)
+        with pytest.raises(BadRequestError, match="Azure SSO is not enabled"):
+            svc.poll_sso(t.id, "device-code")
+        mock_azure_cls.return_value.initiate_device_authorization.assert_not_called()
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_initiate_sso_keeps_blank_client_id(self, mock_azure_cls, db):
+        mock_azure_cls.return_value.initiate_device_authorization.return_value = {
+            "device_code": "d", "user_code": "U", "verification_uri": "v",
+            "verification_uri_complete": "v", "expires_in": 900, "interval": 5,
+            "client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+        }
+        t = self._sso_template(db, azure_client_id=None)
+        CredentialTemplateService(db).initiate_sso(t.id)
+        db.refresh(t)
+        assert t.azure_client_id is None
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_poll_sso_declined_is_client_error(self, mock_azure_cls, db):
+        from services.azure_auth_service import AzureAuthError
+        mock_azure_cls.return_value.poll_for_token.side_effect = AzureAuthError("Azure login was declined by the user.")
+        t = self._sso_template(db)
+        with pytest.raises(AzureAuthError) as exc:
+            CredentialTemplateService(db).poll_sso(t.id, "device-code")
+        assert exc.value.status_code == 400
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_refresh_sso_failure_is_audited(self, mock_azure_cls, db):
+        from services.azure_auth_service import AzureAuthError
+        mock_azure_cls.return_value.refresh_credentials.side_effect = AzureAuthError("invalid_grant")
+        t = self._sso_template(db)
+        svc = CredentialTemplateService(db)
+        with patch.object(svc, "_create_audit_log") as audit, pytest.raises(AzureAuthError):
+            svc.refresh_sso(t.id)
+        assert audit.call_args[0][0] == "azure_sso_refresh_failed"
+
+    def test_switch_to_sso_clears_client_secret(self, db):
+        from core.encryption import encrypt_value
+        t = _create_template_in_db(db, name="azure-sp-switch", provider="azure", aws_access_key_id=None,
+                                   azure_auth_method="service_principal", azure_tenant_id="tenant-1",
+                                   azure_client_id="client-1",
+                                   azure_client_secret_encrypted=encrypt_value("secret"))
+        CredentialTemplateService(db).update_template(t.id, _make_update_data(azure_auth_method="sso"))
+        assert t.azure_client_secret_encrypted is None
+
+    def test_switch_to_sso_rejected_when_projects_bound(self, db):
+        from models import Project
+        t = _create_template_in_db(db, name="azure-sp-bound", provider="azure", aws_access_key_id=None,
+                                   azure_auth_method="service_principal")
+        db.add(Project(name="azure-bound-project", credential_template_id=t.id))
+        db.commit()
+        with pytest.raises(BadRequestError, match="provisioning requires a service principal"):
+            CredentialTemplateService(db).update_template(t.id, _make_update_data(azure_auth_method="sso"))
+
+    def test_switch_to_service_principal_clears_sso_session(self, db):
+        t = self._sso_template(db)
+        CredentialTemplateService(db).update_template(
+            t.id, _make_update_data(azure_auth_method="service_principal"))
+        assert t.azure_sso_access_token_encrypted is None
+        assert t.azure_sso_refresh_token_encrypted is None
+
+    def test_tenant_change_clears_sso_session(self, db):
+        t = self._sso_template(db)
+        CredentialTemplateService(db).update_template(t.id, _make_update_data(azure_tenant_id="tenant-2"))
+        assert t.azure_sso_refresh_token_encrypted is None
+        assert t.azure_sso_authenticated_at is None
+
+    def test_unrelated_update_keeps_sso_session(self, db):
+        t = self._sso_template(db, azure_client_id=None)
+        CredentialTemplateService(db).update_template(
+            t.id, _make_update_data(name="azure-sso-renamed", azure_client_id=""))
+        assert t.azure_sso_refresh_token_encrypted is not None
+
+    def test_create_sso_template_ignores_client_secret(self, db):
+        data = _make_template_data(name="azure-sso-create", provider="azure", azure_auth_method="sso",
+                                   azure_tenant_id="tenant-1", azure_client_secret="typed-before-switch")
+        res = CredentialTemplateService(db).create_template(data)
+        assert res["has_azure_client_secret"] is False

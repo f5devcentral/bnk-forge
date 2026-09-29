@@ -1128,6 +1128,28 @@ class TestListBenchmarkTargets:
         data = resp.json()
         assert all(t["cluster_id"] == c1.id for t in data["targets"])
 
+    def test_filter_by_name(self, client, viewer_headers, all_test_users, make_k8s_cluster, db):
+        c1 = make_k8s_cluster(name="tgt-name-c1")
+        c2 = make_k8s_cluster(name="tgt-name-c2")
+        _make_target(db, c1.id, name="shared-tgt")
+        _make_target(db, c2.id, name="shared-tgt")
+        _make_target(db, c1.id, name="other-tgt")
+
+        resp = client.get("/api/benchmarks/targets?name=shared-tgt", headers=viewer_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 2
+        assert len(data["targets"]) == 2
+        assert all(t["name"] == "shared-tgt" for t in data["targets"])
+
+        resp2 = client.get(f"/api/benchmarks/targets?cluster_id={c1.id}&name=shared-tgt", headers=viewer_headers)
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert data2["total"] == 1
+        assert data2["targets"][0]["cluster_id"] == c1.id
+        assert data2["targets"][0]["name"] == "shared-tgt"
+        assert data2["targets"][0]["cluster_name"] == "tgt-name-c1"
+
     def test_response_contract(self, client, viewer_headers, all_test_users, make_k8s_cluster, db):
         cluster = make_k8s_cluster(name="tgt-contract-cluster")
         _make_target(db, cluster.id, name="tgt-contract")
@@ -1209,6 +1231,29 @@ class TestCreateBenchmarkTarget:
         }
         resp = client.post("/api/benchmarks/targets", json=payload, headers=operator_headers)
         assert resp.status_code == 409
+
+    def test_same_name_different_clusters_allowed(self, client, operator_headers, make_k8s_cluster, db):
+        c1 = make_k8s_cluster(name="tgt-cross-c1")
+        c2 = make_k8s_cluster(name="tgt-cross-c2")
+        p1 = {
+            "name": "cross-cluster-target",
+            "cluster_id": c1.id,
+            "llm_base_url": "http://x",
+            "llm_model": "m",
+        }
+        p2 = {
+            "name": "cross-cluster-target",
+            "cluster_id": c2.id,
+            "llm_base_url": "http://y",
+            "llm_model": "m",
+        }
+        r1 = client.post("/api/benchmarks/targets", json=p1, headers=operator_headers)
+        assert r1.status_code == 201
+        assert r1.json()["cluster_name"] == "tgt-cross-c1"
+
+        r2 = client.post("/api/benchmarks/targets", json=p2, headers=operator_headers)
+        assert r2.status_code == 201
+        assert r2.json()["cluster_name"] == "tgt-cross-c2"
 
     def test_invalid_cluster_id(self, client, operator_headers, db):
         payload = {

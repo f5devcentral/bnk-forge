@@ -787,11 +787,12 @@ def get_benchmark_trends(
 def list_benchmark_targets(
     status: str | None = Query(None),
     cluster_id: int | None = Query(None),
+    name: str | None = Query(None, description="Exact match filter by target name"),
     db: Session = Depends(get_db),
 ):
     """List all benchmark targets."""
     svc = BenchmarkTargetService(db)
-    targets, total = svc.list_targets(status=status, cluster_id=cluster_id)
+    targets, total = svc.list_targets(status=status, cluster_id=cluster_id, name=name)
     return {"targets": targets, "total": total}
 
 

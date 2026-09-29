@@ -10,6 +10,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
+import { queryKeys } from '@/lib/queryKeys';
 import {
   useBnkData,
   useF5BNKHealth,
@@ -175,6 +176,71 @@ describe('useBnkData', () => {
     const { result } = renderHook(() => useBnkData(1), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  function recordRequests() {
+    const urls: URL[] = [];
+    server.use(
+      http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', ({ request }) => {
+        urls.push(new URL(request.url));
+        return HttpResponse.json(mockBnkData);
+      }),
+    );
+    return urls;
+  }
+
+  function createClientWrapper() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 60_000 } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+    return { queryClient, wrapper };
+  }
+
+  it('uses one cache entry for every "all namespaces" param shape', async () => {
+    const urls = recordRequests();
+    const { wrapper } = createClientWrapper();
+    const { result } = renderHook(
+      () => [useBnkData(1, { namespace: undefined }), useBnkData(1), useBnkData(1, {})],
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.every((q) => q.isSuccess)).toBe(true));
+    expect(urls).toHaveLength(1);
+  });
+
+  it('bypasses the backend cache when refetching after invalidation', async () => {
+    const urls = recordRequests();
+    const { queryClient, wrapper } = createClientWrapper();
+    const { result } = renderHook(() => useBnkData(1, { namespace: 'prod' }), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(urls[0].searchParams.get('force')).toBeNull();
+
+    await act(() => queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(1) }));
+    await waitFor(() => expect(urls).toHaveLength(2));
+    expect(urls[1].searchParams.get('force')).toBe('true');
+    expect(urls[1].searchParams.get('namespace')).toBe('prod');
+
+    await act(() => result.current.refetch());
+    await waitFor(() => expect(urls).toHaveLength(3));
+    expect(urls[2].searchParams.get('force')).toBe('true');
+  });
+
+  it('does not show the previous cluster data after a cluster switch', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', async ({ params }) => {
+        if (params.clusterId === '2') await new Promise((r) => setTimeout(r, 50));
+        return HttpResponse.json(mockBnkData);
+      }),
+    );
+    const { wrapper } = createClientWrapper();
+    const { result, rerender } = renderHook(({ id }) => useBnkData(id), { wrapper, initialProps: { id: 1 } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    rerender({ id: 2 });
+    expect(result.current.data).toBeUndefined();
+    await waitFor(() => expect(result.current.data).toBeDefined());
   });
 });
 

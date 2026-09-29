@@ -40,8 +40,6 @@ from services.platform_context_service import PlatformContextService
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PROVIDERS = {"aws", "ibm", "azure", "gcp"}
-
 
 def _normalize_api_server_host(server: str) -> str:
     """Build a single well-formed ``https://<host>:443`` URL from *server*.
@@ -142,30 +140,16 @@ class ClusterDiscoveryService(BaseService):
     """Discover Kubernetes clusters from a project's credential templates."""
 
     def _project_templates(self, project_id: int) -> list[CloudCredentialTemplate]:
-        """Return cloud credential templates relevant to *project_id*.
+        """Return the credential template bound to *project_id*, if any.
 
-        Priority:
-        1. The project's explicitly bound credential template (if any).
-        2. Default templates for each supported provider that has no explicit
-           template yet.
+        Only the bound template is used: ``load_kubeconfig`` resolves cluster
+        credentials from that same template, so a cluster discovered through
+        any other template could not authenticate later.
         """
         project = self._get_project(project_id)
-        templates: list[CloudCredentialTemplate] = []
-        seen_providers: set[str] = set()
-
         if project.credential_template_id and project.credential_template:
-            templates.append(project.credential_template)
-            seen_providers.add(project.credential_template.provider)
-
-        for provider in SUPPORTED_PROVIDERS - seen_providers:
-            default = self.db.query(CloudCredentialTemplate).filter(
-                CloudCredentialTemplate.provider == provider,
-                CloudCredentialTemplate.is_default.is_(True),
-            ).first()
-            if default:
-                templates.append(default)
-
-        return templates
+            return [project.credential_template]
+        return []
 
     def detect_clusters_from_credentials(self, project_id: int) -> dict[str, Any]:
         """Query cloud APIs from credential templates and register clusters."""
@@ -175,7 +159,8 @@ class ClusterDiscoveryService(BaseService):
         if not templates:
             return {
                 "success": True,
-                "message": "No cloud credential templates configured for this project",
+                "message": "No cloud credential template bound to this project",
+                "reason": "no_bound_template",
                 "registered": [],
                 "skipped": [],
                 "errors": [],
@@ -422,9 +407,10 @@ class ClusterDiscoveryService(BaseService):
                     template=template,
                 )
                 token = fetch_aks_bearer_token(template)
+                api_server = _normalize_api_server_host(creds["server"])
                 kubeconfig_yaml = generate_aks_kubeconfig(
                     cluster_name=name,
-                    server=creds["server"],
+                    server=api_server,
                     ca_data=creds["certificate_authority_data"],
                     token=token,
                 )
@@ -432,7 +418,7 @@ class ClusterDiscoveryService(BaseService):
                     self.db,
                     project_id=project_id,
                     name=name,
-                    api_server=_normalize_api_server_host(creds["server"]),
+                    api_server=api_server,
                     cloud_provider="azure",
                     region=cluster.get("location"),
                     kubeconfig_yaml=kubeconfig_yaml,

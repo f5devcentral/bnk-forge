@@ -1032,7 +1032,7 @@
           "k8s-clusters"
         ],
         "summary": "Detect And Register Clusters From Credentials",
-        "description": "Discover Kubernetes clusters via the project's cloud credential templates.",
+        "description": "Discover Kubernetes clusters via the project's bound cloud credential template.",
         "operationId": "detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post",
         "parameters": [
           {
@@ -3931,7 +3931,7 @@
           "k8s-f5bnk"
         ],
         "summary": "Get Bnk Data",
-        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.\n\nQuery parameters:\n  - force: bypass the 15-second BNK data / TMM traffic-stats cache.",
+        "description": "Unified BNK data endpoint \u2014 fetches all 16 CRD types + pods once.\n\nReturns health analysis, topology graph, and policy associations\nin a single response. The frontend caches this under one query key\nso switching between Health, Topology, and Policy Map tabs is instant.\n\nQuery parameters:\n  - force: bypass the BNK data, pod discovery and TMM traffic-stats caches.",
         "operationId": "get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get",
         "parameters": [
           {
@@ -28871,6 +28871,24 @@
               ],
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact match filter by target name",
+              "title": "Name"
+            },
+            "description": "Exact match filter by target name"
           }
         ],
         "responses": {
@@ -36202,6 +36220,17 @@
             "title": "Proxy Count",
             "default": 0
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -36352,6 +36381,17 @@
             "type": "integer",
             "title": "Proxy Count",
             "default": 0
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "created_at": {
             "type": "string",
@@ -49612,7 +49652,10 @@
             "type": "string",
             "enum": [
               "direct_ws",
+              "reverse_ssh",
               "polling",
+              "ngrok_tunnel",
+              "in_cluster",
               "kubeconfig"
             ],
             "title": "Operatormode"

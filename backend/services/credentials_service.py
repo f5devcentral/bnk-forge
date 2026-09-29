@@ -279,21 +279,19 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                     return env
 
                 if template.provider == 'azure':
-                    # NOTE: Only the service-principal path injects a credential
-                    # (ARM_CLIENT_SECRET) for terraform. SSO-authenticated Azure
-                    # templates deliberately inject no credential here — SSO is
-                    # for validation/console access, while terraform provisioning
-                    # uses the service-principal secret. This asymmetry is by design.
+                    # Only the service-principal method injects a credential. Entra ID
+                    # SSO templates carry a delegated ARM token for validation, not a
+                    # terraform identity, so no client id or secret is exported.
                     if template.azure_subscription_id:
                         env['ARM_SUBSCRIPTION_ID'] = template.azure_subscription_id
                         env['AZURE_SUBSCRIPTION_ID'] = template.azure_subscription_id
                     if template.azure_tenant_id:
                         env['ARM_TENANT_ID'] = template.azure_tenant_id
                         env['AZURE_TENANT_ID'] = template.azure_tenant_id
-                    if template.azure_client_id:
+                    if template.azure_auth_method != 'sso' and template.azure_client_id:
                         env['ARM_CLIENT_ID'] = template.azure_client_id
                         env['AZURE_CLIENT_ID'] = template.azure_client_id
-                    if template.azure_client_secret_encrypted:
+                    if template.azure_auth_method != 'sso' and template.azure_client_secret_encrypted:
                         secret = _decrypt_credential(template.azure_client_secret_encrypted, 'Azure Client Secret')
                         if secret:
                             env['ARM_CLIENT_SECRET'] = secret

@@ -7,6 +7,7 @@ No mocking — these are pure data transformations.
 
 import pytest
 
+from schemas.f5bnk import TopologyAnalyzer
 from services.bnk.topology import (
     _build_cne_instance,
     _build_data_plane,
@@ -294,6 +295,15 @@ class TestMatchAnalyzers:
         result = _match_analyzers([analyzer], "web-route", "HTTPRoute", "f5-bnk", "f5-bnk")
         assert len(result) == 1
         assert result[0]["name"] == "analyzer-1"
+
+    def test_object_schedule_is_normalised(self):
+        analyzer = _resource("analyzer-1", spec={
+            "applications": [{"name": "web-route", "kind": "HTTPRoute", "namespace": "f5-bnk"}],
+            "schedule": {"every": "5m"},
+        })
+        result = _match_analyzers([analyzer], "web-route", "HTTPRoute", "f5-bnk", "f5-bnk")
+        assert result[0]["schedule"] == "5m"
+        TopologyAnalyzer(**result[0])
 
     def test_no_match(self):
         analyzer = _resource("analyzer-1", spec={

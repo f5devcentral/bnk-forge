@@ -186,6 +186,29 @@ class TestCredentialTemplate:
         assert "IBMCLOUD_API_KEY" not in env
         assert env["IBMCLOUD_REGION"] == "eu-de"
 
+    @pytest.mark.parametrize("method, exported", [("service_principal", True), ("sso", False)])
+    @patch("services.credentials_service.decrypt_value", return_value="sp-secret")
+    def test_azure_template_exports_client_secret_only_for_service_principal(
+        self, mock_dec, method, exported, db, monkeypatch
+    ):
+        for key in ("ARM_CLIENT_ID", "ARM_CLIENT_SECRET", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"):
+            monkeypatch.delenv(key, raising=False)
+        template = _make_template(
+            db, name="Azure Template", provider="azure", region="eastus",
+            aws_auth_method=None, aws_access_key_id=None, aws_secret_access_key_encrypted=None,
+            azure_auth_method=method, azure_tenant_id="tenant-1", azure_subscription_id="sub-1",
+            azure_client_id="client-1", azure_client_secret_encrypted="enc",
+        )
+        project = _make_project(db, credential_template_id=template.id,
+                                project_type="cloud-azure", cloud_provider="azure")
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        assert env["ARM_TENANT_ID"] == "tenant-1"
+        assert env["ARM_SUBSCRIPTION_ID"] == "sub-1"
+        assert ("ARM_CLIENT_SECRET" in env) is exported
+        assert ("ARM_CLIENT_ID" in env) is exported
+
 
 # ── Priority 2: Legacy Encrypted Credentials ────────────────────────
 

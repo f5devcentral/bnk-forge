@@ -104,6 +104,7 @@ def _cached_discover_f5_pods(
     cluster_id: int,
     api_client,
     extra_namespaces: list[str],
+    force: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Discover F5 pods with a short-lived per-cluster cache.
 
@@ -114,9 +115,10 @@ def _cached_discover_f5_pods(
     from core.cache import cache
 
     cache_key = f"bnk:pods:{cluster_id}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     # Without persisted namespaces (never scanned) the sweep is the only way to
     # find BNK installed outside the standard namespaces.
@@ -138,7 +140,7 @@ def fetch_all_bnk_data(
     """
     Fetch all BNK CRD resources + pods in one parallel burst.
 
-    Results are cached for 15 seconds by (cluster_id, namespace, include_nodes).
+    Results are cached for 60 seconds by (cluster_id, namespace, include_nodes).
     Pass ``force=True`` to bypass the cache (used by explicit "Rescan"/refresh
     actions and by operations that need the freshest state).
 
@@ -214,7 +216,7 @@ def fetch_all_bnk_data(
     executor = _get_bnk_fetch_executor()
     crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
     pods_future = executor.submit(
-        _cached_discover_f5_pods, cluster_id, api_client, persisted_namespaces
+        _cached_discover_f5_pods, cluster_id, api_client, persisted_namespaces, force
     )
     job_future = executor.submit(fetch_crd_installer_job)
     nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None

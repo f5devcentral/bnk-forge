@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Input } from '@/components/ui/input';
 import { AWS_REGIONS } from '@/lib/aws-regions';
 
@@ -16,20 +17,22 @@ export function RegionSelector({
   disabled,
   className,
   placeholder = 'e.g. us-east-1',
-  id = 'aws-region-input',
+  id,
 }: RegionSelectorProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   return (
     <div className="relative">
       <Input
-        id={id}
-        list={`${id}-suggestions`}
+        id={inputId}
+        list={`${inputId}-suggestions`}
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         placeholder={placeholder}
         disabled={disabled}
         className={className}
       />
-      <datalist id={`${id}-suggestions`}>
+      <datalist id={`${inputId}-suggestions`}>
         {AWS_REGIONS.map((region) => (
           <option key={region.value} value={region.value}>
             {region.flag} {region.label}

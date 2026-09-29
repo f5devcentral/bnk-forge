@@ -323,3 +323,22 @@ def _normalize_key(name: str) -> str:
     """Use the module's normalization logic directly."""
     from services.bnk.traffic_stats import _normalize_name
     return _normalize_name(name)
+
+
+class TestFetchForce:
+    def test_force_propagates_to_exec_and_mapping_caches(self):
+        from unittest.mock import patch
+
+        pods = {"tmm": [{"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running",
+                         "containers": [{"name": "debug"}]}]}
+        vs = {"columns": ["name"], "rows": [["gw-prod_http"]], "exit_code": 0}
+        with patch("services.bnk.traffic_stats.cache") as mock_cache, \
+                patch("services.bnk.traffic_stats.exec_tmctl", return_value=vs) as mock_tmctl, \
+                patch("services.bnk.traffic_stats.discover_configview_uuids",
+                      return_value={"exit_code": 0, "uuids": []}) as mock_uuids:
+            mock_cache.get.return_value = [{"uuid": "stale"}]
+            fetch_tmm_traffic_stats(None, pods, cluster_id=1, force=True)  # type: ignore[arg-type]
+
+        mock_cache.get.assert_not_called()
+        assert all(c.kwargs["force"] is True for c in mock_tmctl.call_args_list)
+        assert mock_uuids.call_args.kwargs["force"] is True
