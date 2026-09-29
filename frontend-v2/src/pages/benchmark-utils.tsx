@@ -15,7 +15,7 @@ import {
   TrendingUp,
   TrendingDown,
 } from 'lucide-react';
-import type { BenchmarkRunStatus } from '@/types';
+import type { BenchmarkRunStatus, BenchmarkTarget } from '@/types';
 
 // ============================================================================
 // Constants
@@ -196,6 +196,14 @@ export function fmtPct(n: number | null | undefined): string {
 // ============================================================================
 // Utility Helpers
 // ============================================================================
+
+/**
+ * Target picker label. Target names are unique per cluster and cluster names
+ * only per project, so the cluster id disambiguates across projects.
+ */
+export function targetOptionLabel(t: Pick<BenchmarkTarget, 'name' | 'cluster_id' | 'cluster_name'>): string {
+  return `${t.name} (${t.cluster_name ? `${t.cluster_name} ` : 'cluster '}#${t.cluster_id})`;
+}
 
 /** Download helper — creates a Blob and triggers download */
 export function downloadJson(data: object, filename: string) {

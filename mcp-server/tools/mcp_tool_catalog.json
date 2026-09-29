@@ -2414,5 +2414,37 @@
     "deprecated": false,
     "replacement_tool": null,
     "notes": "Lists configured alert channels (require_viewer)."
+  },
+  {
+    "tool_name": "list_benchmark_targets",
+    "module": "benchmarks",
+    "http_method": "GET",
+    "backend_path_template": "/api/benchmarks/targets",
+    "auth_expectation": "viewer",
+    "risk_class": "read_only",
+    "uses_query_params": true,
+    "uses_json_body": false,
+    "tier": "tier1",
+    "stability": "stable",
+    "since_version": "3.1",
+    "deprecated": false,
+    "replacement_tool": null,
+    "notes": "Lists registered benchmark targets with optional cluster_id and name filters (require_viewer)."
+  },
+  {
+    "tool_name": "create_benchmark_target",
+    "module": "benchmarks",
+    "http_method": "POST",
+    "backend_path_template": "/api/benchmarks/targets",
+    "auth_expectation": "operator",
+    "risk_class": "mutating",
+    "uses_query_params": false,
+    "uses_json_body": true,
+    "tier": "tier1",
+    "stability": "stable",
+    "since_version": "3.1",
+    "deprecated": false,
+    "replacement_tool": null,
+    "notes": "Registers a benchmark target for a cluster with unique (cluster_id, name) scoping (require_operator)."
   }
 ]
