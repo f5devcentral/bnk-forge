@@ -367,7 +367,7 @@ describe('K8sClusterList', () => {
       expect(calls).toEqual([]);
 
       await user.click(screen.getByRole('button', { name: 'Detect and register' }));
-      await waitFor(() => expect(calls).toEqual(['detect-credentials', 'detect-eks']));
+      await waitFor(() => expect(calls).toEqual(['detect-eks', 'detect-credentials']));
     });
 
     it('renders "Detect EKS" button when target platform is EKS', async () => {
