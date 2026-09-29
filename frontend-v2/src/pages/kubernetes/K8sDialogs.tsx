@@ -12,6 +12,7 @@ import { notify } from '@/lib/notify';
 // IMP-005: Use mutation hooks instead of raw api.* calls
 import { useDeleteK8sResource, useUpdateK8sResource, useScaleDeployment, useCreateK8sResource } from '@/hooks/useK8s';
 import type { K8sResource } from '@/types';
+import { getResourceTypeKey } from '@/pages/f5bnk-parts/resource-type-key';
 import type { ResourceAction } from './K8sResourceTable';
 
 // PERFORMANCE OPTIMIZATION (ADR-019): Lazy load heavy dialog components
@@ -270,6 +271,7 @@ export function K8sDialogs({
           resource={d.resourceToDescribe}
           clusterId={clusterId}
           namespace={d.resourceToDescribe.metadata?.namespace || 'default'}
+          resourceType={getResourceTypeKey(d.resourceToDescribe)}
         />
       )}
 
@@ -305,7 +307,7 @@ export function K8sDialogs({
             try {
               await deleteMutation.mutateAsync({
                 clusterId,
-                resourceType: d.resourceToDelete.kind.toLowerCase(),
+                resourceType: getResourceTypeKey(d.resourceToDelete),
                 resourceName: d.resourceToDelete.metadata.name,
                 namespace: d.resourceToDelete.metadata.namespace,
               });
@@ -330,7 +332,7 @@ export function K8sDialogs({
             try {
               await updateMutation.mutateAsync({
                 clusterId,
-                resourceType: d.resourceToEdit!.kind.toLowerCase(),
+                resourceType: getResourceTypeKey(d.resourceToEdit!),
                 resourceName: d.resourceToEdit!.metadata.name,
                 resourceYaml,
                 namespace: d.resourceToEdit!.metadata.namespace,
