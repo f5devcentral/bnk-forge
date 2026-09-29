@@ -86,6 +86,7 @@ class TestValidateTarget:
         svc_mock.metadata.name = "vllm"
         svc_mock.metadata.namespace = "awsbnkctl-scn-aiinference"
         svc_mock.spec.selector = {"app": "vllm"}
+        svc_mock.spec.ports = [MagicMock(port=80)]
         mock_core.read_namespaced_service.return_value = svc_mock
 
         # Mock Pod with Ready condition
@@ -124,6 +125,7 @@ class TestValidateTarget:
 
         svc_mock = MagicMock()
         svc_mock.spec.selector = {"app": "vllm"}
+        svc_mock.spec.ports = [MagicMock(port=80)]
         mock_core.read_namespaced_service.return_value = svc_mock
 
         pod = MagicMock()
@@ -141,3 +143,61 @@ class TestValidateTarget:
 
         assert result.status == BenchmarkTargetStatus.ERROR
         assert "0 ready pods" in result.validation_msg
+
+    def _k8s_fallback(self, mock_get, mock_conn, llm_base_url, svc_mock=None, eps=None):
+        mock_get.side_effect = Exception("Connection refused")
+        mock_conn.side_effect = OSError("Name or service not known")
+        mock_core = MagicMock()
+        if svc_mock is not None:
+            mock_core.read_namespaced_service.return_value = svc_mock
+        if eps is not None:
+            mock_core.read_namespaced_endpoints.return_value = eps
+
+        db = MagicMock()
+        target = _target(llm_base_url=llm_base_url)
+        query_mock = db.query.return_value
+        query_mock.options.return_value = query_mock
+        query_mock.filter.return_value.first.return_value = target
+        with patch("kubernetes.client.CoreV1Api", return_value=mock_core), \
+                patch("services.kubernetes.KubernetesService.load_kubeconfig"):
+            result = BenchmarkTargetService(db).validate_target(1)
+        return result, mock_core
+
+    @patch("socket.create_connection")
+    @patch("requests.get")
+    def test_k8s_fallback_ignores_external_hostname(self, mock_get, mock_conn):
+        """https://api.example.com must not validate because a Service named 'api' exists."""
+        result, core = self._k8s_fallback(mock_get, mock_conn, "https://api.example.com")
+        assert result.status == BenchmarkTargetStatus.ERROR
+        core.read_namespaced_service.assert_not_called()
+
+    @patch("socket.create_connection")
+    @patch("requests.get")
+    def test_k8s_fallback_requires_matching_port(self, mock_get, mock_conn):
+        svc_mock = MagicMock()
+        svc_mock.spec.selector = {"app": "vllm"}
+        svc_mock.spec.ports = [MagicMock(port=8000)]
+        result, _ = self._k8s_fallback(
+            mock_get, mock_conn, "http://vllm.awsbnkctl-scn-aiinference:80", svc_mock=svc_mock,
+        )
+        assert result.status == BenchmarkTargetStatus.ERROR
+        assert "does not expose port 80" in result.validation_msg
+
+    @patch("socket.create_connection")
+    @patch("requests.get")
+    def test_k8s_fallback_selectorless_requires_ready_endpoints(self, mock_get, mock_conn):
+        svc_mock = MagicMock()
+        svc_mock.spec.selector = None
+        svc_mock.spec.ports = [MagicMock(port=80)]
+        empty = MagicMock(subsets=[MagicMock(addresses=None)])
+        result, _ = self._k8s_fallback(
+            mock_get, mock_conn, "http://vllm.awsbnkctl-scn-aiinference:80", svc_mock=svc_mock, eps=empty,
+        )
+        assert result.status == BenchmarkTargetStatus.ERROR
+        assert "no ready endpoints" in result.validation_msg
+
+        ready = MagicMock(subsets=[MagicMock(addresses=[MagicMock(ip="10.0.0.5")])])
+        result, _ = self._k8s_fallback(
+            mock_get, mock_conn, "http://vllm.awsbnkctl-scn-aiinference:80", svc_mock=svc_mock, eps=ready,
+        )
+        assert result.status == BenchmarkTargetStatus.ACTIVE

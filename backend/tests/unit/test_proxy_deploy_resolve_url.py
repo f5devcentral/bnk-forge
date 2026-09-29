@@ -145,3 +145,26 @@ class TestResolveServiceExternalUrl:
             namespace="perf-proxies",
         )
         assert result is None
+
+    @patch("services.proxy_deploy_service.k8s_client.CoreV1Api")
+    @patch("services.proxy_deploy_service.KubernetesService")
+    def test_fallback_matches_release_label_not_name_substring(self, mock_k8s_cls, mock_core_cls):
+        mock_core = MagicMock()
+        mock_core_cls.return_value = mock_core
+        mock_core.read_namespaced_service.side_effect = ApiException(status=404)
+
+        admission = _svc("ClusterIP", [_port(443, name="https-webhook")])
+        controller = _svc("NodePort", [_port(80, node_port=30080, name="http")])
+
+        def _list(namespace, label_selector=None, **_kw):
+            assert label_selector == "app.kubernetes.io/instance=nginx-a"
+            return MagicMock(items=[admission, controller])
+
+        mock_core.list_namespaced_service.side_effect = _list
+        mock_core.list_node.return_value = MagicMock(items=[_node(internal_ip="10.0.1.45")])
+
+        service = ProxyDeployService(db=MagicMock())
+        result = service._resolve_service_external_url(
+            cluster=MagicMock(), release="nginx-a", namespace="perf-proxies",
+        )
+        assert result == "http://10.0.1.45:30080"

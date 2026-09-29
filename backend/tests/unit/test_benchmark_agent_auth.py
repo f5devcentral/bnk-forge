@@ -166,6 +166,25 @@ class TestAgentAuthFlagOn:
                 )
         assert resp.status_code in (200, 201), resp.text
 
+    def test_register_bootstrap_token_cannot_take_over_other_agent(self, client, db):
+        """The bootstrap token may not upsert a non-builtin agent's row."""
+        from models.benchmark import BenchmarkAgent
+
+        db.add(BenchmarkAgent(name="remote-victim", status="connected", managed=False, tags={}))
+        db.commit()
+        payload = {**_register_payload(), "name": "remote-victim", "tags": {"builtin": True}}
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                resp = client.post(
+                    "/api/benchmarks/agents",
+                    json=payload,
+                    headers=self._headers_for(sub="forge-builtin-agent", role="agent"),
+                )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
     def test_register_accepts_operator_token(self, client, db):
         """The documented human curl flow keeps working with an operator token.
 
@@ -343,7 +362,35 @@ class TestWSTokenValidationLogic:
         with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
             assert _agent_ws_authorized(ws_viewer, 5) == 4401
             assert _agent_ws_authorized(ws_admin, 5) == 4401
-            assert _agent_ws_authorized(ws_builtin, 5) is None
+
+    def test_bootstrap_token_bound_to_builtin_agent_row(self, db):
+        """The claimless bootstrap token connects only as an unmanaged builtin-tagged
+        agent; not as another agent, and never as a user named like its subject."""
+        from unittest.mock import MagicMock, patch
+
+        from models.benchmark import BenchmarkAgent
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        builtin = BenchmarkAgent(name="forge-local", status="connected", managed=False,
+                                 tags={"role": "forge-agent", "builtin": True})
+        other = BenchmarkAgent(name="remote-1", status="connected", managed=False, tags={})
+        db.add_all([builtin, other])
+        db.commit()
+
+        def _ws(token):
+            ws = MagicMock()
+            ws.query_params = {"token": token}
+            return ws
+
+        bootstrap = create_access_token(data={"sub": "forge-builtin-agent", "role": "agent"})
+        as_user = create_access_token(data={"sub": "forge-builtin-agent", "role": "operator"})
+
+        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+            assert _agent_ws_authorized(_ws(bootstrap), builtin.id) is None
+            assert _agent_ws_authorized(_ws(bootstrap), other.id) == 4401
+            assert _agent_ws_authorized(_ws(bootstrap), 9999) == 4401
+            assert _agent_ws_authorized(_ws(as_user), builtin.id) == 4401
 
     def test_matching_agent_id_claim_authorizes_through_helper(self):
         """The bound case still connects — the gate must not be a blanket deny."""

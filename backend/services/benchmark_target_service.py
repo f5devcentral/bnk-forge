@@ -246,15 +246,18 @@ class BenchmarkTargetService(BaseService):
                 http_msg = f"Unreachable — TCP connect to {host}:{port} failed: {e}"
 
         # --- Layer 3: Kubernetes Service / Pod check fallback ---
-        if not http_ok and target.cluster_id:
+        # Only for URLs that name a Service in llm_namespace (svc, svc.ns, svc.ns.svc...);
+        # an external hostname's first label is not a Service reference.
+        svc_name = host.split(".")[0]
+        svc_ns = target.llm_namespace or "default"
+        in_cluster_host = host in {
+            svc_name, f"{svc_name}.{svc_ns}", f"{svc_name}.{svc_ns}.svc", f"{svc_name}.{svc_ns}.svc.cluster.local",
+        }
+        if not http_ok and target.cluster_id and in_cluster_host:
             try:
                 from kubernetes import client as k8s_client
 
                 from services.kubernetes import KubernetesService
-                from services.proxy_discovery_service import _extract_svc_name
-
-                svc_name = _extract_svc_name(target.llm_base_url)
-                svc_ns = target.llm_namespace or "default"
 
                 k8s = KubernetesService(self.db)
                 api_client = k8s.load_kubeconfig(target.cluster)
@@ -262,7 +265,9 @@ class BenchmarkTargetService(BaseService):
 
                 svc = core.read_namespaced_service(name=svc_name, namespace=svc_ns, _request_timeout=10)
                 selector = svc.spec.selector
-                if selector:
+                if port not in [p.port for p in (svc.spec.ports or [])]:
+                    http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but does not expose port {port}"
+                elif selector:
                     label_selector = ",".join(f"{k}={v}" for k, v in selector.items())
                     pods = core.list_namespaced_pod(svc_ns, label_selector=label_selector, _request_timeout=10)
                     ready_pods = [
@@ -275,8 +280,13 @@ class BenchmarkTargetService(BaseService):
                     else:
                         http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but 0 ready pods"
                 else:
-                    http_ok = True
-                    http_msg = f"K8s Service '{svc_name}.{svc_ns}' found"
+                    # Selectorless Service: healthy only if its Endpoints carry ready addresses.
+                    eps = core.read_namespaced_endpoints(name=svc_name, namespace=svc_ns, _request_timeout=10)
+                    if any(s.addresses for s in (eps.subsets or [])):
+                        http_ok = True
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' has ready endpoints"
+                    else:
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but has no ready endpoints"
             except Exception as k8s_err:
                 logger.debug("K8s validation fallback failed for target %d: %s", target_id, k8s_err)
 

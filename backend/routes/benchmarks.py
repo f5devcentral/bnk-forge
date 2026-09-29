@@ -438,7 +438,16 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     Called via curl or script. If an agent with the same name
     already exists, it updates its info and marks it as connected.
     """
-    _require_agent_bearer(request)
+    claims = _require_agent_bearer(request)
+    if claims and _is_bootstrap_token(claims):
+        # The bootstrap token may only (re)register the built-in agent; upserting
+        # another agent's row would let it connect as that agent over the WS.
+        existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
+        if existing and not _is_builtin_agent(existing):
+            raise BadRequestError(
+                f"Bootstrap token may not re-register agent '{data.name}'",
+                code="AGENT_AUTH_FORBIDDEN",
+            )
     svc = BenchmarkService(db)
     result = svc.register_agent(data.model_dump())
     db.commit()
@@ -1453,6 +1462,34 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
     return True
 
 
+_BOOTSTRAP_TOKEN_SUB = "forge-builtin-agent"
+
+
+def _is_bootstrap_token(payload: dict) -> bool:
+    """True for the built-in agent's claimless bootstrap token (startup_steps).
+
+    A user login token carries sub=<username> and the user's role (never
+    "agent"), so a user named like the bootstrap subject does not pass.
+    """
+    return (
+        payload.get("sub") == _BOOTSTRAP_TOKEN_SUB
+        and payload.get("role") == "agent"
+        and payload.get("agent_id") is None
+    )
+
+
+def _is_builtin_agent(agent: BenchmarkAgent | None) -> bool:
+    """The built-in agent registers unmanaged with tags.builtin=true (forge_agent.py)."""
+    return bool(agent and not agent.managed and (agent.tags or {}).get("builtin") is True)
+
+
+def _is_builtin_agent_id(agent_id: int) -> bool:
+    from database import get_db_context
+
+    with get_db_context() as db:
+        return _is_builtin_agent(db.get(BenchmarkAgent, agent_id))
+
+
 def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     """Validate the agent WS handshake JWT (M2 + agent-auth layer).
 
@@ -1498,9 +1535,9 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
-            # The built-in agent container connects using the bootstrap token minted
-            # before registration (carrying sub=forge-builtin-agent, role=agent, and no agent_id).
-            if payload.get("sub") == "forge-builtin-agent":
+            # The built-in agent container connects with the claimless bootstrap
+            # token (startup_steps). It may connect only as a built-in agent row.
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
                 return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
