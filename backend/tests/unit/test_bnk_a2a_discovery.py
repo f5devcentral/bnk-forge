@@ -6,12 +6,16 @@ BNK topology data. Reuses build_route_ref_map from helpers (already tested
 in test_bnk_backends.py).
 """
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from services.bnk.a2a_discovery import (
     _candidate_probe_ports,
     _find_http_backend_services,
     _normalize_agent_card,
+    _probe_agent_cards,
     discover_a2a_agents,
 )
 from services.bnk.helpers import build_route_ref_map
@@ -321,3 +325,83 @@ class TestRouteDeduplication:
         assert len(candidates) == 1
         assert len(candidates[0]["routeRefs"]) == 1
 
+
+
+class TestGovernanceSanitised:
+    def test_non_scalar_governance_values_dropped(self):
+        card = {"name": "a", "governance": {"cloud": "GKE", "nested": {"x": 1}, "list": [1], "tier": 2}}
+        assert _normalize_agent_card(card)["governance"] == {"cloud": "GKE", "tier": 2}
+
+    def test_non_dict_governance_is_none(self):
+        assert _normalize_agent_card({"name": "a", "governance": "text"})["governance"] is None
+
+
+def _pod(name, labels, phase="Running"):
+    return SimpleNamespace(metadata=SimpleNamespace(name=name, labels=labels), status=SimpleNamespace(phase=phase))
+
+
+def _candidate(name="api", ports=(8080,), selector=None):
+    return {
+        "name": name,
+        "namespace": "ns",
+        "ports": [{"port": p, "name": "http"} for p in ports],
+        "routeRefs": [],
+        "selector": selector if selector is not None else {"app": name},
+    }
+
+
+class TestProbeAgentCards:
+    def _run(self, candidate, core):
+        with patch("kubernetes.client.CoreV1Api", return_value=core):
+            _probe_agent_cards([candidate], MagicMock())
+
+    def test_stops_at_first_hit_and_paths_are_unique(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = [
+            Exception("404"),
+            '{"name": "agent"}',
+        ]
+        cand = _candidate()
+        self._run(cand, core)
+        calls = core.connect_get_namespaced_service_proxy_with_path.call_args_list
+        assert [c.kwargs["path"] for c in calls] == [".well-known/agent-card.json", ".well-known/agent.json"]
+        assert cand["probeStatus"] == "success"
+        core.list_namespaced_pod.assert_not_called()
+
+    def test_attempts_are_capped(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = Exception("503")
+        core.list_namespaced_pod.return_value.items = [_pod(f"api-{i}", {"app": "api"}) for i in range(10)]
+        cand = _candidate(ports=(80, 8080, 9000))
+        self._run(cand, core)
+        total = (
+            core.connect_get_namespaced_service_proxy_with_path.call_count
+            + core.connect_get_namespaced_pod_proxy_with_path.call_count
+        )
+        assert total == 12
+        assert cand["probeStatus"] == "error"
+
+    def test_pod_fallback_matches_by_selector_not_name_prefix(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = lambda **kw: (
+            '{"name": "agent"}' if kw["name"].startswith("backend-") else None
+        )
+        core.list_namespaced_pod.return_value.items = [
+            _pod("api-gateway-abc", {"app": "api-gateway"}),
+            _pod("backend-xyz", {"app": "api", "tier": "web"}),
+        ]
+        cand = _candidate(name="api", selector={"app": "api"})
+        self._run(cand, core)
+        targets = {c.kwargs["name"] for c in core.connect_get_namespaced_pod_proxy_with_path.call_args_list}
+        assert targets == {"backend-xyz:8080"}
+        assert cand["probeStatus"] == "success"
+
+    def test_no_selector_skips_pod_fallback(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        cand = _candidate(selector={})
+        self._run(cand, core)
+        core.list_namespaced_pod.assert_not_called()
+        assert cand["probeStatus"] == "error"
