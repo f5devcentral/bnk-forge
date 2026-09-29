@@ -213,6 +213,17 @@ class TestClusterDelete:
         assert data["success"] is True
         mock_svc.delete_cluster.assert_called_once_with(cluster.id)
 
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_delete_cluster_project_scoped_route_rejects_other_project(
+        self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster
+    ):
+        """The project-scoped alias 404s when the cluster belongs to another project."""
+        cluster = make_k8s_cluster(project=sample_project, name="delete-cluster-other")
+
+        response = client.delete(f"/api/projects/{sample_project.id + 999}/k8s/clusters/{cluster.id}", headers=admin_headers)
+        assert response.status_code == 404
+        mock_svc_cls.return_value.delete_cluster.assert_not_called()
+
 
 class TestClusterTestConnection:
     """POST /api/k8s/clusters/{id}/test."""
