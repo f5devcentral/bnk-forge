@@ -4,6 +4,7 @@ BNK-Forge MCP tools — organized by domain.
 Each module registers its tools with the FastMCP server instance.
 """
 
+from .benchmarks import register as register_benchmarks
 from .bnk_operations import register as register_bnk_operations
 from .cloud_auth import register as register_cloud_auth
 from .cluster_management import register as register_cluster_management
@@ -22,4 +23,5 @@ __all__ = [
     "register_config_management",
     "register_iac_operations",
     "register_cloud_auth",
+    "register_benchmarks",
 ]

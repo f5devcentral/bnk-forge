@@ -275,7 +275,20 @@ class ForgeAgent:
                             pass
                         except Exception as e:
                             log.warning("Connection task ended: %s", e)
-                    log.info("Connection ended — reconnecting")
+                    if ws.close_code == 4409:
+                        # Forge closed us for a newer connection on the same agent
+                        # (duplicate process / AGENT_NAME). Park instead of exiting: a
+                        # supervisor (compose restart policy, systemd Restart=always)
+                        # restarts a clean exit, and the two agents would flap forever.
+                        log.error(
+                            "Superseded by another agent using the same agent row (#%s); not reconnecting — "
+                            "stop the duplicate and restart this agent",
+                            self.agent_id,
+                        )
+                        while self.running:
+                            await asyncio.sleep(1)
+                    else:
+                        log.info("Connection ended — reconnecting")
 
             except Exception as e:
                 log.error("Connection error: %s", e)
