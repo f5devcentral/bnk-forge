@@ -15,6 +15,10 @@ from services.reachability import with_breaker
 
 logger = logging.getLogger(__name__)
 
+# (connect, read) timeout for resource list calls. The ApiClient has retries
+# disabled, so this bounds how long one unreachable cluster can hold a worker.
+_LIST_REQUEST_TIMEOUT = (5, 15)
+
 # Single source-of-truth: api_group → typed client class.
 # Anything NOT in this map falls through to CustomObjectsApi.
 API_GROUP_CLIENTS: dict[str, type] = {
@@ -170,21 +174,24 @@ class ResourcesMixin:
                             version=resource_type.api_version,
                             namespace=namespace,
                             plural=resource_type.plural,
-                            label_selector=label_selector or ""
+                            label_selector=label_selector or "",
+                            _request_timeout=_LIST_REQUEST_TIMEOUT,
                         )
                     else:
                         response = custom_api.list_cluster_custom_object(
                             group=resource_type.api_group,
                             version=resource_type.api_version,
                             plural=resource_type.plural,
-                            label_selector=label_selector or ""
+                            label_selector=label_selector or "",
+                            _request_timeout=_LIST_REQUEST_TIMEOUT,
                         )
                 else:
                     response = custom_api.list_cluster_custom_object(
                         group=resource_type.api_group,
                         version=resource_type.api_version,
                         plural=resource_type.plural,
-                        label_selector=label_selector or ""
+                        label_selector=label_selector or "",
+                        _request_timeout=_LIST_REQUEST_TIMEOUT,
                     )
 
                 resources = response.get('items', [])
@@ -215,7 +222,9 @@ class ResourcesMixin:
             return result
 
         except ApiException as e:
-            logger.error(f"Failed to fetch {resource_type.kind}: {e}")
+            # 404 = CRD not installed (e.g. BNK 2.4 kinds on a 2.3 cluster); expected, not an error.
+            log = logger.debug if e.status == 404 else logger.error
+            log(f"Failed to fetch {resource_type.kind}: {e}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error fetching {resource_type.kind}: {e}")
@@ -251,9 +260,15 @@ class ResourcesMixin:
         list_method = getattr(api_instance, method_name)
 
         if resource_type.namespaced and namespace:
-            response = list_method(namespace=namespace, label_selector=label_selector or "")
+            response = list_method(
+                namespace=namespace,
+                label_selector=label_selector or "",
+                _request_timeout=_LIST_REQUEST_TIMEOUT,
+            )
         else:
-            response = list_method(label_selector=label_selector or "")
+            response = list_method(
+                label_selector=label_selector or "", _request_timeout=_LIST_REQUEST_TIMEOUT
+            )
 
         return response.items
 

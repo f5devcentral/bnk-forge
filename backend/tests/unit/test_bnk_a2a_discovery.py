@@ -6,12 +6,16 @@ BNK topology data. Reuses build_route_ref_map from helpers (already tested
 in test_bnk_backends.py).
 """
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from services.bnk.a2a_discovery import (
+    _candidate_probe_ports,
     _find_http_backend_services,
     _normalize_agent_card,
-    _pick_probe_port,
+    _probe_agent_cards,
     discover_a2a_agents,
 )
 from services.bnk.helpers import build_route_ref_map
@@ -168,37 +172,50 @@ class TestFindHttpBackendServices:
         assert refs[0]["name"] == "agent-route"
         assert refs[0]["gatewayName"] == "gw-prod"
 
+    def test_target_port_carried_and_defaults_to_port(self):
+        services = [_service("my-svc", ports=[
+            {"port": 80, "targetPort": 8080, "name": "http"},
+            {"port": 81, "target_port": "web", "name": "alt"},
+            {"port": 82, "name": "plain"},
+        ])]
+        candidates = _find_http_backend_services(services, build_route_ref_map(_topology_http("my-svc")))
+        assert [p["targetPort"] for p in candidates[0]["ports"]] == [8080, "web", 82]
+
 
 # ---------------------------------------------------------------------------
-# _pick_probe_port
+# _candidate_probe_ports
 # ---------------------------------------------------------------------------
 
 
-class TestPickProbePort:
-    def test_prefers_http_named_port(self):
-        ports = [
-            {"port": 9090, "name": "metrics", "protocol": "TCP"},
-            {"port": 8080, "name": "http", "protocol": "TCP"},
-        ]
-        assert _pick_probe_port(ports) == 8080
+class TestCandidateProbePorts:
+    def test_prefers_route_ref_port_first(self):
+        candidate = {
+            "routeRefs": [{"port": 8080}],
+            "ports": [
+                {"port": 9090, "name": "http", "protocol": "TCP"},
+                {"port": 8080, "name": "app", "protocol": "TCP"},
+            ],
+        }
+        ports = _candidate_probe_ports(candidate)
+        assert ports[0] == 8080
+        assert 9090 in ports
 
-    def test_prefers_a2a_named_port(self):
-        ports = [
-            {"port": 9090, "name": "grpc", "protocol": "TCP"},
-            {"port": 10001, "name": "a2a", "protocol": "TCP"},
-        ]
-        assert _pick_probe_port(ports) == 10001
+    def test_prefers_http_and_a2a_named_ports(self):
+        candidate = {
+            "routeRefs": [],
+            "ports": [
+                {"port": 9090, "name": "grpc", "protocol": "TCP"},
+                {"port": 10001, "name": "a2a", "protocol": "TCP"},
+                {"port": 8080, "name": "http", "protocol": "TCP"},
+            ],
+        }
+        ports = _candidate_probe_ports(candidate)
+        assert ports[:2] == [10001, 8080]
+        assert ports[2] == 9090
 
-    def test_falls_back_to_first(self):
-        ports = [{"port": 3000, "name": "custom", "protocol": "TCP"}]
-        assert _pick_probe_port(ports) == 3000
-
-    def test_empty_ports_returns_none(self):
-        assert _pick_probe_port([]) is None
-
-    def test_none_name_handled(self):
-        ports = [{"port": 80, "name": None, "protocol": "TCP"}]
-        assert _pick_probe_port(ports) == 80
+    def test_empty_ports_returns_empty_list(self):
+        candidate = {"routeRefs": [], "ports": []}
+        assert _candidate_probe_ports(candidate) == []
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +244,23 @@ class TestNormalizeAgentCard:
         assert len(result["skills"]) == 1
         assert result["iconUrl"] == "https://example.com/icon.png"
 
+    def test_vertex_mcp_string_skills_and_list_capabilities(self):
+        card = {
+            "agent_name": "vertex-finance-mcp",
+            "overview": "Financial analytics agent powered by Google Vertex AI",
+            "version": "1.0",
+            "capabilities": ["streaming", "push_notifications"],
+            "skills": ["get_stock_quote", "get_balance_sheet"],
+        }
+        result = _normalize_agent_card(card)
+        assert result["name"] == "vertex-finance-mcp"
+        assert result["description"] == "Financial analytics agent powered by Google Vertex AI"
+        assert result["capabilities"]["streaming"] is True
+        assert result["capabilities"]["pushNotifications"] is True
+        assert len(result["skills"]) == 2
+        assert result["skills"][0]["name"] == "get_stock_quote"
+        assert result["skills"][1]["name"] == "get_balance_sheet"
+
     def test_minimal_card(self):
         card = {"name": "Minimal"}
         result = _normalize_agent_card(card)
@@ -235,7 +269,194 @@ class TestNormalizeAgentCard:
         assert result["capabilities"] == {}
         assert result["iconUrl"] is None
 
+    def test_governance_field_preserved(self):
+        card = {
+            "name": "gke-vertex-finance-tool",
+            "governance": {
+                "gateway": "F5 BIG-IP Next for Kubernetes",
+                "cloud": "Google Cloud GKE",
+            },
+        }
+        result = _normalize_agent_card(card)
+        assert result["name"] == "gke-vertex-finance-tool"
+        assert result["governance"]["cloud"] == "Google Cloud GKE"
+
     def test_non_dict_returns_none(self):
         assert _normalize_agent_card("not a dict") is None
         assert _normalize_agent_card(None) is None
         assert _normalize_agent_card(42) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_json_or_python_dict & route deduplication
+# ---------------------------------------------------------------------------
+
+
+class TestParseJsonOrPythonDict:
+    def test_valid_json_string(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = '{"name": "agent-1", "skills": ["a", "b"]}'
+        result = _parse_json_or_python_dict(raw)
+        assert result == {"name": "agent-1", "skills": ["a", "b"]}
+
+    def test_single_quoted_python_dict_string(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = "{'name': 'gke-vertex-finance-tool', 'version': '1.0.0'}"
+        result = _parse_json_or_python_dict(raw)
+        assert result == {"name": "gke-vertex-finance-tool", "version": "1.0.0"}
+
+    def test_already_dict(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        raw = {"name": "agent-dict"}
+        assert _parse_json_or_python_dict(raw) == raw
+
+    def test_invalid_input(self):
+        from services.bnk.a2a_discovery import _parse_json_or_python_dict
+        assert _parse_json_or_python_dict("invalid not json") is None
+        assert _parse_json_or_python_dict("") is None
+        assert _parse_json_or_python_dict(None) is None
+        assert _parse_json_or_python_dict([1, 2, 3]) is None
+
+
+class TestRouteDeduplication:
+    def test_deduplicates_repeated_route_refs(self):
+        from services.bnk.a2a_discovery import _find_http_backend_services
+        services = [_service("vertex-finance-mcp")]
+        # Same route referenced across multiple listeners
+        route_ref_map = {
+            ("default", "vertex-finance-mcp"): [
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+            ]
+        }
+        candidates = _find_http_backend_services(services, route_ref_map)
+        assert len(candidates) == 1
+        assert len(candidates[0]["routeRefs"]) == 1
+
+
+
+class TestGovernanceSanitised:
+    def test_non_scalar_governance_values_dropped(self):
+        card = {"name": "a", "governance": {"cloud": "GKE", "nested": {"x": 1}, "list": [1], "tier": 2}}
+        assert _normalize_agent_card(card)["governance"] == {"cloud": "GKE", "tier": 2}
+
+    def test_non_dict_governance_is_none(self):
+        assert _normalize_agent_card({"name": "a", "governance": "text"})["governance"] is None
+
+
+def _pod(name, labels, phase="Running", container_ports=()):
+    containers = [SimpleNamespace(ports=[SimpleNamespace(name=n, container_port=p) for n, p in container_ports])]
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, labels=labels),
+        status=SimpleNamespace(phase=phase),
+        spec=SimpleNamespace(containers=containers),
+    )
+
+
+def _candidate(name="api", ports=(8080,), selector=None):
+    return {
+        "name": name,
+        "namespace": "ns",
+        "ports": [{"port": p, "name": "http"} for p in ports],
+        "routeRefs": [],
+        "selector": selector if selector is not None else {"app": name},
+    }
+
+
+class TestProbeAgentCards:
+    def _run(self, candidate, core):
+        with patch("kubernetes.client.CoreV1Api", return_value=core):
+            _probe_agent_cards([candidate], MagicMock())
+
+    def test_stops_at_first_hit_and_paths_are_unique(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = [
+            Exception("404"),
+            '{"name": "agent"}',
+        ]
+        cand = _candidate()
+        self._run(cand, core)
+        calls = core.connect_get_namespaced_service_proxy_with_path.call_args_list
+        assert [c.kwargs["path"] for c in calls] == [".well-known/agent-card.json", ".well-known/agent.json"]
+        assert cand["probeStatus"] == "success"
+        core.connect_get_namespaced_pod_proxy_with_path.assert_not_called()
+
+    def test_attempts_are_capped(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = Exception("503")
+        core.list_namespaced_pod.return_value.items = [_pod(f"api-{i}", {"app": "api"}) for i in range(10)]
+        cand = _candidate(ports=(80, 8080, 9000))
+        self._run(cand, core)
+        total = (
+            core.connect_get_namespaced_service_proxy_with_path.call_count
+            + core.connect_get_namespaced_pod_proxy_with_path.call_count
+        )
+        assert total == 12
+        assert cand["probeStatus"] == "error"
+        assert core.connect_get_namespaced_pod_proxy_with_path.call_count == 6
+
+    def test_pod_fallback_runs_when_service_has_many_ports(self):
+        # Service proxy fails on every port (GKE VPC-native); only the pod
+        # answers. Four ports must not exhaust the budget on the service proxy.
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = lambda **kw: (
+            '{"name": "agent"}' if kw["name"] == "api-0:9000" and kw["path"] == ".well-known/agent.json" else None
+        )
+        core.list_namespaced_pod.return_value.items = [_pod("api-0", {"app": "api"})]
+        cand = _candidate(ports=(8080, 8081, 8082, 9000))
+        cand["routeRefs"] = [{"port": 9000}]
+        self._run(cand, core)
+        assert cand["probeStatus"] == "success"
+        assert cand["agentCard"]["name"] == "agent"
+
+    def test_pod_fallback_matches_by_selector_not_name_prefix(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = lambda **kw: (
+            '{"name": "agent"}' if kw["name"].startswith("backend-") else None
+        )
+        core.list_namespaced_pod.return_value.items = [
+            _pod("api-gateway-abc", {"app": "api-gateway"}),
+            _pod("backend-xyz", {"app": "api", "tier": "web"}),
+        ]
+        cand = _candidate(name="api", selector={"app": "api"})
+        self._run(cand, core)
+        targets = {c.kwargs["name"] for c in core.connect_get_namespaced_pod_proxy_with_path.call_args_list}
+        assert targets == {"backend-xyz:8080"}
+        assert cand["probeStatus"] == "success"
+
+    def test_no_selector_skips_pod_fallback(self):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        cand = _candidate(selector={})
+        self._run(cand, core)
+        core.list_namespaced_pod.assert_not_called()
+        assert cand["probeStatus"] == "error"
+
+    def _pod_targets(self, cand, pod):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = Exception("404")
+        core.list_namespaced_pod.return_value.items = [pod]
+        self._run(cand, core)
+        return {c.kwargs["name"] for c in core.connect_get_namespaced_pod_proxy_with_path.call_args_list}
+
+    def test_pod_fallback_uses_numeric_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = 8080
+        assert self._pod_targets(cand, _pod("api-0", {"app": "api"})) == {"api-0:8080"}
+
+    def test_pod_fallback_resolves_named_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = "web"
+        pod = _pod("api-0", {"app": "api"}, container_ports=[("metrics", 9100), ("web", 8080)])
+        assert self._pod_targets(cand, pod) == {"api-0:8080"}
+
+    def test_pod_fallback_skips_unresolved_named_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = "web"
+        assert self._pod_targets(cand, _pod("api-0", {"app": "api"}, container_ports=[("metrics", 9100)])) == set()
+        assert cand["probeStatus"] == "error"

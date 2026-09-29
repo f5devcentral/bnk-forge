@@ -31,9 +31,13 @@ logger = logging.getLogger(__name__)
 # k8s.f5net.com covers multiple sub-categories; they're merged into bnk_data_plane
 # by default — categories like bnk_firewall/bnk_irules/bnk_logging/bnk_ai are
 # present in the STATIC fallback only (discovery can't infer sub-categories from groups alone).
+# gateway.k8s.f5.com (BNK 2.4) succeeds gateway.k8s.f5net.com, so it maps to bnk_security;
+# the static fallback files its underlay kinds (Infra, GatewaySettings, EgressGateway) under bnk_data_plane.
 _EXPORT_GROUP_TO_CATEGORY: dict[str, str] = {
     "gateway.networking.k8s.io": "gateway_api",
+    "inference.networking.k8s.io": "gateway_api",
     "gateway.k8s.f5net.com": "bnk_security",
+    "gateway.k8s.f5.com": "bnk_security",
     "k8s.f5net.com": "bnk_data_plane",
     "k8s.f5.com": "bnk_flo",
     "provisioning.dpu.nvidia.com": "dpf_provisioning",
@@ -84,11 +88,16 @@ EXPORT_RESOURCE_TYPES = {
         {"api_version": "gateway.networking.k8s.io/v1", "kind": "GatewayClass", "plural": "gatewayclasses", "namespaced": False},
         {"api_version": "gateway.networking.k8s.io/v1", "kind": "Gateway", "plural": "gateways", "namespaced": True},
         {"api_version": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "plural": "httproutes", "namespaced": True},
+        {"api_version": "inference.networking.k8s.io/v1", "kind": "InferencePool", "plural": "inferencepools", "namespaced": True},
+        {"api_version": "inference.networking.k8s.io/v1alpha2", "kind": "InferenceModelRewrite", "plural": "inferencemodelrewrites", "namespaced": True},
     ],
     "bnk_security": [
         {"api_version": "gateway.k8s.f5net.com/v1alpha1", "kind": "BNKSecPolicy", "plural": "bnksecpolicies", "namespaced": True},
         {"api_version": "gateway.k8s.f5net.com/v1alpha1", "kind": "BNKNetPolicy", "plural": "bnknetpolicies", "namespaced": True},
         {"api_version": "gateway.k8s.f5net.com/v1", "kind": "L4Route", "plural": "l4routes", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1alpha1", "kind": "SecPolicy", "plural": "secpolicies", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1alpha1", "kind": "NetPolicy", "plural": "netpolicies", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1", "kind": "L4Route", "plural": "l4routes", "namespaced": True},
     ],
     "bnk_data_plane": [
         {"api_version": "k8s.f5net.com/v1", "kind": "F5SPKVlan", "plural": "f5-spk-vlans", "namespaced": True},
@@ -96,6 +105,9 @@ EXPORT_RESOURCE_TYPES = {
         {"api_version": "k8s.f5net.com/v1", "kind": "F5SPKSnatpool", "plural": "f5-spk-snatpools", "namespaced": True},
         {"api_version": "k8s.f5net.com/v3", "kind": "F5SPKEgress", "plural": "f5-spk-egresses", "namespaced": True},
         {"api_version": "k8s.f5net.com/v1", "kind": "F5BigGlobalOptions", "plural": "f5-big-global-optionses", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1alpha1", "kind": "Infra", "plural": "infras", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1alpha1", "kind": "GatewaySettings", "plural": "gatewaysettings", "namespaced": True},
+        {"api_version": "gateway.k8s.f5.com/v1alpha1", "kind": "EgressGateway", "plural": "egressgateways", "namespaced": True},
     ],
     "bnk_firewall": [
         {"api_version": "k8s.f5net.com/v1", "kind": "F5BigFwPolicy", "plural": "f5-big-fw-policies", "namespaced": True},

@@ -1,9 +1,10 @@
 """
 BNK policy associations — maps security policies to their enforcement points.
 
-Two distinct association paths:
-- Ingress: BNKSecPolicy → Gateway → F5BigFwPolicy
+Association paths:
+- Ingress: BNKSecPolicy / SecPolicy (2.4) → Gateway → F5BigFwPolicy
 - Egress: F5SPKEgress.spec.firewallEnforcedPolicy → F5BigFwPolicy
+- Egress (2.4): SecPolicy → EgressGateway → F5BigFwPolicy
 
 Builds an enriched association list showing which firewall policies
 are enforced where, with full firewall rule details.
@@ -14,17 +15,33 @@ Pure data transformation: consumes the resources dict from
 
 from typing import Any
 
-from services.bnk.helpers import make_resource_map, resolve_list_refs, resource_name, resource_ns
+from services.bnk.helpers import (
+    get_policy_operational_status,
+    make_resource_map,
+    resolve_egress_config,
+    resolve_list_refs,
+    resource_name,
+    resource_ns,
+)
+
+
+def _policy_status(resource: dict) -> dict[str, Any]:
+    """Derive resolved/programmed operational state from a BNK resource."""
+    return get_policy_operational_status(resource)
 
 
 def analyze_policy_associations(data: dict[str, Any]) -> dict[str, Any]:
     """Build the policy-gateway and policy-egress associations from raw BNK data."""
     resources = data["resources"]
 
-    bnksecpolicies = resources.get("bnksecpolicy", [])
+    secpolicies = resources.get("secpolicy", []) + resources.get("bnksecpolicy", [])
     gateways = resources.get("gateway", [])
     firewallpolicies = resources.get("f5bigfwpolicy", [])
     egresses = resources.get("f5spkegress", [])
+    egress_gw_index: dict[tuple[str, str], dict] = {
+        (resource_ns(eg), resource_name(eg)): eg for eg in resources.get("egressgateway", [])
+    }
+    gs_map = make_resource_map(resources.get("gatewaysettings", []))
 
     # Pre-index gateways and firewall policies by (namespace, name) for O(1) lookups
     gw_index: dict[tuple[str, str], dict] = {
@@ -38,10 +55,17 @@ def analyze_policy_associations(data: dict[str, Any]) -> dict[str, Any]:
     port_map = make_resource_map(resources.get("f5bigcneportlist", []))
 
     associations: list[dict[str, Any]] = []
-    for bnk in bnksecpolicies:
+    for bnk in secpolicies:
         bnk_ns = resource_ns(bnk)
 
         for target in bnk.get("spec", {}).get("targetRefs", []):
+            if target.get("kind") == "EgressGateway":
+                egress_gw = egress_gw_index.get((bnk_ns, target.get("name")))
+                if egress_gw:
+                    associations.extend(
+                        _build_egress_gateway_associations(bnk, egress_gw, gs_map, fw_index, addr_map, port_map)
+                    )
+                continue
             if target.get("kind") != "Gateway":
                 continue
 
@@ -118,6 +142,8 @@ def _build_association(
         association["rules_count"], association["rules"] = _extract_fw_rules(
             policy, addr_map or {}, port_map or {}, bnk_ns,
         )
+
+    association["bnk_policy_status"] = _policy_status(bnk)
 
     return association
 
@@ -209,4 +235,41 @@ def _build_egress_association(
             policy, addr_map or {}, port_map or {}, egress_ns,
         )
 
+    association["egress_status"] = _policy_status(egress)
+
     return association
+
+
+def _build_egress_gateway_associations(
+    sec_policy: dict,
+    egress_gw: dict,
+    gs_map: dict[str, dict],
+    fw_index: dict[tuple[str, str], dict],
+    addr_map: dict[str, dict],
+    port_map: dict[str, dict],
+) -> list[dict[str, Any]]:
+    """Build policy-egress associations for a BNK 2.4 SecPolicy targeting an EgressGateway."""
+    ns = resource_ns(egress_gw)
+    selector = (egress_gw.get("spec") or {}).get("sourceSelector") or {}
+    snat_config = (resolve_egress_config(egress_gw, gs_map) or {}).get("sourceNATConfig") or {}
+
+    associations: list[dict[str, Any]] = []
+    for ext in (sec_policy.get("spec") or {}).get("extensionRefs") or []:
+        if ext.get("kind") != "F5BigFwPolicy":
+            continue
+        policy_name = ext.get("name")
+        association: dict[str, Any] = {
+            "kind": "egress",
+            "egress_name": resource_name(egress_gw),
+            "namespace": ns,
+            "captured_namespaces": (selector.get("namespaces") or {}).get("matchNames") or [],
+            "snat_type": snat_config.get("type"),
+            "firewall_policy_name": policy_name,
+            "bnk_policy_name": resource_name(sec_policy),
+        }
+        policy = fw_index.get((ns, policy_name))
+        if policy:
+            association["rules_count"], association["rules"] = _extract_fw_rules(policy, addr_map, port_map, ns)
+        association["egress_status"] = _policy_status(sec_policy)
+        associations.append(association)
+    return associations

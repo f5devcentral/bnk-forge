@@ -18,6 +18,12 @@ import type {
   LlmProviderMetric,
 } from '@/types/llm-observability';
 
+/**
+ * Cluster scope for every hook: a cluster id, `null` for the fleet aggregate
+ * (all clusters), or `undefined` while no cluster is chosen yet (no fetch).
+ */
+export type LlmClusterScope = number | null | undefined;
+
 /** Build a plain string param map for stable query keys (drops undefined). */
 function keyParams(params: Record<string, string | number | undefined>): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
@@ -28,75 +34,75 @@ function keyParams(params: Record<string, string | number | undefined>): Record<
 }
 
 export function useLlmStats(
-  clusterId: number | undefined,
+  clusterId: LlmClusterScope,
   params: LlmObservabilityParams,
   enabled = true,
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.stats(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getStats(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getStats(clusterId ?? undefined, params),
+    enabled: enabled && clusterId !== undefined,
     placeholderData: (prev) => prev,
   });
 }
 
 export function useLlmHistogram(
-  clusterId: number | undefined,
+  clusterId: LlmClusterScope,
   params: LlmObservabilityParams & { metric: LlmHistogramMetric },
   enabled = true,
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.histogram(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getHistogram(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getHistogram(clusterId ?? undefined, params),
+    enabled: enabled && clusterId !== undefined,
     placeholderData: (prev) => prev,
   });
 }
 
 export function useLlmRankings(
-  clusterId: number | undefined,
+  clusterId: LlmClusterScope,
   params: LlmObservabilityParams,
   enabled = true,
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.rankings(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getRankings(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getRankings(clusterId ?? undefined, params),
+    enabled: enabled && clusterId !== undefined,
     placeholderData: (prev) => prev,
   });
 }
 
 export function useLlmProviderUsage(
-  clusterId: number | undefined,
+  clusterId: LlmClusterScope,
   params: LlmObservabilityParams & { metric: LlmProviderMetric },
   enabled = true,
 ) {
   return useQuery({
     queryKey: queryKeys.llmObservability.providerUsage(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getProviderUsage(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getProviderUsage(clusterId ?? undefined, params),
+    enabled: enabled && clusterId !== undefined,
     placeholderData: (prev) => prev,
   });
 }
 
 export function useLlmLogs(
-  clusterId: number | undefined,
+  clusterId: LlmClusterScope,
   params: LlmObservabilityParams & { limit?: number; end?: string; content_search?: string },
   options?: { live?: boolean; enabled?: boolean },
 ) {
   const enabled = options?.enabled ?? true;
   return useQuery({
     queryKey: queryKeys.llmObservability.logs(clusterId ?? 0, keyParams({ ...params })),
-    queryFn: () => llmObservabilityApi.getLogs(clusterId!, params),
-    enabled: enabled && !!clusterId,
+    queryFn: () => llmObservabilityApi.getLogs(clusterId ?? undefined, params),
+    enabled: enabled && clusterId !== undefined,
     refetchInterval: options?.live ? POLL_INTERVALS.STANDARD : false,
   });
 }
 
-export function useLlmFilterData(clusterId: number | undefined, range: LlmObservabilityParams['range']) {
+export function useLlmFilterData(clusterId: LlmClusterScope, range: LlmObservabilityParams['range']) {
   return useQuery({
     queryKey: queryKeys.llmObservability.filterData(clusterId ?? 0, keyParams({ range })),
-    queryFn: () => llmObservabilityApi.getFilterData(clusterId!, { range }),
-    enabled: !!clusterId,
+    queryFn: () => llmObservabilityApi.getFilterData(clusterId ?? undefined, { range }),
+    enabled: clusterId !== undefined,
   });
 }

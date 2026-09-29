@@ -275,3 +275,11 @@ class TestFleetRBAC:
         """Unauthenticated request to fleet health returns 401."""
         response = client.get("/api/operators/fleet-health")
         assert response.status_code == 401
+
+
+def test_bnk_24_gateway_group_counts_as_bnk():
+    """A cluster serving only the BNK 2.4 gateway.k8s.f5.com group still gets the BNK fetch."""
+    from routes.operators import fleet
+
+    with patch.object(fleet, "_cluster_api_groups", return_value=frozenset({"gateway.k8s.f5.com"})):
+        assert fleet._cluster_has_bnk_api_groups(MagicMock(), MagicMock()) is True

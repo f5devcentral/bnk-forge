@@ -154,6 +154,15 @@ class TestVersionMetadata:
         assert info is not None
         assert info["label"] == "BNK 2.0"
 
+    def test_bnk_24_detected(self):
+        """FLO v2.30.x should map to BNK 2.4 GA."""
+        from services.bnk_upgrade_service import get_known_version_info
+        info = get_known_version_info("v2.30.0-0.5.2")
+        assert info is not None
+        assert info["label"] == "BNK 2.4 GA"
+        assert info["min_k8s"] == "1.30"
+        assert info["max_k8s"] == "1.35"
+
     def test_bnk_23_k8s_range_widened(self):
         """#390: BNK 2.3 GA's max_k8s must be widened past 1.31 to cover
         real-world clusters (e.g. kind 1.36)."""

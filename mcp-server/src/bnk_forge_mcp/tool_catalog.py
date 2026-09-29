@@ -2080,6 +2080,38 @@ HIGH_RISK_TOOL_CATALOG: tuple[ToolCatalogEntry, ...] = (
         replacement_tool=None,
         notes="Lists configured alert channels (require_viewer).",
     ),
+    ToolCatalogEntry(
+        tool_name="list_benchmark_targets",
+        module="benchmarks",
+        http_method="GET",
+        backend_path_template="/api/benchmarks/targets",
+        auth_expectation="viewer",
+        risk_class=ToolRiskClass.READ_ONLY,
+        uses_query_params=True,
+        uses_json_body=False,
+        tier="tier1",
+        stability=ToolStability.STABLE,
+        since_version="3.1",
+        deprecated=False,
+        replacement_tool=None,
+        notes="Lists registered benchmark targets with optional cluster_id and name filters (require_viewer).",
+    ),
+    ToolCatalogEntry(
+        tool_name="create_benchmark_target",
+        module="benchmarks",
+        http_method="POST",
+        backend_path_template="/api/benchmarks/targets",
+        auth_expectation="operator",
+        risk_class=ToolRiskClass.MUTATING,
+        uses_query_params=False,
+        uses_json_body=True,
+        tier="tier1",
+        stability=ToolStability.STABLE,
+        since_version="3.1",
+        deprecated=False,
+        replacement_tool=None,
+        notes="Registers a benchmark target for a cluster with unique (cluster_id, name) scoping (require_operator).",
+    ),
 )
 
 
@@ -2092,6 +2124,7 @@ GOVERNED_MODULES: tuple[str, ...] = (
     "bnk_operations",
     "cloud_auth",
     "diagnostics_fleet",
+    "benchmarks",
 )
 
 

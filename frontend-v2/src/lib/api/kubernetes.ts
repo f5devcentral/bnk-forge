@@ -116,6 +116,31 @@ export const kubernetesApi = {
       errors: Array<{ module_id: number; error: string }>;
     }>(`/api/projects/${projectId}/k8s/clusters/detect-eks`).then((res) => res.data),
 
+  detectClustersFromCredentials: (projectId: number) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      reason?: 'no_bound_template';
+      registered: Array<{ id: number; name: string; provider: string; status: string }>;
+      skipped: Array<{ name: string; provider: string; reason: string }>;
+      errors: Array<{ provider: string; name: string | null; error: string }>;
+    }>(`/api/projects/${projectId}/k8s/clusters/detect-credentials`).then((res) => res.data),
+
+  /**
+   * Module outputs first, so clusters this project deployed stay linked to their module,
+   * then the bound credential template (names already registered are skipped).
+   */
+  detectClusters: async (projectId: number) => {
+    const fromModules = await kubernetesApi.detectManagedClusters(projectId);
+    const fromCredentials = await kubernetesApi.detectClustersFromCredentials(projectId);
+    return {
+      message: [fromModules.message, fromCredentials.message].join('. '),
+      registered: [...fromModules.registered, ...fromCredentials.registered],
+      skipped: [...fromModules.skipped, ...fromCredentials.skipped],
+      errors: [...fromModules.errors, ...fromCredentials.errors],
+    };
+  },
+
   getClusterResources: (clusterId: number, resourceType: string, params?: { namespace?: string; label_selector?: string }) =>
     apiClient.get<K8sResourceListResponse>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}`, { params }).then((res) => res.data),
 
@@ -162,7 +187,7 @@ export const kubernetesApi = {
 
   // F5 BNK Monitoring — unified data endpoint (single fetch for all insight views)
    
-  getBnkData: (clusterId: number, params?: { namespace?: string }) =>
+  getBnkData: (clusterId: number, params?: { namespace?: string; force?: boolean }) =>
     apiClient.get<BnkDataResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/data`, { params }).then((res) => res.data),
 
   // Legacy individual endpoints (kept for backward compat, all delegate to shared fetch on backend)
@@ -401,3 +426,14 @@ export const kubernetesApi = {
   assignBnkClusterMembers: (clusterId: number, data: BnkClusterMemberAssignRequest) =>
     apiClient.post<BnkClusterMemberAssignResponse>(`/api/k8s/clusters/${clusterId}/bnk-members`, data).then((res) => res.data),
 };
+
+/** Distinct clusters in a detectClusters result: credential discovery skips, by name, clusters the module pass registered. */
+export function countDetectedClusters(result: Awaited<ReturnType<typeof kubernetesApi.detectClusters>>): number {
+  const names = new Set<string>();
+  let unnamed = 0;
+  for (const cluster of [...result.registered, ...result.skipped]) {
+    if ('name' in cluster) names.add(cluster.name);
+    else unnamed += 1;
+  }
+  return names.size + unnamed;
+}

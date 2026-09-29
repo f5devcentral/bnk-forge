@@ -1,6 +1,7 @@
 // F5 BNK & Upgrade types
 
 import type { JsonValue } from './common';
+import type { OperatorConnectivityMode } from './operators';
 
 export interface F5FirewallRule {
   name: string;
@@ -33,6 +34,7 @@ export interface F5GatewayPolicyAssociation {
   protocol?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  bnk_policy_status?: PolicyStatus;
   egress_name?: string;
   captured_namespaces?: string[];
   snat_type?: string;
@@ -47,6 +49,7 @@ export interface F5EgressPolicyAssociation {
   snat_type?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  egress_status?: PolicyStatus;
   bnk_policy_name?: string;
   gateway_name?: string;
   listener_name?: string;
@@ -85,6 +88,8 @@ export interface HealthPodDetail {
   podName: string;
   namespace: string;
   nodeName?: string | null;
+  nodeZone?: string | null;
+  nodeInstanceType?: string | null;
   hostIP?: string | null;
   phase: string;
   restartCount: number;
@@ -96,6 +101,9 @@ export interface HealthComponentEnrichment {
   explanation: string;
   podDetails: HealthPodDetail[];
   remediationActions: HealthRemediationAction[];
+  namespaces: string[];
+  zones: string[];
+  nodes: string[];
 }
 
 export interface HealthPlatformComponent extends HealthComponentEnrichment {
@@ -134,6 +142,20 @@ export interface HealthVlanComponent {
     interfaces: string[];
     selfIPs: string[];
     mtu: number | null;
+  }>;
+}
+
+/** BNK 2.4 Infra CRs (networks and IPAM pools that replace F5SPKVlan). */
+export interface HealthInfraComponent {
+  total: number;
+  programmed: number;
+  severity: HealthSeverity;
+  explanation: string;
+  details: Array<{
+    name: string;
+    programmed: boolean;
+    networks: number;
+    ipams: number;
   }>;
 }
 
@@ -180,6 +202,9 @@ export interface BnkHealthResponse {
     severity: HealthSeverity;
     gateways: HealthGatewayComponent;
     vlans: HealthVlanComponent;
+    infra?: HealthInfraComponent | null;
+    gatewaySettings?: number;
+    egressGateways?: number;
     listeners: number;
     httpRoutes: number;
     staticRoutes: number;
@@ -202,6 +227,14 @@ export interface BnkHealthResponse {
       namespace: string;
       schedule: string;
     }>;
+    f5epps?: number;
+    inferencePools?: number;
+    inferencePoolDetails?: Array<{
+      name: string;
+      namespace: string;
+      targetPorts: number[];
+      endpointPicker: string;
+    }>;
   };
   counts: {
     gateways: number;
@@ -216,6 +249,23 @@ export interface BnkHealthResponse {
     tmm_running: number;
     tmm_containers: string;
   };
+  connectivity: HealthConnectivityStatus;
+  integration: HealthIntegrationStatus;
+}
+
+export interface HealthConnectivityStatus {
+  status: 'connected' | 'reachable' | 'partial' | 'unreachable' | 'unknown';
+  message: string;
+  checkedAt: string | null;
+}
+
+export interface HealthIntegrationStatus {
+  status: HealthSeverity;
+  operatorConnected: boolean;
+  operatorMode: OperatorConnectivityMode | 'kubeconfig';
+  operatorVersion: string | null;
+  lastSeen: string | null;
+  message: string;
 }
 
 // BNK Upgrade Types
@@ -367,6 +417,20 @@ export interface BnkUpgradeRollbackResponse {
 
 // ─── BNK Gateway Topology Types ──────────────────────────────────────
 
+export interface TopologyCondition {
+  type: string;
+  status: string;
+  reason?: string | null;
+  message?: string | null;
+  lastTransitionTime?: string | null;
+}
+
+export interface PolicyStatus {
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
+}
+
 export interface TopologyRouteBackend {
   name: string;
   namespace?: string | null;
@@ -388,9 +452,13 @@ export interface TopologyRoute {
   name: string;
   namespace: string;
   kind: string;   // "HTTPRoute", "TCPRoute", "UDPRoute", "TLSRoute", "GRPCRoute", "L4Route"
+  resourceType?: string;  // registry key to fetch it by; L4Route has two (l4route, l4route_24)
   hostnames: string[];
   backends: TopologyRouteBackend[];
   analyzers: TopologyAnalyzer[];
+  accepted: boolean;
+  conditions: TopologyCondition[];
+  conditionMessage?: string | null;
 }
 
 export interface TopologyNetworkPolicyExtension {
@@ -403,10 +471,14 @@ export interface TopologyNetworkPolicyExtension {
 
 export interface TopologyNetworkPolicy {
   name: string;
+  kind?: string;  // "NetPolicy" (2.4) or "BNKNetPolicy"
   namespace: string;
   extensions: TopologyNetworkPolicyExtension[];
   resolvedCount: number;
   totalExtensions: number;
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 export interface TopologyFirewallPolicy {
@@ -429,15 +501,21 @@ export interface TopologyFirewallPolicy {
 
 export interface TopologySecurityPolicy {
   name: string;
+  kind?: string;  // "SecPolicy" (2.4) or "BNKSecPolicy"
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFirewallPolicy[];
+  resolved: boolean;
+  programmed: boolean;
+  messages: Record<string, string | null>;
 }
 
 export interface TopologyListener {
   name: string;
   protocol: string;
   port: number | null;
+  attachedRouteCount: number;
+  conditions: TopologyCondition[];
   routes: TopologyRoute[];
   networkPolicies: TopologyNetworkPolicy[];
 }
@@ -447,6 +525,9 @@ export interface TopologyGateway {
   namespace: string;
   gatewayClassName: string;
   addresses: string[];
+  accepted: boolean;
+  programmed: boolean;
+  conditions: TopologyCondition[];
   listeners: TopologyListener[];
   securityPolicies: TopologySecurityPolicy[];
 }
@@ -454,6 +535,8 @@ export interface TopologyGateway {
 export interface TopologyVlan {
   name: string;
   namespace: string;
+  kind?: string;
+  infraName?: string;  // parent Infra when projected from a 2.4 Infra network
   interfaces: unknown[];
   selfipV4s: string[];
   prefixLen: number | null;
@@ -470,6 +553,7 @@ export interface TopologyCneInstance {
   networkAttachments: unknown[];
   containerPlatform: string;
   phase: string;
+  ready: boolean;
 }
 
 export interface TopologyStaticRoute {
@@ -477,6 +561,8 @@ export interface TopologyStaticRoute {
   namespace: string;
   destination: string;
   gateway: string;
+  kind?: string;
+  infraName?: string;
 }
 
 export interface TopologySnatPool {
@@ -488,6 +574,7 @@ export interface TopologySnatPool {
 export interface TopologyEgress {
   name: string;
   namespace: string;
+  kind?: string;
   snatType: string;
   egressSnatpool: string | null;
   firewallEnforcedPolicy: string | null;
@@ -590,6 +677,55 @@ export interface BnkBackendEntry {
   createdAt?: string | null;
 }
 
+// ─── Traffic Statistics Types ────────────────────────────────────────
+
+export interface BnkListenerTrafficStats {
+  gatewayName: string;
+  gatewayNamespace: string;
+  listenerName: string;
+  clientsideBytesIn: number;
+  clientsideBytesOut: number;
+  clientsideCurConns: number;
+  clientsideTotConns: number;
+  serversideBytesIn: number;
+  serversideBytesOut: number;
+  serversideCurConns: number;
+  serversideTotConns: number;
+}
+
+export interface BnkEgressTrafficStats {
+  egressName: string;
+  namespace: string;
+  clientsideBytesIn: number;
+  clientsideBytesOut: number;
+  clientsideCurConns: number;
+  clientsideTotConns: number;
+  serversideBytesIn: number;
+  serversideBytesOut: number;
+  serversideCurConns: number;
+  serversideTotConns: number;
+}
+
+export interface BnkFirewallRuleTrafficStats {
+  policyName: string;
+  namespace: string;
+  ruleName: string;
+  action: string;
+  ipProtocol: string;
+  hitCount: number;
+}
+
+export interface BnkTrafficStatsResponse {
+  source: string | null;
+  podName: string | null;
+  sampledAt: string | null;
+  available: boolean;
+  error: string | null;
+  listeners: BnkListenerTrafficStats[];
+  egresses: BnkEgressTrafficStats[];
+  firewallRules: BnkFirewallRuleTrafficStats[];
+}
+
 // BNK unified data response (getBnkData)
 export interface BnkDataResponse {
   health: BnkHealthResponse;
@@ -601,6 +737,7 @@ export interface BnkDataResponse {
   policyCount: number;
   backends?: BnkBackendEntry[];
   palette?: BnkPaletteData;
+  trafficStats?: BnkTrafficStatsResponse;
   cluster_id: number;
   namespace: string | null;
 }
@@ -761,6 +898,7 @@ export interface A2AAgentCard {
   defaultOutputModes: string[];
   provider: Record<string, string>;
   securitySchemes: Record<string, unknown>;
+  governance?: Record<string, string | number | boolean>;
   iconUrl?: string | null;
 }
 

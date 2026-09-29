@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 _BNK_API_GROUPS = frozenset({
     ApiGroups.F5_NET,
     ApiGroups.F5_K8S,
+    ApiGroups.F5_GATEWAY,
     ApiGroups.F5_GATEWAY_NET,
 })
 _DPF_API_GROUPS = frozenset({

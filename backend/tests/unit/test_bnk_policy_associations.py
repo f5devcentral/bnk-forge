@@ -61,6 +61,9 @@ class TestAnalyzePolicyAssociations:
         assert a["rules_count"] == 1
         assert a["rules"][0]["action"] == "drop"
         assert a["rules"][0]["logging"] is True
+        assert "bnk_policy_status" in a
+        assert a["bnk_policy_status"]["resolved"] is False
+        assert a["bnk_policy_status"]["programmed"] is False
         # Referenced port list has no matching resource — name kept, ports empty
         assert a["rules"][0]["destination"]["ports"] == []
         assert a["rules"][0]["destination"]["portLists"] == ["ssh-ports"]
@@ -115,6 +118,27 @@ class TestAnalyzePolicyAssociations:
         assert "rules" not in a
         assert "rules_count" not in a
 
+    def test_sec_policy_status_extracted_from_conditions(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_resource("gw-prod")]
+        resources["bnksecpolicy"] = [_resource("sp", spec={
+            "targetRefs": [{"name": "gw-prod", "kind": "Gateway"}],
+            "extensionRefs": [{"kind": "F5BigFwPolicy", "name": "fw-1"}],
+        }, status={
+            "conditions": [
+                {"type": "Resolved", "status": "True", "message": "resolved"},
+                {"type": "Programmed", "status": "False", "message": "pending"},
+            ],
+        })]
+        resources["f5bigfwpolicy"] = [_resource("fw-1", spec={"rule": []})]
+
+        result = analyze_policy_associations({"resources": resources})
+        status = result["associations"][0]["bnk_policy_status"]
+        assert status["resolved"] is True
+        assert status["programmed"] is False
+        assert status["messages"]["resolved"] == "resolved"
+        assert status["messages"]["programmed"] == "pending"
+
 
 class TestEgressAssociations:
     def test_egress_with_firewall_policy_produces_association(self):
@@ -154,6 +178,21 @@ class TestEgressAssociations:
 
         result = analyze_policy_associations({"resources": resources})
         assert result["count"] == 0
+
+    def test_egress_status_extracted_from_conditions(self):
+        resources = _empty_resources()
+        resources["f5bigfwpolicy"] = [_resource("egress-demo-fw", spec={"rule": []})]
+        resources["f5spkegress"] = [_resource("bnk-egress-demo", spec={
+            "snatType": "SRC_TRANS_AUTOMAP",
+            "firewallEnforcedPolicy": "egress-demo-fw",
+        }, status={
+            "conditions": [{"type": "Programmed", "status": "True", "message": "programmed"}],
+        })]
+
+        result = analyze_policy_associations({"resources": resources})
+        status = result["associations"][0]["egress_status"]
+        assert status["programmed"] is True
+        assert status["messages"]["programmed"] == "programmed"
 
     def test_egress_with_missing_firewall_policy_no_rules(self):
         resources = _empty_resources()
@@ -314,3 +353,65 @@ class TestBuildAssociation:
         assert a["bnk_policy_name"] == "sp"
         assert "gateway_ip" not in a
         assert "rules" not in a
+
+
+class TestBNK24PolicyAssociations:
+    """SecPolicy (gateway.k8s.f5.com) shapes from the awsbnkctl egress demo."""
+
+    def _fw(self, name: str, ns: str) -> dict:
+        return _resource(name, ns, spec={
+            "rule": [{"name": "block", "action": "drop", "ipProtocol": "any",
+                      "destination": {"addresses": ["1.1.1.1/32"]}, "logging": True}],
+        })
+
+    def test_secpolicy_on_gateway(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_resource("gw", "default", spec={
+            "listeners": [{"name": "http", "port": 80, "protocol": "HTTP"}],
+        })]
+        resources["f5bigfwpolicy"] = [self._fw("mcp-firewall", "default")]
+        resources["secpolicy"] = [_resource("mcp-sec-policy", "default", spec={
+            "targetRefs": [{"group": "gateway.networking.k8s.io", "kind": "Gateway", "name": "gw",
+                            "sectionName": "http"}],
+            "extensionRefs": [{"group": "k8s.f5net.com", "kind": "F5BigFwPolicy", "name": "mcp-firewall"}],
+        })]
+
+        (a,) = analyze_policy_associations({"resources": resources})["associations"]
+        assert a["kind"] == "gateway"
+        assert a["bnk_policy_name"] == "mcp-sec-policy"
+        assert a["port"] == 80
+        assert a["rules_count"] == 1
+
+    def test_secpolicy_on_egress_gateway(self):
+        resources = _empty_resources()
+        resources["egressgateway"] = [_resource("bnk-egress-demo", "bnk-egress-demo", spec={
+            "infrastructure": {"parametersRef": {"name": "bnk-egress-demo", "sectionName": "bnk-egress-demo"}},
+            "sourceSelector": {"selectionMode": "NamespaceSelector",
+                               "namespaces": {"matchNames": ["bnk-egress-demo"]}},
+        })]
+        resources["gatewaysettings"] = [_resource("bnk-egress-demo", "bnk-egress-demo", spec={
+            "egressConfigs": [{"name": "bnk-egress-demo", "networkRef": {"name": "int-vlan"},
+                               "sourceNATConfig": {"type": "Automap"}}],
+        })]
+        resources["f5bigfwpolicy"] = [self._fw("egress-demo-fw", "bnk-egress-demo")]
+        resources["secpolicy"] = [_resource("egress-demo-fw", "bnk-egress-demo", spec={
+            "targetRefs": [{"group": "gateway.k8s.f5.com", "kind": "EgressGateway", "name": "bnk-egress-demo"}],
+            "extensionRefs": [{"group": "k8s.f5net.com", "kind": "F5BigFwPolicy", "name": "egress-demo-fw"}],
+        }, status={"conditions": [{"type": "Programmed", "status": "True"}]})]
+
+        (a,) = analyze_policy_associations({"resources": resources})["associations"]
+        assert a["kind"] == "egress"
+        assert a["egress_name"] == "bnk-egress-demo"
+        assert a["bnk_policy_name"] == "egress-demo-fw"
+        assert a["captured_namespaces"] == ["bnk-egress-demo"]
+        assert a["snat_type"] == "Automap"
+        assert a["firewall_policy_name"] == "egress-demo-fw"
+        assert a["rules"][0]["destination"]["addresses"] == ["1.1.1.1/32"]
+
+    def test_secpolicy_on_missing_egress_gateway_is_skipped(self):
+        resources = _empty_resources()
+        resources["secpolicy"] = [_resource("sp", "ns", spec={
+            "targetRefs": [{"kind": "EgressGateway", "name": "absent"}],
+            "extensionRefs": [{"kind": "F5BigFwPolicy", "name": "fw"}],
+        })]
+        assert analyze_policy_associations({"resources": resources})["associations"] == []

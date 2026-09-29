@@ -53,6 +53,7 @@ _F5_CLEANUP_GROUPS = [
     "spk.f5.com",
     "k8s.f5net.com",
     "gateway.k8s.f5net.com",
+    "gateway.k8s.f5.com",
 ]
 
 # Known F5 BNK CRD groups and their resources

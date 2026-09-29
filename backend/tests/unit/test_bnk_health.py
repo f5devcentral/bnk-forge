@@ -10,6 +10,8 @@ import pytest
 from services.bnk.health import (
     COMPONENT_EXPLANATIONS,
     _build_component_health,
+    _build_connectivity_status,
+    _build_integration_status,
     _crd_installer_severity,
     _extract_cne_features,
     _feature_enabled,
@@ -61,11 +63,12 @@ def _empty_classified() -> dict:
     return {"tmm": [], "flo": [], "controller": [], "analyzer": [], "crd_installer": [], "other": []}
 
 
-def _make_data(resources=None, classified=None) -> dict:
+def _make_data(resources=None, classified=None, nodes=None) -> dict:
     return {
         "resources": resources or _empty_resources(),
         "classified_pods": classified or _empty_classified(),
         "pods": {"tenant": [], "utils": []},
+        "nodes": nodes,
     }
 
 
@@ -140,6 +143,8 @@ class TestPodDetails:
         assert d["restartCount"] == 0
         assert d["containersReady"] == "1/1"
         assert d["issue"] == ""
+        assert d["nodeZone"] is None
+        assert d["nodeInstanceType"] is None
 
     def test_unhealthy_pod(self):
         d = _pod_details(_pod(ready=False, restarts=6))
@@ -158,6 +163,27 @@ class TestPodDetails:
         d = _pod_details(p)
         assert d["containersReady"] == "2/2"
         assert d["restartCount"] == 2
+
+    def test_pod_enrichment_from_nodes(self):
+        pod = _pod(name="tmm-1", namespace="f5-bnk")
+        pod["nodeName"] = "worker-1"
+        nodes = {
+            "worker-1": {"zone": "us-east-1a", "instance_type": "m5.large"},
+        }
+        d = _pod_details(pod, nodes)
+        assert d["nodeZone"] == "us-east-1a"
+        assert d["nodeInstanceType"] == "m5.large"
+
+    def test_pod_enrichment_unknown_node(self):
+        pod = _pod(name="tmm-1", namespace="f5-bnk")
+        pod["nodeName"] = "missing-node"
+        d = _pod_details(pod, {})
+        assert d["nodeZone"] is None
+        assert d["nodeInstanceType"] is None
+
+    def test_pod_enrichment_no_node_assignment(self):
+        d = _pod_details(_pod(name="tmm-1"), {"worker-1": {"zone": "us-east-1a"}})
+        assert d["nodeZone"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +218,30 @@ class TestBuildComponentHealth:
     def test_unknown_component_key(self):
         h = _build_component_health("nonexistent", [_pod()], [_pod()], "healthy")
         assert h["explanation"] == ""
+
+    def test_component_placement_aggregation(self):
+        pods = [
+            _pod(name="tmm-1", namespace="f5-bnk"),
+            _pod(name="tmm-2", namespace="f5-bnk"),
+        ]
+        pods[0]["nodeName"] = "worker-1"
+        pods[1]["nodeName"] = "worker-2"
+        nodes = {
+            "worker-1": {"zone": "us-east-1a"},
+            "worker-2": {"zone": "us-east-1b"},
+        }
+        h = _build_component_health("tmm", pods, pods, "healthy", nodes)
+        assert h["namespaces"] == ["f5-bnk"]
+        assert h["nodes"] == ["worker-1", "worker-2"]
+        assert h["zones"] == ["us-east-1a", "us-east-1b"]
+
+    def test_component_aggregation_degrades_without_nodes(self):
+        pods = [_pod(name="tmm-1", namespace="f5-bnk")]
+        pods[0]["nodeName"] = "worker-1"
+        h = _build_component_health("tmm", pods, pods, "healthy")
+        assert h["namespaces"] == ["f5-bnk"]
+        assert h["nodes"] == ["worker-1"]
+        assert h["zones"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +556,39 @@ class TestAnalyzeHealth:
         assert result["installShape"] == "unknown"
         assert result["installMethod"] == "Unknown"
 
+    def test_node_az_enrichment_in_component_summaries(self):
+        """Nodes and zones are aggregated into platform + data-plane summaries."""
+        classified = _empty_classified()
+        classified["tmm"] = [_pod(name="tmm-1", namespace="f5-bnk")]
+        classified["tmm"][0]["nodeName"] = "worker-1"
+        classified["flo"] = [_pod(name="flo-1", namespace="f5-bnk")]
+        classified["flo"][0]["nodeName"] = "worker-1"
+        classified["controller"] = [_pod(name="ctrl-1", namespace="f5-utils")]
+        classified["controller"][0]["nodeName"] = "worker-2"
+
+        nodes = {
+            "worker-1": {"zone": "us-east-1a", "instance_type": "m5.large"},
+            "worker-2": {"zone": "us-east-1b"},
+        }
+
+        result = analyze_health(_make_data(classified=classified, nodes=nodes))
+
+        # Platform aggregation
+        assert result["platform"]["flo"]["nodes"] == ["worker-1"]
+        assert result["platform"]["flo"]["zones"] == ["us-east-1a"]
+        assert result["platform"]["controller"]["nodes"] == ["worker-2"]
+        assert result["platform"]["controller"]["zones"] == ["us-east-1b"]
+        assert result["platform"]["controller"]["namespaces"] == ["f5-utils"]
+
+        # Data-plane aggregation
+        assert result["dataPlane"]["tmm"]["nodes"] == ["worker-1"]
+        assert result["dataPlane"]["tmm"]["zones"] == ["us-east-1a"]
+
+        # Pod detail enrichment
+        tmm_pod = result["dataPlane"]["tmm"]["podDetails"][0]
+        assert tmm_pod["nodeZone"] == "us-east-1a"
+        assert tmm_pod["nodeInstanceType"] == "m5.large"
+
 
 # ---------------------------------------------------------------------------
 # _crd_installer_severity unit tests
@@ -542,3 +625,167 @@ class TestCrdInstallerSeverity:
         sev, include = _crd_installer_severity([], job)
         assert sev == "unknown"
         assert include is False
+
+
+# ---------------------------------------------------------------------------
+# Connectivity / integration status
+# ---------------------------------------------------------------------------
+
+
+class TestConnectivityStatus:
+    def test_default_is_connected_when_no_injection(self):
+        result = _build_connectivity_status({})
+        assert result["status"] == "connected"
+        assert "Kubernetes API is accessible" in result["message"]
+        assert result["checkedAt"]
+
+    def test_injected_status_is_used(self):
+        result = _build_connectivity_status({
+            "connectivity": {"status": "partial", "message": "ICMP only", "checkedAt": "2026-01-01T00:00:00Z"},
+        })
+        assert result["status"] == "partial"
+        assert result["message"] == "ICMP only"
+        assert result["checkedAt"] == "2026-01-01T00:00:00Z"
+
+
+class TestIntegrationStatus:
+    def test_default_is_kubeconfig_healthy(self):
+        result = _build_integration_status({})
+        assert result["status"] == "healthy"
+        assert result["operatorMode"] == "kubeconfig"
+        assert result["operatorConnected"] is False
+        assert "kubeconfig" in result["message"].lower()
+
+    def test_injected_operator_status_is_used(self):
+        result = _build_integration_status({
+            "integration": {
+                "status": "warning",
+                "operatorConnected": False,
+                "operatorMode": "direct_ws",
+                "operatorVersion": "1.2.3",
+                "lastSeen": "2026-01-01T00:00:00Z",
+                "message": "Operator op-1 is disconnected",
+            },
+        })
+        assert result["status"] == "warning"
+        assert result["operatorMode"] == "direct_ws"
+        assert result["operatorVersion"] == "1.2.3"
+        assert result["lastSeen"] == "2026-01-01T00:00:00Z"
+
+
+class TestAnalyzeHealthConnectivityIntegration:
+    def test_analyze_health_includes_connectivity_and_integration(self):
+        result = analyze_health(_make_data())
+        assert "connectivity" in result
+        assert "integration" in result
+        assert result["connectivity"]["status"] == "connected"
+        assert result["integration"]["status"] == "healthy"
+
+    def test_analyze_health_uses_injected_context(self):
+        data = _make_data()
+        data["connectivity"] = {"status": "unreachable", "message": "API down", "checkedAt": "2026-01-01T00:00:00Z"}
+        data["integration"] = {"status": "critical", "operatorConnected": False, "operatorMode": "polling", "message": "Lost"}
+        result = analyze_health(data)
+        assert result["connectivity"]["status"] == "unreachable"
+        assert result["integration"]["status"] == "critical"
+
+
+class TestBNK24Health:
+    def test_infra_health_evaluated_when_vlans_absent(self):
+        data = _make_data()
+        data["resources"]["f5spkvlan"] = []
+        data["resources"]["infra"] = [{
+            "metadata": {"name": "infra-main", "namespace": "f5-bnk"},
+            "spec": {"networks": [{"name": "ext"}], "ipams": []},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["gatewaysettings"] = [{
+            "metadata": {"name": "gw-settings", "namespace": "f5-bnk"},
+            "spec": {},
+        }]
+        result = analyze_health(data)
+        net_h = result["networking"]
+        assert "infra" in net_h
+        assert net_h["infra"]["total"] == 1
+        assert net_h["infra"]["severity"] == "healthy"
+        assert net_h["gatewaySettings"] == 1
+        assert net_h["severity"] == "healthy"
+
+    def test_24_security_and_ai_health(self):
+        data = _make_data()
+        data["resources"]["secpolicy"] = [{
+            "metadata": {"name": "sp-24", "namespace": "f5-bnk"},
+            "spec": {},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["f5epp"] = [{
+            "metadata": {"name": "epp-1", "namespace": "f5-bnk"},
+            "spec": {},
+        }]
+        data["resources"]["inferencepool"] = [{
+            "metadata": {"name": "pool-llama", "namespace": "f5-bnk"},
+            "spec": {
+                "targetPorts": [{"number": 8000}],
+                "selector": {"matchLabels": {"app": "vllm-llama"}},
+                "endpointPickerRef": {"name": "pool-llama-epp", "port": {"number": 9002}},
+            },
+        }]
+        result = analyze_health(data)
+        sec_h = result["security"]
+        assert sec_h["securityPolicies"] == 1
+        assert sec_h["severity"] == "healthy"
+
+        ai_h = result["ai"]
+        assert ai_h["f5epps"] == 1
+        assert ai_h["inferencePools"] == 1
+        assert len(ai_h["inferencePoolDetails"]) == 1
+        assert ai_h["inferencePoolDetails"][0]["targetPorts"] == [8000]
+        assert ai_h["inferencePoolDetails"][0]["endpointPicker"] == "pool-llama-epp"
+
+
+    def test_24_null_spec_and_status(self):
+        data = _make_data()
+        for key in ("infra", "inferencepool"):
+            data["resources"][key] = [{"metadata": {"name": "x", "namespace": "ns"}, "spec": None, "status": None}]
+        result = analyze_health(data)
+        assert result["networking"]["infra"]["details"][0]["networks"] == 0
+        assert result["ai"]["inferencePoolDetails"][0] == {
+            "name": "x", "namespace": "ns", "targetPorts": [], "endpointPicker": "",
+        }
+
+    def test_24_fields_survive_response_schema(self):
+        from schemas.bnk import BnkHealthAISection, BnkHealthNetworkingSection
+
+        data = _make_data()
+        data["resources"]["infra"] = [{
+            "metadata": {"name": "infra", "namespace": "f5-cne-system"},
+            "spec": {"networks": [{"name": "ext-vlan"}], "staticRoutes": [
+                {"name": "vpc", "destinations": ["10.0.0.0/16"], "nextHop": "10.0.20.1"},
+                {"name": "default", "destinations": ["0.0.0.0/0"], "nextHop": "10.0.10.1"},
+            ]},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["gatewaysettings"] = [{"metadata": {"name": "gs", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["egressgateway"] = [{"metadata": {"name": "eg", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["f5epp"] = [{"metadata": {"name": "epp", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["inferencepool"] = [{
+            "metadata": {"name": "pool", "namespace": "ns"},
+            "spec": {"targetPorts": [{"number": 8000}], "endpointPickerRef": {"name": "pool-epp"}},
+        }]
+        result = analyze_health(data)
+
+        net = BnkHealthNetworkingSection.model_validate(result["networking"]).model_dump()
+        assert net["infra"]["details"] == [{"name": "infra", "programmed": True, "networks": 1, "ipams": 0}]
+        assert net["gatewaySettings"] == 1
+        assert net["egressGateways"] == 1
+        # Legacy F5SPKStaticRoutes are absent, so the Infra routes count
+        assert net["staticRoutes"] == 2
+        # Same rule for the VLAN count
+        assert result["counts"]["vlans"] == 1
+
+        ai = BnkHealthAISection.model_validate(result["ai"]).model_dump()
+        assert ai["f5epps"] == 1
+        assert ai["inferencePools"] == 1
+        assert ai["inferencePoolDetails"] == [
+            {"name": "pool", "namespace": "ns", "targetPorts": [8000], "endpointPicker": "pool-epp"},
+        ]

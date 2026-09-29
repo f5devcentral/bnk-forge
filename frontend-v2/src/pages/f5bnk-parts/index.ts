@@ -15,6 +15,6 @@ export { F5BNKResourceTable } from './F5BNKResourceTable';
 export { F5BNKDetailPanel } from './F5BNKDetailPanel';
 export {
   getRegistryEntry, getDetailComponent, getContextActions,
-  getResourceIcon, getDetailQuickActions,
+  getResourceIcon, getDetailQuickActions, getResourceTypeKey,
 } from './resource-registry';
 export type { ResourceContextAction, DetailPanelProps, ResourceRegistryEntry } from './resource-registry';

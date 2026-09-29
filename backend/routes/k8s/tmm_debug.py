@@ -125,7 +125,7 @@ def get_tmm_debug_pods(
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
 
-    pods = list_tmm_debug_pods(api_client)
+    pods = list_tmm_debug_pods(api_client, cluster_id)
 
     return {
         "pods": pods,
@@ -199,6 +199,7 @@ def post_tmm_debug_tmctl(
         body.columns,
         body.width,
         body.directory,
+        cluster_id=cluster_id,
     )
 
     return result
@@ -222,7 +223,9 @@ def post_tmm_debug_configview(
     api_client = k8s_service.load_kubeconfig(cluster)
     namespace = body.namespace or _resolve_namespace(cluster)
 
-    result = exec_configview(api_client, body.pod_name, namespace, body.uuid)
+    result = exec_configview(
+        api_client, body.pod_name, namespace, body.uuid, cluster_id=cluster_id
+    )
 
     return result
 
@@ -245,7 +248,9 @@ def post_tmm_debug_configview_uuids(
     api_client = k8s_service.load_kubeconfig(cluster)
     namespace = body.namespace or _resolve_namespace(cluster)
 
-    result = discover_configview_uuids(api_client, body.pod_name, namespace)
+    result = discover_configview_uuids(
+        api_client, body.pod_name, namespace, cluster_id=cluster_id
+    )
 
     return result
 
@@ -270,6 +275,8 @@ def post_tmm_debug_bdt(
     api_client = k8s_service.load_kubeconfig(cluster)
     namespace = body.namespace or _resolve_namespace(cluster)
 
-    result = exec_bdt_cli(api_client, body.pod_name, namespace, body.subcommand)
+    result = exec_bdt_cli(
+        api_client, body.pod_name, namespace, body.subcommand, cluster_id=cluster_id
+    )
 
     return result

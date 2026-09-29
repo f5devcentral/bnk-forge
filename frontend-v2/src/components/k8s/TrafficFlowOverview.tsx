@@ -18,14 +18,18 @@ import { useMemo, useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useBnkData } from '@/hooks/k8s/useBnk';
+import { useBnkData, useBnkRefresh } from '@/hooks/k8s/useBnk';
+import { getSeverityConfig } from '@/lib/health-severity';
 
 import type {
   TopologyGateway,
   TopologyDataPlane,
   TopologyCounts,
   TopologyEgress,
+  TopologyReferenceGrant,
   BnkBackendEntry,
+  BnkTrafficStatsResponse,
+  TopologyCondition,
 } from '@/types/f5bnk';
 import {
   Globe,
@@ -45,16 +49,26 @@ import {
   Layers,
   ArrowRightLeft,
   Boxes,
+  ShieldCheck,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/** Resource click payload; resourceType is the registry key when kind alone is ambiguous (BNK 2.4 L4Route). */
+interface FlowResourceSelection {
+  kind: string;
+  name: string;
+  namespace: string;
+  resourceType?: string;
+}
+
 interface TrafficFlowOverviewProps {
   clusterId: number;
   namespace?: string;
-  onSelectResource?: (selection: { kind: string; name: string; namespace: string }) => void;
+  searchQuery?: string;
+  onSelectResource?: (selection: FlowResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
 }
 
@@ -121,6 +135,41 @@ function buildGatewayFlowData(topology: TopologyGateway[]): GatewayFlowData[] {
       analyzedRouteNames,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Operational-state helpers
+// ---------------------------------------------------------------------------
+
+function severityFromConditions(
+  conditions: TopologyCondition[] | undefined,
+): 'healthy' | 'unhealthy' | 'degraded' | 'unknown' {
+  if (!conditions || conditions.length === 0) return 'unknown';
+  const relevant = conditions.filter(
+    (c) => c.type === 'Ready' || c.type === 'Programmed' || c.type === 'Accepted'
+  );
+  if (relevant.length === 0) return 'unknown';
+  const order = { unhealthy: 0, critical: 0, degraded: 1, warning: 1, unknown: 2, healthy: 3 };
+  let worst: 'healthy' | 'unhealthy' | 'degraded' = 'healthy';
+  for (const c of relevant) {
+    const sev: 'healthy' | 'unhealthy' | 'degraded' =
+      c.status === 'True' ? 'healthy' : c.status === 'False' ? 'unhealthy' : 'degraded';
+    if (order[sev] < order[worst]) worst = sev;
+  }
+  return worst;
+}
+
+function StatusBadge({ conditions, label }: { conditions: TopologyCondition[] | undefined; label?: string }) {
+  const severity = severityFromConditions(conditions);
+  const config = getSeverityConfig(severity);
+  return (
+    <Badge
+      variant={severity === 'healthy' ? 'success' : severity === 'unhealthy' ? 'destructive' : severity === 'degraded' ? 'warning' : 'muted'}
+      className="text-[10px]"
+    >
+      {label ?? config.label}
+    </Badge>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -209,14 +258,19 @@ function AttachmentBadge({
 function ClickableName({
   name,
   kind,
+  resourceName,
+  resourceType,
   namespace,
   onSelect,
   className: extraClass,
 }: {
   name: string;
   kind: string;
+  /** Resource to open when it differs from the label (Infra-projected VLANs and routes). */
+  resourceName?: string;
+  resourceType?: string;
   namespace: string;
-  onSelect?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelect?: (sel: FlowResourceSelection) => void;
   className?: string;
 }) {
   if (!onSelect) {
@@ -225,7 +279,7 @@ function ClickableName({
   return (
     <button
       type="button"
-      onClick={() => onSelect({ kind, name, namespace })}
+      onClick={() => onSelect({ kind, name: resourceName || name, namespace, ...(resourceType ? { resourceType } : {}) })}
       className={cn(
         'font-medium text-xs hover:underline text-left truncate text-primary hover:text-primary/80',
         extraClass,
@@ -265,11 +319,18 @@ const INITIAL_BACKEND_LIMIT = 4;
 function GatewayFlowRow({
   flow,
   onSelectResource,
+  gatewayStatsMap,
+  listenerStatsMap,
+  searchQuery,
 }: {
   flow: GatewayFlowData;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
+  gatewayStatsMap: Map<string, { totalConns: number; curConns: number }>;
+  listenerStatsMap: Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>;
+  searchQuery?: string;
 }) {
   const { gateway } = flow;
+  const gatewayStats = gatewayStatsMap.get(`${gateway.namespace}/${gateway.name}`);
   const [expandedListeners, setExpandedListeners] = useState<Set<string>>(() =>
     new Set(gateway.listeners.slice(0, 3).map(l => l.name)),
   );
@@ -296,8 +357,18 @@ function GatewayFlowRow({
   const visibleRoutes = showAllRoutes ? allRoutes : allRoutes.slice(0, INITIAL_ROUTE_LIMIT);
   const visibleBackends = showAllBackends ? allBackends : allBackends.slice(0, INITIAL_BACKEND_LIMIT);
 
+  const isHighlighted = useMemo(() => {
+    if (!searchQuery || !searchQuery.trim()) return false;
+    const q = searchQuery.toLowerCase().trim();
+    if (gateway.name.toLowerCase().includes(q)) return true;
+    if (gateway.namespace.toLowerCase().includes(q)) return true;
+    if (allRoutes.some((r) => r.name.toLowerCase().includes(q))) return true;
+    if (allBackends.some((b) => b.toLowerCase().includes(q))) return true;
+    return false;
+  }, [searchQuery, gateway, allRoutes, allBackends]);
+
   return (
-    <div className="rounded-lg border overflow-hidden bg-card border-border">
+    <div className={cn("rounded-lg border overflow-hidden bg-card border-border transition-all", isHighlighted && "ring-2 ring-primary border-primary shadow-sm")}>
       {/* Gateway header bar */}
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 border-border">
         <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10">
@@ -322,6 +393,7 @@ function GatewayFlowRow({
                 {gateway.addresses.join(', ')}
               </Badge>
             )}
+            <StatusBadge conditions={gateway.conditions} />
           </div>
           <div className="text-[11px] mt-0.5 text-muted-foreground">
             {gateway.namespace}
@@ -337,6 +409,13 @@ function GatewayFlowRow({
             ) : null}
           </div>
         </div>
+        {gatewayStats && gatewayStats.totalConns > 0 && (
+          <Badge variant="info" className="text-xs gap-1">
+            <Activity className="h-3 w-3" />
+            {gatewayStats.totalConns} conn{gatewayStats.totalConns !== 1 ? 's' : ''}
+            {gatewayStats.curConns > 0 && <span className="opacity-70">({gatewayStats.curConns} active)</span>}
+          </Badge>
+        )}
       </div>
 
       {/* Flow pipeline */}
@@ -345,7 +424,10 @@ function GatewayFlowRow({
         <div className="w-[25%] min-w-0">
           <StageHeader title="Listeners" icon={Layers} />
           <div className="space-y-1">
-            {gateway.listeners.map(listener => (
+            {gateway.listeners.map(listener => {
+              const listenerKey = `${gateway.namespace}/${gateway.name}/${listener.name}`;
+              const stats = listenerStatsMap.get(listenerKey);
+              return (
               <div key={listener.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <button
                   type="button"
@@ -357,9 +439,22 @@ function GatewayFlowRow({
                     : <ChevronRight className="h-3 w-3 shrink-0" />
                   }
                   <span className="font-medium truncate">{listener.name}</span>
-                  <Badge variant="outline" className="text-[9px] py-0 ml-auto shrink-0">
-                    {listener.protocol}:{listener.port}
-                  </Badge>
+                  <div className="flex items-center gap-1 ml-auto shrink-0">
+                    <Badge variant="outline" className="text-[9px] py-0">
+                      {listener.protocol}:{listener.port}
+                    </Badge>
+                    {stats && stats.curConns > 0 && (
+                      <Badge variant="info" className="text-[9px] py-0 gap-0.5">
+                        <Activity className="h-2.5 w-2.5" />
+                        {stats.curConns}
+                      </Badge>
+                    )}
+                    {stats && stats.totConns > 0 && (
+                      <Badge variant="muted" className="text-[9px] py-0">
+                        {stats.totConns} total
+                      </Badge>
+                    )}
+                  </div>
                 </button>
                 {expandedListeners.has(listener.name) && (
                   <div className="mt-1 pl-5 space-y-0.5 text-[11px] text-muted-foreground">
@@ -372,7 +467,7 @@ function GatewayFlowRow({
                   </div>
                 )}
               </div>
-            ))}
+            )})}
             {gateway.listeners.length === 0 && (
               <div className="text-xs px-2 py-1 text-muted-foreground">
                 no listeners
@@ -388,7 +483,7 @@ function GatewayFlowRow({
           <StageHeader title="Routes" icon={Route} />
           <div className="space-y-1">
             {visibleRoutes.map(route => (
-              <div key={`${route.namespace}/${route.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
+                <div key={`${route.namespace}/${route.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Badge variant="outline" className="text-[9px] py-0 shrink-0">
                     {route.kind.replace('Route', '')}
@@ -396,9 +491,16 @@ function GatewayFlowRow({
                   <ClickableName
                     name={route.name}
                     kind={route.kind}
+                    resourceType={route.resourceType}
                     namespace={route.namespace}
                     onSelect={onSelectResource}
                   />
+                  <Badge
+                    variant={route.accepted ? 'success' : 'warning'}
+                    className="text-[9px] py-0 ml-auto shrink-0"
+                  >
+                    {route.accepted ? 'Accepted' : 'Pending'}
+                  </Badge>
                 </div>
                 {route.hostnames.length > 0 && (
                   <div className="text-[10px] mt-0.5 pl-0.5 truncate text-muted-foreground">
@@ -501,12 +603,25 @@ function GatewayFlowRow({
 function EgressFlowRow({
   egress,
   onSelectResource,
+  searchQuery,
 }: {
   egress: TopologyEgress;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
+  searchQuery?: string;
 }) {
+  const isHighlighted = useMemo(() => {
+    if (!searchQuery || !searchQuery.trim()) return false;
+    const q = searchQuery.toLowerCase().trim();
+    if (egress.name.toLowerCase().includes(q)) return true;
+    if (egress.namespace.toLowerCase().includes(q)) return true;
+    if (egress.capturedNamespaces.some((ns) => ns.toLowerCase().includes(q))) return true;
+    if (egress.firewallEnforcedPolicy && egress.firewallEnforcedPolicy.toLowerCase().includes(q)) return true;
+    if (egress.snatType && egress.snatType.toLowerCase().includes(q)) return true;
+    return false;
+  }, [searchQuery, egress]);
+
   return (
-    <div className="rounded-lg border overflow-hidden bg-card border-border">
+    <div className={cn("rounded-lg border overflow-hidden bg-card border-border transition-all", isHighlighted && "ring-2 ring-primary border-primary shadow-sm")}>
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 border-border">
         <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10">
           <ArrowRightLeft className="h-4 w-4 text-primary" />
@@ -515,7 +630,7 @@ function EgressFlowRow({
           <div className="flex items-center gap-2 flex-wrap">
             <ClickableName
               name={egress.name}
-              kind="F5SPKEgress"
+              kind={egress.kind || "F5SPKEgress"}
               namespace={egress.namespace}
               onSelect={onSelectResource}
               className="text-sm"
@@ -603,10 +718,12 @@ function EgressFlowRow({
 
 function EgressSection({
   egresses,
+  searchQuery,
   onSelectResource,
 }: {
   egresses: TopologyEgress[];
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  searchQuery?: string;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
 }) {
   if (egresses.length === 0) return null;
 
@@ -623,11 +740,49 @@ function EgressSection({
       </div>
       {egresses.map(egress => (
         <EgressFlowRow
-          key={`${egress.namespace}/${egress.name}`}
+          key={`${egress.kind || 'F5SPKEgress'}/${egress.namespace}/${egress.name}`}
           egress={egress}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
         />
       ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ReferenceGrantsCard — lightweight cross-namespace grant visibility
+// ---------------------------------------------------------------------------
+
+function ReferenceGrantsCard({ grants }: { grants: TopologyReferenceGrant[] }) {
+  if (grants.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border bg-card border-border">
+      <div className="px-4 py-3 flex items-center gap-2">
+        <ShieldCheck className="h-4 w-4 text-info" />
+        <span className="text-sm font-medium text-foreground/80">
+          Reference Grants
+        </span>
+        <span className="text-xs text-muted-foreground">
+          ({grants.length} grant{grants.length !== 1 ? 's' : ''})
+        </span>
+      </div>
+      <div className="px-4 pb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {grants.map((rg) => (
+            <div key={`${rg.namespace}/${rg.name}`} className="rounded px-2 py-1.5 text-xs bg-muted/50">
+              <div className="font-medium truncate">{rg.name}</div>
+              <div className="text-[10px] text-muted-foreground truncate">
+                from: {rg.from.map((f) => `${f.kind}@${f.namespace}`).join(', ')}
+              </div>
+              <div className="text-[10px] text-muted-foreground truncate">
+                to: {rg.to.map((t) => t.kind).join(', ')}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -641,7 +796,7 @@ function InfrastructureCard({
   onSelectResource,
 }: {
   dataPlane: TopologyDataPlane | undefined;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -695,10 +850,10 @@ function InfrastructureCard({
               <div key={vlan.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Wifi className="h-3 w-3 shrink-0" />
-                  <ClickableName name={vlan.name} kind="F5SPKVlan" namespace={vlan.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={vlan.name} kind={vlan.kind || "F5SPKVlan"} resourceName={vlan.infraName} namespace={vlan.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
-                  {vlan.selfipV4s.join(', ') || 'no self-IPs'} · {vlan.ready ? 'ready' : 'pending'}
+                  {vlan.selfipV4s.join(', ') || (vlan.kind === 'Infra' ? 'self-IPs from IPAM' : 'no self-IPs')} · {vlan.ready ? 'ready' : 'pending'}
                 </div>
               </div>
             ))}
@@ -717,7 +872,7 @@ function InfrastructureCard({
               <div key={sr.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Route className="h-3 w-3 shrink-0" />
-                  <ClickableName name={sr.name} kind="F5SPKStaticRoute" namespace={sr.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={sr.name} kind={sr.kind || "F5SPKStaticRoute"} resourceName={sr.infraName} namespace={sr.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
                   {sr.destination} → {sr.gateway}
@@ -741,7 +896,7 @@ function UnmappedServicesCard({
   onNavigateView,
 }: {
   backends: BnkBackendEntry[] | undefined;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
 }) {
   const unmapped = useMemo(() => backends?.filter(b => !b.mapped) ?? [], [backends]);
@@ -812,22 +967,53 @@ function UnmappedServicesCard({
 // Main Component
 // ---------------------------------------------------------------------------
 
-export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, onNavigateView }: TrafficFlowOverviewProps) {
+export function TrafficFlowOverview({ clusterId, namespace, searchQuery, onSelectResource, onNavigateView }: TrafficFlowOverviewProps) {
   const { data, isLoading, error, refetch, isFetching } = useBnkData(
     clusterId,
     namespace ? { namespace } : undefined,
     { pollingEnabled: false, enabled: !!clusterId },
   );
+  const refresh = useBnkRefresh(clusterId);
 
   const topology = useMemo(() => (data?.topology as TopologyGateway[]) ?? [], [data?.topology]);
   const dataPlane = data?.dataPlane as TopologyDataPlane | undefined;
   const counts = data?.topologyCounts as TopologyCounts | undefined;
   const backends = data?.backends as BnkBackendEntry[] | undefined;
+  const trafficStats = data?.trafficStats as BnkTrafficStatsResponse | undefined;
+  const referenceGrants = (data?.referenceGrants as TopologyReferenceGrant[] | undefined) ?? [];
 
   const flowRows = useMemo(() => buildGatewayFlowData(topology), [topology]);
 
+  const gatewayStatsMap = useMemo(() => {
+    const map = new Map<string, { totalConns: number; curConns: number }>();
+    if (!trafficStats?.available) return map;
+    for (const listener of trafficStats.listeners || []) {
+      const key = `${listener.gatewayNamespace}/${listener.gatewayName}`;
+      const existing = map.get(key) || { totalConns: 0, curConns: 0 };
+      existing.totalConns += listener.clientsideTotConns || 0;
+      existing.curConns += listener.clientsideCurConns || 0;
+      map.set(key, existing);
+    }
+    return map;
+  }, [trafficStats]);
+
+  const listenerStatsMap = useMemo(() => {
+    const map = new Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>();
+    if (!trafficStats?.available) return map;
+    for (const listener of trafficStats.listeners || []) {
+      const key = `${listener.gatewayNamespace}/${listener.gatewayName}/${listener.listenerName}`;
+      map.set(key, {
+        curConns: listener.clientsideCurConns || 0,
+        totConns: listener.clientsideTotConns || 0,
+        bytesIn: listener.clientsideBytesIn || 0,
+        bytesOut: listener.clientsideBytesOut || 0,
+      });
+    }
+    return map;
+  }, [trafficStats]);
+
   // Loading
-  if (isLoading) {
+  if (isLoading && !data) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-6 w-6 animate-spin text-primary mr-3" />
@@ -862,6 +1048,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
   const totalBackends = flowRows.reduce((n, r) => n + r.backendNames.size, 0);
   const totalListeners = counts?.listeners ?? flowRows.reduce((n, r) => n + r.listenerCount, 0);
   const totalPolicies = (counts?.firewallPolicies ?? 0) + (counts?.securityPolicies ?? 0) + (counts?.networkPolicies ?? 0);
+  const totalConnections = Array.from(gatewayStatsMap.values()).reduce((n, s) => n + s.totalConns, 0);
 
   // Empty state — no gateways and no meaningful infrastructure
   const hasInfra = dataPlane && (
@@ -878,7 +1065,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
             <StatChip icon={Globe} value={0} label="gateways" variant="info" />
             <StatChip icon={Route} value={0} label="routes" variant="muted" />
           </div>
-          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} className="h-7">
+          <Button variant="ghost" size="sm" onClick={() => refresh()} disabled={isFetching} className="h-7">
             <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', isFetching && 'animate-spin')} />
             Refresh
           </Button>
@@ -905,11 +1092,14 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
           <StatChip icon={Layers} value={totalListeners} label={totalListeners !== 1 ? 'listeners' : 'listener'} variant="muted" />
           <StatChip icon={Route} value={totalRoutes} label={totalRoutes !== 1 ? 'routes' : 'route'} variant="secondary" />
           <StatChip icon={Server} value={totalBackends} label={totalBackends !== 1 ? 'backends' : 'backend'} variant="success" />
+          {totalConnections > 0 && (
+            <StatChip icon={Activity} value={totalConnections} label={totalConnections !== 1 ? 'connections' : 'connection'} variant="info" />
+          )}
           {totalPolicies > 0 && (
             <StatChip icon={Shield} value={totalPolicies} label={totalPolicies !== 1 ? 'policies' : 'policy'} variant="warning" />
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} className="h-7">
+        <Button variant="ghost" size="sm" onClick={() => refresh()} disabled={isFetching} className="h-7">
           <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', isFetching && 'animate-spin')} />
           Refresh
         </Button>
@@ -920,7 +1110,10 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
         <GatewayFlowRow
           key={`${flow.gateway.namespace}/${flow.gateway.name}`}
           flow={flow}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
+          gatewayStatsMap={gatewayStatsMap}
+          listenerStatsMap={listenerStatsMap}
         />
       ))}
 
@@ -928,6 +1121,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
       {dataPlane && (
         <EgressSection
           egresses={dataPlane.egresses}
+          searchQuery={searchQuery}
           onSelectResource={onSelectResource}
         />
       )}
@@ -944,6 +1138,9 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
         dataPlane={dataPlane}
         onSelectResource={onSelectResource}
       />
+
+      {/* Reference Grants — cross-namespace policy visibility */}
+      <ReferenceGrantsCard grants={referenceGrants} />
     </div>
   );
 }
