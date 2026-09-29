@@ -251,3 +251,24 @@ class TestCleanupFinalizersForModule:
             db, cluster_id=1, module_path="custom/mod", namespaces=["ns1", "ns2"]
         )
         assert mock_svc.cleanup_namespace_finalizers.call_count == 2
+
+
+# ── BNK 2.4 group ────────────────────────────────────────────────────
+
+
+class TestBnk24CleanupGroups:
+    def test_discovery_targets_include_gateway_k8s_f5_com(self, db):
+        from schemas.k8s import CRDInfo, CrdListEnvelope
+
+        crd = CRDInfo(name="secpolicies.gateway.k8s.f5.com", kind="SecPolicy", plural="secpolicies",
+                      group="gateway.k8s.f5.com", version="v1alpha1", namespaced=True,
+                      display_name=None, category=None, source="discovered")
+        envelope = CrdListEnvelope(crds=[crd], count=1, cluster_id=1, group_filter=None, info=None)
+        svc = FinalizerCleanupService.__new__(FinalizerCleanupService)
+        svc.db = db
+        with patch("services.crd_discovery_service.CrdDiscoveryService") as MockSvc:
+            MockSvc.return_value.list_crds.return_value = envelope
+            targets = svc._get_f5_crd_targets(cluster_id=1)
+
+        assert "gateway.k8s.f5.com" in MockSvc.return_value.list_crds.call_args.kwargs["group_filter"]
+        assert targets == [("gateway.k8s.f5.com", "v1alpha1", "secpolicies")]

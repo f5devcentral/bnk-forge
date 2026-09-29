@@ -276,3 +276,53 @@ class TestApplyResources:
 
         assert len(results["failed"]) == 1
         assert results["failed"][0]["error"] == "server error"
+
+
+# ---------------------------------------------------------------------------
+# BNK 2.4 + GAIE coverage
+# ---------------------------------------------------------------------------
+
+
+_BNK24_REGISTRY_KEYS = ("infra", "gatewaysettings", "egressgateway", "secpolicy", "netpolicy", "l4route_24")
+_GAIE_REGISTRY_KEYS = ("inferencepool", "inferencemodelrewrite")
+
+
+class TestBnk24ExportTypes:
+    """Export covers the BNK 2.4 gateway.k8s.f5.com and GAIE groups."""
+
+    @pytest.mark.parametrize("key", _BNK24_REGISTRY_KEYS + _GAIE_REGISTRY_KEYS)
+    def test_static_table_matches_registry(self, key):
+        from core.k8s_resource_registry import RESOURCE_REGISTRY
+        from services.config_export_service import EXPORT_RESOURCE_TYPES
+
+        rt = RESOURCE_REGISTRY[key]
+        entries = [e for types in EXPORT_RESOURCE_TYPES.values() for e in types]
+        assert {
+            "api_version": f"{rt.api_group}/{rt.api_version}",
+            "kind": rt.kind,
+            "plural": rt.plural,
+            "namespaced": rt.namespaced,
+        } in entries
+
+    def test_discovery_includes_bnk24_and_gaie_groups(self):
+        from schemas.k8s import CRDInfo, CrdListEnvelope
+        from services.config_export_service import _build_export_types_from_discovery
+
+        crds = [
+            CRDInfo(name=f"{plural}.{group}", kind=kind, plural=plural, group=group, version=version,
+                    namespaced=True, display_name=kind, category=None, source="discovered")
+            for group, version, kind, plural in (
+                ("gateway.k8s.f5.com", "v1alpha1", "Infra", "infras"),
+                ("gateway.k8s.f5.com", "v1", "L4Route", "l4routes"),
+                ("inference.networking.k8s.io", "v1", "InferencePool", "inferencepools"),
+            )
+        ]
+        envelope = CrdListEnvelope(crds=crds, count=len(crds), cluster_id=1, group_filter=None, info=None)
+        with patch("services.crd_discovery_service.CrdDiscoveryService") as MockSvc:
+            MockSvc.return_value.list_crds.return_value = envelope
+            result = _build_export_types_from_discovery(1, MagicMock())
+
+        group_filter = MockSvc.return_value.list_crds.call_args.kwargs["group_filter"]
+        assert {"gateway.k8s.f5.com", "inference.networking.k8s.io"} <= set(group_filter)
+        assert {e["kind"] for e in result["bnk_security"]} == {"Infra", "L4Route"}
+        assert [e["api_version"] for e in result["gateway_api"]] == ["inference.networking.k8s.io/v1"]
