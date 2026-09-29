@@ -1624,8 +1624,11 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
         # A run still RUNNING for this agent was dispatched on a previous
         # connection (or before a backend restart) and can never report back on
         # this one; fail it so it does not block the queue. Runs whose dispatch
-        # a route is still sending are spared.
-        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING}
+        # a route is still sending, or that were already sent on this connection
+        # (while the superseded one was closing), are spared.
+        in_flight = {
+            rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING or owner is websocket
+        }
         interrupted = svc.fail_interrupted_runs_for_agent(agent_id, keep=in_flight)
         for rid in interrupted:
             _run_owner.pop(rid, None)
