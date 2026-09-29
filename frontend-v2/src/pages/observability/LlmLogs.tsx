@@ -156,10 +156,10 @@ export default function LlmLogs() {
   const nextEnd = cursor ?? logs.data?.next_end ?? null;
 
   const loadOlder = useCallback(async () => {
-    if (!nextEnd) return;
+    if (f.clusterId === undefined || !nextEnd) return;
     setLoadingOlder(true);
     try {
-      const res = await llmObservabilityApi.getLogs(f.clusterId, { ...logParams, end: nextEnd });
+      const res = await llmObservabilityApi.getLogs(f.clusterId ?? undefined, { ...logParams, end: nextEnd });
       setOlderRows((prev) => [...prev, ...res.rows]);
       setCursor(res.next_end);
     } finally {

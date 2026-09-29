@@ -126,6 +126,13 @@ describe('LlmDashboard', () => {
     expect(histogramRequests.every((u) => u.searchParams.get('model') === 'gpt-4o')).toBe(true);
   });
 
+  it('defaults to a single cluster, not the fleet aggregate', async () => {
+    render(<LlmDashboard />, { initialRoute: '/observability/ai-gateway' });
+
+    await waitFor(() => expect(histogramRequests.length).toBeGreaterThan(0));
+    expect(histogramRequests.every((u) => u.pathname.includes('/api/k8s/clusters/'))).toBe(true);
+  });
+
   it('renders multi-cluster latency series when All Clusters is selected', async () => {
     render(<LlmDashboard />, {
       initialRoute: '/observability/ai-gateway?cluster=all',
