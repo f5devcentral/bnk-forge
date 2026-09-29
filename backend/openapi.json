@@ -63402,6 +63402,23 @@
               }
             ],
             "title": "Conditionmessage"
+          },
+          "serviceSettings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servicesettings"
           }
         },
         "type": "object",

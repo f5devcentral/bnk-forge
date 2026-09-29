@@ -23614,6 +23614,12 @@ export interface components {
             conditions?: components["schemas"]["TopologyCondition"][];
             /** Conditionmessage */
             conditionMessage?: string | null;
+            /** Servicesettings */
+            serviceSettings?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            } | null;
         };
         /** TopologyRouteBackend */
         TopologyRouteBackend: {
