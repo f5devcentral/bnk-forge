@@ -22,8 +22,22 @@ describe('RegionSelector', () => {
   it('renders a datalist with known AWS regions', () => {
     render(<RegionSelector value="" onValueChange={vi.fn()} />);
 
-    const datalist = document.getElementById('aws-region-input-suggestions') as HTMLDataListElement;
+    const listId = screen.getByPlaceholderText('e.g. us-east-1').getAttribute('list')!;
+    const datalist = document.getElementById(listId) as HTMLDataListElement;
     expect(datalist).toBeInTheDocument();
     expect(datalist.options.length).toBeGreaterThan(20);
+  });
+
+  it('gives each instance its own input and datalist ids', () => {
+    render(
+      <>
+        <RegionSelector value="" onValueChange={vi.fn()} />
+        <RegionSelector value="" onValueChange={vi.fn()} />
+      </>,
+    );
+
+    const [a, b] = screen.getAllByPlaceholderText('e.g. us-east-1');
+    expect(a.id).not.toBe(b.id);
+    expect(a.getAttribute('list')).not.toBe(b.getAttribute('list'));
   });
 });

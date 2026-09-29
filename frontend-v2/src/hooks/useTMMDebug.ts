@@ -18,6 +18,7 @@ import type {
   TMMDebugBdtRequest,
 } from '@/types';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
+import { keepPreviousForCluster } from '@/lib/queryKeys';
 
 // ---------------------------------------------------------------------------
 // Query Keys
@@ -39,7 +40,7 @@ export function useTMMDebugPods(clusterId: number, enabled = true) {
     queryFn: () => tmmDebugApi.listPods(clusterId),
     enabled: enabled && clusterId > 0,
     staleTime: 60_000, // 60s — pod list doesn't change often
-    placeholderData: (prev) => prev,
+    placeholderData: keepPreviousForCluster(clusterId),
     retry: 1,
   });
 }

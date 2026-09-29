@@ -75,6 +75,9 @@ const _checkClusterUpdate: AssertKeysMatch<K8sClusterUpdateRequest, ApiClusterUp
 // eslint-disable-next-line @typescript-eslint/no-unused-expressions
 void _checkClusterCreate, _checkClusterUpdate;
 
+// detect-credentials message when the project has no credential template bound.
+const NO_BOUND_TEMPLATE_MESSAGE = 'No cloud credential template bound to this project';
+
 export const kubernetesApi = {
   // Kubernetes Monitoring
   getAllClusters: () =>
@@ -125,6 +128,13 @@ export const kubernetesApi = {
       errors: Array<{ provider: string; name: string | null; error: string }>;
     }>(`/api/projects/${projectId}/k8s/clusters/detect-credentials`).then((res) => res.data),
 
+  /** Discover through the project's bound credential template; without one, from deployed module outputs. */
+  detectClusters: async (projectId: number) => {
+    const fromCredentials = await kubernetesApi.detectClustersFromCredentials(projectId);
+    if (fromCredentials.message !== NO_BOUND_TEMPLATE_MESSAGE) return fromCredentials;
+    return kubernetesApi.detectManagedClusters(projectId);
+  },
+
   getClusterResources: (clusterId: number, resourceType: string, params?: { namespace?: string; label_selector?: string }) =>
     apiClient.get<K8sResourceListResponse>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}`, { params }).then((res) => res.data),
 
@@ -171,7 +181,7 @@ export const kubernetesApi = {
 
   // F5 BNK Monitoring — unified data endpoint (single fetch for all insight views)
    
-  getBnkData: (clusterId: number, params?: { namespace?: string }) =>
+  getBnkData: (clusterId: number, params?: { namespace?: string; force?: boolean }) =>
     apiClient.get<BnkDataResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/data`, { params }).then((res) => res.data),
 
   // Legacy individual endpoints (kept for backward compat, all delegate to shared fetch on backend)

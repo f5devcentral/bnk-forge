@@ -117,7 +117,7 @@ export function useDetectClusters() {
   const queryClient = useQueryClient();
 
   return useAppMutation({
-    mutationFn: (projectId: number) => api.detectClustersFromCredentials(projectId),
+    mutationFn: (projectId: number) => api.detectClusters(projectId),
     onSuccess: (data, projectId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.batchConnectivity() });
@@ -138,7 +138,7 @@ export function useDetectClusters() {
   });
 }
 
-/** @deprecated Use useDetectClusters() for credential-template-driven discovery. */
+/** @deprecated Use useDetectClusters(). */
 export const useDetectEKSClusters = useDetectClusters;
 
 export function useRefreshClusterKubeconfig() {

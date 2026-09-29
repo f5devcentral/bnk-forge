@@ -346,6 +346,30 @@ describe('K8sClusterList', () => {
       });
     });
 
+    it('asks for confirmation before registering detected clusters', async () => {
+      const user = userEvent.setup();
+      const calls: string[] = [];
+      const ok = { success: true, message: 'No cloud credential template bound to this project', registered: [], skipped: [], errors: [] };
+      server.use(
+        http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
+          calls.push('detect-eks');
+          return HttpResponse.json(ok);
+        }),
+        http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () => {
+          calls.push('detect-credentials');
+          return HttpResponse.json(ok);
+        }),
+      );
+      render(<K8sClusterList projectId={1} cloudProvider="aws" />);
+
+      await user.click(await screen.findByText('Detect Managed Clusters'));
+      expect(await screen.findByText('Detect and register clusters?')).toBeInTheDocument();
+      expect(calls).toEqual([]);
+
+      await user.click(screen.getByRole('button', { name: 'Detect and register' }));
+      await waitFor(() => expect(calls).toEqual(['detect-credentials', 'detect-eks']));
+    });
+
     it('renders "Detect EKS" button when target platform is EKS', async () => {
       render(<K8sClusterList projectId={1} targetPlatformProfile="eks" />);
 

@@ -49,6 +49,7 @@ import {
 import { useProjectClusters, useClusterNamespaces, useClusterResources, useClusterResourceSummary } from '@/hooks/useK8s';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { MigrationPanel } from '@/components/k8s/migration';
+import { DetectClustersConfirmDialog } from '@/components/k8s/DetectClustersConfirmDialog';
 import { useHelmReleases, useUninstallHelmRelease } from '@/hooks/useHelm';
 import { useProjects } from '@/hooks/useProjects';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -196,6 +197,7 @@ export default function KubernetesV2() {
   const [showHelmRollback, setShowHelmRollback] = useState(false);
   const [showHelmUninstall, setShowHelmUninstall] = useState(false);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
+  const [showDetectConfirm, setShowDetectConfirm] = useState(false);
   const [preselectedChart, setPreselectedChart] = useState<{ name: string; version: string } | null>(null);
 
   const isHelmView = isHelmResourceType(selectedResourceType);
@@ -770,27 +772,10 @@ export default function KubernetesV2() {
               icon={Server}
               title="No cluster selected"
               description="Select a cluster from the dropdown above to view and manage Kubernetes resources"
-                action={{
-                  label: 'Auto-detect Kubernetes Clusters',
-                  onClick: async () => {
-                    if (!selectedProject) return;
-                    try {
-                      const data = await api.detectClustersFromCredentials(selectedProject);
-                      queryClient.invalidateQueries({
-                        queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
-                      });
-                      notify.success(
-                        data.registered?.length
-                          ? `Found ${data.registered.length} cluster(s)`
-                          : 'No new clusters found',
-                        undefined,
-                        { category: 'system' },
-                      );
-                    } catch (error) {
-                      notifyError(error, 'detecting clusters');
-                    }
-                  },
-                }}
+              action={{
+                label: 'Auto-detect Kubernetes Clusters',
+                onClick: () => setShowDetectConfirm(true),
+              }}
             />
           ) : viewMode === 'migration' ? (
             /* Migration mode: proxy/CIS migration surface (D-022 P6 Slice A).
@@ -1162,6 +1147,29 @@ export default function KubernetesV2() {
           onOpenChange={setShowRepoDialog}
         />
       </Suspense>
+
+      <DetectClustersConfirmDialog
+        open={showDetectConfirm}
+        onOpenChange={setShowDetectConfirm}
+        onConfirm={async () => {
+          if (!selectedProject) return;
+          try {
+            const data = await api.detectClusters(selectedProject);
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
+            });
+            notify.success(
+              data.registered.length
+                ? `Found ${data.registered.length} cluster(s)`
+                : 'No new clusters found',
+              undefined,
+              { category: 'system' },
+            );
+          } catch (error) {
+            notifyError(error, 'detecting clusters');
+          }
+        }}
+      />
 
       {/* Helm Uninstall Confirmation */}
       <AlertDialog open={showHelmUninstall} onOpenChange={setShowHelmUninstall}>

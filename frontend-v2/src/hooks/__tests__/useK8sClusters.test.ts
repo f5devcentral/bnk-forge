@@ -311,8 +311,46 @@ describe('useTestClusterConnection', () => {
 });
 
 describe('useDetectClusters', () => {
-  it('detects clusters from credential templates for a project', async () => {
+  it('falls back to module outputs when no credential template is bound', async () => {
     server.use(
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'No cloud credential template bound to this project',
+          registered: [],
+          skipped: [],
+          errors: [],
+        }),
+      ),
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'Found 1 managed cluster module(s), registered 1 cluster(s)',
+          registered: [{ id: 9, name: 'eks-module', module_id: 3, status: 'registered' }],
+          skipped: [],
+          errors: [],
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useDetectEKSClusters(), { wrapper: createWrapper() });
+    result.current.mutate(1);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-module']);
+  });
+
+  it('registers clusters from the bound credential template only', async () => {
+    server.use(
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
+        return HttpResponse.json({
+          success: true,
+          message: 'Found 1 managed cluster module(s), registered 1 cluster(s)',
+          registered: [{ id: 9, name: 'eks-module', module_id: 3, status: 'registered' }],
+          skipped: [],
+          errors: [],
+        });
+      }),
       http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () => {
         return HttpResponse.json({
           success: true,
@@ -332,8 +370,7 @@ describe('useDetectClusters', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(result.current.data!.registered).toHaveLength(1);
-    expect(result.current.data!.registered[0].provider).toBe('aws');
+    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-prod']);
   });
 });
 
