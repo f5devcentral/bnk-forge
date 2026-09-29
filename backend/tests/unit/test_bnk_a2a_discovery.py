@@ -366,7 +366,7 @@ class TestProbeAgentCards:
         calls = core.connect_get_namespaced_service_proxy_with_path.call_args_list
         assert [c.kwargs["path"] for c in calls] == [".well-known/agent-card.json", ".well-known/agent.json"]
         assert cand["probeStatus"] == "success"
-        core.list_namespaced_pod.assert_not_called()
+        core.connect_get_namespaced_pod_proxy_with_path.assert_not_called()
 
     def test_attempts_are_capped(self):
         core = MagicMock()
@@ -381,6 +381,22 @@ class TestProbeAgentCards:
         )
         assert total == 12
         assert cand["probeStatus"] == "error"
+        assert core.connect_get_namespaced_pod_proxy_with_path.call_count == 6
+
+    def test_pod_fallback_runs_when_service_has_many_ports(self):
+        # Service proxy fails on every port (GKE VPC-native); only the pod
+        # answers. Four ports must not exhaust the budget on the service proxy.
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = lambda **kw: (
+            '{"name": "agent"}' if kw["name"] == "api-0:9000" and kw["path"] == ".well-known/agent.json" else None
+        )
+        core.list_namespaced_pod.return_value.items = [_pod("api-0", {"app": "api"})]
+        cand = _candidate(ports=(8080, 8081, 8082, 9000))
+        cand["routeRefs"] = [{"port": 9000}]
+        self._run(cand, core)
+        assert cand["probeStatus"] == "success"
+        assert cand["agentCard"]["name"] == "agent"
 
     def test_pod_fallback_matches_by_selector_not_name_prefix(self):
         core = MagicMock()
