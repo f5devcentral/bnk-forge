@@ -123,6 +123,14 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
   );
   topPods.sort((a, b) => b.cpu_millicores - a.cpu_millicores);
   const topFive = topPods.slice(0, 5);
+  // Fall back to node capacity only when no cluster reports pod metrics.
+  const withoutMetrics = clusters.filter((c) => !c.metrics_available).length;
+  const showCapacity = clusters.length > 0 && withoutMetrics === clusters.length;
+  const usageSubtext = showCapacity
+    ? 'Node capacity (metrics-server unavailable)'
+    : withoutMetrics > 0
+      ? `Across all BNK pods · ${withoutMetrics} cluster${withoutMetrics > 1 ? 's' : ''} without metrics not included`
+      : 'Across all BNK pods';
 
   return (
     <div className="space-y-6" data-testid="bnk-resources-panel">
@@ -143,30 +151,14 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
         <OverviewTile
           icon={Cpu}
           label="CPU"
-          value={
-            fleet_summary.total_cpu_millicores > 0
-              ? formatCPU(fleet_summary.total_cpu_millicores)
-              : formatCPU(fleet_summary.node_capacity_cpu_millicores)
-          }
-          subtext={
-            fleet_summary.total_cpu_millicores > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
-          }
+          value={formatCPU(showCapacity ? fleet_summary.node_capacity_cpu_millicores : fleet_summary.total_cpu_millicores)}
+          subtext={usageSubtext}
         />
         <OverviewTile
           icon={Database}
           label="Memory"
-          value={
-            fleet_summary.total_memory_bytes > 0
-              ? formatMemory(fleet_summary.total_memory_bytes)
-              : formatMemory(fleet_summary.node_capacity_memory_bytes)
-          }
-          subtext={
-            fleet_summary.total_memory_bytes > 0
-              ? "Across all BNK pods"
-              : "Node capacity (metrics-server unavailable)"
-          }
+          value={formatMemory(showCapacity ? fleet_summary.node_capacity_memory_bytes : fleet_summary.total_memory_bytes)}
+          subtext={usageSubtext}
         />
       </div>
 

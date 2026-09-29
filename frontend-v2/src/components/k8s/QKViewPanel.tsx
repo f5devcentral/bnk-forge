@@ -76,10 +76,10 @@ export function QKViewPanel({ clusterId }: QKViewPanelProps) {
   const { data: checkData, isLoading: checkLoading } = useQKViewCheck(clusterId);
   const cwcAvailable = checkData?.available === true;
 
-  // Setup status — run concurrently when clusterId is valid
+  // Setup status — only meaningful once CWC is available
   const { data: setupData, isLoading: setupLoading } = useCWCAPISetupStatus(
     clusterId,
-    clusterId > 0,
+    clusterId > 0 && cwcAvailable,
   );
   const setupComplete = setupData?.setup_complete === true;
 

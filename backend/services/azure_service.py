@@ -119,6 +119,7 @@ def generate_aks_kubeconfig(
 ) -> str:
     """Generate a portable kubeconfig YAML for an AKS cluster.
 
+    *server* is the full API server URL (``https://<host>:443``).
     Embeds a short-lived AAD bearer token inline. The token must be refreshed
     periodically via the cluster kubeconfig refresh path, but the kubeconfig
     itself is portable and contains no local file references or exec plugins.
@@ -130,7 +131,7 @@ def generate_aks_kubeconfig(
             {
                 "name": cluster_name,
                 "cluster": {
-                    "server": f"https://{server}:443",
+                    "server": server,
                     "certificate-authority-data": ca_data,
                 },
             }

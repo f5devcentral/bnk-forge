@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RegionSelector } from '@/components/aws/RegionSelector';
@@ -26,9 +26,11 @@ export function CloudRegionSelector({
   disabled,
   placeholder = 'Enter region',
   options = [],
-  id = 'cloud-region-input',
+  id: idProp,
   label,
 }: CloudRegionSelectorProps) {
+  const generatedId = useId();
+  const id = idProp ?? generatedId;
   if (provider === 'aws') {
     return (
       <div className="space-y-2">

@@ -15,7 +15,7 @@ describe('CloudRegionSelector', () => {
     const input = screen.getByPlaceholderText('Enter region') as HTMLInputElement;
     expect(input.tagName).toBe('INPUT');
     // AWS delegates to RegionSelector; the datalist uses the parent id.
-    expect(document.getElementById('cloud-region-input-suggestions')).toBeInTheDocument();
+    expect(document.getElementById(`${input.id}-suggestions`)).toBeInTheDocument();
   });
 
   it('renders a free-text input for IBM with suggestions', () => {
@@ -28,7 +28,7 @@ describe('CloudRegionSelector', () => {
     const input = screen.getByPlaceholderText('Enter region') as HTMLInputElement;
     expect(input.tagName).toBe('INPUT');
 
-    const datalist = document.getElementById('cloud-region-input-ibm-suggestions') as HTMLDataListElement;
+    const datalist = document.getElementById(`${input.id}-ibm-suggestions`) as HTMLDataListElement;
     expect(datalist).toBeInTheDocument();
     expect(datalist.options.length).toBe(2);
   });

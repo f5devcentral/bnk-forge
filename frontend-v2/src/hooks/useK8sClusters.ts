@@ -109,7 +109,7 @@ export function useDetectClusters() {
   const queryClient = useQueryClient();
 
   return useAppMutation({
-    mutationFn: (projectId: number) => api.detectClustersFromCredentials(projectId),
+    mutationFn: (projectId: number) => api.detectClusters(projectId),
     onSuccess: (data, projectId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
@@ -124,13 +124,13 @@ export function useDetectClusters() {
 
       if (data.errors.length > 0) {
         notify.warning(`${data.errors.length} cluster(s) failed to register`, 'Check console for details', { category: 'cluster' });
-        logger.error('Credential-driven cluster detection errors:', data.errors);
+        logger.error('Cluster detection errors:', data.errors);
       }
     },
   });
 }
 
-/** @deprecated Use useDetectClusters() for credential-template-driven discovery. */
+/** @deprecated Use useDetectClusters(). */
 export const useDetectEKSClusters = useDetectClusters;
 
 export function useRefreshClusterKubeconfig() {

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
@@ -8,7 +9,7 @@ import type {
 } from '@/types';
 import { POLL_INTERVALS, QUERY_STALE_TIME } from '@/lib/constants';
 import { notify } from '@/lib/notify';
-import { queryKeys } from '@/lib/queryKeys';
+import { keepPreviousForCluster, queryKeys } from '@/lib/queryKeys';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
 // ========================================================================
@@ -24,14 +25,24 @@ export function useBnkData(
   params?: { namespace?: string },
   options?: { pollingEnabled?: boolean; enabled?: boolean }
 ) {
-  return useQuery({
-    queryKey: queryKeys.k8s.clusters.bnkData(clusterId, params),
-    queryFn: () => api.getBnkData(clusterId, params),
+  const queryClient = useQueryClient();
+  // One key per namespace: `undefined`, `{}` and `{ namespace: undefined }` all mean "all namespaces".
+  const namespace = params?.namespace || undefined;
+  const queryKey = queryKeys.k8s.clusters.bnkData(clusterId, namespace ? { namespace } : undefined);
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ queryKey }) => {
+      // Refetches triggered by invalidation (mutations, Refresh) bypass the backend's BNK data cache.
+      const force = queryClient.getQueryState(queryKey)?.isInvalidated || undefined;
+      return api.getBnkData(clusterId, { namespace, force });
+    },
     enabled: options?.enabled !== false && !!clusterId,
     staleTime: QUERY_STALE_TIME.DEFAULT,
     refetchInterval: options?.pollingEnabled !== false ? POLL_INTERVALS.SLOW : false,
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
   });
+  // An explicit refresh goes through invalidation so it bypasses the backend cache too.
+  return { ...query, refetch: () => queryClient.invalidateQueries({ queryKey, exact: true }) };
 }
 
 // Convenience selectors — each returns a slice of the unified data
@@ -41,15 +52,12 @@ export function useF5BNKHealth(
   options?: { pollingEnabled?: boolean; enabled?: boolean }
 ) {
   const query = useBnkData(clusterId, params, options);
-  return {
-    ...query,
-    data: query.data
-      ? ({
-          ...query.data.health,
-          cluster_id: clusterId,
-        } as BnkHealthEndpointResponse)
-      : undefined,
-  };
+  const health = query.data?.health;
+  const data = useMemo(
+    () => (health ? ({ ...health, cluster_id: clusterId } as BnkHealthEndpointResponse) : undefined),
+    [health, clusterId],
+  );
+  return { ...query, data };
 }
 
 export function useF5GatewayTopology(

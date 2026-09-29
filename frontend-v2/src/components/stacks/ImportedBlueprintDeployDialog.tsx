@@ -48,7 +48,7 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
   }, [open]);
 
   const { data: template, isLoading: templateLoading } = useStackTemplate(slug);
-  const { data: requiredInputs, isLoading: inputsLoading } = useStackRequiredInputs(slug);
+  const { data: requiredInputs, isLoading: inputsLoading, isError: inputsError } = useStackRequiredInputs(slug);
   const { data: templates } = useQuery({
     queryKey: ['credential-templates', template?.cloud_provider || 'all'],
     queryFn: () => api.listCredentialTemplates(template?.cloud_provider || undefined),
@@ -373,6 +373,7 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
 
   const canSubmit =
     Boolean(template) &&
+    !inputsError &&
     (deployMode === 'existing'
       ? !!selectedProjectId
       : !!projectName.trim() && !requiresCluster);
@@ -718,6 +719,13 @@ export function ImportedBlueprintDeployDialog({ slug, open, onOpenChange, onSucc
                         )}
                       </div>
                     </div>
+                  )}
+
+                  {inputsError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>Failed to load blueprint inputs.</AlertDescription>
+                    </Alert>
                   )}
 
                   {submitError && (

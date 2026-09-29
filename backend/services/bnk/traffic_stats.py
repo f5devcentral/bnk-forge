@@ -120,7 +120,7 @@ def fetch_tmm_traffic_stats(
         api_client: Authenticated K8s API client.
         classified_pods: Output of ``classify_f5_pods``; used to find TMM pods.
         timeout: Max seconds to wait for each ``tmctl``/``configview`` exec.
-        cluster_id: When provided, results are cached for 15 seconds per cluster.
+        cluster_id: When provided, results are cached for 120 seconds per cluster.
         force: Bypass the cache (used for explicit refresh actions).
 
     Returns:
@@ -168,12 +168,14 @@ def fetch_tmm_traffic_stats(
             _VIRTUAL_SERVER_STAT_TABLE, _VIRTUAL_SERVER_COLUMNS,
             directory=_TMCTL_DIRECTORY, timeout=timeout,
             cluster_id=cluster_id,
+            force=force,
         )
         fw_result = exec_tmctl(
             api_client, pod_name, namespace,
             _FW_RULE_STAT_TABLE, _FW_RULE_COLUMNS,
             directory=_TMCTL_DIRECTORY, timeout=timeout,
             cluster_id=cluster_id,
+            force=force,
         )
         result["virtualServerStat"] = vs_result
         result["fwRuleStat"] = fw_result
@@ -183,7 +185,7 @@ def fetch_tmm_traffic_stats(
         # sequential kubectl exec calls (each ~2s) on clusters with no traffic.
         if vs_result.get("exit_code") == 0 and _tmctl_rows_as_dicts(vs_result):
             mappings = _fetch_configview_mappings(
-                api_client, pod_name, namespace, timeout, cluster_id=cluster_id
+                api_client, pod_name, namespace, timeout, cluster_id=cluster_id, force=force
             )
             result["configviewMappings"] = mappings
     except Exception as exc:  # pragma: no cover - defensive catch-all
@@ -207,7 +209,8 @@ def analyze_traffic_stats(
     ``fetch_tmm_traffic_stats``).
 
     Args:
-        data: The BNK resource bundle from ``fetch_all_bnk_data``.
+        data: The BNK resource bundle from ``fetch_all_bnk_data`` with the
+            ``topology`` and ``dataPlane`` keys from ``analyze_topology`` added.
         raw_stats: Optional raw TMM stats envelope.  If None or unavailable,
             an empty but valid envelope is returned.
 
@@ -287,10 +290,11 @@ def _fetch_configview_mappings(
     namespace: str,
     timeout: int,
     cluster_id: int | None = None,
+    force: bool = False,
 ) -> list[dict[str, Any]]:
     """Run configview list + uuid for each UUID and return parsed metadata."""
     cache_key = f"bnk:configview_mappings:{cluster_id}:{pod_name}:{namespace}" if cluster_id is not None else None
-    if cluster_id is not None:
+    if cache_key is not None and not force:
         cached = cache.get(cache_key)
         if cached is not None:
             return cached
@@ -298,7 +302,7 @@ def _fetch_configview_mappings(
     mappings: list[dict[str, Any]] = []
     try:
         uuids_result = discover_configview_uuids(
-            api_client, pod_name, namespace, timeout, cluster_id=cluster_id
+            api_client, pod_name, namespace, timeout, cluster_id=cluster_id, force=force
         )
         if uuids_result.get("exit_code") != 0:
             return mappings
@@ -309,7 +313,7 @@ def _fetch_configview_mappings(
         def _probe_uuid(uuid: str) -> dict[str, Any] | None:
             try:
                 cv_result = exec_configview(
-                    api_client, pod_name, namespace, uuid, timeout, cluster_id=cluster_id
+                    api_client, pod_name, namespace, uuid, timeout, cluster_id=cluster_id, force=force
                 )
                 if cv_result.get("exit_code") == 0:
                     hints = _parse_configview_uuid_output(cv_result.get("stdout", ""))

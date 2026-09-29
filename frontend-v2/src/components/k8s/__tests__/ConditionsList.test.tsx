@@ -31,4 +31,26 @@ describe('ConditionsList', () => {
     expect(screen.getByText('False')).toBeInTheDocument();
     expect(screen.getByText(/address conflict/)).toBeInTheDocument();
   });
+
+  it('treats status=False as healthy for negative-polarity types', () => {
+    render(
+      <ConditionsList
+        conditions={[
+          { type: 'Conflicted', status: 'False' },
+          { type: 'ResolvedRefs', status: 'False' },
+        ]}
+      />
+    );
+    const [conflicted, resolvedRefs] = screen.getAllByText('False');
+    expect(conflicted.className).toContain('success');
+    expect(resolvedRefs.className).toContain('destructive');
+  });
+
+  it('keeps the card neutral and puts status color on small elements', () => {
+    const { container } = render(
+      <ConditionsList conditions={[{ type: 'Programmed', status: 'False' }]} />
+    );
+    const card = container.querySelector('.rounded-md.border') as HTMLElement;
+    expect(card.className).not.toMatch(/destructive|success|warning/);
+  });
 });

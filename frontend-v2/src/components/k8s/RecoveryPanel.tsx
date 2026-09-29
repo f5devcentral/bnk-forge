@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { queryKeys } from '@/lib/queryKeys';
+import { keepPreviousForCluster } from '@/lib/queryKeys';
 import { recoveryApi } from '@/lib/api/recovery';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -143,7 +143,7 @@ export function RecoveryPanel({ clusterId }: RecoveryPanelProps) {
     queryFn: () => recoveryApi.getStatus(clusterId),
     enabled: clusterId > 0,
     staleTime: 60_000,
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
     retry: 1,
   });
 
@@ -160,8 +160,6 @@ export function RecoveryPanel({ clusterId }: RecoveryPanelProps) {
       queryClient.invalidateQueries({ queryKey: ['recovery', 'status', clusterId] });
       queryClient.invalidateQueries({ queryKey: ['licensing'] });
       queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', clusterId] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(clusterId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(clusterId) });
     },
     onError: (error: Error) => {
       notify.error('CWC cert re-sync failed', error.message, { category: 'security' });
@@ -187,8 +185,6 @@ export function RecoveryPanel({ clusterId }: RecoveryPanelProps) {
         queryClient.invalidateQueries({ queryKey: ['recovery', 'status', clusterId] });
         queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', clusterId] });
         queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(clusterId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(clusterId) });
       }, 5000);
     },
     onError: (error: Error) => {

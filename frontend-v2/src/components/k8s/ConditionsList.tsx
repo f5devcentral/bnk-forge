@@ -8,11 +8,14 @@ interface ConditionsListProps {
   emptyText?: string;
 }
 
-function conditionSeverity(status: string): 'healthy' | 'unhealthy' | 'degraded' {
-  const lower = status?.toLowerCase();
-  if (lower === 'true') return 'healthy';
-  if (lower === 'false') return 'unhealthy';
-  return 'degraded';
+// Condition types where status=True is the bad state (Gateway API listener/route conditions).
+const NEGATIVE_POLARITY_TYPES = new Set(['Conflicted', 'Degraded', 'PartiallyInvalid']);
+
+function conditionSeverity(condition: K8sCondition): 'healthy' | 'unhealthy' | 'degraded' {
+  const lower = condition.status?.toLowerCase();
+  if (lower !== 'true' && lower !== 'false') return 'degraded';
+  const good = NEGATIVE_POLARITY_TYPES.has(condition.type) ? lower === 'false' : lower === 'true';
+  return good ? 'healthy' : 'unhealthy';
 }
 
 export function ConditionsList({
@@ -28,24 +31,15 @@ export function ConditionsList({
   return (
     <div className="space-y-2">
       {conditions.map((condition, idx) => {
-        const severity = conditionSeverity(condition.status);
+        const severity = conditionSeverity(condition);
         const config = getSeverityConfig(severity);
         const Icon = config.icon;
 
         return (
-          <div
-            key={idx}
-            className={cn(
-              'rounded-md border p-2.5',
-              config.border,
-              config.bg,
-            )}
-          >
+          <div key={idx} className="rounded-md border bg-muted/50 p-2.5">
             <div className="flex items-center gap-2">
               <Icon className={cn('h-4 w-4', config.color)} />
-              <span className={cn('text-sm font-medium', config.color)}>
-                {condition.type}
-              </span>
+              <span className="text-sm font-medium">{condition.type}</span>
               <Badge
                 variant={severity === 'healthy' ? 'success' : severity === 'unhealthy' ? 'destructive' : 'warning'}
                 className="ml-auto text-[10px]"
