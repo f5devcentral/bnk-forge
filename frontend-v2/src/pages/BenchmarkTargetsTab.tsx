@@ -262,12 +262,6 @@ export function BenchmarkTargetsTab({ selectedClusterId }: BenchmarkTargetsTabPr
               </p>
             </div>
             <div>
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">Cluster</span>
-              <p className="font-mono text-xs mt-1 text-foreground/80">
-                {targetDetail.cluster_name || clusters.find(c => c.id === targetDetail.cluster_id)?.name || `Cluster #${targetDetail.cluster_id}`}
-              </p>
-            </div>
-            <div>
               <span className="text-xs uppercase tracking-wider text-muted-foreground">LLM endpoint</span>
               <p className="font-mono text-xs mt-1 text-foreground/80">{targetDetail.llm_base_url}</p>
             </div>
