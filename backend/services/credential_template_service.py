@@ -21,7 +21,7 @@ from core.encryption import decrypt_value, encrypt_value
 from core.errors import AppError, BadRequestError, InternalError, NotFoundError
 from models import CloudCredentialTemplate
 from services.aws_auth_service import AWSAuthService
-from services.azure_auth_service import AzureAuthService
+from services.azure_auth_service import AzureAuthService, clear_azure_sso_session
 from services.defaults_service import get_default
 
 logger = logging.getLogger(__name__)
@@ -413,7 +413,7 @@ class CredentialTemplateService:
             template.aws_session_token_encrypted = encrypt_value(template_data.aws_session_token)
         if template_data.gcp_credentials:
             template.gcp_credentials_encrypted = encrypt_value(template_data.gcp_credentials)
-        if getattr(template_data, "azure_client_secret", None):
+        if getattr(template_data, "azure_client_secret", None) and template.azure_auth_method != 'sso':
             template.azure_client_secret_encrypted = encrypt_value(template_data.azure_client_secret)
         if template_data.azure_credentials:
             template.azure_credentials_encrypted = encrypt_value(template_data.azure_credentials)
@@ -450,6 +450,7 @@ class CredentialTemplateService:
                 CloudCredentialTemplate.is_default
             ).update({"is_default": False})
 
+        old_azure = (template.azure_auth_method, template.azure_tenant_id, template.azure_client_id)
         update_data = template_data.model_dump(exclude_unset=True)
 
         # Handle encrypted fields
@@ -475,10 +476,30 @@ class CredentialTemplateService:
             if hasattr(template, key):
                 setattr(template, key, value)
 
+        if template.provider == 'azure':
+            self._apply_azure_auth_change(template, *old_azure)
+
         template.updated_at = datetime.now(UTC)
         self.db.flush()
         self.db.refresh(template)
         return self.serialize_template(template)
+
+    @staticmethod
+    def _apply_azure_auth_change(template: CloudCredentialTemplate, old_method: str | None,
+                                 old_tenant_id: str | None, old_client_id: str | None) -> None:
+        """Drop credentials that no longer match the template's Azure identity."""
+        method_changed = template.azure_auth_method != old_method
+        if template.azure_auth_method == 'sso':
+            if method_changed and template.projects:
+                raise BadRequestError(
+                    f"Cannot switch to Entra ID SSO. {len(template.projects)} project(s) use this template, "
+                    "and provisioning requires a service principal."
+                )
+            template.azure_client_secret_encrypted = None
+        identity_changed = ((template.azure_tenant_id or None) != (old_tenant_id or None)
+                            or (template.azure_client_id or None) != (old_client_id or None))
+        if (method_changed and old_method == 'sso') or identity_changed:
+            clear_azure_sso_session(template)
 
     def delete_template(self, template_id: int) -> None:
         """Delete a credential template."""
@@ -652,12 +673,13 @@ class CredentialTemplateService:
         template = self._get_template(template_id)
 
         if template.provider == 'azure':
+            if not self._has_complete_sso_config(template):
+                raise BadRequestError("Azure SSO is not enabled for this template. Set the authentication method to Entra ID SSO.")
             auth_service = AzureAuthService()
             result = auth_service.initiate_device_authorization(
                 tenant_id=template.azure_tenant_id or "common",
                 client_id=template.azure_client_id,
             )
-            template.azure_client_id = result['client_id']
             self._create_audit_log("azure_sso_auth_initiated", template, "success", {
                 "tenant_id": template.azure_tenant_id or "common",
                 "client_id": result['client_id'],
@@ -709,6 +731,8 @@ class CredentialTemplateService:
         template = self._get_template(template_id)
 
         if template.provider == 'azure':
+            if not self._has_complete_sso_config(template):
+                raise BadRequestError("Azure SSO is not enabled for this template. Set the authentication method to Entra ID SSO.")
             auth_service = AzureAuthService()
             try:
                 token_data = auth_service.poll_for_token(
@@ -719,6 +743,8 @@ class CredentialTemplateService:
             except Exception as e:
                 error_msg = str(e)
                 self._create_audit_log("azure_sso_auth_failed", template, "failed", {"error": error_msg})
+                if isinstance(e, AppError):
+                    raise
                 raise InternalError(error_msg)
 
             if token_data.get("pending"):
@@ -858,10 +884,10 @@ class CredentialTemplateService:
                     tenant_id=template.azure_tenant_id or "common",
                     client_id=template.azure_client_id,
                 )
-            except AppError:
-                raise
             except Exception as e:
                 self._create_audit_log("azure_sso_refresh_failed", template, "failed", {"error": str(e)})
+                if isinstance(e, AppError):
+                    raise
                 raise InternalError(f"Failed to refresh Azure SSO credentials: {str(e)}")
 
             template.azure_sso_access_token_encrypted = encrypt_value(token_data['access_token'])

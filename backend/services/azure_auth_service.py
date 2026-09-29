@@ -29,6 +29,15 @@ class AzureAuthError(AppError):
 
 ServiceError = AzureAuthError
 
+
+def clear_azure_sso_session(template: Any) -> None:
+    """Drop the stored Entra ID SSO session so the template must re-authenticate."""
+    template.azure_sso_access_token_encrypted = None
+    template.azure_sso_refresh_token_encrypted = None
+    template.azure_sso_token_expiry = None
+    template.azure_sso_authenticated_at = None
+
+
 # Standard Azure CLI public client ID (Microsoft Azure Cross-platform Command Line Interface)
 DEFAULT_AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 DEFAULT_AZURE_MANAGEMENT_SCOPE = "https://management.azure.com/.default offline_access"
@@ -205,7 +214,7 @@ class AzureAuthService:
             if not resp.ok:
                 err_desc = data.get("error_description") or data.get("error") or resp.text
                 logger.error(f"Failed to refresh Azure token: {err_desc}")
-                raise ServiceError(f"Failed to refresh Azure token: {err_desc}")
+                raise ServiceError(f"Failed to refresh Azure token: {err_desc}", details={"oauth_error": data.get("error")})
 
             access_token = data.get("access_token")
             if not access_token:

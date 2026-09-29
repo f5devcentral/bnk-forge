@@ -42,7 +42,8 @@ function remainingLabel(ms: number): string {
  * Priority (first match wins):
  *  1. failed  — last observation is an error newer than last success
  *  2. expired — credentials/token expiry is in the past
- *  3. warning — expiry within 1 hour
+ *  3. warning — expiry within 1 hour (AWS only; Azure SSO access tokens are
+ *     auto-refreshed at T-15m, so refresh failures surface as 'failed')
  *  4. ok      — creds valid (with remaining time if lease present)
  *  5. unknown — no expiry and no observation
  *
@@ -57,6 +58,7 @@ export function resolveCredStatus(template: CloudCredentialTemplate): CredStatus
       : template.aws_credentials_expiry
   );
   const now = Date.now();
+  const autoRefreshed = template.provider === 'azure';
 
   // 1. failed: error observation is present and newer than last success
   if (errorAt && (!successAt || errorAt > successAt)) {
@@ -82,7 +84,7 @@ export function resolveCredStatus(template: CloudCredentialTemplate): CredStatus
   }
 
   // 3. warning: expiry within 1 hour
-  if (expiryAt) {
+  if (expiryAt && !autoRefreshed) {
     const msLeft = expiryAt.getTime() - now;
     if (msLeft < 60 * 60 * 1000) {
       const mins = Math.floor(msLeft / (1000 * 60));
@@ -97,7 +99,7 @@ export function resolveCredStatus(template: CloudCredentialTemplate): CredStatus
 
   // 4. ok: valid lease or recent successful call
   if (expiryAt || successAt) {
-    const remaining = expiryAt ? remainingLabel(expiryAt.getTime() - now) : null;
+    const remaining = expiryAt && !autoRefreshed ? remainingLabel(expiryAt.getTime() - now) : null;
     const headline = remaining ? `OK · ${remaining}` : 'OK';
     const detail = successAt ? `Last verified ${relativeAge(successAt)}` : '';
     return { level: 'ok', headline, detail };

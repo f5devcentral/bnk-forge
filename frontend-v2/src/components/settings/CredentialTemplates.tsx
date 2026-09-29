@@ -303,7 +303,10 @@ export default function CredentialTemplates() {
   };
 
   const handleCreate = () => {
-    createMutation.mutate(formData);
+    const data = { ...formData };
+    // The Azure form keeps both methods' inputs; submit only the chosen one.
+    if (data.provider === 'azure' && data.azure_auth_method === 'sso') delete data.azure_client_secret;
+    createMutation.mutate(data);
   };
 
   const handleEdit = (template: CloudCredentialTemplate) => {
@@ -373,8 +376,8 @@ export default function CredentialTemplates() {
       updateData.region = formData.region;
       if (formData.azure_subscription_id) updateData.azure_subscription_id = formData.azure_subscription_id;
       if (formData.azure_tenant_id) updateData.azure_tenant_id = formData.azure_tenant_id;
-      if (formData.azure_client_id) updateData.azure_client_id = formData.azure_client_id;
-      if (formData.azure_client_secret) updateData.azure_client_secret = formData.azure_client_secret;
+      updateData.azure_client_id = formData.azure_client_id;
+      if (formData.azure_auth_method !== 'sso' && formData.azure_client_secret) updateData.azure_client_secret = formData.azure_client_secret;
     }
 
     if (formData.provider === 'ibm') {
