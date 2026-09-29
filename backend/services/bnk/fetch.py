@@ -68,7 +68,7 @@ def fetch_all_bnk_data(
                 jobs = batch_api.list_namespaced_job(
                     namespace=ns,
                     label_selector=_CRD_INSTALLER_LABEL,
-                    _request_timeout=10,
+                    _request_timeout=(5, 15),
                 ).items
                 if jobs:
                     job = jobs[0]

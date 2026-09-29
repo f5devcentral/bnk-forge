@@ -14,11 +14,13 @@ from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.encryption import decrypt_value
+from core.errors import BreakerOpenError
 from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
-from services.reachability import with_breaker
+from services.reachability import registry, with_breaker
+from services.reachability.breaker import breaker_open_error
 
 logger = logging.getLogger(__name__)
 
@@ -203,9 +205,11 @@ class KubernetesServiceBase:
         # a single broken request into ~75s of blocking. The breaker assumes one
         # call = one wire attempt; per-call _request_timeout enforces the upper
         # bound on the wire attempt itself.
+        import urllib3.util
         cfg = client.Configuration.get_default_copy()
-        cfg.retries = 0
-        return client.ApiClient(cfg)
+        cfg.retries = urllib3.util.Retry(total=0, connect=0, read=0, redirect=0)
+        cfg.connection_pool_maxsize = 32
+        return client.ApiClient(cfg, pool_threads=32)
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:
@@ -404,21 +408,15 @@ class KubernetesServiceBase:
         """Delegate to shared cluster_utils._maybe_open_ssh_tunnel()."""
         return _maybe_open_ssh_tunnel(cluster)
 
-    @with_breaker("cluster", target_id_arg="cluster_id")
     def test_connection(self, cluster_id: int) -> dict[str, Any]:
         """Test connection to cluster."""
+        # An open breaker skips kubeconfig loading too (SSH tunnel, cloud token).
+        if registry.is_open("cluster", cluster_id):
+            raise breaker_open_error("cluster", cluster_id)
         try:
             cluster = self.get_cluster(cluster_id)
             api_client = self.load_kubeconfig(cluster)
-            v1 = client.CoreV1Api(api_client)
-
-            # Bound the wire attempt: connect=3s, read=8s. Without _request_timeout
-            # a kubernetes-client call inherits the OS TCP timeout (75s+).
-            v1.list_namespace(limit=1, _request_timeout=(3, 8))
-
-            # Get server version
-            version_api = client.VersionApi(api_client)
-            version_info = version_api.get_code(_request_timeout=(3, 8))
+            version_info = self._probe_api_server(cluster_id, api_client)
 
             return {
                 "success": True,
@@ -429,6 +427,8 @@ class KubernetesServiceBase:
                 "cloud_provider": cluster.cloud_provider,
                 "region": cluster.region
             }
+        except BreakerOpenError:
+            raise
         except ApiException as e:
             logger.error(f"Kubernetes API error during connection test: {e}")
             return {
@@ -442,6 +442,18 @@ class KubernetesServiceBase:
                 "success": False,
                 "message": str(e)
             }
+
+    @with_breaker("cluster", target_id_arg="cluster_id")
+    def _probe_api_server(self, cluster_id: int, api_client: client.ApiClient) -> Any:
+        """The wire calls of test_connection, behind the cluster breaker.
+
+        Raises on failure so the breaker records it (test_connection itself
+        returns a failure dict, which the breaker would count as a success).
+        """
+        # Bound the wire attempt: connect=5s, read=15s. Without _request_timeout
+        # a kubernetes-client call inherits the OS TCP timeout (75s+).
+        client.CoreV1Api(api_client).list_namespace(limit=1, _request_timeout=(5, 15))
+        return client.VersionApi(api_client).get_code(_request_timeout=(5, 15))
 
     def list_namespaces(self, cluster_id: int) -> list[str]:
         """List all namespaces in a cluster."""

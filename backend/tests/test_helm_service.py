@@ -103,6 +103,19 @@ class TestInstallChart:
         assert result["name"] == "nginx"
         assert result["info"]["status"] == "deployed"
 
+    def test_openapi_validation_skipped_only_on_request(self, db, make_k8s_cluster):
+        svc = _make_helm_service(db)
+        cluster = make_k8s_cluster()
+        ok = _mock_run_helm_success(stdout=json.dumps({"name": "nginx"}))
+
+        with patch.object(svc, "get_cluster", return_value=cluster), \
+             patch.object(svc, "_run_helm_command", return_value=ok) as run:
+            svc.install_chart(cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx")
+            assert "--disable-openapi-validation" not in run.call_args.args[1]
+            svc.install_chart(cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx",
+                              disable_openapi_validation=True)
+            assert "--disable-openapi-validation" in run.call_args.args[1]
+
     def test_install_duplicate_release_raises_value_error(self, db, make_k8s_cluster):
         """install_chart raises ValueError when release name is already in use."""
         svc = _make_helm_service(db)
