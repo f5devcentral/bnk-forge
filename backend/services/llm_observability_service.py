@@ -38,6 +38,8 @@ from sqlalchemy.orm import Session
 from core.config import settings
 from models.kubernetes import KubernetesCluster
 from services.kubernetes_service import KubernetesService
+from services.reachability import ReachabilityState
+from services.reachability import registry as reachability_registry
 
 logger = logging.getLogger(__name__)
 
@@ -217,19 +219,18 @@ class LlmObservabilityService:
         return self._k8s.load_kubeconfig(cluster_or_id)
 
     def _resolve_active_clients(self, errors: dict[str, str]) -> list[tuple[KubernetesCluster, Any]]:
-        clusters = self._active_clusters()
         clients: list[tuple[KubernetesCluster, Any]] = []
-        for c in clusters:
+        for c in self._active_clusters():
+            # Skip clusters the reachability probe already marks down.
+            state = reachability_registry.get_state("cluster", c.id)
+            if state and state.get("state") == ReachabilityState.UNREACHABLE:
+                errors[str(c.name)] = "unreachable"
+                continue
             try:
-                cid = getattr(c, "id", c)
-                if getattr(self._client, "__func__", None) is LlmObservabilityService._client:
-                    client = self._k8s.load_kubeconfig(c)
-                else:
-                    client = self._client(cid)
-                clients.append((c, client))
+                clients.append((c, self._client(c)))
             except Exception as e:
-                logger.warning("Failed to load kubeconfig for cluster %s: %s", getattr(c, "name", str(c)), e)
-                errors[str(getattr(c, "name", c))] = f"kubeconfig: {e}"
+                logger.warning("Failed to load kubeconfig for cluster %s: %s", c.name, e)
+                errors[str(c.name)] = f"kubeconfig: {e}"
         return clients
 
     def _fleet(
