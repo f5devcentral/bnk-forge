@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from kubernetes import client as k8s_client
+from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
@@ -45,6 +46,7 @@ from services.bnk_data_service import (
 )
 from services.kubernetes_service import KubernetesService
 from services.proxy_discovery_service import (
+    _deployment_configmap_names,
     _extract_backends_from_configmaps,
     _safe_list_all_custom,
     _safe_list_all_ingresses,
@@ -322,17 +324,21 @@ def translate_proxy_to_bnk(
                 source_httproutes.append(route)
                 break
 
-    # If neither Ingresses nor HTTPRoutes matched (e.g. Deployment kind or standalone proxy):
-    if not source_ingresses and not source_httproutes:
+    # Standalone proxy Deployment (class_name = Deployment name): take backends
+    # from the ConfigMaps that Deployment mounts, not every ConfigMap around it.
+    if body.source_kind == "Deployment" and not source_ingresses and not source_httproutes:
         core = k8s_client.CoreV1Api(api_client)
         ns = body.namespace or "default"
-        extracted = _extract_backends_from_configmaps(
-            core, ns, body.proxy_type, class_name
-        )
-        if not extracted and ns != "perf-proxies":
-            extracted = _extract_backends_from_configmaps(
-                core, "perf-proxies", body.proxy_type, class_name
+        try:
+            dep = k8s_client.AppsV1Api(api_client).read_namespaced_deployment(
+                name=class_name, namespace=ns, _request_timeout=10,
             )
+            extracted = _extract_backends_from_configmaps(
+                core, ns, body.proxy_type, _deployment_configmap_names(dep),
+            )
+        except ApiException as e:
+            logger.info("translate: Deployment %s/%s not readable: %s", ns, class_name, e.reason)
+            extracted = []
 
         if extracted:
             primary_ns = extracted[0].get("namespace") or ns

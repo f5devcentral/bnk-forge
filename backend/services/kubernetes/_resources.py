@@ -171,7 +171,7 @@ class ResourcesMixin:
                             namespace=namespace,
                             plural=resource_type.plural,
                             label_selector=label_selector or "",
-                            _request_timeout=(3, 5),
+                            _request_timeout=(5, 30),
                         )
                     else:
                         response = custom_api.list_cluster_custom_object(
@@ -179,7 +179,7 @@ class ResourcesMixin:
                             version=resource_type.api_version,
                             plural=resource_type.plural,
                             label_selector=label_selector or "",
-                            _request_timeout=(3, 5),
+                            _request_timeout=(5, 30),
                         )
                 else:
                     response = custom_api.list_cluster_custom_object(
@@ -187,7 +187,7 @@ class ResourcesMixin:
                         version=resource_type.api_version,
                         plural=resource_type.plural,
                         label_selector=label_selector or "",
-                        _request_timeout=(3, 5),
+                        _request_timeout=(5, 30),
                     )
 
                 resources = response.get('items', [])

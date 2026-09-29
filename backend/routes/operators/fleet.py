@@ -624,7 +624,7 @@ def get_fleet_health(db: Session = Depends(get_db)):
             "operators": [],
             "platform_context": {
                 "mixed_platform_profiles": False,
-                "profiles_present": [],
+                "detected_profiles": [],
                 "clusters": [],
                 "comparison_caveats": [],
                 "support_semantics": [],

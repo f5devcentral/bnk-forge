@@ -648,7 +648,7 @@ backend llm_backend
 """
         }
         with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
-            backends = _extract_backends_from_configmaps(mock_core, "perf-proxies", "haproxy")
+            backends = _extract_backends_from_configmaps(mock_core, "perf-proxies", "haproxy", {"haproxy-cfg"})
 
         assert len(backends) == 1
         assert backends[0]["service"] == "vllm"
@@ -670,7 +670,7 @@ server {
 """
         }
         with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
-            backends = _extract_backends_from_configmaps(mock_core, "default", "nginx")
+            backends = _extract_backends_from_configmaps(mock_core, "default", "nginx", {"nginx-conf"})
 
         assert len(backends) == 1
         assert backends[0]["service"] == "vllm-service"
@@ -697,6 +697,9 @@ class TestDiscoverInventoryDeployments:
         container = MagicMock()
         container.image = "docker.io/haproxytech/haproxy-alpine:3.3.1"
         dep.spec.template.spec.containers = [container]
+        vol = MagicMock()
+        vol.config_map.name = "perf-haproxy-vllm-952188"
+        dep.spec.template.spec.volumes = [vol]
 
         cm = MagicMock()
         cm.metadata.name = "perf-haproxy-vllm-952188"
@@ -769,7 +772,7 @@ static_resources:
         }
 
         with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
-            backends = _extract_backends_from_configmaps(core, "ai-inference", proxy_type="envoy")
+            backends = _extract_backends_from_configmaps(core, "ai-inference", "envoy", {"envoy-cm"})
 
         assert len(backends) == 1
         assert backends[0]["service"] == "vllm-server"
@@ -777,3 +780,118 @@ static_resources:
         assert backends[0]["port"] == 8000
         assert backends[0]["via"] == "Envoy Config (envoy-cm)"
 
+
+
+class TestConfigBackendParsing:
+    @staticmethod
+    def _extract(proxy_type, data, cm_name="own-cm", names=None):
+        cm = MagicMock()
+        cm.metadata.name = cm_name
+        cm.data = data
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            return _extract_backends_from_configmaps(
+                MagicMock(), "perf-proxies", proxy_type, names if names is not None else {"own-cm"},
+            )
+
+    def test_envoy_skips_listener_admin_and_ip_addresses(self):
+        backends = self._extract("envoy", {"envoy.yaml": """
+admin:
+  address:
+    socket_address:
+      address: 127.0.0.1
+      port_value: 9901
+static_resources:
+  listeners:
+  - address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10080
+  clusters:
+  - load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.0.12
+                port_value: 8000
+        - endpoint:
+            address:
+              socket_address:
+                address: vllm.inference.svc.cluster.local
+                port_value: 8000
+"""})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
+    def test_haproxy_only_server_lines(self):
+        backends = self._extract("haproxy", {"haproxy.cfg": """
+defaults
+    default-server inter 2s fall 3
+backend llm
+    server s1 10.0.0.5:8000 check
+    server s2 localhost:8000
+    server s3 vllm.inference:8000 check
+"""})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
+    def test_out_of_range_and_oversized_ports_do_not_break_parsing(self):
+        backends = self._extract("nginx", {"default.conf": (
+            "proxy_pass http://a.ns:99999;\n"
+            "proxy_pass http://d.ns:123456;\n"
+            f"proxy_pass http://b.ns:{'9' * 5000};\n"
+            "proxy_pass http://c.ns:8080;\n"
+        )})
+        assert [(b["service"], b["port"]) for b in backends] == [("c", 8080)]
+
+    def test_only_named_configmaps_are_parsed(self):
+        data = {"haproxy.cfg": "    server s1 vllm.inference:8000"}
+        assert self._extract("haproxy", data, cm_name="other-cm") == []
+        assert self._extract("haproxy", data, names=set()) == []
+
+
+class TestTargetDeploymentMatch:
+    @staticmethod
+    def _dep(name, instance=None):
+        d = MagicMock()
+        d.metadata.name = name
+        d.metadata.labels = {"app.kubernetes.io/instance": instance} if instance else {}
+        return d
+
+    def _match(self, releases, deployments, target_name="llm"):
+        from services.proxy_discovery_service import _has_target_deployment_match
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = [(r,) for r in releases]
+        target = MagicMock(id=1)
+        target.name = target_name
+        return _has_target_deployment_match(db, target, deployments, proxy_type="haproxy")
+
+    def test_db_row_without_live_deployment_does_not_match(self):
+        assert self._match(["perf-haproxy-llm-1"], []) is False
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-other")]) is False
+
+    def test_target_name_substring_does_not_match(self):
+        assert self._match([], [self._dep("llm-gateway-haproxy")]) is False
+
+    def test_exact_release_identity_matches(self):
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-llm-1")]) is True
+        assert self._match(["rel-a"], [self._dep("rel-a-kubernetes-ingress", instance="rel-a")]) is True
+
+
+class TestCoveredControllerWorkload:
+    def test_envoy_gateway_and_haproxy_ingress_are_deduplicated(self):
+        from services.proxy_discovery_service import _is_covered_controller_workload
+
+        eg = {"gateway.envoyproxy.io/gatewayclass-controller"}
+        assert _is_covered_controller_workload("envoy-gateway", {}, ["docker.io/envoyproxy/gateway:v1.2.0"], eg)
+        assert _is_covered_controller_workload(
+            "envoy-default-eg-1234", {"app.kubernetes.io/managed-by": "envoy-gateway"},
+            ["docker.io/envoyproxy/envoy:v1.31"], eg,
+        )
+        assert not _is_covered_controller_workload("my-envoy", {}, ["envoyproxy/envoy:v1.31"], eg)
+
+        hap = {"haproxy.org/ingress-controller"}
+        assert _is_covered_controller_workload(
+            "haproxy-kubernetes-ingress", {}, ["haproxytech/kubernetes-ingress:3.0"], hap,
+        )
+        assert not _is_covered_controller_workload("perf-haproxy-x", {}, ["haproxytech/haproxy-alpine:3.3"], hap)

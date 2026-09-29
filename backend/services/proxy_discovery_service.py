@@ -365,16 +365,18 @@ class ProxyDiscoveryService:
                 continue
 
             # If this is BNK / CIS controller, it is represented by GatewayClass or IngressClass
-            if proxy_type in ("f5-bnk", "f5-cis") or any(cov in dep_name.lower() for cov in ["f5-cne", "f5-bigip-ctlr"]):
+            if any(cov in dep_name.lower() for cov in ["f5-cne", "f5-bigip-ctlr"]):
                 continue
 
-            # If it's a standard ingress controller deployment (e.g. ingress-nginx-controller in ingress-nginx)
-            # and an IngressClass already exists for it, skip adding duplicate standalone item
-            if any(cov in dep_name.lower() or any(cov in img.lower() for img in images) for cov in covered_controllers if cov):
+            # A controller already listed via its IngressClass / GatewayClass
+            # (e.g. ingress-nginx-controller, envoy-gateway): skip the duplicate.
+            if _is_covered_controller_workload(dep_name, labels, images, covered_controllers):
                 continue
 
             # Extract backends from ConfigMaps in this namespace
-            backends = _extract_backends_from_configmaps(core, dep_ns, proxy_type, dep_name)
+            backends = _extract_backends_from_configmaps(
+                core, dep_ns, proxy_type, _deployment_configmap_names(dep),
+            )
 
             # Check matching DB proxy deployment for backend enrichment
             matched_db_deploy = (
@@ -615,9 +617,9 @@ class ProxyDiscoveryService:
         has_route = _has_ingress_to_backend(
             api_client, target_svc_name, target_svc_ns, ingress_class_filter="nginx",
         )
-        if not has_route and nginx_ns:
+        if not has_route:
             has_route = _has_configmap_to_backend(
-                core, nginx_ns, target_svc_name, proxy_type="nginx"
+                core, nginx_deploys, target_svc_name, target_svc_ns, proxy_type="nginx"
             )
         if not has_route and self.db:
             has_route = _has_target_deployment_match(
@@ -719,9 +721,9 @@ class ProxyDiscoveryService:
         has_route = _has_ingress_to_backend(
             api_client, target_svc_name, target_svc_ns, ingress_class_filter="haproxy",
         )
-        if not has_route and haproxy_ns:
+        if not has_route:
             has_route = _has_configmap_to_backend(
-                core, haproxy_ns, target_svc_name, proxy_type="haproxy"
+                core, haproxy_deploys, target_svc_name, target_svc_ns, proxy_type="haproxy"
             )
         if not has_route and self.db:
             has_route = _has_target_deployment_match(
@@ -1175,13 +1177,6 @@ class ProxyDiscoveryService:
             proxy_url, external_url = self._find_service_by_name_pattern(
                 core, instance, namespace=namespace
             )
-            if proxy_url:
-                return proxy_url, external_url
-
-        # 3. Search services in the namespace for any proxy match
-        proxy_url, external_url = self._find_service_by_name_pattern(
-            core, "proxy", namespace=namespace
-        )
         return proxy_url, external_url
 
     # ------------------------------------------------------------------
@@ -1735,119 +1730,151 @@ def _classify_deployment(
     return None, None
 
 
+def _deployment_configmap_names(dep: Any) -> set[str]:
+    """Names of the ConfigMaps a Deployment mounts as volumes (its own config)."""
+    spec = dep.spec.template.spec if dep.spec and dep.spec.template else None
+    return {
+        v.config_map.name
+        for v in ((spec.volumes if spec else None) or [])
+        if v.config_map and v.config_map.name
+    }
+
+
+# Server lines only (anchored): `default-server inter 2s` and friends are not backends.
+_HAPROXY_SERVER_RE = re.compile(r"^\s*server\s+\S+\s+([a-zA-Z0-9_\-\.]+)(?::(\d+))?", re.MULTILINE)
+_NGINX_PROXY_PASS_RE = re.compile(r"proxy_pass\s+https?://([a-zA-Z0-9_\-\.]+)(?::(\d+))?")
+_ENVOY_ADDRESS_RE = re.compile(r"address:\s*[\"']?([a-zA-Z0-9_\-\.]+)[\"']?")
+_ENVOY_PORT_RE = re.compile(r"port_value:\s*(\d+)")
+
+
+def _service_backend(host: str, port_digits: str | None, namespace: str, via: str) -> dict[str, Any] | None:
+    """Map a config host:port to a Service backend, or None if it is not one.
+
+    IP literals (incl. 0.0.0.0 listeners and 127.0.0.1 admin) and localhost do
+    not name a Service; a port must be 1..65535 (absent = 80). Digits are
+    length-checked before int() so an unbounded run cannot raise ValueError.
+    """
+    port = 80 if port_digits is None else (int(port_digits) if len(port_digits) <= 5 else 0)
+    if not 1 <= port <= 65535 or host.lower() == "localhost":
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        pass
+    parts = host.split(".")
+    svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
+    return {"service": parts[0], "namespace": svc_ns, "port": port, "via": via}
+
+
+def _parse_config_backends(
+    content: str, fname: str, proxy_type: str, namespace: str, cm_name: str,
+) -> list[dict[str, Any]]:
+    """Parse one ConfigMap data value for Service backends."""
+    found: list[dict[str, Any] | None] = []
+    if proxy_type == "haproxy" or "haproxy" in fname.lower():
+        via = f"HAProxy Config ({cm_name})"
+        found = [
+            _service_backend(m.group(1), m.group(2), namespace, via)
+            for m in _HAPROXY_SERVER_RE.finditer(content)
+        ]
+    elif proxy_type == "nginx" or "nginx" in fname.lower() or "default.conf" in fname.lower():
+        via = f"NGINX Config ({cm_name})"
+        found = [
+            _service_backend(m.group(1), m.group(2), namespace, via)
+            for m in _NGINX_PROXY_PASS_RE.finditer(content)
+        ]
+    elif proxy_type == "envoy" or "envoy" in fname.lower():
+        # address: <host> then port_value: <port>, line by line (linear time).
+        via = f"Envoy Config ({cm_name})"
+        current_host: str | None = None
+        for line in content.splitlines():
+            addr_match = _ENVOY_ADDRESS_RE.search(line)
+            if addr_match:
+                current_host = addr_match.group(1)
+                continue
+            port_match = _ENVOY_PORT_RE.search(line) if current_host else None
+            if current_host and port_match:
+                found.append(_service_backend(current_host, port_match.group(1), namespace, via))
+                current_host = None
+    return [b for b in found if b]
+
+
+# Controller-string substring -> workload hints (image / label) of that
+# controller's own Deployments, for controllers whose image does not contain
+# the controller string (Envoy Gateway, HAProxy ingress, NGINX Inc).
+_CONTROLLER_WORKLOAD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("envoyproxy.io", ("envoyproxy/gateway", "app.kubernetes.io/managed-by=envoy-gateway")),
+    ("haproxy", ("haproxytech/kubernetes-ingress", "haproxy-ingress")),
+    ("nginx.org", ("nginx/nginx-ingress",)),
+)
+
+
+def _is_covered_controller_workload(
+    name: str,
+    labels: dict[str, str],
+    images: list[str],
+    covered_controllers: set[str],
+) -> bool:
+    """True if a Deployment is (part of) a controller inventory already lists."""
+    hay = " ".join([name, *images, *(f"{k}={v}" for k, v in labels.items())]).lower()
+    for cov in covered_controllers:
+        if not cov:
+            continue
+        if cov in hay:
+            return True
+        if any(sub in cov and any(h in hay for h in hints) for sub, hints in _CONTROLLER_WORKLOAD_HINTS):
+            return True
+    return False
+
+
 def _extract_backends_from_configmaps(
     core: k8s_client.CoreV1Api,
     namespace: str,
     proxy_type: str,
-    deployment_name: str = "",
+    configmap_names: set[str],
 ) -> list[dict[str, Any]]:
-    """Extract backend services from ConfigMaps in a namespace."""
+    """Extract backend services from the named ConfigMaps (a proxy's own config)."""
     backends: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int]] = set()
+    if not configmap_names:
+        return backends
 
-    cms = _safe_list_namespaced_configmaps(core, namespace)
-    sorted_cms = sorted(
-        cms,
-        key=lambda cm: 0 if deployment_name and deployment_name in (cm.metadata.name or "") else 1,
-    )
-
-    for cm in sorted_cms:
+    for cm in _safe_list_namespaced_configmaps(core, namespace):
         cm_name = cm.metadata.name or ""
-        if cm_name == "kube-root-ca.crt":
+        if cm_name not in configmap_names:
             continue
-
-        for fname, content in (cm.data or {}).items():
-            if not isinstance(content, str):
-                continue
-
-            if len(content) > _MAX_CONFIGMAP_PARSE_BYTES:
+        try:
+            for fname, content in (cm.data or {}).items():
+                if not isinstance(content, str):
+                    continue
                 content = content[:_MAX_CONFIGMAP_PARSE_BYTES]
-
-            # HAProxy: server <name> <host>:<port>
-            if proxy_type == "haproxy" or "haproxy" in fname.lower():
-                for match in re.finditer(r"server\s+\S+\s+([a-zA-Z0-9_\-\.]+)(?::(\d+))?", content):
-                    host = match.group(1)
-                    port = int(match.group(2)) if match.group(2) else 80
-                    parts = host.split(".")
-                    svc_name = parts[0]
-                    svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
-                    key = (svc_name, svc_ns, port)
+                for b in _parse_config_backends(content, fname, proxy_type, namespace, cm_name):
+                    key = (b["service"], b["namespace"], b["port"])
                     if key not in seen:
                         seen.add(key)
-                        backends.append({
-                            "service": svc_name,
-                            "namespace": svc_ns,
-                            "port": port,
-                            "via": f"HAProxy Config ({cm_name})",
-                        })
-
-            # NGINX: proxy_pass http(s)://<host>[:<port>]
-            elif proxy_type == "nginx" or "nginx" in fname.lower() or "default.conf" in fname.lower():
-                for match in re.finditer(r"proxy_pass\s+https?://([a-zA-Z0-9_\-\.]+)(?::(\d+))?", content):
-                    host = match.group(1)
-                    port = int(match.group(2)) if match.group(2) else 80
-                    parts = host.split(".")
-                    svc_name = parts[0]
-                    svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
-                    key = (svc_name, svc_ns, port)
-                    if key not in seen:
-                        seen.add(key)
-                        backends.append({
-                            "service": svc_name,
-                            "namespace": svc_ns,
-                            "port": port,
-                            "via": f"NGINX Config ({cm_name})",
-                        })
-
-            # Envoy: address: <host>, port_value: <port> (parsed line-by-line to prevent quadratic backtracking DoS)
-            elif proxy_type == "envoy" or "envoy" in fname.lower():
-                current_host: str | None = None
-                for line in content.splitlines():
-                    addr_match = re.search(r"address:\s*[\"']?([a-zA-Z0-9_\-\.]+)[\"']?", line)
-                    if addr_match:
-                        current_host = addr_match.group(1)
-                        continue
-                    if current_host:
-                        port_match = re.search(r"port_value:\s*(\d+)", line)
-                        if port_match:
-                            port = int(port_match.group(1))
-                            parts = current_host.split(".")
-                            svc_name = parts[0]
-                            svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
-                            key = (svc_name, svc_ns, port)
-                            if key not in seen:
-                                seen.add(key)
-                                backends.append({
-                                    "service": svc_name,
-                                    "namespace": svc_ns,
-                                    "port": port,
-                                    "via": f"Envoy Config ({cm_name})",
-                                })
-                            current_host = None
+                        backends.append(b)
+        except Exception as e:
+            logger.debug("Failed to parse ConfigMap %s/%s for backends: %s", namespace, cm_name, e)
 
     return backends
 
 
 def _has_configmap_to_backend(
     core: k8s_client.CoreV1Api,
-    namespace: str,
+    deployments: list,
     target_svc_name: str,
+    target_svc_ns: str,
     proxy_type: str = "haproxy",
 ) -> bool:
-    """Check if any ConfigMap in namespace references the target service name."""
-    try:
-        cms = _safe_list_namespaced_configmaps(core, namespace)
-        target_lower = target_svc_name.lower()
-        for cm in cms:
-            for content in (cm.data or {}).values():
-                if isinstance(content, str):
-                    capped = content[:_MAX_CONFIGMAP_PARSE_BYTES] if len(content) > _MAX_CONFIGMAP_PARSE_BYTES else content
-                    if target_lower in capped.lower():
-                        return True
-        return False
-    except Exception as e:
-        logger.debug("Failed to check configmaps in %s for %s: %s", namespace, target_svc_name, e)
-        return False
+    """True if a proxy Deployment's own ConfigMap routes to the target Service."""
+    for dep in deployments:
+        backends = _extract_backends_from_configmaps(
+            core, dep.metadata.namespace or "default", proxy_type, _deployment_configmap_names(dep),
+        )
+        if any(b["service"] == target_svc_name and b["namespace"] == target_svc_ns for b in backends):
+            return True
+    return False
 
 
 def _has_target_deployment_match(
@@ -1856,27 +1883,27 @@ def _has_target_deployment_match(
     deployments: list,
     proxy_type: str = "haproxy",
 ) -> bool:
-    """Check if deployment name/labels or DB ProxyDeployment matches the target."""
-    target_slug = (getattr(target, "slug", "") or getattr(target, "name", "") or "").lower()[:20]
-    for d in deployments:
-        d_name = (getattr(d.metadata, "name", "") or "").lower()
-        if target_slug and target_slug in d_name:
-            return True
+    """True if one of the live Deployments is this target's own Forge proxy.
 
-    if db and getattr(target, "id", None):
-        try:
-            from models.benchmark import ProxyDeployment, ProxyDeploymentStatus
-            deploy = db.query(ProxyDeployment).filter_by(
-                target_id=target.id,
-                proxy_type=proxy_type,
-            ).filter(
-                ProxyDeployment.status.in_([
-                    ProxyDeploymentStatus.READY,
-                    ProxyDeploymentStatus.DISCOVERED,
-                ])
-            ).first()
-            if deploy:
-                return True
-        except Exception as e:
-            logger.debug("Failed to query ProxyDeployment for target %s: %s", target.id, e)
+    Exact identity only: the Deployment's name or Helm instance label equals the
+    helm_release recorded on this target's ProxyDeployment. A row alone (without
+    its live Deployment) never matches, so removed proxies drop out.
+    """
+    if not db or not getattr(target, "id", None):
+        return False
+    try:
+        releases = {
+            r for (r,) in db.query(ProxyDeployment.helm_release).filter(
+                ProxyDeployment.target_id == target.id,
+                ProxyDeployment.proxy_type == proxy_type,
+                ProxyDeployment.helm_release.isnot(None),
+            ).all()
+        }
+    except Exception as e:
+        logger.debug("Failed to query ProxyDeployment for target %s: %s", target.id, e)
+        return False
+    for d in deployments:
+        labels = d.metadata.labels or {}
+        if d.metadata.name in releases or labels.get("app.kubernetes.io/instance") in releases:
+            return True
     return False
