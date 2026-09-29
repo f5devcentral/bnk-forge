@@ -71,6 +71,8 @@ class TopologyRoute(BaseModel):
     conditionMessage: str | None = None
     isMcp: bool = False
     mcpInfo: TopologyMcpInfo | None = None
+    # L4Route per-backend service settings, keyed by backend then setting.
+    serviceSettings: dict[str, dict[str, float]] | None = None
 
 
 class TopologyNetworkPolicyExtension(BaseModel):

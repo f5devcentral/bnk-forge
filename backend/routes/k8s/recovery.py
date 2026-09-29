@@ -428,55 +428,57 @@ def resync_cwc_certs(
             steps=[{"step": "read_cert_manager_cert", "status": "failed", "error": str(e)}],
         )
 
-    # Step 2: Copy to cwc-license-certs
+    # From here on the secret may have changed: clear the caches on every exit path.
     try:
-        _copy_cert_to_cwc_license_secret(api_client, cert_data, cwc_ns)
-        steps.append({"step": "update_cwc_license_certs", "status": "ok"})
-    except QKViewError as e:
-        _invalidate_cwc_caches(cluster_id)
+        # Step 2: Copy to cwc-license-certs
+        try:
+            _copy_cert_to_cwc_license_secret(api_client, cert_data, cwc_ns)
+            steps.append({"step": "update_cwc_license_certs", "status": "ok"})
+        except QKViewError as e:
+            return CWCCertResyncResponse(
+                success=False,
+                message=f"Failed to update cwc-license-certs: {e}",
+                steps=steps + [{"step": "update_cwc_license_certs", "status": "failed", "error": str(e)}],
+            )
+
+        # Step 3: Restart CWC pod
+        try:
+            deleted_pod = _restart_cwc_pod(api_client, cwc_ns)
+            steps.append({
+                "step": "restart_cwc_pod",
+                "status": "ok",
+                "detail": f"Deleted pod: {deleted_pod}",
+            })
+        except QKViewError as e:
+            steps.append({
+                "step": "restart_cwc_pod",
+                "status": "failed",
+                "error": str(e),
+            })
+            # Continue — cert update was successful
+
+        # Step 4: Clean up stale agent pods
+        try:
+            _cleanup_all_client_pods(api_client, cwc_ns)
+            steps.append({"step": "cleanup_agent_pods", "status": "ok"})
+        except Exception as e:
+            steps.append({
+                "step": "cleanup_agent_pods",
+                "status": "warning",
+                "error": str(e),
+            })
+            # Non-fatal — agent pod will be recreated on next request
+
         return CWCCertResyncResponse(
-            success=False,
-            message=f"Failed to update cwc-license-certs: {e}",
-            steps=steps + [{"step": "update_cwc_license_certs", "status": "failed", "error": str(e)}],
+            success=True,
+            message=(
+                "CWC certs re-synced from cert-manager. "
+                "Licensing and QKView should work after CWC pod restarts (~30s)."
+            ),
+            steps=steps,
         )
-
-    # Step 3: Restart CWC pod
-    try:
-        deleted_pod = _restart_cwc_pod(api_client, cwc_ns)
-        steps.append({
-            "step": "restart_cwc_pod",
-            "status": "ok",
-            "detail": f"Deleted pod: {deleted_pod}",
-        })
-    except QKViewError as e:
-        steps.append({
-            "step": "restart_cwc_pod",
-            "status": "failed",
-            "error": str(e),
-        })
-        # Continue — cert update was successful
-
-    # Step 4: Clean up stale agent pods
-    try:
-        _cleanup_all_client_pods(api_client, cwc_ns)
-        steps.append({"step": "cleanup_agent_pods", "status": "ok"})
-    except Exception as e:
-        steps.append({
-            "step": "cleanup_agent_pods",
-            "status": "warning",
-            "error": str(e),
-        })
-        # Non-fatal — agent pod will be recreated on next request
-
-    _invalidate_cwc_caches(cluster_id)
-    return CWCCertResyncResponse(
-        success=True,
-        message=(
-            "CWC certs re-synced from cert-manager. "
-            "Licensing and QKView should work after CWC pod restarts (~30s)."
-        ),
-        steps=steps,
-    )
+    finally:
+        _invalidate_cwc_caches(cluster_id)
 
 
 @router.post(

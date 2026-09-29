@@ -1325,3 +1325,39 @@ class TestAzureAuthMethodGuards:
                                    azure_tenant_id="tenant-1", azure_client_secret="typed-before-switch")
         res = CredentialTemplateService(db).create_template(data)
         assert res["has_azure_client_secret"] is False
+
+    def test_sso_template_cannot_be_created_as_default(self, db):
+        data = _make_template_data(name="azure-sso-default", provider="azure", azure_auth_method="sso",
+                                   is_default=True)
+        with pytest.raises(BadRequestError, match="cannot be the Azure default"):
+            CredentialTemplateService(db).create_template(data)
+
+    def test_default_template_cannot_switch_to_sso(self, db):
+        t = _create_template_in_db(db, name="azure-sp-default", provider="azure", aws_access_key_id=None,
+                                   azure_auth_method="service_principal", is_default=True)
+        with pytest.raises(BadRequestError, match="cannot be the Azure default"):
+            CredentialTemplateService(db).update_template(t.id, _make_update_data(azure_auth_method="sso"))
+
+    def test_switch_to_sso_clears_legacy_credentials_blob(self, db):
+        from core.encryption import encrypt_value
+        t = _create_template_in_db(db, name="azure-sp-blob", provider="azure", aws_access_key_id=None,
+                                   azure_auth_method="service_principal",
+                                   azure_credentials_encrypted=encrypt_value('{"client_id": "c", "client_secret": "s"}'))
+        CredentialTemplateService(db).update_template(t.id, _make_update_data(azure_auth_method="sso"))
+        assert t.azure_credentials_encrypted is None
+
+    @patch("services.credential_template_service.AzureAuthService")
+    def test_successful_poll_resolves_refresh_failure_notification(self, mock_azure_cls, db):
+        from models import Notification
+        from services.credential_refresh_service import azure_refresh_failure_key
+        mock_azure_cls.return_value.poll_for_token.return_value = {
+            "access_token": "a", "refresh_token": "r", "expires_in": 3600,
+        }
+        t = self._sso_template(db)
+        n = Notification(user="admin", type="warning", title="Azure SSO Credential Refresh Failed",
+                         message="m", dedupe_key=azure_refresh_failure_key(t.id), is_read=False)
+        db.add(n)
+        db.commit()
+        CredentialTemplateService(db).poll_sso(t.id, "device-code")
+        db.refresh(n)
+        assert n.is_read is True

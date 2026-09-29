@@ -225,17 +225,16 @@ def _probe_agent_cards(
                 pods_cache[ns] = []
         return pods_cache[ns]
 
-    def selected_pods(candidate: dict) -> list[str]:
-        """Running pods backing the Service, matched by its label selector."""
+    def backing_pod(candidate: dict) -> str | None:
+        """A Running pod behind the Service, matched by its label selector."""
         selector = candidate.get("selector") or {}
         if not selector:
-            return []
-        names = []
+            return None
         for p in get_namespace_pods(candidate["namespace"]):
             labels = getattr(p.metadata, "labels", None) or {}
             if getattr(p.status, "phase", "") == "Running" and all(labels.get(k) == v for k, v in selector.items()):
-                names.append(p.metadata.name)
-        return names
+                return p.metadata.name
+        return None
 
     def probe_one(candidate: dict) -> None:
         svc_name = candidate["name"]
@@ -249,37 +248,43 @@ def _probe_agent_cards(
         deadline = time.monotonic() + _PROBE_BUDGET_SECONDS
         attempts = 0
 
-        def try_card(fetch: Any, target: str) -> dict | None:
+        def budget_left() -> bool:
+            return attempts < _MAX_PROBES_PER_CANDIDATE and time.monotonic() < deadline
+
+        def attempt(fetch: Any, target: str, path: str) -> dict | None:
             nonlocal attempts
-            for path in _AGENT_CARD_PATHS:
-                if attempts >= _MAX_PROBES_PER_CANDIDATE or time.monotonic() >= deadline:
-                    return None
-                attempts += 1
-                try:
-                    resp = fetch(name=target, namespace=svc_ns, path=path, _request_timeout=5)
-                except Exception as exc:
-                    logger.debug("A2A probe %s/%s via %s (%s) — %s", svc_ns, svc_name, target, path, exc)
-                    continue
-                normalized = _normalize_agent_card(_parse_json_or_python_dict(resp))
-                if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
-                    return normalized
+            attempts += 1
+            try:
+                resp = fetch(name=target, namespace=svc_ns, path=path, _request_timeout=5)
+            except Exception as exc:
+                logger.debug("A2A probe %s/%s via %s (%s) — %s", svc_ns, svc_name, target, path, exc)
+                return None
+            normalized = _normalize_agent_card(_parse_json_or_python_dict(resp))
+            if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
+                return normalized
             return None
 
-        # 1. Service proxy; 2. pod proxy fallback (e.g. GKE VPC-native clusters
-        # where the service proxy 503s).
+        # For each port and path: the service proxy, then one backing pod (GKE
+        # VPC-native clusters 503 the service proxy). Interleaving keeps a slow
+        # or failing service proxy from spending the budget before the pod
+        # fallback runs. The pod is looked up only once the service proxy fails.
         card_found = None
+        pod: list[str | None] = []
         for port in ports_to_try:
-            card_found = try_card(core_v1.connect_get_namespaced_service_proxy_with_path, f"{svc_name}:{port}")
-            if card_found:
-                break
-        if not card_found:
-            for pod_name in selected_pods(candidate):
-                for port in ports_to_try:
-                    card_found = try_card(core_v1.connect_get_namespaced_pod_proxy_with_path, f"{pod_name}:{port}")
-                    if card_found:
-                        break
+            for path in _AGENT_CARD_PATHS:
+                if not budget_left():
+                    break
+                card_found = attempt(core_v1.connect_get_namespaced_service_proxy_with_path, f"{svc_name}:{port}", path)
                 if card_found:
                     break
+                if not pod:
+                    pod.append(backing_pod(candidate))
+                if pod[0] and budget_left():
+                    card_found = attempt(core_v1.connect_get_namespaced_pod_proxy_with_path, f"{pod[0]}:{port}", path)
+                    if card_found:
+                        break
+            if card_found or not budget_left():
+                break
 
         if card_found:
             candidate["agentCard"] = card_found

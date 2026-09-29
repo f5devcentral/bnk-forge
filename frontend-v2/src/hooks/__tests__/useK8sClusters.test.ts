@@ -311,7 +311,7 @@ describe('useTestClusterConnection', () => {
 });
 
 describe('useDetectClusters', () => {
-  it('falls back to module outputs when no credential template is bound', async () => {
+  it('registers module outputs when no credential template is bound', async () => {
     server.use(
       http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () =>
         HttpResponse.json({
@@ -340,7 +340,7 @@ describe('useDetectClusters', () => {
     expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-module']);
   });
 
-  it('registers clusters from the bound credential template only', async () => {
+  it('registers module outputs first, then clusters from the bound credential template', async () => {
     server.use(
       http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
         return HttpResponse.json({
@@ -370,7 +370,7 @@ describe('useDetectClusters', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-prod']);
+    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-module', 'eks-prod']);
   });
 });
 

@@ -663,6 +663,20 @@ class TestProjectServiceUpdate:
 
     @patch("services.project_service.invalidate_cache")
     @patch("services.project_service.cache")
+    def test_sso_azure_default_template_not_bound(self, mock_cache, mock_inv, db):
+        from models import CloudCredentialTemplate, Project
+
+        db.add(CloudCredentialTemplate(name="Azure SSO Default", provider="azure",
+                                       azure_auth_method="sso", is_default=True))
+        db.commit()
+        created = ProjectService(db).create_project(_make_create_data(
+            name="Azure Default Project", project_type="cloud-azure", cloud_provider="azure",
+        ))
+        project = db.query(Project).filter(Project.id == created["project_id"]).first()
+        assert project.credential_template_id is None
+
+    @patch("services.project_service.invalidate_cache")
+    @patch("services.project_service.cache")
     def test_sso_azure_template_cannot_be_bound(self, mock_cache, mock_inv, db):
         from models import CloudCredentialTemplate
 

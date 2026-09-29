@@ -146,6 +146,39 @@ class TestCWCCertResyncEndpoint:
         mock_cleanup.assert_called_once()
 
     @patch("routes.k8s.recovery._detect_cwc_namespace", return_value="f5-utils")
+    @patch("routes.k8s.recovery._restart_cwc_pod")
+    @patch("routes.k8s.recovery._copy_cert_to_cwc_license_secret")
+    @patch("routes.k8s.recovery._wait_for_secret")
+    @patch("routes.k8s.recovery.KubernetesService")
+    def test_resync_invalidates_caches_when_restart_raises(
+        self,
+        mock_k8s_svc,
+        mock_wait,
+        mock_copy,
+        mock_restart,
+        _mock_detect,
+        client,
+        operator_headers,
+        all_test_users,
+    ):
+        """An unexpected error after the secret was rewritten still clears the caches."""
+        from kubernetes.client.rest import ApiException
+
+        mock_k8s_svc.return_value.get_cluster.return_value = MagicMock()
+        mock_k8s_svc.return_value.load_kubeconfig.return_value = MagicMock()
+        mock_wait.return_value = {"tls.crt": "c", "tls.key": "k", "ca.crt": "ca"}
+        mock_restart.side_effect = ApiException(status=500, reason="boom")
+
+        with patch("routes.k8s.recovery.cache") as mock_cache:
+            resp = client.post("/api/k8s/clusters/1/recovery/cwc-certs", headers=operator_headers)
+
+        assert resp.status_code >= 400
+        mock_copy.assert_called_once()
+        deleted = {c.args[0] for c in mock_cache.delete.call_args_list}
+        assert "recovery:status:1" in deleted
+        assert "cwc:available:1" in deleted
+
+    @patch("routes.k8s.recovery._detect_cwc_namespace", return_value="f5-utils")
     @patch("routes.k8s.recovery._wait_for_secret")
     @patch("routes.k8s.recovery.KubernetesService")
     def test_resync_fails_when_cert_missing(

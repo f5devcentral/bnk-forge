@@ -53,6 +53,7 @@ import { useHelmReleases, useUninstallHelmRelease } from '@/hooks/useHelm';
 import { useProjects } from '@/hooks/useProjects';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { countDetectedClusters } from '@/lib/api/kubernetes';
 import { queryKeys } from '@/lib/queryKeys';
 import { notify, notifyError } from '@/lib/notify';
 import type { K8sCluster } from '@/types';
@@ -1233,11 +1234,11 @@ export default function KubernetesV2() {
             queryClient.invalidateQueries({
               queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
             });
+            // Module-output detection lists already-registered clusters as registered too.
+            const detected = countDetectedClusters(data);
             notify.success(
-              data.registered.length
-                ? `Found ${data.registered.length} cluster(s)`
-                : 'No new clusters found',
-              undefined,
+              detected ? `Detected ${detected} cluster(s)` : 'No clusters detected',
+              detected ? 'New clusters were registered; existing ones were left unchanged' : data.message,
               { category: 'system' },
             );
           } catch (error) {

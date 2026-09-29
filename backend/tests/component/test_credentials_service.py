@@ -14,6 +14,7 @@ from models import ApplicationSetting, CloudCredentialTemplate, Project
 from services.credentials_service import (
     CredentialUnavailableError,
     _decrypt_credential,
+    get_azure_service_principal_info,
     get_cloud_credentials_env,
     get_gcp_service_account_info,
 )
@@ -632,3 +633,30 @@ class TestAwsTfVarMirroring:
 
         assert "TF_VAR_aws_access_key_id" not in env
         assert "TF_VAR_aws_secret_access_key" not in env
+
+
+class TestAzureSSOTemplateNotProvisioning:
+    def _sso_template(self, db, **kwargs):
+        return _make_template(
+            db, name="Azure SSO", provider="azure", aws_auth_method=None, aws_access_key_id=None,
+            aws_secret_access_key_encrypted=None, azure_auth_method="sso", azure_tenant_id="tenant-1",
+            **kwargs,
+        )
+
+    def test_sso_default_template_not_used_for_unbound_azure_project(self, db, monkeypatch):
+        monkeypatch.delenv("ARM_TENANT_ID", raising=False)
+        self._sso_template(db, is_default=True)
+        project = _make_project(db, name="Unbound Azure", project_type="cloud-azure", cloud_provider="azure")
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        assert "ARM_TENANT_ID" not in env
+
+    @patch("services.credentials_service.decrypt_value",
+           return_value='{"client_id": "c", "client_secret": "s"}')
+    def test_sp_resolver_ignores_sso_template_blob(self, mock_dec, db):
+        template = self._sso_template(db, azure_credentials_encrypted="enc")
+        project = _make_project(db, name="Azure SSO Bound", project_type="cloud-azure",
+                                cloud_provider="azure", credential_template_id=template.id)
+
+        assert get_azure_service_principal_info(project, db) is None

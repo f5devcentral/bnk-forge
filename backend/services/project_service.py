@@ -579,6 +579,8 @@ class ProjectService(BaseService):
                 .filter(
                     CloudCredentialTemplate.is_default.is_(True),
                     CloudCredentialTemplate.provider == cloud_provider,
+                    # Entra ID SSO templates cannot provision.
+                    CloudCredentialTemplate.azure_auth_method.is_distinct_from("sso"),
                 )
                 .first()
             )

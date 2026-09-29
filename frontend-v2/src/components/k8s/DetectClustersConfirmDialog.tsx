@@ -22,8 +22,8 @@ export function DetectClustersConfirmDialog({ open, onOpenChange, onConfirm }: D
         <AlertDialogHeader>
           <AlertDialogTitle>Detect and register clusters?</AlertDialogTitle>
           <AlertDialogDescription>
-            This registers every cluster the project&apos;s cloud credential template can list, or, without a
-            bound template, the clusters deployed by this project&apos;s modules. Clusters already registered are skipped.
+            This registers the clusters deployed by this project&apos;s modules and every cluster the project&apos;s
+            cloud credential template can list. Clusters already registered are left unchanged.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

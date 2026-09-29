@@ -131,13 +131,13 @@ describe('BnkResourcesPanel', () => {
 
 const plane = (count: number, cpu: number, mem: number) => ({ count, cpu_millicores: cpu, memory_bytes: mem });
 
-function cluster(id: number, metrics: boolean, cpu: number): BnkClusterConsumption {
+function cluster(id: number, metrics: boolean, cpu: number, reachable = true): BnkClusterConsumption {
   return {
     cluster_id: id,
     cluster_name: `cluster-${id}`,
     cloud_provider: 'aws',
     region: 'us-east-1',
-    reachable: true,
+    reachable,
     bnk_installed: true,
     bnk_version: null,
     status: 'connected',
@@ -159,7 +159,7 @@ function response(clusters: BnkClusterConsumption[]): BnkConsumptionResponse {
     clusters,
     fleet_summary: {
       total_clusters: clusters.length,
-      reachable_clusters: clusters.length,
+      reachable_clusters: clusters.filter((c) => c.reachable).length,
       bnk_installed_clusters: clusters.length,
       total_bnk_pods: clusters.length,
       control_plane_pods: 0,
@@ -196,5 +196,24 @@ describe('BnkResourcesPanel metrics fallback', () => {
       />,
     );
     expect(screen.getAllByText('Across all BNK pods · 1 cluster without metrics not included')).toHaveLength(2);
+  });
+
+  it('does not blame metrics-server for offline clusters', () => {
+    render(<BnkResourcesPanel data={response([cluster(1, false, 0, false)])} isLoading={false} error={null} />);
+    expect(screen.queryByText(/metrics-server unavailable/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('Across all BNK pods · 1 cluster offline')).toHaveLength(2);
+  });
+
+  it('counts offline clusters apart from clusters without metrics', () => {
+    render(
+      <BnkResourcesPanel
+        data={response([cluster(1, true, 500), cluster(2, false, 0), cluster(3, false, 0, false)])}
+        isLoading={false}
+        error={null}
+      />,
+    );
+    expect(
+      screen.getAllByText('Across all BNK pods · 1 cluster without metrics not included · 1 cluster offline'),
+    ).toHaveLength(2);
   });
 });

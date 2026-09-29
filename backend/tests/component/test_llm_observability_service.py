@@ -495,7 +495,7 @@ class TestMultiClusterObservability:
         svc._k8s.get_cluster = lambda cid: c1 if cid == 1 else c2
         fake1 = _FakeApiClient(_router_for(3, 100, 5000, 1.0))
         fake2 = _FakeApiClient(_router_for(4, 50, 2000, 0.5))
-        svc._client = lambda cid: fake1 if cid == 1 else fake2
+        svc._client = lambda c: fake1 if c.id == 1 else fake2
 
         out = svc.stats(cluster_id=None, range_="1h")
         assert out["available"] is True
@@ -517,7 +517,7 @@ class TestMultiClusterObservability:
         c1.name = "us-east"
         svc._active_clusters = MagicMock(return_value=[c1])
         svc._k8s.get_cluster = lambda cid: c1
-        svc._client = lambda cid: _FakeApiClient(_boom)
+        svc._client = lambda c: _FakeApiClient(_boom)
 
         out = svc.stats(cluster_id=None, range_="1h")
         assert out["available"] is False
@@ -552,7 +552,7 @@ class TestMultiClusterObservability:
         # Mock client per cluster
         fake1 = _FakeApiClient(lambda s, q, p: _streams(*lines_c1))
         fake2 = _FakeApiClient(lambda s, q, p: _streams(*lines_c2))
-        svc._client = lambda cid: fake1 if cid == 1 else fake2
+        svc._client = lambda c: fake1 if c.id == 1 else fake2
 
         out = svc.logs(cluster_id=None, range_="1h", limit=10)
         assert out["available"] is True
@@ -581,7 +581,7 @@ class TestFleetFanOut:
             clusters.append(c)
         svc._active_clusters = MagicMock(return_value=clusters)
         fakes = {cid: _FakeApiClient(r) for cid, r in routers.items()}
-        svc._client = lambda cid: fakes[cid]
+        svc._client = lambda c: fakes[c.id]
         return svc
 
     def test_unavailable_cluster_is_reported_in_errors(self):
@@ -623,6 +623,23 @@ class TestFleetFanOut:
         out = svc.rankings(cluster_id=None, range_="1h")
         assert out["available"] is True
         assert all(len(threads) == 1 for threads in seen.values())
+
+    def test_unreachable_cluster_is_skipped_and_reported(self):
+        from services.reachability import ReachabilityState
+
+        loaded: list[int] = []
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: lambda s, q, p: _instant(_vector(7))})
+        client_for = svc._client
+        svc._client = lambda c: (loaded.append(c.id), client_for(c))[1]
+
+        def _state(_target_type, target_id):
+            return {"state": ReachabilityState.UNREACHABLE.value} if target_id == 2 else None
+
+        with patch("services.llm_observability_service.reachability_registry.get_state", side_effect=_state):
+            out = svc.stats(cluster_id=None, range_="1h")
+        assert loaded == [1]
+        assert out["total_requests"] == 5
+        assert out["errors"] == {"cluster-2": "unreachable"}
 
     def test_all_clusters_failing_carries_the_error_map(self):
         def _boom(sub, query, params):

@@ -22,6 +22,7 @@ from core.errors import AppError, BadRequestError, InternalError, NotFoundError
 from models import CloudCredentialTemplate
 from services.aws_auth_service import AWSAuthService
 from services.azure_auth_service import AzureAuthService, clear_azure_sso_session
+from services.credential_refresh_service import resolve_azure_refresh_failure
 from services.defaults_service import get_default
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,12 @@ def validate_provider(provider: Any) -> str:
             f"Must be one of: {supported}."
         )
     return provider
+
+
+_SSO_DEFAULT_ERROR = (
+    "An Entra ID SSO template cannot be the Azure default: projects provision through the "
+    "default template, which requires a service principal."
+)
 
 
 class _AwsTestError(Exception):
@@ -407,6 +414,10 @@ class CredentialTemplateService:
         if existing:
             raise BadRequestError(f"Credential template '{template_data.name}' already exists")
 
+        if (template_data.provider == 'azure' and getattr(template_data, "azure_auth_method", None) == 'sso'
+                and template_data.is_default):
+            raise BadRequestError(_SSO_DEFAULT_ERROR)
+
         # Default management
         if template_data.is_default:
             self.db.query(CloudCredentialTemplate).filter(
@@ -457,7 +468,7 @@ class CredentialTemplateService:
             template.gcp_credentials_encrypted = encrypt_value(template_data.gcp_credentials)
         if getattr(template_data, "azure_client_secret", None) and template.azure_auth_method != 'sso':
             template.azure_client_secret_encrypted = encrypt_value(template_data.azure_client_secret)
-        if template_data.azure_credentials:
+        if template_data.azure_credentials and template.azure_auth_method != 'sso':
             template.azure_credentials_encrypted = encrypt_value(template_data.azure_credentials)
         if template_data.ibmcloud_api_key:
             template.ibmcloud_api_key_encrypted = encrypt_value(template_data.ibmcloud_api_key)
@@ -548,7 +559,10 @@ class CredentialTemplateService:
                     f"Cannot switch to Entra ID SSO. {len(template.projects)} project(s) use this template, "
                     "and provisioning requires a service principal."
                 )
+            if template.is_default:
+                raise BadRequestError(_SSO_DEFAULT_ERROR)
             template.azure_client_secret_encrypted = None
+            template.azure_credentials_encrypted = None
         identity_changed = ((template.azure_tenant_id or None) != (old_tenant_id or None)
                             or (template.azure_client_id or None) != (old_client_id or None))
         if (method_changed and old_method == 'sso') or identity_changed:
@@ -815,6 +829,8 @@ class CredentialTemplateService:
             template.last_error_code = None
             template.last_error_message = None
 
+            resolve_azure_refresh_failure(self.db, template.id)
+
             self._create_audit_log("azure_sso_auth_completed", template, "success", {
                 "tenant_id": template.azure_tenant_id,
                 "token_expiry": template.azure_sso_token_expiry.isoformat(),
@@ -953,6 +969,8 @@ class CredentialTemplateService:
             template.last_error_at = None
             template.last_error_code = None
             template.last_error_message = None
+
+            resolve_azure_refresh_failure(self.db, template.id)
 
             self._create_audit_log("azure_sso_refreshed", template, "success", {
                 "token_expiry": template.azure_sso_token_expiry.isoformat(),
