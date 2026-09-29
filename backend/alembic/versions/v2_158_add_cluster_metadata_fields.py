@@ -1,7 +1,7 @@
 """Add cluster metadata fields to kubernetes_clusters.
 
-Revision ID: v2_157
-Revises: v2_156
+Revision ID: v2_158
+Revises: v2_157
 
 Adds node_count, connectivity_status, integration_status, zones, and
 access_method so cluster list/detail views can surface per-cluster
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "v2_157"
-down_revision = "v2_156"
+revision = "v2_158"
+down_revision = "v2_157"
 branch_labels = None
 depends_on = None
 
