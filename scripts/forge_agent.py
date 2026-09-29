@@ -275,7 +275,13 @@ class ForgeAgent:
                             pass
                         except Exception as e:
                             log.warning("Connection task ended: %s", e)
-                    log.info("Connection ended — reconnecting")
+                    if ws.close_code == 4409:
+                        # Forge closed us for a newer connection on the same agent
+                        # (duplicate process / AGENT_NAME): stop instead of flapping.
+                        log.error("Superseded by another connection for agent #%s — stopping", self.agent_id)
+                        self.running = False
+                    else:
+                        log.info("Connection ended — reconnecting")
 
             except Exception as e:
                 log.error("Connection error: %s", e)

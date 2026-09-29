@@ -8,6 +8,7 @@ proxy-vs-proxy comparison, and manages test client agents.
 """
 
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
@@ -127,7 +128,7 @@ class BenchmarkService(BaseService):
     # ================================================================
 
     def complete_run_with_aiperf_result(self, run_id: int, raw: dict) -> BenchmarkRun:
-        """Update an existing pending/running run with aiperf result data.
+        """Update an existing running run with aiperf result data.
 
         Used when an agent completes a run triggered from Forge.
         Unlike ingest_aiperf_result(), this updates the existing run row
@@ -136,6 +137,9 @@ class BenchmarkService(BaseService):
         run = self.db.query(BenchmarkRun).get(run_id)
         if not run:
             raise NotFoundError("benchmark_run", run_id)
+        if run.status != BenchmarkRunStatus.RUNNING:
+            # A late result must not overwrite a run already failed/cancelled/completed.
+            raise ConflictError("benchmark_run", f"Run #{run_id} is {run.status}, not running")
 
         # Parse the raw aiperf JSON (same logic as ingest_aiperf_result)
         req_lat = raw.get("request_latency", {})
@@ -920,26 +924,34 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def fail_interrupted_runs_for_agent(self, agent_id: int) -> list[int]:
-        """Mark an agent's RUNNING runs FAILED when it (re)connects.
+    def fail_interrupted_runs_for_agent(
+        self,
+        agent_id: int,
+        *,
+        only: Collection[int] | None = None,
+        keep: Collection[int] = (),
+        reason: str = "agent reconnected; run interrupted",
+    ) -> list[int]:
+        """Mark an agent's RUNNING runs FAILED when their connection is gone.
 
         A run's result is reported over the WebSocket it was dispatched on, so a
-        run still RUNNING when the agent opens a new connection can never report
-        back. Left RUNNING it blocks get_first_pending_run_for_agent (and the
-        group claim guard) forever. Rolls up affected run-groups. Caller commits.
+        run whose connection is gone can never report back. Left RUNNING it
+        blocks get_first_pending_run_for_agent (and the group claim guard)
+        forever. ``only`` limits this to the given runs; ``keep`` spares runs
+        whose dispatch is still in flight. Rolls up affected run-groups. Caller
+        commits.
         """
-        runs = (
-            self.db.query(BenchmarkRun)
-            .filter(
-                BenchmarkRun.agent_id == agent_id,
-                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
-            )
-            .all()
+        query = self.db.query(BenchmarkRun).filter(
+            BenchmarkRun.agent_id == agent_id,
+            BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
         )
+        if only is not None:
+            query = query.filter(BenchmarkRun.id.in_(list(only)))
+        runs = [r for r in query.all() if r.id not in keep]
         now = datetime.now(UTC)
         for run in runs:
             run.status = BenchmarkRunStatus.FAILED
-            run.error_message = "agent reconnected; run interrupted"
+            run.error_message = reason
             run.completed_at = now
         self.db.flush()
         for group_id in {r.run_group_id for r in runs if r.run_group_id}:
