@@ -175,7 +175,7 @@ export default function TaskHistory({ projectId, embedded = false }: TaskHistory
   };
 
   const { data: tasksData, isLoading, isError, error, refetch } = useTasks(taskParams);
-  const { data: taskStats } = useTaskStats({ days: 7 });
+  const { data: taskStats } = useTaskStats({ days: 7, project_id: projectId });
   const { data: taskDetails } = useTask(
     selectedTaskId || 0,
     showFullLogs ? { log_tail: undefined } : undefined,

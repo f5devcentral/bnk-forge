@@ -241,6 +241,10 @@ describe('normalizeProvider()', () => {
     expect(normalizeProvider('on-prem')).toBe('metal');
     expect(normalizeProvider('metal')).toBe('metal');
     expect(normalizeProvider('kubernetes')).toBe('metal');
+    expect(normalizeProvider('onprem')).toBe('metal');
+    expect(normalizeProvider('baremetal')).toBe('metal');
+    expect(normalizeProvider('vmware')).toBe('metal');
+    expect(normalizeProvider('vsphere')).toBe('metal');
   });
 
   it('normalizes IBM and ROKS aliases to ibm', () => {
