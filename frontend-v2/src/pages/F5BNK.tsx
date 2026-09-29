@@ -29,8 +29,8 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
-import { useBnkData } from '@/hooks/k8s/useBnk';
-import { keepPreviousForCluster, queryKeys } from '@/lib/queryKeys';
+import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
+import { keepPreviousForCluster } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -542,6 +542,8 @@ export default function F5BNK() {
     queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     queryClient.invalidateQueries({ queryKey: ['qkview'] });
     queryClient.invalidateQueries({ queryKey: ['licensing'] });
+    // Last, so its forced BNK data fetch is not cancelled by the broader invalidations above.
+    refreshBnkData(queryClient, selectedCluster);
   };
 
   const handleDescribe = (resource: K8sResource) => {
@@ -997,7 +999,7 @@ export default function F5BNK() {
                   setResourceToDelete(null);
                   setSelectedResource(null);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
+                  refreshBnkData(queryClient, selectedCluster);
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
                   notify.error(parsed.title, parsed.message, { category: 'cluster' });
@@ -1029,7 +1031,7 @@ export default function F5BNK() {
                     setEditDialogOpen(false);
                     setResourceToEdit(null);
                     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
+                    refreshBnkData(queryClient, selectedCluster);
                   }
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
@@ -1068,7 +1070,7 @@ export default function F5BNK() {
                 } else {
                   setCreateDialogOpen(false);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
+                  refreshBnkData(queryClient, selectedCluster);
                 }
               } catch (error: unknown) {
                 const parsed = parseApiError(error);

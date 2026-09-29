@@ -7,7 +7,7 @@ No mocking — these are pure data transformations.
 
 import pytest
 
-from schemas.f5bnk import TopologyAnalyzer
+from schemas.f5bnk import GatewayTopologyResponse, TopologyAnalyzer
 from services.bnk.topology import (
     _build_cne_instance,
     _build_data_plane,
@@ -120,6 +120,25 @@ class TestAnalyzeTopology:
         assert len(listener["routes"]) == 1
         assert listener["routes"][0]["name"] == "web-route"
         assert listener["routes"][0]["backends"][0]["name"] == "svc-1"
+
+    def test_route_service_settings_survive_response_model(self):
+        """L4Route per-backend serviceSettings are kept by the typed response."""
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway()]
+        resources["httproute"] = [_httproute("web-route", "gw-prod")]
+        result = analyze_topology({"resources": resources})
+        settings = {"svc-1": {"weight": 0.75}}
+        result["topology"][0]["listeners"][0]["routes"][0]["serviceSettings"] = settings
+
+        response = GatewayTopologyResponse(
+            topology=result["topology"],
+            dataPlane=result["dataPlane"],
+            referenceGrants=result["referenceGrants"],
+            counts=result["counts"],
+            cluster_id=1,
+        ).model_dump()
+
+        assert response["topology"][0]["listeners"][0]["routes"][0]["serviceSettings"] == settings
 
     def test_route_matches_by_section_name(self):
         """Route with sectionName only attaches to the matching listener."""

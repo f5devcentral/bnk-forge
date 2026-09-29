@@ -3,6 +3,7 @@
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { countDetectedClusters } from '@/lib/api/kubernetes';
 import type {
   K8sClusterCreateRequest,
   K8sClusterUpdateRequest,
@@ -114,12 +115,16 @@ export function useDetectClusters() {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 
-      if (data.registered.length > 0) {
-        notify.success(data.message, `Registered ${data.registered.length} cluster(s)`, { category: 'cluster' });
-      } else if (data.skipped.length > 0) {
-        notify.info(data.message, 'All discovered clusters are already registered', { category: 'cluster' });
+      // Module-output detection lists already-registered clusters as registered too.
+      const detected = countDetectedClusters(data);
+      if (detected > 0) {
+        notify.success(
+          `Detected ${detected} cluster(s)`,
+          'New clusters were registered; existing ones were left unchanged',
+          { category: 'cluster' },
+        );
       } else {
-        notify.info(data.message, undefined, { category: 'cluster' });
+        notify.info('No clusters detected', data.message, { category: 'cluster' });
       }
 
       if (data.errors.length > 0) {

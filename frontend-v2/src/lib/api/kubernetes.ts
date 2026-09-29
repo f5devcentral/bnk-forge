@@ -126,11 +126,19 @@ export const kubernetesApi = {
       errors: Array<{ provider: string; name: string | null; error: string }>;
     }>(`/api/projects/${projectId}/k8s/clusters/detect-credentials`).then((res) => res.data),
 
-  /** Discover through the project's bound credential template; without one, from deployed module outputs. */
+  /**
+   * Module outputs first, so clusters this project deployed stay linked to their module,
+   * then the bound credential template (names already registered are skipped).
+   */
   detectClusters: async (projectId: number) => {
+    const fromModules = await kubernetesApi.detectManagedClusters(projectId);
     const fromCredentials = await kubernetesApi.detectClustersFromCredentials(projectId);
-    if (fromCredentials.reason !== 'no_bound_template') return fromCredentials;
-    return kubernetesApi.detectManagedClusters(projectId);
+    return {
+      message: [fromModules.message, fromCredentials.message].join('. '),
+      registered: [...fromModules.registered, ...fromCredentials.registered],
+      skipped: [...fromModules.skipped, ...fromCredentials.skipped],
+      errors: [...fromModules.errors, ...fromCredentials.errors],
+    };
   },
 
   getClusterResources: (clusterId: number, resourceType: string, params?: { namespace?: string; label_selector?: string }) =>
@@ -418,3 +426,14 @@ export const kubernetesApi = {
   assignBnkClusterMembers: (clusterId: number, data: BnkClusterMemberAssignRequest) =>
     apiClient.post<BnkClusterMemberAssignResponse>(`/api/k8s/clusters/${clusterId}/bnk-members`, data).then((res) => res.data),
 };
+
+/** Distinct clusters in a detectClusters result: credential discovery skips, by name, clusters the module pass registered. */
+export function countDetectedClusters(result: Awaited<ReturnType<typeof kubernetesApi.detectClusters>>): number {
+  const names = new Set<string>();
+  let unnamed = 0;
+  for (const cluster of [...result.registered, ...result.skipped]) {
+    if ('name' in cluster) names.add(cluster.name);
+    else unnamed += 1;
+  }
+  return names.size + unnamed;
+}

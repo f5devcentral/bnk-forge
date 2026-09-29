@@ -9,7 +9,7 @@ interface ConditionsListProps {
 }
 
 // Condition types where status=True is the bad state (Gateway API listener/route conditions).
-const NEGATIVE_POLARITY_TYPES = new Set(['Conflicted', 'Degraded', 'PartiallyInvalid']);
+const NEGATIVE_POLARITY_TYPES = new Set(['Conflicted', 'Degraded', 'OverlappingTLSConfig', 'PartiallyInvalid']);
 
 function conditionSeverity(condition: K8sCondition): 'healthy' | 'unhealthy' | 'degraded' {
   const lower = condition.status?.toLowerCase();

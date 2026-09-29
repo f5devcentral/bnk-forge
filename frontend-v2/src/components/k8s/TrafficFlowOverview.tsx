@@ -18,7 +18,7 @@ import { useMemo, useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useBnkData } from '@/hooks/k8s/useBnk';
+import { useBnkData, useBnkRefresh } from '@/hooks/k8s/useBnk';
 import { getSeverityConfig } from '@/lib/health-severity';
 
 import type {
@@ -930,6 +930,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
     namespace ? { namespace } : undefined,
     { pollingEnabled: false, enabled: !!clusterId },
   );
+  const refresh = useBnkRefresh(clusterId);
 
   const topology = useMemo(() => (data?.topology as TopologyGateway[]) ?? [], [data?.topology]);
   const dataPlane = data?.dataPlane as TopologyDataPlane | undefined;
@@ -1021,7 +1022,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
             <StatChip icon={Globe} value={0} label="gateways" variant="info" />
             <StatChip icon={Route} value={0} label="routes" variant="muted" />
           </div>
-          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} className="h-7">
+          <Button variant="ghost" size="sm" onClick={() => refresh()} disabled={isFetching} className="h-7">
             <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', isFetching && 'animate-spin')} />
             Refresh
           </Button>
@@ -1055,7 +1056,7 @@ export function TrafficFlowOverview({ clusterId, namespace, onSelectResource, on
             <StatChip icon={Shield} value={totalPolicies} label={totalPolicies !== 1 ? 'policies' : 'policy'} variant="warning" />
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} className="h-7">
+        <Button variant="ghost" size="sm" onClick={() => refresh()} disabled={isFetching} className="h-7">
           <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', isFetching && 'animate-spin')} />
           Refresh
         </Button>
