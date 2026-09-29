@@ -170,7 +170,7 @@ class TestAgentAuthFlagOn:
         """The bootstrap token may not upsert a non-builtin agent's row."""
         from models.benchmark import BenchmarkAgent
 
-        db.add(BenchmarkAgent(name="remote-victim", status="connected", managed=False, tags={}))
+        db.add(BenchmarkAgent(name="remote-victim", status="connected", managed=False, tags={"builtin": True}))
         db.commit()
         payload = {**_register_payload(), "name": "remote-victim", "tags": {"builtin": True}}
         with patch("routes.benchmarks.settings") as mock_settings:
@@ -182,6 +182,57 @@ class TestAgentAuthFlagOn:
                     json=payload,
                     headers=self._headers_for(sub="forge-builtin-agent", role="agent"),
                 )
+        assert resp.status_code == 400
+        assert "AGENT_AUTH_FORBIDDEN" in resp.text
+
+    def _post(self, path, json, **claims):
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                return self._client.post(path, json=json, headers=self._headers_for(**claims))
+
+    def test_builtin_marker_is_server_owned(self, client, db):
+        from models.benchmark import BenchmarkAgent
+
+        self._client = client
+        tags = {"builtin": True, "_forge_builtin": True, "site": "lab"}
+        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "ext-agent", "tags": tags},
+                          sub="op-agent", role="agent", agent_id=12345)
+        assert resp.status_code in (200, 201), resp.text
+        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "new-builtin", "tags": tags},
+                          sub="forge-builtin-agent", role="agent")
+        assert resp.status_code in (200, 201), resp.text
+
+        db.expire_all()
+        ext = db.query(BenchmarkAgent).filter_by(name="ext-agent").one()
+        builtin = db.query(BenchmarkAgent).filter_by(name="new-builtin").one()
+        assert ext.tags == {"site": "lab"}
+        assert builtin.tags == {"site": "lab", "builtin": True, "_forge_builtin": True}
+
+    def test_bootstrap_adopts_legacy_builtin_row_once(self, client, db):
+        from models.benchmark import BenchmarkAgent
+
+        self._client = client
+        db.add(BenchmarkAgent(name="forge-local", status="connected", managed=False, tags={"builtin": True}))
+        db.commit()
+        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local",
+                          "tags": {"builtin": True}}, sub="forge-builtin-agent", role="agent")
+        assert resp.status_code in (200, 201), resp.text
+        db.expire_all()
+        assert db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags["_forge_builtin"] is True
+
+    def test_bootstrap_ingest_bound_to_builtin_agent(self, client, db):
+        from models.benchmark import BenchmarkAgent
+
+        self._client = client
+        db.add_all([
+            BenchmarkAgent(name="builtin-a", status="connected", managed=False, tags={"_forge_builtin": True}),
+            BenchmarkAgent(name="victim-a", status="connected", managed=False, tags={"builtin": True}),
+        ])
+        db.commit()
+        resp = self._post("/api/benchmarks/results/aiperf?agent_name=victim-a", {"request_count": {"avg": 1}},
+                          sub="forge-builtin-agent", role="agent")
         assert resp.status_code == 400
         assert "AGENT_AUTH_FORBIDDEN" in resp.text
 
@@ -373,8 +424,9 @@ class TestWSTokenValidationLogic:
         from services.auth_service import create_access_token
 
         builtin = BenchmarkAgent(name="forge-local", status="connected", managed=False,
-                                 tags={"role": "forge-agent", "builtin": True})
-        other = BenchmarkAgent(name="remote-1", status="connected", managed=False, tags={})
+                                 tags={"role": "forge-agent", "builtin": True, "_forge_builtin": True})
+        # forge_agent.py sends tags.builtin=true for every agent it runs.
+        other = BenchmarkAgent(name="remote-1", status="connected", managed=False, tags={"builtin": True})
         db.add_all([builtin, other])
         db.commit()
 

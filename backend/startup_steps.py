@@ -388,8 +388,9 @@ def mint_builtin_agent_token_step():
         # 0644, not 0600: the agent container runs as uid 1001 (Dockerfile.agent)
         # and the backend as another uid, and the file crosses between them via
         # the compose mount. World-read is the mechanism, not an accident -- the
-        # token is deliberately narrow (role=agent, no agent_id) so this exposure
-        # buys register + claimless WS and nothing else. Never widen its claims.
+        # token is deliberately narrow (role=agent, no agent_id): the backend lets it
+        # register, connect and report only as the built-in agent row. Never widen
+        # its claims.
         # chmod AFTER write, not via an opener: an opener's mode applies only on
         # create, so a rewrite of an existing 0600 file would keep it 0600 and
         # the agent could not read the reissued token.

@@ -162,9 +162,11 @@ def ingest_benchmark_result(request: Request, data: BenchmarkResultPush, db: Ses
     BenchmarkResult JSON after a run completes. We extract key fields for
     denormalization and store the full result as-is.
     """
-    _require_agent_bearer(request)
+    claims = _require_agent_bearer(request)
+    result_data = data.model_dump()
+    result_data["agent_name"] = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
     svc = BenchmarkService(db)
-    run = svc.ingest_result(data.model_dump())
+    run = svc.ingest_result(result_data)
     db.commit()
     return {
         "id": run.id,
@@ -217,7 +219,7 @@ def ingest_aiperf_result(
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
     """
-    _require_agent_bearer(request)
+    agent_name = _bootstrap_agent_name(_require_agent_bearer(request), db, agent_name)
     svc = BenchmarkService(db)
     run = svc.ingest_aiperf_result(
         raw,
@@ -440,17 +442,13 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     already exists, it updates its info and marks it as connected.
     """
     claims = _require_agent_bearer(request)
-    if claims and _is_bootstrap_token(claims):
-        # The bootstrap token may only (re)register the built-in agent; upserting
-        # another agent's row would let it connect as that agent over the WS.
-        existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
-        if existing and not _is_builtin_agent(existing):
-            raise BadRequestError(
-                f"Bootstrap token may not re-register agent '{data.name}'",
-                code="AGENT_AUTH_FORBIDDEN",
-            )
+    bootstrap = _is_bootstrap_token(claims)
+    if bootstrap:
+        _check_bootstrap_register(db, data.name)
+    payload = data.model_dump()
+    payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap)
     svc = BenchmarkService(db)
-    result = svc.register_agent(data.model_dump())
+    result = svc.register_agent(payload)
     db.commit()
     return result
 
@@ -1498,9 +1496,60 @@ def _is_bootstrap_token(payload: dict) -> bool:
     )
 
 
+# Server-owned tag marking the agent row the bootstrap token registered. Clients
+# cannot set it (forge_agent.py sends tags.builtin=true for EVERY agent it runs).
+_BUILTIN_TAG = "_forge_builtin"
+# The compose default AGENT_NAME of the built-in agent, for adopting its row
+# registered before the marker existed.
+_LEGACY_BUILTIN_NAME = "forge-local"
+
+
 def _is_builtin_agent(agent: BenchmarkAgent | None) -> bool:
-    """The built-in agent registers unmanaged with tags.builtin=true (forge_agent.py)."""
-    return bool(agent and not agent.managed and (agent.tags or {}).get("builtin") is True)
+    """True for the unmanaged agent row the bootstrap token registered."""
+    return bool(agent and not agent.managed and (agent.tags or {}).get(_BUILTIN_TAG) is True)
+
+
+def _server_owned_builtin_tags(tags: dict | None, *, builtin: bool) -> dict | None:
+    """Drop client-supplied built-in markers; set them only for the bootstrap token."""
+    if tags is None and not builtin:
+        return None
+    owned = {k: v for k, v in (tags or {}).items() if k not in ("builtin", _BUILTIN_TAG)}
+    if builtin:
+        owned.update({"builtin": True, _BUILTIN_TAG: True})
+    return owned
+
+
+def _check_bootstrap_register(db: Session, name: str) -> None:
+    """The bootstrap token may create a new agent or re-register the built-in one.
+
+    Upserting another agent's row would let it connect and report as that agent.
+    A pre-marker built-in row (legacy name, unmanaged) is adopted once, while no
+    marked row exists.
+    """
+    existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == name).first()
+    if existing is None or _is_builtin_agent(existing):
+        return
+    if existing.name == _LEGACY_BUILTIN_NAME and not existing.managed and not any(
+        _is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False))
+    ):
+        return
+    raise BadRequestError(
+        f"Bootstrap token may not re-register agent '{name}'",
+        code="AGENT_AUTH_FORBIDDEN",
+    )
+
+
+def _bootstrap_agent_name(claims: dict, db: Session, agent_name: str | None) -> str | None:
+    """The bootstrap token writes results only as the built-in agent (or no agent)."""
+    if not _is_bootstrap_token(claims) or agent_name is None:
+        return agent_name
+    agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == agent_name).first()
+    if not _is_builtin_agent(agent):
+        raise BadRequestError(
+            f"Bootstrap token may not write results as agent '{agent_name}'",
+            code="AGENT_AUTH_FORBIDDEN",
+        )
+    return agent_name
 
 
 def _is_builtin_agent_id(agent_id: int) -> bool:
