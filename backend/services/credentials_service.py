@@ -350,6 +350,8 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                 default_template = db.query(CloudCredentialTemplate).filter(
                     CloudCredentialTemplate.is_default.is_(True),
                     CloudCredentialTemplate.provider == project_provider,
+                    # Entra ID SSO templates cannot provision.
+                    CloudCredentialTemplate.azure_auth_method.is_distinct_from("sso"),
                 ).first()
                 if default_template:
                     logger.info(
@@ -457,7 +459,7 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
                 CloudCredentialTemplate.is_default.is_(True),
             ).first()
 
-    if template and template.provider == "azure" and template.azure_tenant_id:
+    if template and template.provider == "azure" and template.azure_auth_method != "sso" and template.azure_tenant_id:
         # Check discrete fields first (PR 207 / modern UI)
         if getattr(template, "azure_client_id", None) and getattr(template, "azure_client_secret_encrypted", None):
             secret = _decrypt_credential(template.azure_client_secret_encrypted, "Azure client secret")

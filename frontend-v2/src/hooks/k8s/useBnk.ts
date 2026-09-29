@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
+import { hashKey, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
   GatewayTopologyResponse,
@@ -20,20 +20,36 @@ import { useAppMutation } from '@/hooks/lib/useAppMutation';
 // cache key, so switching tabs is instant (no re-fetch).
 // ========================================================================
 
+// Hashes of bnkData queries whose next fetch must bypass the backend cache.
+const forceNextFetch = new Set<string>();
+
+/**
+ * Refetch every cached BNK data variant of a cluster past the backend cache.
+ * Use after mutations and for explicit Refresh; call it after any broader
+ * invalidation of the same keys so this forced fetch is the one that runs.
+ */
+export function refreshBnkData(queryClient: QueryClient, clusterId: number) {
+  const filters = { queryKey: queryKeys.k8s.clusters.bnkDataAll(clusterId) };
+  for (const query of queryClient.getQueryCache().findAll(filters)) forceNextFetch.add(query.queryHash);
+  return queryClient.invalidateQueries(filters);
+}
+
+export function useBnkRefresh(clusterId: number) {
+  const queryClient = useQueryClient();
+  return useCallback(() => refreshBnkData(queryClient, clusterId), [queryClient, clusterId]);
+}
+
 export function useBnkData(
   clusterId: number,
   params?: { namespace?: string },
   options?: { pollingEnabled?: boolean; enabled?: boolean }
 ) {
-  const queryClient = useQueryClient();
   // One key per namespace: `undefined`, `{}` and `{ namespace: undefined }` all mean "all namespaces".
   const namespace = params?.namespace || undefined;
-  const queryKey = queryKeys.k8s.clusters.bnkData(clusterId, namespace ? { namespace } : undefined);
-  const query = useQuery({
-    queryKey,
+  return useQuery({
+    queryKey: queryKeys.k8s.clusters.bnkData(clusterId, namespace ? { namespace } : undefined),
     queryFn: ({ queryKey }) => {
-      // Refetches triggered by invalidation (mutations, Refresh) bypass the backend's BNK data cache.
-      const force = queryClient.getQueryState(queryKey)?.isInvalidated || undefined;
+      const force = forceNextFetch.delete(hashKey(queryKey)) || undefined;
       return api.getBnkData(clusterId, { namespace, force });
     },
     enabled: options?.enabled !== false && !!clusterId,
@@ -41,8 +57,6 @@ export function useBnkData(
     refetchInterval: options?.pollingEnabled !== false ? POLL_INTERVALS.SLOW : false,
     placeholderData: keepPreviousForCluster(clusterId),
   });
-  // An explicit refresh goes through invalidation so it bypasses the backend cache too.
-  return { ...query, refetch: () => queryClient.invalidateQueries({ queryKey, exact: true }) };
 }
 
 // Convenience selectors — each returns a slice of the unified data

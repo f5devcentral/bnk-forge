@@ -20,7 +20,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { useF5BNKHealth } from '@/hooks/useK8s';
+import { useBnkRefresh, useF5BNKHealth } from '@/hooks/useK8s';
 import { useClusterDriftStatus } from '@/hooks/useDrift';
 import { LicenseStatusCard } from '@/components/k8s/LicenseStatusCard';
 import { Badge } from '@/components/ui/badge';
@@ -189,6 +189,7 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
     pollingEnabled: true,
   });
   const { data: driftStatus } = useClusterDriftStatus(clusterId);
+  const refresh = useBnkRefresh(clusterId);
 
   // Dialog state for View Logs
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
@@ -495,7 +496,7 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => refetch()}
+            onClick={() => refresh()}
             disabled={isFetching}
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />

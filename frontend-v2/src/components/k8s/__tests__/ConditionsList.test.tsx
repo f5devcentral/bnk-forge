@@ -38,12 +38,14 @@ describe('ConditionsList', () => {
         conditions={[
           { type: 'Conflicted', status: 'False' },
           { type: 'ResolvedRefs', status: 'False' },
+          { type: 'OverlappingTLSConfig', status: 'True' },
         ]}
       />
     );
     const [conflicted, resolvedRefs] = screen.getAllByText('False');
     expect(conflicted.className).toContain('success');
     expect(resolvedRefs.className).toContain('destructive');
+    expect(screen.getByText('True').className).toContain('destructive');
   });
 
   it('keeps the card neutral and puts status color on small elements', () => {

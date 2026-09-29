@@ -12,7 +12,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useF5GatewayTopology } from '@/hooks/useK8s';
+import { useBnkRefresh, useF5GatewayTopology } from '@/hooks/useK8s';
 import {
   Globe,
   Radio,
@@ -527,6 +527,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
     namespace ? { namespace } : undefined,
     { pollingEnabled: false, enabled: !!clusterId }
   );
+  const refresh = useBnkRefresh(clusterId);
 
   const topology = (data as TopologyResponse)?.topology || [];
   const dataPlane = (data as TopologyResponse)?.dataPlane;
@@ -629,7 +630,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => refetch()}
+          onClick={() => refresh()}
           disabled={isFetching}
           className="text-xs"
         >

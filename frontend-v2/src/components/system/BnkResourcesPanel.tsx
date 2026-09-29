@@ -182,14 +182,18 @@ export function BnkResourcesPanel({ data, isLoading, error }: BnkResourcesPanelP
     return null;
   }
 
-  // Fall back to node capacity only when no cluster reports pod metrics.
-  const withoutMetrics = filteredClusters.filter((c) => !c.metrics_available).length;
-  const showCapacity = filteredClusters.length > 0 && withoutMetrics === filteredClusters.length;
-  const usageSubtext = showCapacity
-    ? 'Node capacity (metrics-server unavailable)'
-    : withoutMetrics > 0
-      ? `Across all BNK pods · ${withoutMetrics} cluster${withoutMetrics > 1 ? 's' : ''} without metrics not included`
-      : 'Across all BNK pods';
+  // Fall back to node capacity only when no reachable cluster reports pod metrics.
+  // Offline clusters also report metrics_available=false; count them separately.
+  const reachable = filteredClusters.filter((c) => c.reachable).length;
+  const offline = filteredClusters.length - reachable;
+  const withoutMetrics = filteredClusters.filter((c) => c.reachable && !c.metrics_available).length;
+  const showCapacity = reachable > 0 && withoutMetrics === reachable;
+  const plural = (n: number) => `${n} cluster${n > 1 ? 's' : ''}`;
+  const usageSubtext = [
+    showCapacity ? 'Node capacity (metrics-server unavailable)' : 'Across all BNK pods',
+    !showCapacity && withoutMetrics > 0 ? `${plural(withoutMetrics)} without metrics not included` : null,
+    offline > 0 ? `${plural(offline)} offline` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div className="space-y-6" data-testid="bnk-resources-panel">
