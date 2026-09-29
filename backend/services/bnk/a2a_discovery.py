@@ -14,6 +14,7 @@ probe phase (with I/O) attempts to fetch actual agent cards.
 import ast
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -22,6 +23,11 @@ from services.bnk.helpers import build_route_ref_map
 logger = logging.getLogger(__name__)
 
 AGENT_CARD_PATH = "/.well-known/agent-card.json"
+# Agent-card locations tried per port, most specific first.
+_AGENT_CARD_PATHS = (".well-known/agent-card.json", ".well-known/agent.json", "agent-card.json")
+# Per-candidate probe bounds: attempts and wall-clock seconds.
+_MAX_PROBES_PER_CANDIDATE = 12
+_PROBE_BUDGET_SECONDS = 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +123,7 @@ def _find_http_backend_services(
             "namespace": svc_ns,
             "ports": ports,
             "clusterIP": spec.get("clusterIP"),
+            "selector": spec.get("selector") or {},
             "routeRefs": deduped_http_refs,
             "gateways": sorted(list({r["gatewayName"] for r in deduped_http_refs if r.get("gatewayName")})),
             "agentCard": None,       # Populated by probe
@@ -206,15 +213,6 @@ def _probe_agent_cards(
 
     core_v1 = k8s_client.CoreV1Api(api_client)
 
-    paths = [
-        "/.well-known/agent-card.json",
-        ".well-known/agent-card.json",
-        "/.well-known/agent.json",
-        ".well-known/agent.json",
-        "/agent-card.json",
-        "agent-card.json",
-    ]
-
     # Cache pods per namespace to avoid repeated list_namespaced_pod calls
     pods_cache: dict[str, list[Any]] = {}
 
@@ -227,6 +225,18 @@ def _probe_agent_cards(
                 pods_cache[ns] = []
         return pods_cache[ns]
 
+    def selected_pods(candidate: dict) -> list[str]:
+        """Running pods backing the Service, matched by its label selector."""
+        selector = candidate.get("selector") or {}
+        if not selector:
+            return []
+        names = []
+        for p in get_namespace_pods(candidate["namespace"]):
+            labels = getattr(p.metadata, "labels", None) or {}
+            if getattr(p.status, "phase", "") == "Running" and all(labels.get(k) == v for k, v in selector.items()):
+                names.append(p.metadata.name)
+        return names
+
     def probe_one(candidate: dict) -> None:
         svc_name = candidate["name"]
         svc_ns = candidate["namespace"]
@@ -236,62 +246,36 @@ def _probe_agent_cards(
             candidate["probeStatus"] = "skipped"
             return
 
-        card_found = None
+        deadline = time.monotonic() + _PROBE_BUDGET_SECONDS
+        attempts = 0
 
-        # 1. First attempt: Service proxy
+        def try_card(fetch: Any, target: str) -> dict | None:
+            nonlocal attempts
+            for path in _AGENT_CARD_PATHS:
+                if attempts >= _MAX_PROBES_PER_CANDIDATE or time.monotonic() >= deadline:
+                    return None
+                attempts += 1
+                try:
+                    resp = fetch(name=target, namespace=svc_ns, path=path, _request_timeout=5)
+                except Exception as exc:
+                    logger.debug("A2A probe %s/%s via %s (%s) — %s", svc_ns, svc_name, target, path, exc)
+                    continue
+                normalized = _normalize_agent_card(_parse_json_or_python_dict(resp))
+                if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
+                    return normalized
+            return None
+
+        # 1. Service proxy; 2. pod proxy fallback (e.g. GKE VPC-native clusters
+        # where the service proxy 503s).
+        card_found = None
         for port in ports_to_try:
-            proxy_targets = [f"{svc_name}:{port}", f"http:{svc_name}:{port}", svc_name]
-            for proxy_name in proxy_targets:
-                for path in paths:
-                    try:
-                        resp = core_v1.connect_get_namespaced_service_proxy_with_path(
-                            name=proxy_name,
-                            namespace=svc_ns,
-                            path=path,
-                            _request_timeout=5,
-                        )
-                        card = _parse_json_or_python_dict(resp)
-                        normalized = _normalize_agent_card(card)
-                        if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
-                            card_found = normalized
-                            break
-                    except Exception as exc:
-                        logger.debug("A2A service probe %s/%s via %s (%s) — %s", svc_ns, svc_name, proxy_name, path, exc)
-                if card_found:
-                    break
+            card_found = try_card(core_v1.connect_get_namespaced_service_proxy_with_path, f"{svc_name}:{port}")
             if card_found:
                 break
-
-        # 2. Second attempt: Pod proxy fallback (e.g. for GKE VPC-native clusters where service proxy 503s)
         if not card_found:
-            ns_pods = get_namespace_pods(svc_ns)
-            matching_pods = [
-                p for p in ns_pods
-                if (
-                    (getattr(p.metadata, "name", "") or "").startswith(svc_name)
-                    or (getattr(p.metadata, "labels", None) and getattr(p.metadata, "labels", {}).get("app") == svc_name)
-                )
-                and getattr(p.status, "phase", "") == "Running"
-            ]
-
-            for pod in matching_pods:
-                pod_name = pod.metadata.name
+            for pod_name in selected_pods(candidate):
                 for port in ports_to_try:
-                    for path in paths:
-                        try:
-                            resp = core_v1.connect_get_namespaced_pod_proxy_with_path(
-                                name=f"{pod_name}:{port}",
-                                namespace=svc_ns,
-                                path=path,
-                                _request_timeout=5,
-                            )
-                            card = _parse_json_or_python_dict(resp)
-                            normalized = _normalize_agent_card(card)
-                            if normalized and (normalized.get("name") or normalized.get("description") or normalized.get("skills")):
-                                card_found = normalized
-                                break
-                        except Exception as exc:
-                            logger.debug("A2A pod probe %s/%s via %s:%s (%s) — %s", svc_ns, svc_name, pod_name, port, path, exc)
+                    card_found = try_card(core_v1.connect_get_namespaced_pod_proxy_with_path, f"{pod_name}:{port}")
                     if card_found:
                         break
                 if card_found:
@@ -309,6 +293,13 @@ def _probe_agent_cards(
         futures = {executor.submit(probe_one, c): c for c in candidates}
         for future in as_completed(futures):
             future.result()  # propagate exceptions (caught inside)
+
+
+def _scalar_dict(value: Any) -> dict | None:
+    """Keep only scalar entries of an untrusted dict (rendered as text by the UI)."""
+    if not isinstance(value, dict):
+        return None
+    return {str(k): v for k, v in value.items() if isinstance(v, str | int | float | bool)}
 
 
 def _normalize_agent_card(card: Any) -> dict | None:
@@ -380,7 +371,7 @@ def _normalize_agent_card(card: Any) -> dict | None:
         "defaultOutputModes": card.get("defaultOutputModes") or card.get("default_output_modes") or [],
         "provider": card.get("provider", {}) if isinstance(card.get("provider"), dict) else {},
         "securitySchemes": card.get("securitySchemes") or card.get("security_schemes") or {},
-        "governance": card.get("governance") if isinstance(card.get("governance"), dict) else None,
+        "governance": _scalar_dict(card.get("governance")),
         "iconUrl": card.get("iconUrl") or card.get("icon_url"),
     }
 

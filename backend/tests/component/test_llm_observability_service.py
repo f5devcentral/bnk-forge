@@ -565,3 +565,71 @@ class TestMultiClusterObservability:
         assert out["rows"][1]["cluster_name"] == "us-east"
         assert out["rows"][1]["cluster_id"] == 1
 
+
+
+class TestFleetFanOut:
+    """Fleet requests: one bounded pool, an overall deadline, per-cluster errors."""
+
+    @staticmethod
+    def _fleet_service(routers: dict[int, Any]):
+        svc, _ = _make_service(lambda s, q, p: _instant(_vector(1)))
+        clusters = []
+        for cid in routers:
+            c = MagicMock()
+            c.id = cid
+            c.name = f"cluster-{cid}"
+            clusters.append(c)
+        svc._active_clusters = MagicMock(return_value=clusters)
+        fakes = {cid: _FakeApiClient(r) for cid, r in routers.items()}
+        svc._client = lambda cid: fakes[cid]
+        return svc
+
+    def test_unavailable_cluster_is_reported_in_errors(self):
+        def _boom(sub, query, params):
+            raise ApiException(status=503, reason="Service Unavailable")
+
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: _boom})
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        assert set(out["errors"]) == {"cluster-2"}
+        assert "503" in out["errors"]["cluster-2"]
+
+    def test_deadline_drops_slow_cluster(self):
+        def _slow(sub, query, params):
+            time.sleep(1.0)
+            return _instant(_vector(5))
+
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: _slow})
+        with patch("services.llm_observability_service._FLEET_DEADLINE_SECONDS", 0.2):
+            start = time.monotonic()
+            out = svc.stats(cluster_id=None, range_="1h")
+            elapsed = time.monotonic() - start
+        assert elapsed < 0.9
+        assert out["available"] is True
+        assert "timed out" in out["errors"]["cluster-2"]
+
+    def test_each_cluster_runs_its_queries_in_one_worker_thread(self):
+        import threading
+
+        seen: dict[int, set[int]] = {1: set(), 2: set()}
+
+        def _router_for(cid):
+            def _r(sub, query, params):
+                seen[cid].add(threading.get_ident())
+                return _instant(_vector(1, {"model": "gpt-4o"}))
+            return _r
+
+        svc = self._fleet_service({1: _router_for(1), 2: _router_for(2)})
+        out = svc.rankings(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        assert all(len(threads) == 1 for threads in seen.values())
+
+    def test_all_clusters_failing_carries_the_error_map(self):
+        def _boom(sub, query, params):
+            raise ApiException(status=502, reason="Bad Gateway")
+
+        svc = self._fleet_service({1: _boom})
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is False
+        assert "502" in out["reason"]
+        assert set(out["errors"]) == {"cluster-1"}

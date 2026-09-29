@@ -23,7 +23,8 @@ export function normalizeProvider(provider?: string | null): NormalizedCloudProv
   if (p === 'aws' || p === 'eks' || p.includes('cloud-aws')) return 'aws';
   if (p === 'azure' || p === 'aks' || p.includes('cloud-azure')) return 'azure';
   if (p === 'gcp' || p === 'gke' || p === 'google' || p.includes('cloud-gcp')) return 'gke';
-  if (p === 'bare-metal' || p === 'on-prem' || p === 'metal' || p === 'kubernetes') return 'metal';
+  // 'kubernetes' is the on-prem project type (backend GENERIC_ONPREM).
+  if (['bare-metal', 'baremetal', 'on-prem', 'onprem', 'metal', 'vmware', 'vsphere', 'kubernetes'].includes(p)) return 'metal';
   if (p === 'ibm' || p === 'roks' || p === 'ibmcloud' || p.includes('cloud-ibm')) return 'ibm';
   return 'other';
 }

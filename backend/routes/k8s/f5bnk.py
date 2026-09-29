@@ -129,13 +129,23 @@ def _build_bnk_context(cluster: KubernetesCluster, db: Session) -> dict[str, Any
             ),
         }
     else:
+        if connectivity_status == "connected":
+            integration_status = "healthy"
+            integration_msg = "Cluster managed via kubeconfig"
+        elif connectivity_status == "unreachable":
+            integration_status = "warning"
+            integration_msg = "Cluster managed via kubeconfig (Kubernetes API unreachable)"
+        else:
+            integration_status = "unknown"
+            integration_msg = "Cluster managed via kubeconfig (Connectivity unverified)"
+
         integration = {
-            "status": "healthy",
+            "status": integration_status,
             "operatorConnected": False,
             "operatorMode": "kubeconfig",
             "operatorVersion": None,
             "lastSeen": _dt_to_str(cluster.last_synced_at),
-            "message": "Cluster managed via kubeconfig",
+            "message": integration_msg,
         }
 
     return {"connectivity": connectivity, "integration": integration}
@@ -165,7 +175,7 @@ def get_bnk_data(
     so switching between Health, Topology, and Policy Map tabs is instant.
 
     Query parameters:
-      - force: bypass the 15-second BNK data / TMM traffic-stats cache.
+      - force: bypass the BNK data, pod discovery and TMM traffic-stats caches.
     """
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
@@ -173,6 +183,15 @@ def get_bnk_data(
         k8s_service, cluster_id, namespace, include_nodes=True, force=force
     )
     data.update(_build_bnk_context(cluster, db))
+
+    health = analyze_health(data)
+    topo = analyze_topology(data)
+    policy = analyze_policy_associations(data)
+    backends = analyze_backends(data, topo["topology"])
+    palette = extract_palette_data(data)
+
+    # Traffic stats map onto the analysed gateway listeners and egresses.
+    analysed = {**data, "topology": topo["topology"], "dataPlane": topo["dataPlane"]}
 
     # Traffic stats require the TMM debug sidecar.  Fetching them here keeps
     # the unified response shape so all insight tabs share the same cache key.
@@ -183,16 +202,10 @@ def get_bnk_data(
         raw_stats = fetch_tmm_traffic_stats(
             api_client, data.get("classified_pods", {}), cluster_id=cluster_id, force=force
         )
-        traffic_stats = analyze_traffic_stats(data, raw_stats)
+        traffic_stats = analyze_traffic_stats(analysed, raw_stats)
     except Exception:
         logger.exception("Failed to collect TMM traffic stats for cluster %d", cluster_id)
-        traffic_stats = analyze_traffic_stats(data, None)
-
-    health = analyze_health(data)
-    topo = analyze_topology(data)
-    policy = analyze_policy_associations(data)
-    backends = analyze_backends(data, topo["topology"])
-    palette = extract_palette_data(data)
+        traffic_stats = analyze_traffic_stats(analysed, None)
 
     return {
         "health": health,

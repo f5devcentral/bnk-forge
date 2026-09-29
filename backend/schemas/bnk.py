@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 HealthSeverityV1 = Literal["healthy", "warning", "critical", "unknown"]
 ConnectivityStatusV1 = Literal["connected", "reachable", "partial", "unreachable", "unknown"]
-OperatorModeV1 = Literal["direct_ws", "polling", "kubeconfig"]
+OperatorModeV1 = Literal["direct_ws", "reverse_ssh", "polling", "ngrok_tunnel", "in_cluster", "kubeconfig"]
 
 
 class HealthRemediationAction(BaseModel):

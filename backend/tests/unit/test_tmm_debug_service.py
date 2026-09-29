@@ -64,3 +64,18 @@ class TestExecDebugCommandNoSidecar:
                 pass  # exec against a mocked stream is expected to fail differently
         finally:
             svc.k8s_client.CoreV1Api = original_core_v1_api
+
+
+class TestCachedExecForce:
+    def test_force_skips_cached_output(self):
+        from unittest.mock import patch
+
+        from services.tmm_debug_service import _cached_exec_debug_command
+
+        fresh = {"stdout": "fresh", "stderr": "", "exit_code": 0, "duration_ms": 1, "command": "x"}
+        with patch("services.tmm_debug_service.cache") as mock_cache, \
+                patch("services.tmm_debug_service.exec_debug_command", return_value=fresh) as mock_exec:
+            mock_cache.get.return_value = {"stdout": "stale"}
+            assert _cached_exec_debug_command(1, MagicMock(), "p", "ns", ["tmctl"])["stdout"] == "stale"
+            assert _cached_exec_debug_command(1, MagicMock(), "p", "ns", ["tmctl"], force=True) == fresh
+        mock_exec.assert_called_once()

@@ -1,6 +1,7 @@
 // F5 BNK & Upgrade types
 
 import type { JsonValue } from './common';
+import type { OperatorConnectivityMode } from './operators';
 
 export interface F5FirewallRule {
   name: string;
@@ -236,7 +237,7 @@ export interface HealthConnectivityStatus {
 export interface HealthIntegrationStatus {
   status: HealthSeverity;
   operatorConnected: boolean;
-  operatorMode: 'direct_ws' | 'polling' | 'kubeconfig';
+  operatorMode: OperatorConnectivityMode | 'kubeconfig';
   operatorVersion: string | null;
   lastSeen: string | null;
   message: string;
@@ -872,7 +873,7 @@ export interface A2AAgentCard {
   defaultOutputModes: string[];
   provider: Record<string, string>;
   securitySchemes: Record<string, unknown>;
-  governance?: Record<string, string>;
+  governance?: Record<string, string | number | boolean>;
   iconUrl?: string | null;
 }
 

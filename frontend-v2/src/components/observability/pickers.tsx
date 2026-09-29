@@ -14,8 +14,9 @@ import {
 import { useAllClusters } from '@/hooks/useK8sClusters';
 
 export interface ClusterPickerProps {
-  value: number | undefined;
-  onChange: (clusterId: number | undefined) => void;
+  /** A cluster id, `null` for all clusters, `undefined` while unset. */
+  value: number | null | undefined;
+  onChange: (clusterId: number | null) => void;
   allowAll?: boolean;
 }
 
@@ -25,12 +26,12 @@ export function ClusterPicker({ value, onChange, allowAll = true }: ClusterPicke
 
   return (
     <Select
-      value={value != null ? String(value) : (allowAll ? '__all__' : undefined)}
-      onValueChange={(v) => onChange(v === '__all__' ? undefined : Number(v))}
+      value={value === null ? '__all__' : value != null ? String(value) : undefined}
+      onValueChange={(v) => onChange(v === '__all__' ? null : Number(v))}
     >
       <SelectTrigger className="h-8 w-[220px] text-xs font-medium" aria-label="Cluster">
         <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <SelectValue placeholder="All Clusters (Fleet Aggregate)" />
+        <SelectValue placeholder="Select cluster…" />
       </SelectTrigger>
       <SelectContent>
         {allowAll && (

@@ -356,9 +356,13 @@ def _match_analyzers(
                     and app.get("namespace", gw_ns) == route_ns):
                 script = a_spec.get("script", {})
                 params = script.get("custom", {}).get("parameters", [])
+                # F5BigAnalyzer spec.schedule is an object ({"every": "5m"}).
+                schedule = a_spec.get("schedule") or ""
+                if isinstance(schedule, dict):
+                    schedule = schedule.get("every") or ""
                 result.append({
                     "name": resource_name(analyzer),
-                    "schedule": a_spec.get("schedule", ""),
+                    "schedule": str(schedule),
                     "scriptType": script.get("type", ""),
                     "dataSources": [ds.get("name", "") for ds in a_spec.get("dataSources", [])],
                     "parameters": {p.get("key", ""): p.get("value", "") for p in params},

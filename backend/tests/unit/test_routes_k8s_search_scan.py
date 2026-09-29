@@ -63,6 +63,7 @@ class _FakeApiClient:
         self.custom = custom or {}
         self.services = services or []
         self.delay = delay
+        self.groups: dict[str, str] = {}  # plural -> API group queried
 
 
 def _networking_factory(api_client):
@@ -81,7 +82,10 @@ def _custom_factory(api_client):
     m = MagicMock()
 
     def _list(group=None, version=None, plural=None, **_kw):
+        api_client.groups[plural] = group
         val = api_client.custom.get(plural, "RAISE")
+        if isinstance(val, Exception):
+            raise val
         if val == "RAISE":
             raise ApiException(status=404, reason=f"{plural} CRD not installed")
         return {"items": val}
@@ -168,6 +172,8 @@ class TestScanClusterParsing:
         assert by_kind["HTTPRoute"].matched_host == "api.example.com"
         assert by_kind["VirtualServer"].matched_host == "app.example.com"
         assert by_kind["VirtualServer"].target_service == "10.0.0.5"
+        # CIS VirtualServers live in cis.f5.com (registry key cis_virtualserver).
+        assert client.groups["virtualservers"] == "cis.f5.com"
         assert by_kind["Egress"].target_service == "192.0.2.0/24"
         # Service matched by name (LoadBalancer type) and harvested its
         # clusterIP + LoadBalancer ingress IP into all_hosts.
@@ -225,6 +231,26 @@ class TestScanClusterParsing:
                 results = _scan_cluster_for_query(1, "c", None, None, "example")
         assert [r.kind for r in results] == ["Ingress"]
 
+    def test_timeout_on_one_kind_does_not_skip_the_others(self):
+        # A non-ApiException (urllib3 read timeout) on the HTTPRoute list must
+        # not abort the VirtualServer / Gateway searches for the cluster.
+        import urllib3
+
+        client = _FakeApiClient(
+            custom={
+                "httproutes": urllib3.exceptions.ReadTimeoutError(None, "/", "timed out"),
+                "virtualservers": [{
+                    "metadata": {"name": "vs-app", "namespace": "bnk"},
+                    "spec": {"host": "app.example.com"},
+                }],
+                "f5-bnkgateways": urllib3.exceptions.ReadTimeoutError(None, "/", "timed out"),
+                "gateways": [{"metadata": {"name": "example-gw", "namespace": "gw"}}],
+            },
+        )
+        with _wire({1: client}):
+            results = _scan_cluster_for_query(1, "c", None, None, "example")
+        assert sorted(r.kind for r in results) == ["Gateway", "VirtualServer"]
+
     def test_service_matches_on_load_balancer_ip(self):
         # A query that hits only the LB ingress IP still returns the Service,
         # regardless of its name (exercises the `matched_ip` branch).
@@ -273,50 +299,66 @@ class _DB:
         return _Query(self._clusters if model is KubernetesCluster else [])
 
 
-def _db_cluster(cid, name):
+def _db_cluster(cid, name, project_id=None):
     return SimpleNamespace(
         id=cid, name=name, cloud_provider="aws", region="us-east-1",
         detected_platform_profile=None, meta_data={}, status="active",
+        project_id=project_id,
     )
 
 
 class TestGlobalSearchScanOrchestration:
-    def test_timeout_yields_partial_results_and_dedups(self):
-        """One cluster returns instantly, one stalls past the harvest window.
+    def test_deadline_returns_partial_results_without_waiting_for_stragglers(self):
+        """One cluster returns instantly, one stalls past the scan deadline.
 
-        The fast cluster's result must come back (partial results, no hang),
-        and the dedup must collapse the fast future being counted twice — once
-        via as_completed, once again in the timeout-harvest re-scan.
+        The response must come back at the deadline with the fast cluster's
+        result, name the slow cluster in ``timed_out_clusters``, and not wait
+        for the straggler to finish.
         """
         fast = _FakeApiClient(
             ingresses=[_ingress("fast-ing", "ns", hosts=["hit.example.com"])],
         )
         slow = _FakeApiClient(
             ingresses=[_ingress("slow-ing", "ns", hosts=["hit.example.com"])],
-            delay=1.0,  # finite so the executor still shuts down (no infinite hang)
+            delay=1.5,
         )
 
         db = _DB([_db_cluster(1, "fast-cluster"), _db_cluster(2, "slow-cluster")])
 
-        # Force the harvest branch quickly instead of waiting the real 6s.
-        real_as_completed = search_mod.as_completed
-
-        def _short_as_completed(fs, timeout=None):
-            return real_as_completed(fs, timeout=0.2)
-
         with _wire({1: fast, 2: slow}):
-            with patch.object(search_mod, "as_completed", _short_as_completed):
+            with patch.object(search_mod, "SCAN_DEADLINE_SECONDS", 0.2):
                 start = time.monotonic()
                 resp = global_search(q="hit.example.com", limit=25, db=db)
                 elapsed = time.monotonic() - start
 
-        names = [i.name for i in resp.ingresses]
-        # Fast cluster's partial result is present...
-        assert "fast-ing" in names
-        # ...and dedup collapsed the double-harvest: no duplicate fast-ing.
-        assert names.count("fast-ing") == 1
-        # Did not hang for the full 6s as_completed budget.
-        assert elapsed < 5.0
+        assert [i.name for i in resp.ingresses] == ["fast-ing"]
+        assert resp.timed_out_clusters == ["slow-cluster"]
+        assert elapsed < 1.0
+
+    def test_results_carry_the_cluster_project_id(self):
+        client = _FakeApiClient(ingresses=[_ingress("ing", "ns", hosts=["p.example.com"])])
+        db = _DB([_db_cluster(1, "p-cluster", project_id=7)])
+        with _wire({1: client}):
+            resp = global_search(q="p-cluster", limit=25, db=db)
+            resp_ing = global_search(q="p.example.com", limit=25, db=db)
+        assert resp.clusters[0].project_id == 7
+        assert resp_ing.ingresses[0].project_id == 7
+
+    def test_clusters_marked_unreachable_are_not_scanned(self):
+        from services.reachability import ReachabilityState
+
+        up = _FakeApiClient(ingresses=[_ingress("up-ing", "ns", hosts=["hit.example.com"])])
+        down = _FakeApiClient(ingresses=[_ingress("down-ing", "ns", hosts=["hit.example.com"])])
+        db = _DB([_db_cluster(1, "up"), _db_cluster(2, "down")])
+
+        def _state(_target_type, target_id):
+            return {"state": ReachabilityState.UNREACHABLE.value} if target_id == 2 else None
+
+        with _wire({1: up, 2: down}):
+            with patch.object(search_mod.registry, "get_state", side_effect=_state):
+                resp = global_search(q="hit.example.com", limit=25, db=db)
+        assert [i.name for i in resp.ingresses] == ["up-ing"]
+
 
     def test_dedup_key_spans_kind_cluster_namespace_name(self):
         """Two DISTINCT clusters returning the same-named resource are kept

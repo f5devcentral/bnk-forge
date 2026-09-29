@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useGlobalSearch } from '@/hooks/useGlobalSearch';
+import { MIN_SEARCH_LENGTH, useGlobalSearch } from '@/hooks/useGlobalSearch';
 import {
   getCloudProviderBadgeInfo,
   getClusterLocationInfo,
@@ -36,7 +36,7 @@ export function HeroOmniSearch({
   projects = [],
   clusters = [],
   className,
-  debounceMs = 250,
+  debounceMs = 400,
 }: HeroOmniSearchProps) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -117,6 +117,7 @@ export function HeroOmniSearch({
           .map((c) => ({
             id: c.id,
             name: c.name,
+            project_id: c.project_id,
             cloud_provider: c.cloud_provider,
             region: c.region,
             status: c.status,
@@ -205,7 +206,7 @@ export function HeroOmniSearch({
     if (k === 'ingress' || k === 'ingresses') return 'ingress';
     if (k === 'service' || k === 'services') return 'service';
     if (k === 'httproute' || k === 'httproutes') return 'httproute';
-    if (k === 'virtualserver' || k === 'virtualservers') return 'virtualserver';
+    if (k === 'virtualserver' || k === 'virtualservers') return 'cis_virtualserver';
     if (k === 'egress' || k === 'f5-spk-egress' || k === 'f5-spk-egresses' || k === 'f5spkegress') return 'f5spkegress';
     if (k === 'snatpool' || k === 'f5-spk-snatpools' || k === 'f5spksnatpool') return 'f5spksnatpool';
     if (k === 'gateway' || k === 'gateways') return 'gateway';
@@ -216,14 +217,27 @@ export function HeroOmniSearch({
     return k || 'ingress';
   };
 
-  const handleSelectIngress = (clusterId: number, namespace: string, name: string, kind?: string, resourceType?: string) => {
+  // Deep links carry the cluster's project so the target page doesn't swap the
+  // cluster for one from the project remembered in localStorage.
+  const clusterScope = (clusterId: number, projectId?: number | null): string =>
+    projectId ? `cluster=${clusterId}&project=${projectId}` : `cluster=${clusterId}`;
+
+  const handleSelectIngress = (
+    clusterId: number,
+    projectId: number | null | undefined,
+    namespace: string,
+    name: string,
+    kind?: string,
+    resourceType?: string
+  ) => {
     setIsOpen(false);
+    const scope = clusterScope(clusterId, projectId);
     const k = (kind || '').toLowerCase().replace(/[-_]/g, '');
 
     // Egress resources route directly to F5 BNK Traffic Flow Pipeline
     if (k === 'egress' || k === 'f5spkegress' || k === 'f5egress') {
       navigate(
-        `/bnk?cluster=${clusterId}&view=traffic-flow&namespace=${encodeURIComponent(
+        `/bnk?${scope}&view=traffic-flow&namespace=${encodeURIComponent(
           namespace
         )}&name=${encodeURIComponent(name)}`
       );
@@ -234,7 +248,7 @@ export function HeroOmniSearch({
     if (isBnkResource(kind)) {
       const resource = resourceType || mapKindToResourceParam(kind);
       navigate(
-        `/bnk?cluster=${clusterId}&namespace=${encodeURIComponent(
+        `/bnk?${scope}&namespace=${encodeURIComponent(
           namespace
         )}&resource=${encodeURIComponent(resource)}&name=${encodeURIComponent(name)}`
       );
@@ -244,15 +258,15 @@ export function HeroOmniSearch({
     // Standard Kubernetes resources route to Kubernetes Advanced view
     const resource = resourceType || mapKindToResourceParam(kind);
     navigate(
-      `/kubernetes?cluster=${clusterId}&namespace=${encodeURIComponent(
+      `/kubernetes?${scope}&namespace=${encodeURIComponent(
         namespace
       )}&resource=${encodeURIComponent(resource)}&name=${encodeURIComponent(name)}&view=advanced`
     );
   };
 
-  const handleSelectCluster = (clusterId: number) => {
+  const handleSelectCluster = (clusterId: number, projectId?: number | null) => {
     setIsOpen(false);
-    navigate(`/kubernetes?cluster=${clusterId}&view=advanced`);
+    navigate(`/kubernetes?${clusterScope(clusterId, projectId)}&view=advanced`);
   };
 
   const handleSelectProject = (projectId: number) => {
@@ -260,7 +274,7 @@ export function HeroOmniSearch({
     navigate(`/projects/${projectId}`);
   };
 
-  const hasQuery = query.trim().length >= 2;
+  const hasQuery = query.trim().length >= MIN_SEARCH_LENGTH;
 
   return (
     <div ref={containerRef} className={cn('relative w-full', className)}>
@@ -431,7 +445,7 @@ export function HeroOmniSearch({
                       return (
                         <div
                           key={`ing-${item.cluster_id}-${item.namespace}-${item.name}-${idx}`}
-                          onClick={() => handleSelectIngress(item.cluster_id, item.namespace, item.name, item.kind, item.resource_type)}
+                          onClick={() => handleSelectIngress(item.cluster_id, item.project_id, item.namespace, item.name, item.kind, item.resource_type)}
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
@@ -492,7 +506,7 @@ export function HeroOmniSearch({
                       return (
                         <div
                           key={`cluster-${cluster.id}`}
-                          onClick={() => handleSelectCluster(cluster.id)}
+                          onClick={() => handleSelectCluster(cluster.id, cluster.project_id)}
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">

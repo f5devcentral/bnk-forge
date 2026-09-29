@@ -6,6 +6,7 @@ import { qkviewApi } from '@/lib/api/qkview';
 
 import type { QKViewCreateRequest, CWCAPISetupStatusResponse } from '@/types';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
+import { keepPreviousForCluster } from '@/lib/queryKeys';
 
 export const QKVIEW_KEYS = {
   all: ['qkview'] as const,
@@ -23,7 +24,7 @@ export function useQKViewCheck(clusterId: number) {
     queryFn: () => qkviewApi.checkAvailability(clusterId),
     enabled: clusterId > 0,
     staleTime: 60_000, // 1 minute — CWC availability doesn't change often
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
     retry: 1,
   });
 }
@@ -36,7 +37,7 @@ export function useQKViewList(clusterId: number, enabled = true) {
     enabled: enabled && clusterId > 0,
     staleTime: 30_000,
     refetchInterval: 30_000, // Poll every 30s — each poll execs into a K8s pod
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
   });
 }
 
@@ -48,7 +49,7 @@ export function useQKViewStatus(clusterId: number, qkviewId: string, enabled = t
     enabled: enabled && clusterId > 0 && !!qkviewId,
     staleTime: 15_000,
     refetchInterval: 15_000, // Poll every 15s while active — execs into K8s pod
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
   });
 }
 
@@ -121,7 +122,7 @@ export function useCWCAPISetupStatus(clusterId: number, enabled = true) {
     queryFn: () => qkviewApi.getCWCAPISetupStatus(clusterId),
     enabled: enabled && clusterId > 0,
     staleTime: 60_000,
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(clusterId),
     retry: 1,
   });
 }

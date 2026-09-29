@@ -30,7 +30,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { useBnkData } from '@/hooks/k8s/useBnk';
-import { queryKeys } from '@/lib/queryKeys';
+import { keepPreviousForCluster, queryKeys } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -38,6 +38,7 @@ import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
+import { useLinkedClusterProject } from '@/hooks/useLinkedClusterProject';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer';
 import { ResourceDeleteDialog } from '@/components/k8s/ResourceDeleteDialog';
@@ -445,6 +446,14 @@ export default function F5BNK() {
     setSelectedCluster,
   });
 
+  const { linkPending } = useLinkedClusterProject(Number(searchParams.get('cluster')) || null, {
+    allClusters,
+    allClustersLoaded: allClustersResponse !== undefined,
+    visibleClusters,
+    selectedProject,
+    setSelectedProject,
+  });
+
   // Resource type & sidebar state
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
     const fromUrl = mapParamToViewOrResource(
@@ -554,6 +563,7 @@ export default function F5BNK() {
 
   // Clear cluster selection when project changes
   useEffect(() => {
+    if (linkPending) return;
     if (selectedProject && selectedCluster) {
       const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
       if (!clusterExistsInProject && visibleClusters.length > 0) {
@@ -562,7 +572,7 @@ export default function F5BNK() {
         setSelectedCluster(null);
       }
     }
-  }, [selectedProject, visibleClusters, selectedCluster]);
+  }, [linkPending, selectedProject, visibleClusters, selectedCluster]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
@@ -587,7 +597,7 @@ export default function F5BNK() {
     }),
     enabled: !!selectedCluster && !!selectedResourceType && !isSpecialView(selectedResourceType) && clusterReachable,
     staleTime: 30000,
-    placeholderData: (previousData) => previousData,
+    placeholderData: keepPreviousForCluster(selectedCluster ?? 0),
   });
 
   const { data: namespacesResponse } = useClusterNamespaces(selectedCluster || 0, {
@@ -639,8 +649,6 @@ export default function F5BNK() {
     //   - 'licensing' → BNK licensing status
     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
     queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
     queryClient.invalidateQueries({ queryKey: ['runbooks'] });
     queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     queryClient.invalidateQueries({ queryKey: ['qkview'] });
@@ -905,13 +913,12 @@ export default function F5BNK() {
   const resolvedNamespace = selectedNamespace === 'all' ? undefined : selectedNamespace;
 
   // Prefetch the unified BNK data bundle in the background while the user is
-  // on any BNK tab. This warms the cache for Traffic Flow / Topology / Policy
-  // so tab switching feels instant; the lightweight /f5bnk/health endpoint
-  // still drives the Health Dashboard landing view.
+  // on any BNK tab. It shares the cache entry of every insight view (Health,
+  // Traffic Flow, Topology, Policy), so tab switching feels instant.
   useBnkData(
     selectedCluster ?? 0,
     { namespace: resolvedNamespace },
-    { enabled: !!selectedCluster, pollingEnabled: false }
+    { enabled: !!selectedCluster && clusterReachable, pollingEnabled: false }
   );
 
   return (
@@ -1101,8 +1108,7 @@ export default function F5BNK() {
                   setResourceToDelete(null);
                   setSelectedResource(null);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
                   notify.error(parsed.title, parsed.message, { category: 'cluster' });
@@ -1134,8 +1140,7 @@ export default function F5BNK() {
                     setEditDialogOpen(false);
                     setResourceToEdit(null);
                     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
-                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
                   }
                 } catch (error: unknown) {
                   const parsed = parseApiError(error);
@@ -1174,8 +1179,7 @@ export default function F5BNK() {
                 } else {
                   setCreateDialogOpen(false);
                   queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkData(selectedCluster) });
-                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkHealth(selectedCluster) });
+                  queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(selectedCluster) });
                 }
               } catch (error: unknown) {
                 const parsed = parseApiError(error);

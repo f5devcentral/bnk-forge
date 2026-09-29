@@ -45,6 +45,7 @@ import {
   useLlmFilterData,
   useLlmProviderUsage,
   useLlmRankings,
+  type LlmClusterScope,
 } from '@/hooks/useLlmObservability';
 import { useObservabilityFilters } from './use-observability-filters';
 import type {
@@ -123,7 +124,7 @@ export default function LlmDashboard() {
 // ============================================================================
 
 interface TabProps {
-  clusterId: number | undefined;
+  clusterId: LlmClusterScope;
   params: LlmObservabilityParams;
   active: boolean;
 }
@@ -186,7 +187,7 @@ function OverviewTab({ clusterId, params, active }: TabProps) {
 }
 
 interface HistogramCardProps {
-  clusterId: number | undefined;
+  clusterId: LlmClusterScope;
   params: LlmObservabilityParams;
   metric: LlmHistogramMetric;
   title: string;
@@ -416,7 +417,7 @@ function ProviderCard({
   provider,
   valueFormatter,
 }: {
-  clusterId: number | undefined;
+  clusterId: LlmClusterScope;
   params: LlmObservabilityParams;
   metric: LlmProviderMetric;
   title: string;

@@ -60,6 +60,39 @@ class TestAggregateClusterConsumption:
         assert result["bnk_installed"] is False
         assert result["total"]["count"] == 0
 
+    def test_cloud_provider_and_region_propagated(self):
+        result = aggregate_cluster_consumption(
+            cluster_id=4,
+            cluster_name="aks-cluster",
+            node_count=5,
+            status="active",
+            bnk_data={"classified_pods": {}},
+            pod_metrics_response={"available": True, "metrics": []},
+            dpf_summary={"detected": False, "dpu_count": 0},
+            reachable=True,
+            cloud_provider="azure",
+            region="australiaeast",
+        )
+
+        assert result["cloud_provider"] == "azure"
+        assert result["region"] == "australiaeast"
+
+        unreachable_result = aggregate_cluster_consumption(
+            cluster_id=5,
+            cluster_name="gke-cluster",
+            node_count=3,
+            status="error",
+            bnk_data=None,
+            pod_metrics_response=None,
+            dpf_summary=None,
+            reachable=False,
+            cloud_provider="gcp",
+            region="us-central1",
+        )
+
+        assert unreachable_result["cloud_provider"] == "gcp"
+        assert unreachable_result["region"] == "us-central1"
+
     def test_metrics_unavailable_gracefully_degrades(self):
         bnk_data = {
             "classified_pods": {
@@ -215,3 +248,45 @@ class TestAggregateFleetSummary:
         assert summary["reachable_clusters"] == 0
         assert summary["total_bnk_pods"] == 0
         assert summary["total_cpu_millicores"] == 0
+
+
+class TestGetBnkConsumptionDeadline:
+    def test_hung_cluster_does_not_block_response(self):
+        """A hung cluster is reported unreachable once the deadline passes; the call does not join it."""
+        import threading
+        import time
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from services.system_service import SystemService
+
+        release = threading.Event()
+
+        def fake_fetch(_svc, cluster_id, include_nodes=False):
+            if cluster_id == 1:
+                release.wait(timeout=5)
+            raise RuntimeError("unreachable")
+
+        db = MagicMock()
+        db.query.return_value.all.return_value = [
+            SimpleNamespace(id=1, name="hung", node_count=None, status="active"),
+            SimpleNamespace(id=2, name="down", node_count=None, status="active"),
+        ]
+        svc = SystemService(db)
+        svc._BNK_CONSUMPTION_DEADLINE_SECONDS = 0.5
+        try:
+            with patch("services.system_service.cache") as mock_cache, \
+                    patch("services.system_service.fetch_all_bnk_data", side_effect=fake_fetch), \
+                    patch("services.system_service.KubernetesService"), \
+                    patch("database.SessionLocal"):
+                mock_cache.get.return_value = None
+                start = time.monotonic()
+                result = svc.get_bnk_consumption()
+                elapsed = time.monotonic() - start
+        finally:
+            release.set()
+
+        assert elapsed < 3
+        by_id = {c["cluster_id"]: c for c in result["clusters"]}
+        assert by_id[1]["reachable"] is False
+        assert by_id[2]["reachable"] is False

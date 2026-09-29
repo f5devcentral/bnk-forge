@@ -894,6 +894,7 @@ export const handlers = [
           all_hosts: ['api.example.com'],
           cluster_id: 1,
           cluster_name: 'test-cluster',
+          project_id: 3,
           cloud_provider: 'aws',
           region: 'us-west-2',
           target_service: 'api-svc:8080',

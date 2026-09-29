@@ -493,7 +493,7 @@ export interface paths {
         put?: never;
         /**
          * Detect And Register Clusters From Credentials
-         * @description Discover Kubernetes clusters via the project's cloud credential templates.
+         * @description Discover Kubernetes clusters via the project's bound cloud credential template.
          */
         post: operations["detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post"];
         delete?: never;
@@ -609,6 +609,26 @@ export interface paths {
          * @description Delete cluster configuration (owner or admin only).
          */
         delete: operations["delete_cluster_api_k8s_clusters__cluster_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Project Cluster
+         * @description Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.
+         */
+        delete: operations["delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1513,7 +1533,7 @@ export interface paths {
          *     so switching between Health, Topology, and Policy Map tabs is instant.
          *
          *     Query parameters:
-         *       - force: bypass the 15-second BNK data / TMM traffic-stats cache.
+         *       - force: bypass the BNK data, pod discovery and TMM traffic-stats caches.
          */
         get: operations["get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get"];
         put?: never;
@@ -14027,6 +14047,8 @@ export interface components {
              * @default 0
              */
             proxy_count: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -14091,6 +14113,8 @@ export interface components {
              * @default 0
              */
             proxy_count: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -14606,6 +14630,10 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
             /** Reachable */
             reachable: boolean;
             /** Bnk Installed */
@@ -15844,6 +15872,8 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+            /** Project Id */
+            project_id?: number | null;
             /** Cloud Provider */
             cloud_provider?: string | null;
             /** Region */
@@ -16384,8 +16414,11 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
-            /** Provider */
-            provider: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "aws" | "azure" | "gcp" | "ibm" | "ssh";
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -16604,7 +16637,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Provider */
-            provider?: string | null;
+            provider?: ("aws" | "azure" | "gcp" | "ibm" | "ssh") | null;
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -18369,6 +18402,8 @@ export interface components {
             clusters?: components["schemas"]["ClusterSearchResult"][];
             /** Projects */
             projects?: components["schemas"]["ProjectSearchResult"][];
+            /** Timed Out Clusters */
+            timed_out_clusters?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -18526,7 +18561,7 @@ export interface components {
              * Operatormode
              * @enum {string}
              */
-            operatorMode: "direct_ws" | "polling" | "kubeconfig";
+            operatorMode: "direct_ws" | "reverse_ssh" | "polling" | "ngrok_tunnel" | "in_cluster" | "kubeconfig";
             /** Operatorversion */
             operatorVersion?: string | null;
             /** Lastseen */
@@ -19001,6 +19036,8 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Project Id */
+            project_id?: number | null;
             /** Cloud Provider */
             cloud_provider?: string | null;
             /** Region */
@@ -25949,6 +25986,38 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
                 cluster_id: number;
             };
             cookie?: never;
@@ -43777,6 +43846,8 @@ export interface operations {
             query?: {
                 status?: string | null;
                 cluster_id?: number | null;
+                /** @description Exact match filter by target name */
+                name?: string | null;
             };
             header?: never;
             path?: never;

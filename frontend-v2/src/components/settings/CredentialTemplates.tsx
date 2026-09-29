@@ -59,6 +59,7 @@ import { notify, notifyError } from '@/lib/notify';
 import { api } from '@/lib/api';
 import { loadIbmRegionsFromApiKey } from '@/lib/ibm-cloud';
 import type { CloudCredentialTemplate, CloudCredentialTemplateCreate, CloudRegionOption, IBCosInstanceOption } from '@/types';
+import type { ApiCredentialTemplateCreate } from '@/types/api-schemas';
 import { RegionSelector } from '@/components/aws/RegionSelector';
 import { CloudRegionSelector } from '@/components/cloud/CloudRegionSelector';
 import { SSOAuthDialog } from './SSOAuthDialog';
@@ -66,12 +67,17 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { resolveCredStatus } from './resolveCredStatus';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
+// Typed against the generated `provider` union so an invalid entry (or one
+// that drifts from the backend Literal) is a compile error. `ssh` is a valid
+// provider but intentionally not offered in this create UI; the type still
+// permits it, so adding it later is a one-line change with no cast.
+type TemplateProvider = ApiCredentialTemplateCreate['provider'];
 const TEMPLATE_PROVIDER_OPTIONS = [
   { value: 'aws', label: 'Amazon Web Services (AWS)' },
   { value: 'gcp', label: 'Google Cloud Platform (GCP)' },
   { value: 'azure', label: 'Microsoft Azure' },
   { value: 'ibm', label: 'IBM Cloud' },
-] as const;
+] as const satisfies ReadonlyArray<{ value: TemplateProvider; label: string }>;
 
 /**
  * Single authoritative cloud credential status badge.
@@ -303,7 +309,10 @@ export default function CredentialTemplates() {
   };
 
   const handleCreate = () => {
-    createMutation.mutate(formData);
+    const data = { ...formData };
+    // The Azure form keeps both methods' inputs; submit only the chosen one.
+    if (data.provider === 'azure' && data.azure_auth_method === 'sso') delete data.azure_client_secret;
+    createMutation.mutate(data);
   };
 
   const handleEdit = (template: CloudCredentialTemplate) => {
@@ -373,8 +382,8 @@ export default function CredentialTemplates() {
       updateData.region = formData.region;
       if (formData.azure_subscription_id) updateData.azure_subscription_id = formData.azure_subscription_id;
       if (formData.azure_tenant_id) updateData.azure_tenant_id = formData.azure_tenant_id;
-      if (formData.azure_client_id) updateData.azure_client_id = formData.azure_client_id;
-      if (formData.azure_client_secret) updateData.azure_client_secret = formData.azure_client_secret;
+      updateData.azure_client_id = formData.azure_client_id;
+      if (formData.azure_auth_method !== 'sso' && formData.azure_client_secret) updateData.azure_client_secret = formData.azure_client_secret;
     }
 
     if (formData.provider === 'ibm') {

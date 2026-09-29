@@ -21,10 +21,47 @@ from core.encryption import decrypt_value, encrypt_value
 from core.errors import AppError, BadRequestError, InternalError, NotFoundError
 from models import CloudCredentialTemplate
 from services.aws_auth_service import AWSAuthService
-from services.azure_auth_service import AzureAuthService
+from services.azure_auth_service import AzureAuthService, clear_azure_sso_session
 from services.defaults_service import get_default
 
 logger = logging.getLogger(__name__)
+
+# Canonical set of providers a credential template may declare.
+#
+# This is the single source of truth for provider validation.  It must stay in
+# lock-step with every consumer that branches on ``template.provider`` to inject
+# or resolve credentials, otherwise a template can be created that looks healthy
+# in the API yet contributes no credentials at deploy time (see issue #191):
+#   - ``aws``   -> AWS_* env + TF_VAR_* mirror   (credentials_service, terraform-env injection)
+#   - ``ibm``   -> IC_API_KEY / IBMCLOUD_API_KEY  (credentials_service, terraform-env injection)
+#   - ``gcp``   -> GKE kubeconfig token            (credentials_service.get_gcp_service_account_info; post-provision cluster access, not terraform env)
+#   - ``azure`` -> AKS kubeconfig token            (execution.engine_router; post-provision cluster access, not terraform env)
+#   - ``ssh``   -> SSH tunnel / on-prem            (credential test + tunnel manager)
+# These are exactly the four cloud providers the UI offers plus the legacy
+# ``ssh`` on-prem provider.  Adding a new provider here without wiring its
+# consumer (or vice-versa) is the bug this constant exists to prevent.  NOTE:
+# ``aws``/``ibm`` inject credentials into the terraform provisioning env, so
+# #191's "looks healthy, injects nothing" class is fully closed for them;
+# ``azure``/``gcp`` are consumed only for post-provision cluster access, so a
+# mis-set provider is still rejected here but the underlying #191 class for the
+# terraform-env path only ever applied to aws/ibm.
+SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"aws", "gcp", "azure", "ibm", "ssh"})
+
+
+def validate_provider(provider: Any) -> str:
+    """Return ``provider`` if it is a supported credential-template provider.
+
+    Raises ``BadRequestError`` with a clear, enumerated message otherwise so a
+    misspelled or unknown value (e.g. ``"ibmcloud"``) is rejected at the point
+    of the mistake instead of silently injecting nothing later.
+    """
+    if provider not in SUPPORTED_PROVIDERS:
+        supported = ", ".join(sorted(SUPPORTED_PROVIDERS))
+        raise BadRequestError(
+            f"Unsupported credential-template provider '{provider}'. "
+            f"Must be one of: {supported}."
+        )
+    return provider
 
 
 class _AwsTestError(Exception):
@@ -358,6 +395,11 @@ class CredentialTemplateService:
 
     def create_template(self, template_data) -> dict:
         """Create a new credential template."""
+        # Reject unknown/misspelled providers before persisting: a template whose
+        # provider matches no injection path is created "successfully" yet
+        # contributes no credentials at deploy time (issue #191).
+        validate_provider(template_data.provider)
+
         # Duplicate name check
         existing = self.db.query(CloudCredentialTemplate).filter(
             CloudCredentialTemplate.name == template_data.name
@@ -413,7 +455,7 @@ class CredentialTemplateService:
             template.aws_session_token_encrypted = encrypt_value(template_data.aws_session_token)
         if template_data.gcp_credentials:
             template.gcp_credentials_encrypted = encrypt_value(template_data.gcp_credentials)
-        if getattr(template_data, "azure_client_secret", None):
+        if getattr(template_data, "azure_client_secret", None) and template.azure_auth_method != 'sso':
             template.azure_client_secret_encrypted = encrypt_value(template_data.azure_client_secret)
         if template_data.azure_credentials:
             template.azure_credentials_encrypted = encrypt_value(template_data.azure_credentials)
@@ -450,7 +492,19 @@ class CredentialTemplateService:
                 CloudCredentialTemplate.is_default
             ).update({"is_default": False})
 
+        old_azure = (template.azure_auth_method, template.azure_tenant_id, template.azure_client_id)
         update_data = template_data.model_dump(exclude_unset=True)
+
+        # If the caller is changing the provider, hold it to the same canonical
+        # set as create so an update can't move a template onto a value that
+        # injects nothing (issue #191).  An explicit ``null`` (or an absent
+        # field) leaves the stored provider unchanged: drop it here so the
+        # generic assignment loop below can't write None into the
+        # ``nullable=False`` column and 500 on flush.
+        if update_data.get("provider") is not None:
+            validate_provider(update_data["provider"])
+        else:
+            update_data.pop("provider", None)
 
         # Handle encrypted fields
         encrypted_map = {
@@ -475,10 +529,30 @@ class CredentialTemplateService:
             if hasattr(template, key):
                 setattr(template, key, value)
 
+        if template.provider == 'azure':
+            self._apply_azure_auth_change(template, *old_azure)
+
         template.updated_at = datetime.now(UTC)
         self.db.flush()
         self.db.refresh(template)
         return self.serialize_template(template)
+
+    @staticmethod
+    def _apply_azure_auth_change(template: CloudCredentialTemplate, old_method: str | None,
+                                 old_tenant_id: str | None, old_client_id: str | None) -> None:
+        """Drop credentials that no longer match the template's Azure identity."""
+        method_changed = template.azure_auth_method != old_method
+        if template.azure_auth_method == 'sso':
+            if method_changed and template.projects:
+                raise BadRequestError(
+                    f"Cannot switch to Entra ID SSO. {len(template.projects)} project(s) use this template, "
+                    "and provisioning requires a service principal."
+                )
+            template.azure_client_secret_encrypted = None
+        identity_changed = ((template.azure_tenant_id or None) != (old_tenant_id or None)
+                            or (template.azure_client_id or None) != (old_client_id or None))
+        if (method_changed and old_method == 'sso') or identity_changed:
+            clear_azure_sso_session(template)
 
     def delete_template(self, template_id: int) -> None:
         """Delete a credential template."""
@@ -652,12 +726,13 @@ class CredentialTemplateService:
         template = self._get_template(template_id)
 
         if template.provider == 'azure':
+            if not self._has_complete_sso_config(template):
+                raise BadRequestError("Azure SSO is not enabled for this template. Set the authentication method to Entra ID SSO.")
             auth_service = AzureAuthService()
             result = auth_service.initiate_device_authorization(
                 tenant_id=template.azure_tenant_id or "common",
                 client_id=template.azure_client_id,
             )
-            template.azure_client_id = result['client_id']
             self._create_audit_log("azure_sso_auth_initiated", template, "success", {
                 "tenant_id": template.azure_tenant_id or "common",
                 "client_id": result['client_id'],
@@ -709,6 +784,8 @@ class CredentialTemplateService:
         template = self._get_template(template_id)
 
         if template.provider == 'azure':
+            if not self._has_complete_sso_config(template):
+                raise BadRequestError("Azure SSO is not enabled for this template. Set the authentication method to Entra ID SSO.")
             auth_service = AzureAuthService()
             try:
                 token_data = auth_service.poll_for_token(
@@ -719,6 +796,8 @@ class CredentialTemplateService:
             except Exception as e:
                 error_msg = str(e)
                 self._create_audit_log("azure_sso_auth_failed", template, "failed", {"error": error_msg})
+                if isinstance(e, AppError):
+                    raise
                 raise InternalError(error_msg)
 
             if token_data.get("pending"):
@@ -858,10 +937,10 @@ class CredentialTemplateService:
                     tenant_id=template.azure_tenant_id or "common",
                     client_id=template.azure_client_id,
                 )
-            except AppError:
-                raise
             except Exception as e:
                 self._create_audit_log("azure_sso_refresh_failed", template, "failed", {"error": str(e)})
+                if isinstance(e, AppError):
+                    raise
                 raise InternalError(f"Failed to refresh Azure SSO credentials: {str(e)}")
 
             template.azure_sso_access_token_encrypted = encrypt_value(token_data['access_token'])

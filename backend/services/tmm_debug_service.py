@@ -268,12 +268,14 @@ def _cached_exec_debug_command(
     namespace: str,
     command: list[str],
     timeout: int = DEFAULT_EXEC_TIMEOUT,
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Execute a read-only debug command with short-term caching."""
+    """Execute a read-only debug command with short-term caching (``force`` skips the read)."""
     cache_key = _tmm_exec_cache_key(cluster_id, pod_name, namespace, command)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     result = exec_debug_command(api_client, pod_name, namespace, command, timeout)
     cache.set(cache_key, result, ttl_seconds=_TMM_EXEC_CACHE_TTL)
@@ -295,6 +297,7 @@ def exec_tmctl(
     directory: str = "blade",
     timeout: int = DEFAULT_EXEC_TIMEOUT,
     cluster_id: int | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a tmctl command and parse the tabular output.
@@ -314,7 +317,7 @@ def exec_tmctl(
     cmd.extend(["-w", str(width)])
 
     result = _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
     )
 
     # Parse tabular output if the command succeeded
@@ -419,6 +422,7 @@ def exec_configview(
     uuid: str,
     timeout: int = DEFAULT_EXEC_TIMEOUT,
     cluster_id: int | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Execute 'configview uuid <uuid>' to inspect a specific CR config.
@@ -432,7 +436,7 @@ def exec_configview(
 
     cmd = ["configview", "uuid", uuid]
     return _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
     )
 
 
@@ -442,6 +446,7 @@ def discover_configview_uuids(
     namespace: str,
     timeout: int = DEFAULT_EXEC_TIMEOUT,
     cluster_id: int | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Run 'configview list' to discover available configuration UUIDs.
@@ -451,7 +456,7 @@ def discover_configview_uuids(
     """
     cmd = ["configview", "list"]
     result = _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
+        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
     )
 
     # Parse UUIDs from the output

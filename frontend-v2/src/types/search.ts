@@ -6,6 +6,7 @@ export interface IngressSearchResult {
   all_hosts: string[];
   cluster_id: number;
   cluster_name: string;
+  project_id?: number | null;
   cloud_provider?: string;
   region?: string;
   target_service?: string;
@@ -16,6 +17,7 @@ export interface IngressSearchResult {
 export interface ClusterSearchResult {
   id: number;
   name: string;
+  project_id?: number | null;
   cloud_provider?: string;
   region?: string;
   status: string;
@@ -39,4 +41,5 @@ export interface GlobalSearchResponse {
   ingresses: IngressSearchResult[];
   clusters: ClusterSearchResult[];
   projects: ProjectSearchResult[];
+  timed_out_clusters?: string[];
 }

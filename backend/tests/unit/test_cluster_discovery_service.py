@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from core.encryption import decrypt_value, encrypt_value
 from models import CloudCredentialTemplate, KubernetesCluster
@@ -46,7 +47,8 @@ class TestDetectClustersFromCredentials:
         assert result["registered"] == []
         assert result["skipped"] == []
         assert result["errors"] == []
-        assert "No cloud credential templates" in result["message"]
+        assert "No cloud credential template bound" in result["message"]
+        assert result["reason"] == "no_bound_template"
 
     @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
     def test_registers_aws_cluster(self, mock_list, db, make_project):
@@ -177,20 +179,34 @@ class TestDetectClustersFromCredentials:
         assert "AWS API unreachable" in result["errors"][0]["error"]
 
     @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
-    def test_uses_default_template_when_project_has_none(self, mock_list, db, make_project):
+    def test_ignores_default_template_when_project_unbound(self, mock_list, db, make_project):
         project = make_project()
-        template = _aws_template()
-        db.add(template)
+        db.add(_aws_template())
         db.flush()
-
-        mock_list.return_value = []
 
         svc = ClusterDiscoveryService(db)
         result = svc.detect_clusters_from_credentials(project.id)
 
-        assert result["success"] is True
-        assert "No clusters found" in result["message"]
-        mock_list.assert_called_once()
+        assert result["registered"] == []
+        mock_list.assert_not_called()
+
+    @patch("services.cluster_discovery_service.list_roks_clusters_from_template")
+    @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
+    def test_uses_only_bound_template(self, mock_eks, mock_roks, db, make_project):
+        """Other providers' default templates are not queried."""
+        project = make_project()
+        template = _aws_template()
+        db.add(template)
+        db.add(_ibm_template())
+        db.flush()
+        project.credential_template_id = template.id
+        db.flush()
+        mock_eks.return_value = []
+
+        ClusterDiscoveryService(db).detect_clusters_from_credentials(project.id)
+
+        mock_eks.assert_called_once()
+        mock_roks.assert_not_called()
 
     @patch("services.cluster_discovery_service.list_roks_clusters_from_template")
     @patch("services.cluster_discovery_service.describe_roks_cluster")
@@ -276,7 +292,7 @@ class TestDetectClustersFromCredentials:
             }
         ]
         mock_fetch.return_value = {
-            "server": "aks-prod.hcp.eastus.azmk8s.io",
+            "server": "https://aks-prod.hcp.eastus.azmk8s.io",
             "certificate_authority_data": "LS0tLS1CRUdJTi...",
         }
 
@@ -287,6 +303,10 @@ class TestDetectClustersFromCredentials:
         assert len(result["registered"]) == 1
         assert result["registered"][0]["name"] == "aks-prod"
         assert result["registered"][0]["provider"] == "azure"
+        cluster = db.query(KubernetesCluster).filter_by(name="aks-prod").one()
+        assert cluster.api_server == "https://aks-prod.hcp.eastus.azmk8s.io:443"
+        kubeconfig = yaml.safe_load(decrypt_value(cluster.kubeconfig_encrypted))
+        assert kubeconfig["clusters"][0]["cluster"]["server"] == "https://aks-prod.hcp.eastus.azmk8s.io:443"
 
     @patch("services.cluster_discovery_service.list_gke_clusters_from_template")
     @patch("services.cluster_discovery_service.fetch_gke_cluster_credentials")

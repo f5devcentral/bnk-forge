@@ -96,12 +96,12 @@ function AgentCard({ agent }: { agent: A2AAgentCandidate }) {
           )}
           {card.governance?.agent_framework && (
             <Badge variant="secondary" className="text-xs gap-1 font-mono">
-              {card.governance.agent_framework}
+              {String(card.governance.agent_framework)}
             </Badge>
           )}
           {card.governance?.cloud && (
             <Badge variant="outline" className="text-xs gap-1">
-              {card.governance.cloud}
+              {String(card.governance.cloud)}
             </Badge>
           )}
         </div>

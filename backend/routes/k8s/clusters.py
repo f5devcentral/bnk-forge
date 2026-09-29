@@ -11,10 +11,10 @@ from threading import Lock
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from core.errors import handle_route_errors
+from core.errors import NotFoundError, handle_route_errors
 from core.k8s_resource_registry import list_resource_types
 from database import get_db
-from models import User
+from models import KubernetesCluster, User
 from routes.auth import require_cluster_owner, require_project_owner, require_viewer
 from routes.k8s._shared import (
     AdaptiveModuleRequest,
@@ -72,8 +72,12 @@ def detect_and_register_clusters_from_credentials(
     user: User = Depends(require_project_owner),
     db: Session = Depends(get_db)
 ):
-    """Discover Kubernetes clusters via the project's cloud credential templates."""
-    return ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
+    """Discover Kubernetes clusters via the project's bound cloud credential template."""
+    result = ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
+    db.commit()
+    for cluster in result["registered"]:
+        enqueue_cluster_scan(cluster["id"])
+    return result
 
 
 @router.post("/projects/{project_id}/k8s/clusters", response_model=ClusterCreateResponse)
@@ -137,6 +141,23 @@ def update_cluster(cluster_id: int, cluster_data: ClusterUpdateRequest, user: Us
 @handle_route_errors("delete cluster")
 def delete_cluster(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
     """Delete cluster configuration (owner or admin only)."""
+    result = ClusterManagementService(db).delete_cluster(cluster_id)
+    db.commit()
+    return result
+
+
+@router.delete("/projects/{project_id}/k8s/clusters/{cluster_id}", response_model=ClusterOperationResponse)
+@handle_route_errors("delete project cluster")
+def delete_project_cluster(
+    project_id: int,
+    cluster_id: int,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
+    """Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere."""
+    cluster = db.get(KubernetesCluster, cluster_id)
+    if cluster is None or cluster.project_id != project_id:
+        raise NotFoundError("cluster", cluster_id)
     result = ClusterManagementService(db).delete_cluster(cluster_id)
     db.commit()
     return result
