@@ -673,6 +673,7 @@ def delete_agent_host(
 
     db.delete(agent)
     db.commit()
+    close_agent_connection(host_id)
 
     if cleanup_args is not None:
         from tasks.benchmark_agent_tasks import cleanup_benchmark_agent_host
