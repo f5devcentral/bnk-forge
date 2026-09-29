@@ -275,7 +275,8 @@ class ClusterScanner:
         fetch returned a server version): every fetcher swallows its exception
         and returns an empty default, so an unreachable or expired-token cluster
         yields a fully shaped empty scan, and stamping it would show a fresh
-        sync time and "connected" over a panel with no data (#194).
+        sync time and "connected" over a panel with no data (#194). A scan that
+        didn't reach the server marks the cluster "unreachable".
         """
         from services.operator_registry import is_operator_live_connected
 
@@ -289,6 +290,8 @@ class ClusterScanner:
         if cluster_info.get("version"):
             cluster.last_synced_at = now
             cluster.connectivity_status = "connected"
+        else:
+            cluster.connectivity_status = "unreachable"
         cluster.access_method = "ssh_tunnel" if getattr(cluster, "ssh_tunnel_enabled", False) else "kubeconfig"
 
         try:

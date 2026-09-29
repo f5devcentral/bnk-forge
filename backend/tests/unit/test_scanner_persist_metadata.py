@@ -24,16 +24,16 @@ def _cluster():
 
 
 @pytest.mark.unit
-def test_empty_scan_does_not_stamp_sync_time_or_connected():
+def test_empty_scan_marks_unreachable_without_stamping_sync_time():
     """Every fetcher swallows errors, so an unreachable cluster yields an empty scan.
 
     That scan must not write a fresh last_synced_at or flip connectivity to
-    "connected": the NULL honestly says data was never received.
+    "connected": it marks the cluster "unreachable" and leaves the sync time.
     """
     cluster = _cluster()
     _scanner()._persist_cluster_metadata(cluster, cluster_info={}, nodes=[])
     assert cluster.last_synced_at is None
-    assert cluster.connectivity_status == "in_progress"
+    assert cluster.connectivity_status == "unreachable"
     # Non-sync metadata is still written from what is available.
     assert cluster.integration_status == "direct"
 
