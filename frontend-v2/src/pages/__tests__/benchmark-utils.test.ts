@@ -4,7 +4,7 @@
  * context's baseline using the shared REGRESSION_THRESHOLD_PCT (10%).
  */
 import { describe, it, expect } from 'vitest';
-import { getRegressionStatus, REGRESSION_THRESHOLD_PCT } from '@/pages/benchmark-utils';
+import { getRegressionStatus, REGRESSION_THRESHOLD_PCT, targetOptionLabel } from '@/pages/benchmark-utils';
 
 describe('getRegressionStatus', () => {
   it('returns "baseline" when the run itself is the baseline', () => {
@@ -85,5 +85,18 @@ describe('getRegressionStatus', () => {
 
   it('exposes the shared 10% threshold constant', () => {
     expect(REGRESSION_THRESHOLD_PCT).toBe(10);
+  });
+});
+
+describe('targetOptionLabel', () => {
+  it('tells apart same-named targets on same-named clusters in different projects', () => {
+    const a = targetOptionLabel({ name: 'mcp-route', cluster_id: 18, cluster_name: 'bnk-staging-test' });
+    const b = targetOptionLabel({ name: 'mcp-route', cluster_id: 21, cluster_name: 'bnk-staging-test' });
+    expect(a).toBe('mcp-route (bnk-staging-test #18)');
+    expect(a).not.toBe(b);
+  });
+
+  it('falls back to the cluster id when the cluster name is not loaded', () => {
+    expect(targetOptionLabel({ name: 'mcp-route', cluster_id: 7, cluster_name: null })).toBe('mcp-route (cluster #7)');
   });
 });

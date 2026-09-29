@@ -11,6 +11,7 @@ deployments (envoy, nginx, haproxy, f5-bnk) that route traffic to them.
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import joinedload
@@ -100,15 +101,19 @@ class BenchmarkTargetService(BaseService):
         self,
         status: str | None = None,
         cluster_id: int | None = None,
+        name: str | None = None,
     ) -> tuple[list[BenchmarkTarget], int]:
         """List all benchmark targets with optional filters."""
         query = self.db.query(BenchmarkTarget).options(
+            joinedload(BenchmarkTarget.cluster),
             joinedload(BenchmarkTarget.proxy_deployments),
         )
         if status:
             query = query.filter(BenchmarkTarget.status == status)
         if cluster_id:
             query = query.filter(BenchmarkTarget.cluster_id == cluster_id)
+        if name:
+            query = query.filter(BenchmarkTarget.name == name)
 
         targets = query.order_by(desc(BenchmarkTarget.created_at)).all()
         # Use unique() to deduplicate rows caused by joinedload on a collection
@@ -118,7 +123,9 @@ class BenchmarkTargetService(BaseService):
 
     def get_target(self, target_id: int, with_details: bool = False) -> BenchmarkTarget:
         """Get a benchmark target by ID."""
-        query = self.db.query(BenchmarkTarget)
+        query = self.db.query(BenchmarkTarget).options(
+            joinedload(BenchmarkTarget.cluster),
+        )
         if with_details:
             query = query.options(
                 joinedload(BenchmarkTarget.proxy_deployments),
@@ -128,14 +135,17 @@ class BenchmarkTargetService(BaseService):
             raise NotFoundError("benchmark_target", target_id)
         return target
 
-    def create_target(self, data: dict) -> BenchmarkTarget:
+    def create_target(self, data: dict | Any) -> BenchmarkTarget:
         """Create a new benchmark target."""
-        # Check unique name
+        if hasattr(data, "model_dump"):
+            data = data.model_dump()
+        # Check unique (cluster_id, name)
         existing = self.db.query(BenchmarkTarget).filter(
-            BenchmarkTarget.name == data["name"]
+            BenchmarkTarget.cluster_id == data["cluster_id"],
+            BenchmarkTarget.name == data["name"],
         ).first()
         if existing:
-            raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists")
+            raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists for cluster {data['cluster_id']}")
 
         # Validate cluster_id references a real cluster
         from models.kubernetes import KubernetesCluster
@@ -152,17 +162,23 @@ class BenchmarkTargetService(BaseService):
                      target.id, target.name, target.cluster_id)
         return target
 
-    def update_target(self, target_id: int, data: dict) -> BenchmarkTarget:
+    def update_target(self, target_id: int, data: dict | Any) -> BenchmarkTarget:
         """Update a benchmark target."""
+        if hasattr(data, "model_dump"):
+            data = data.model_dump(exclude_unset=True)
         target = self.get_target(target_id)
 
-        # Check unique name if changing
-        if data.get("name") and data["name"] != target.name:
+        # Check unique (cluster_id, name) if changing
+        new_name = data.get("name", target.name)
+        new_cluster_id = data.get("cluster_id", target.cluster_id)
+        if new_name != target.name or new_cluster_id != target.cluster_id:
             existing = self.db.query(BenchmarkTarget).filter(
-                BenchmarkTarget.name == data["name"]
+                BenchmarkTarget.cluster_id == new_cluster_id,
+                BenchmarkTarget.name == new_name,
+                BenchmarkTarget.id != target_id,
             ).first()
             if existing:
-                raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists")
+                raise ConflictError("benchmark_target", f"Target with name '{new_name}' already exists for cluster {new_cluster_id}")
 
         # Validate cluster_id if changing
         if data.get("cluster_id") and data["cluster_id"] != target.cluster_id:

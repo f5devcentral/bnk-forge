@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BNK-Forge API",
-    "version": "3.1.6"
+    "version": "4.0.0"
   },
   "paths": {
     "/": {
@@ -27957,6 +27957,24 @@
               ],
               "title": "Cluster Id"
             }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact match filter by target name",
+              "title": "Name"
+            },
+            "description": "Exact match filter by target name"
           }
         ],
         "responses": {
@@ -35288,6 +35306,17 @@
             "title": "Proxy Count",
             "default": 0
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -35438,6 +35467,17 @@
             "type": "integer",
             "title": "Proxy Count",
             "default": 0
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "created_at": {
             "type": "string",
