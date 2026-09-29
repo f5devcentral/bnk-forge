@@ -160,6 +160,7 @@ class ClusterDiscoveryService(BaseService):
             return {
                 "success": True,
                 "message": "No cloud credential template bound to this project",
+                "reason": "no_bound_template",
                 "registered": [],
                 "skipped": [],
                 "errors": [],

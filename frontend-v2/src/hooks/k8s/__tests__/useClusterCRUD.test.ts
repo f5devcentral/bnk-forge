@@ -289,7 +289,7 @@ describe('useDetectClusters', () => {
       http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () =>
         HttpResponse.json({
           success: true,
-          message: 'No cloud credential template bound to this project',
+          message: 'No cloud credential template bound to this project', reason: 'no_bound_template',
           registered: [],
           skipped: [],
           errors: [],

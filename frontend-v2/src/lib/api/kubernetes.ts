@@ -75,9 +75,6 @@ const _checkClusterUpdate: AssertKeysMatch<K8sClusterUpdateRequest, ApiClusterUp
 // eslint-disable-next-line @typescript-eslint/no-unused-expressions
 void _checkClusterCreate, _checkClusterUpdate;
 
-// detect-credentials message when the project has no credential template bound.
-const NO_BOUND_TEMPLATE_MESSAGE = 'No cloud credential template bound to this project';
-
 export const kubernetesApi = {
   // Kubernetes Monitoring
   getAllClusters: () =>
@@ -123,6 +120,7 @@ export const kubernetesApi = {
     apiClient.post<{
       success: boolean;
       message: string;
+      reason?: 'no_bound_template';
       registered: Array<{ id: number; name: string; provider: string; status: string }>;
       skipped: Array<{ name: string; provider: string; reason: string }>;
       errors: Array<{ provider: string; name: string | null; error: string }>;
@@ -131,7 +129,7 @@ export const kubernetesApi = {
   /** Discover through the project's bound credential template; without one, from deployed module outputs. */
   detectClusters: async (projectId: number) => {
     const fromCredentials = await kubernetesApi.detectClustersFromCredentials(projectId);
-    if (fromCredentials.message !== NO_BOUND_TEMPLATE_MESSAGE) return fromCredentials;
+    if (fromCredentials.reason !== 'no_bound_template') return fromCredentials;
     return kubernetesApi.detectManagedClusters(projectId);
   },
 

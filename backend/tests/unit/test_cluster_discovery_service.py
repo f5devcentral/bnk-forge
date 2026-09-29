@@ -48,6 +48,7 @@ class TestDetectClustersFromCredentials:
         assert result["skipped"] == []
         assert result["errors"] == []
         assert "No cloud credential template bound" in result["message"]
+        assert result["reason"] == "no_bound_template"
 
     @patch("services.cluster_discovery_service.list_eks_clusters_from_template")
     def test_registers_aws_cluster(self, mock_list, db, make_project):

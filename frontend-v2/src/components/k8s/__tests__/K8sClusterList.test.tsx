@@ -349,7 +349,7 @@ describe('K8sClusterList', () => {
     it('asks for confirmation before registering detected clusters', async () => {
       const user = userEvent.setup();
       const calls: string[] = [];
-      const ok = { success: true, message: 'No cloud credential template bound to this project', registered: [], skipped: [], errors: [] };
+      const ok = { success: true, message: 'No cloud credential template bound to this project', reason: 'no_bound_template', registered: [], skipped: [], errors: [] };
       server.use(
         http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
           calls.push('detect-eks');
