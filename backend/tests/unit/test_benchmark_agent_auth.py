@@ -222,6 +222,46 @@ class TestAgentAuthFlagOn:
         db.expire_all()
         assert db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags["_forge_builtin"] is True
 
+    def test_non_bootstrap_register_cannot_take_over_builtin_row(self, client, db):
+        from models.benchmark import BenchmarkAgent
+        from services.auth_service import create_user
+
+        self._client = client
+        create_user(db, "op2", "op2@t.com", "pw-op-123", role="operator", must_change_password=False)
+        marker = {"builtin": True, "_forge_builtin": True}
+        db.add(BenchmarkAgent(name="forge-local", hostname="orig", status="connected", managed=False, tags=marker))
+        db.commit()
+        body = {**_register_payload(), "name": "forge-local", "tags": {"site": "x"}}
+
+        assert self._post("/api/benchmarks/agents", body, sub="op2", role="operator").status_code == 409
+        assert self._post("/api/benchmarks/agents", body, sub="m", role="agent", agent_id=4242).status_code == 409
+        db.expire_all()
+        row = db.query(BenchmarkAgent).filter_by(name="forge-local").one()
+        assert (row.hostname, row.tags) == ("orig", marker)
+
+        resp = self._post("/api/benchmarks/agents", body, sub="forge-builtin-agent", role="agent")
+        assert resp.status_code in (200, 201), resp.text
+        db.expire_all()
+        assert db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags == {"site": "x", **marker}
+
+    def test_bootstrap_does_not_adopt_connected_legacy_row(self, client, db):
+        import routes.benchmarks as bench_routes
+        from models.benchmark import BenchmarkAgent
+
+        self._client = client
+        legacy = BenchmarkAgent(name="forge-local", status="connected", managed=False, tags={"builtin": True})
+        db.add(legacy)
+        db.commit()
+        bench_routes._agent_ws_connections[legacy.id] = object()
+        try:
+            resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local"},
+                              sub="forge-builtin-agent", role="agent")
+        finally:
+            bench_routes._agent_ws_connections.pop(legacy.id, None)
+        assert resp.status_code == 409
+        db.expire_all()
+        assert "_forge_builtin" not in db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags
+
     def test_bootstrap_ingest_bound_to_builtin_agent(self, client, db):
         from models.benchmark import BenchmarkAgent
 
@@ -618,3 +658,52 @@ class TestAgentWSLayer2MustChangeGate:
             patch("services.auth_service.token_user_state", _boom),
         ):
             assert _agent_ws_authorized(self._ws(token), 5) is None
+
+
+@pytest.mark.unit
+class TestAgentAuthFlagOffBuiltinMarker:
+    """Agent auth off: the built-in row stays marked (the WS layer binds the
+    bootstrap token to it) whoever registers it."""
+
+    def _post(self, client, body, headers):
+        with patch("routes.benchmarks.settings") as mock_settings:
+            mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = False
+            with patch("core.auth_middleware.settings") as mw_settings:
+                mw_settings.REQUIRE_AUTH = False
+                return client.post("/api/benchmarks/agents", json=body, headers=headers)
+
+    def test_bootstrap_register_marks_row_and_others_keep_it(self, client, db, admin_headers):
+        from models.benchmark import BenchmarkAgent
+        from services.auth_service import create_access_token
+
+        bootstrap = {"Authorization": f"Bearer {create_access_token({'sub': 'forge-builtin-agent', 'role': 'agent'})}"}
+        body = {**_register_payload(), "name": "builtin-off"}
+        assert self._post(client, body, bootstrap).status_code in (200, 201)
+        assert self._post(client, body, admin_headers).status_code in (200, 201)
+        db.expire_all()
+        assert db.query(BenchmarkAgent).filter_by(name="builtin-off").one().tags["_forge_builtin"] is True
+
+
+class TestAgentWSLayer2BootstrapBinding:
+    """Agent auth off, global JWT on: the bootstrap token connects only as the
+    built-in agent row."""
+
+    def test_bootstrap_token_bound_to_builtin_row(self, db):
+        from unittest.mock import MagicMock
+
+        from models.benchmark import BenchmarkAgent
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        builtin = BenchmarkAgent(name="builtin-l2", status="connected", managed=False, tags={"_forge_builtin": True})
+        other = BenchmarkAgent(name="remote-l2", status="connected", managed=False, tags={"builtin": True})
+        db.add_all([builtin, other])
+        db.commit()
+        ws = MagicMock()
+        ws.query_params = {"token": create_access_token(data={"sub": "forge-builtin-agent", "role": "agent"})}
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
+            patch("core.config.settings.REQUIRE_AUTH", True),
+        ):
+            assert _agent_ws_authorized(ws, builtin.id) is None
+            assert _agent_ws_authorized(ws, other.id) == 4001

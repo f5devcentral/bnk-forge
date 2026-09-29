@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from core.auth_context import effective_role
 from core.config import settings
-from core.errors import BadRequestError, ForbiddenError, NotFoundError, handle_route_errors
+from core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError, handle_route_errors
 from database import get_db
 from models.benchmark import BenchmarkAgent
 from models.enums import BenchmarkAgentStatus, BenchmarkRunStatus, ProxyDeploymentStatus
@@ -441,12 +441,18 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     Called via curl or script. If an agent with the same name
     already exists, it updates its info and marks it as connected.
     """
-    claims = _require_agent_bearer(request)
+    claims = _require_agent_bearer(request) or _optional_bearer_claims(request)
     bootstrap = _is_bootstrap_token(claims)
+    builtin_row = _is_builtin_agent(db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first())
     if bootstrap:
         _check_bootstrap_register(db, data.name)
+    elif builtin_row and settings.BENCHMARK_AGENT_AUTH_REQUIRED:
+        # Only the bootstrap token may re-register the built-in agent. With agent
+        # auth off every caller (the built-in agent included) is anonymous, so the
+        # row is kept marked instead.
+        raise ConflictError("benchmark_agent", f"Agent '{data.name}' is the built-in agent")
     payload = data.model_dump()
-    payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap)
+    payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap or builtin_row)
     svc = BenchmarkService(db)
     result = svc.register_agent(payload)
     db.commit()
@@ -1483,6 +1489,21 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
 _BOOTSTRAP_TOKEN_SUB = "forge-builtin-agent"
 
 
+def _optional_bearer_claims(request: Request) -> dict:
+    """Claims of a valid bearer token, or {}. With agent auth off the built-in agent
+    still sends its bootstrap token; recognising it keeps its row marked, which the
+    WS layer binds that token to."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {}
+    from core.errors import UnauthorizedError
+    from services.auth_service import decode_token
+    try:
+        return decode_token(auth_header.split(" ", 1)[1])
+    except UnauthorizedError:
+        return {}
+
+
 def _is_bootstrap_token(payload: dict) -> bool:
     """True for the built-in agent's claimless bootstrap token (startup_steps).
 
@@ -1532,6 +1553,9 @@ def _check_bootstrap_register(db: Session, name: str) -> None:
     if existing.name == _LEGACY_BUILTIN_NAME and not existing.managed and not any(
         _is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False))
     ):
+        if existing.id in _agent_ws_connections:
+            # A live agent (an external one may use the legacy name) keeps its row.
+            raise ConflictError("benchmark_agent", f"Agent '{name}' is connected; not adopting it")
         return
     raise BadRequestError(
         f"Bootstrap token may not re-register agent '{name}'",
@@ -1647,6 +1671,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         payload = decode_token(token)
     except Exception:
         return 4001
+    # The claimless bootstrap token sits in a shared file; it connects only as the
+    # built-in agent (as in layer 1), so it cannot supersede another agent.
+    if _is_bootstrap_token(payload) and not _is_builtin_agent_id(agent_id):
+        return 4001
     # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
     # only, so this path waved a must-change human admin straight through.
     # (bonnyr-f5 #193 minor: the earlier claim that this was "the one
@@ -1724,8 +1752,11 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
         # A run still RUNNING for this agent was dispatched on a previous
         # connection (or before a backend restart) and can never report back on
         # this one; fail it so it does not block the queue. Runs whose dispatch
-        # a route is still sending are spared.
-        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING}
+        # a route is still sending, or that were already sent on this connection
+        # (while the superseded one was closing), are spared.
+        in_flight = {
+            rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING or owner is websocket
+        }
         interrupted = svc.fail_interrupted_runs_for_agent(agent_id, keep=in_flight)
         for rid in interrupted:
             _run_owner.pop(rid, None)

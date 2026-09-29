@@ -119,5 +119,7 @@ describe('BenchmarkTargetsTab', () => {
     // Detail header badge and detail grid should display cluster-alpha
     const clusterBadges = screen.getAllByText('cluster-alpha');
     expect(clusterBadges.length).toBeGreaterThanOrEqual(1);
+    // One Cluster cell in the details card
+    expect(screen.getAllByText('Cluster')).toHaveLength(1);
   });
 });
