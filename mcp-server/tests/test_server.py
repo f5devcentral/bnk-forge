@@ -136,6 +136,15 @@ def test_all_iac_tools_registered(config: MCPConfig) -> None:
     assert expected.issubset(tool_names), f"Missing IaC tools: {expected - tool_names}"
 
 
+def test_all_benchmark_tools_registered(config: MCPConfig) -> None:
+    """Benchmark target tools are registered."""
+    mcp = create_server(config)
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+
+    expected = {"list_benchmark_targets", "create_benchmark_target"}
+    assert expected.issubset(tool_names), f"Missing benchmark tools: {expected - tool_names}"
+
+
 def test_total_tool_count(config: MCPConfig) -> None:
     """Verify we have the expected number of tools registered."""
     mcp = create_server(config)

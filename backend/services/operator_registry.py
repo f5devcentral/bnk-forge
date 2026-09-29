@@ -602,5 +602,21 @@ class OperatorConnectionManager:
         return self._connections.get(operator_id)
 
 
+def is_operator_live_connected(op: ConnectedOperator, polling_threshold_seconds: int = 60) -> bool:
+    """Return whether an operator is currently connected.
+
+    Direct-WebSocket operators are live when their socket is in the in-memory
+    registry.  Polling operators are live when their most recent heartbeat is
+    within ``polling_threshold_seconds``.  This is the single source of truth
+    used by the operator list, fleet health, and BNK health views.
+    """
+    if operator_connections.is_connected(op.operator_id):
+        return True
+    if op.connectivity_mode == "polling" and op.last_heartbeat_at:
+        heartbeat_age = (datetime.now(UTC) - op.last_heartbeat_at).total_seconds()
+        return heartbeat_age < polling_threshold_seconds
+    return False
+
+
 # Global singleton
 operator_connections = OperatorConnectionManager()

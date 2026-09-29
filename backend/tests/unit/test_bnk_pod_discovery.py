@@ -444,3 +444,15 @@ class TestDiscoverF5Pods:
 
         assert tenant_pods == []
         assert utils_pods == []
+
+
+class TestCachedDiscoverForce:
+    def test_force_bypasses_pod_cache(self):
+        from services.bnk.fetch import _cached_discover_f5_pods
+
+        with patch("core.cache.cache") as mock_cache, \
+                patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])) as mock_discover:
+            mock_cache.get.return_value = [[{"name": "stale"}], []]
+            assert _cached_discover_f5_pods(1, MagicMock(), [])[0] == [{"name": "stale"}]
+            assert _cached_discover_f5_pods(1, MagicMock(), [], force=True) == ([], [])
+        mock_discover.assert_called_once()

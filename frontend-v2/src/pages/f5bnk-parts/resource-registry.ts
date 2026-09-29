@@ -38,6 +38,7 @@ import {
   IpamRangeDetail,
   BnkGatewayDetail,
   FirewallRuleListDetail,
+  ServiceDetail,
 } from '@/components/k8s/f5bnk-details';
 
 import { VIEW_POLICY_MAP, VIEW_AI_ANALYZERS } from './bnk-constants';
@@ -236,6 +237,13 @@ const registry: Record<string, ResourceRegistryEntry> = {
       { label: 'View AI Dashboard', icon: Activity, type: 'navigate', targetView: VIEW_AI_ANALYZERS },
     ],
     icon: Activity,
+  },
+  Service: {
+    detailComponent: ServiceDetail,
+    contextActions: [
+      { label: 'View Service Details', icon: Server, type: 'select' },
+    ],
+    icon: Server,
   },
 };
 

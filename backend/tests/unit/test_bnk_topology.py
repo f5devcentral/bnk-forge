@@ -7,6 +7,7 @@ No mocking — these are pure data transformations.
 
 import pytest
 
+from schemas.f5bnk import GatewayTopologyResponse, TopologyAnalyzer
 from services.bnk.topology import (
     _build_cne_instance,
     _build_data_plane,
@@ -33,24 +34,36 @@ def _resource(name: str, namespace: str = "f5-bnk", **kw) -> dict:
     }
 
 
-def _gateway(name: str = "gw-prod", namespace: str = "f5-bnk", listeners=None, addresses=None) -> dict:
-    return _resource(name, namespace, spec={
-        "gatewayClassName": "f5-bnk",
-        "listeners": listeners or [{"name": "http", "protocol": "HTTP", "port": 80}],
-    }, status={
+def _gateway(name: str = "gw-prod", namespace: str = "f5-bnk", listeners=None, addresses=None,
+             conditions=None, listener_status=None) -> dict:
+    listeners = listeners or [{"name": "http", "protocol": "HTTP", "port": 80}]
+    status: dict = {
         "addresses": [{"value": a} for a in (addresses or ["10.0.0.1"])],
-        "conditions": [
+        "conditions": conditions or [
             {"type": "Programmed", "status": "True"},
             {"type": "Accepted", "status": "True"},
         ],
-    })
+    }
+    if listener_status:
+        status["listeners"] = listener_status
+    return _resource(name, namespace, spec={
+        "gatewayClassName": "f5-bnk",
+        "listeners": listeners,
+    }, status=status)
 
 
 def _httproute(name: str, gw_name: str, gw_ns: str = "f5-bnk",
-               namespace: str = "f5-bnk", backends=None, section_name=None) -> dict:
+               namespace: str = "f5-bnk", backends=None, section_name=None,
+               parent_conditions=None) -> dict:
     parent_ref: dict = {"name": gw_name, "namespace": gw_ns}
     if section_name:
         parent_ref["sectionName"] = section_name
+    status: dict = {}
+    if parent_conditions is not None:
+        status["parents"] = [{
+            "parentRef": {"name": gw_name, "namespace": gw_ns, "sectionName": section_name} if section_name else {"name": gw_name, "namespace": gw_ns},
+            "conditions": parent_conditions,
+        }]
     return _resource(name, namespace, spec={
         "parentRefs": [parent_ref],
         "hostnames": ["example.com"],
@@ -59,7 +72,7 @@ def _httproute(name: str, gw_name: str, gw_ns: str = "f5-bnk",
                 {"name": "svc-1", "port": 8080, "kind": "Service", "group": ""},
             ],
         }],
-    })
+    }, status=status)
 
 
 def _empty_resources() -> dict:
@@ -107,6 +120,25 @@ class TestAnalyzeTopology:
         assert len(listener["routes"]) == 1
         assert listener["routes"][0]["name"] == "web-route"
         assert listener["routes"][0]["backends"][0]["name"] == "svc-1"
+
+    def test_route_service_settings_survive_response_model(self):
+        """L4Route per-backend serviceSettings are kept by the typed response."""
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway()]
+        resources["httproute"] = [_httproute("web-route", "gw-prod")]
+        result = analyze_topology({"resources": resources})
+        settings = {"svc-1": {"weight": 0.75}}
+        result["topology"][0]["listeners"][0]["routes"][0]["serviceSettings"] = settings
+
+        response = GatewayTopologyResponse(
+            topology=result["topology"],
+            dataPlane=result["dataPlane"],
+            referenceGrants=result["referenceGrants"],
+            counts=result["counts"],
+            cluster_id=1,
+        ).model_dump()
+
+        assert response["topology"][0]["listeners"][0]["routes"][0]["serviceSettings"] == settings
 
     def test_route_matches_by_section_name(self):
         """Route with sectionName only attaches to the matching listener."""
@@ -202,6 +234,47 @@ class TestAnalyzeTopology:
         assert len(result["referenceGrants"]) == 1
         assert result["referenceGrants"][0]["name"] == "rg-1"
 
+    def test_gateway_operational_state(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway(
+            conditions=[
+                {"type": "Accepted", "status": "True"},
+                {"type": "Programmed", "status": "False", "message": "address conflict"},
+            ],
+        )]
+
+        result = analyze_topology({"resources": resources})
+        gw = result["topology"][0]
+        assert gw["accepted"] is True
+        assert gw["programmed"] is False
+        assert any(c["type"] == "Programmed" and c["status"] == "False" for c in gw["conditions"])
+
+    def test_listener_operational_state(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway(listener_status=[{
+            "name": "http",
+            "attachedRoutes": 3,
+            "conditions": [{"type": "Accepted", "status": "True"}],
+        }])]
+
+        result = analyze_topology({"resources": resources})
+        listener = result["topology"][0]["listeners"][0]
+        assert listener["attachedRouteCount"] == 3
+        assert listener["conditions"][0]["type"] == "Accepted"
+
+    def test_route_operational_state(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway()]
+        resources["httproute"] = [_httproute("web-route", "gw-prod", parent_conditions=[
+            {"type": "Accepted", "status": "False", "message": "no matching listener"},
+        ])]
+
+        result = analyze_topology({"resources": resources})
+        route = result["topology"][0]["listeners"][0]["routes"][0]
+        assert route["accepted"] is False
+        assert route["conditionMessage"] == "no matching listener"
+        assert route["conditions"][0]["type"] == "Accepted"
+
 
 # ---------------------------------------------------------------------------
 # _match_routes_to_listener
@@ -242,6 +315,15 @@ class TestMatchAnalyzers:
         assert len(result) == 1
         assert result[0]["name"] == "analyzer-1"
 
+    def test_object_schedule_is_normalised(self):
+        analyzer = _resource("analyzer-1", spec={
+            "applications": [{"name": "web-route", "kind": "HTTPRoute", "namespace": "f5-bnk"}],
+            "schedule": {"every": "5m"},
+        })
+        result = _match_analyzers([analyzer], "web-route", "HTTPRoute", "f5-bnk", "f5-bnk")
+        assert result[0]["schedule"] == "5m"
+        TopologyAnalyzer(**result[0])
+
     def test_no_match(self):
         analyzer = _resource("analyzer-1", spec={
             "applications": [{"name": "other-route", "kind": "HTTPRoute", "namespace": "f5-bnk"}],
@@ -273,6 +355,22 @@ class TestMatchNetPolicies:
         result = _match_net_policies([np], {}, "gw-prod", "http")
         assert result == []
 
+    def test_net_policy_operational_state(self):
+        np = _resource("np-1", spec={
+            "targetRefs": [{"name": "gw-prod", "sectionName": "http", "kind": "Gateway"}],
+            "extensionRefs": [],
+        }, status={
+            "descendants": [],
+            "conditions": [
+                {"type": "Resolved", "status": "True", "message": "resolved"},
+                {"type": "Programmed", "status": "False", "message": "not programmed"},
+            ],
+        })
+        result = _match_net_policies([np], {}, "gw-prod", "http")
+        assert result[0]["resolved"] is True
+        assert result[0]["programmed"] is False
+        assert result[0]["messages"]["programmed"] == "not programmed"
+
 
 class TestMatchSecPolicies:
     def test_sec_policy_with_firewall(self):
@@ -290,6 +388,23 @@ class TestMatchSecPolicies:
         assert result[0]["name"] == "sp-1"
         assert len(result[0]["firewallPolicies"]) == 1
         assert result[0]["firewallPolicies"][0]["rules"][0]["action"] == "accept"
+
+    def test_sec_policy_operational_state(self):
+        sp = _resource("sp-1", spec={
+            "targetRefs": [{"name": "gw-prod", "kind": "Gateway", "sectionName": "http"}],
+            "extensionRefs": [{"kind": "F5BigFwPolicy", "name": "fw-1"}],
+        }, status={
+            "conditions": [
+                {"type": "Resolved", "status": "True", "message": "resolved"},
+                {"type": "Programmed", "status": "True"},
+            ],
+        })
+        from services.bnk.helpers import make_resource_map
+        fw_map = make_resource_map([_resource("fw-1", spec={"rule": []})])
+        result = _match_sec_policies([sp], fw_map, {}, {}, "gw-prod")
+        assert result[0]["resolved"] is True
+        assert result[0]["programmed"] is True
+        assert result[0]["messages"]["resolved"] == "resolved"
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +468,15 @@ class TestBuildCneInstance:
         assert result["features"]["envDiscovery"] is False
         assert result["containerPlatform"] == "k8s"
         assert result["phase"] == "Running"
+        assert result["ready"] is False
+
+    def test_cne_ready_when_programmed(self):
+        cne = _resource("cne-1", spec={"containerPlatform": "k8s"}, status={
+            "phase": "Running",
+            "conditions": [{"type": "Programmed", "status": "True"}],
+        })
+        result = _build_cne_instance(cne)
+        assert result["ready"] is True
 
 
 class TestBuildEgress:
