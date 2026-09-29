@@ -1890,6 +1890,34 @@ class TestTriggerBenchmarkRun:
         assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "pending"
+        run = db.query(BenchmarkRun).get(data["run_id"])
+        db.refresh(run)
+        assert run.status == "pending"
+        assert run.started_at is None
+
+    def test_run_claimed_before_dispatch(self, client, operator_headers, make_k8s_cluster, db):
+        """The run is RUNNING (claimed + committed) while dispatch is in flight, so a
+        concurrent connect-drain cannot dispatch it a second time."""
+        cluster = make_k8s_cluster(name="trigger-claim-cluster")
+        target = _make_target(db, cluster.id, name="trigger-claim-target")
+        proxy = _make_proxy(db, target.id, status="ready")
+        agent = _make_agent(db, name="trigger-claim-agent", status="connected")
+        seen = []
+
+        def _dispatch(agent_id, command):
+            db.expire_all()
+            seen.append(db.query(BenchmarkRun).get(command["run_id"]).status)
+            return True
+
+        with patch("routes.benchmarks.dispatch_to_agent", side_effect=_dispatch):
+            resp = client.post(
+                f"/api/benchmarks/targets/{target.id}/proxies/{proxy.id}/run",
+                json={"agent_id": agent.id},
+                headers=operator_headers,
+            )
+        assert resp.status_code == 201
+        assert seen == ["running"]
+        assert resp.json()["status"] == "running"
 
     def test_requires_valid_token(self, client, make_k8s_cluster, db):
         cluster = make_k8s_cluster(name="trigger-noauth-cluster")
@@ -2407,6 +2435,91 @@ class TestAgentWebSocketAuth:
         db.expire_all()
         db.refresh(run)
         assert run.status == "running"  # mutation was skipped by the spoof guard
+
+
+class TestAgentWebSocketQueue:
+    """Connect-drain and terminal-event dispatch of an agent's queued runs."""
+
+    @staticmethod
+    def _connect(client, agent):
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": agent.name, "role": "agent", "agent_id": agent.id})
+        return client.websocket_connect(f"/ws/benchmarks/agents/{agent.id}?token={token}")
+
+    def test_reconnect_fails_interrupted_run_and_drains_next(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-reconnect-agent", status="connected")
+        stale = _make_run(db, status="running", agent_id=agent.id)
+        queued = _make_run(db, status="pending", agent_id=agent.id)
+
+        sent = []
+
+        async def _send(agent_id, command):
+            sent.append(command["run_id"])
+            return True
+
+        with patch("routes.benchmarks.send_command_to_agent", _send):
+            with self._connect(client, agent) as ws:
+                ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        assert sent == [queued.id]
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(stale.id).status == "failed"
+        assert "interrupted" in db.query(BenchmarkRun).get(stale.id).error_message
+        assert db.query(BenchmarkRun).get(queued.id).status == "running"
+
+    def test_standalone_terminal_event_dispatches_next_queued_run(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-chain-agent", status="connected")
+        first = _make_run(db, status="pending", agent_id=agent.id)
+        second = _make_run(db, status="pending", agent_id=agent.id)
+
+        sent = []
+
+        async def _send(agent_id, command):
+            sent.append(command["run_id"])
+            return True
+
+        with patch("routes.benchmarks.send_command_to_agent", _send):
+            with self._connect(client, agent) as ws:
+                ws.send_json({"type": "run_failed", "run_id": first.id, "error": "boom"})
+                ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        assert sent == [first.id, second.id]
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(first.id).status == "failed"
+        assert db.query(BenchmarkRun).get(second.id).status == "running"
+
+
+def test_dispatch_to_agent_timeout_cancels_scheduled_send(monkeypatch):
+    """A timed-out dispatch cancels the scheduled send, so it cannot land after the
+    caller has released the claim (which would re-send the run)."""
+    import asyncio
+    import threading
+    import time
+
+    import routes.benchmarks as bench_routes
+
+    landed = []
+
+    async def _slow_send(agent_id, command):
+        await asyncio.sleep(0.5)
+        landed.append(command["run_id"])
+        return True
+
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        monkeypatch.setattr(bench_routes, "_main_loop", loop)
+        monkeypatch.setattr(bench_routes, "_DISPATCH_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", _slow_send)
+        assert bench_routes.dispatch_to_agent(1, {"type": "run", "run_id": 7}) is False
+        time.sleep(0.8)
+        assert landed == []
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(timeout=2)
+        loop.close()
 
 
 # ============================================================================

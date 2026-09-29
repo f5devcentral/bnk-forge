@@ -575,3 +575,27 @@ class TestMarkRunGroupRunningIfPending:
         # Already RUNNING, rowcount == 0 so returns False
         assert transitioned is False
 
+
+
+class TestFailInterruptedRunsForAgent:
+    def test_fails_only_that_agents_running_runs_and_unblocks_queue(self, db):
+        agent = _agent(db, name="agent-interrupted")
+        other = _agent(db, name="agent-other")
+        group = _group(db, status="running", total_runs=2)
+        stale = _child(db, group.id, "running", agent_id=agent.id, variant_label="c1")
+        nxt = _child(db, group.id, "pending", agent_id=agent.id, variant_label="c2")
+        foreign = _child(db, None, "running", agent_id=other.id, variant_label="x")
+
+        svc = BenchmarkService(db)
+        assert svc.get_first_pending_run_for_agent(agent.id) is None
+        assert svc.fail_interrupted_runs_for_agent(agent.id) == [stale.id]
+        db.commit()
+
+        db.refresh(stale)
+        db.refresh(foreign)
+        db.refresh(group)
+        assert stale.status == BenchmarkRunStatus.FAILED
+        assert stale.completed_at is not None
+        assert foreign.status == BenchmarkRunStatus.RUNNING
+        assert group.failed_runs == 1
+        assert svc.get_first_pending_run_for_agent(agent.id).id == nxt.id
