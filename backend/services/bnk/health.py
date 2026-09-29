@@ -489,8 +489,10 @@ def _build_ai_health(
             {
                 "name": safe_get(ip, "metadata", "name", default=""),
                 "namespace": safe_get(ip, "metadata", "namespace", default=""),
-                "modelName": safe_get(ip, "spec", "modelName", default=""),
-                "targetPortNumber": safe_get(ip, "spec", "targetPortNumber", default=None),
+                "targetPorts": [
+                    p.get("number") for p in safe_get(ip, "spec", "targetPorts", default=[]) or [] if isinstance(p, dict)
+                ],
+                "endpointPicker": safe_get(ip, "spec", "endpointPickerRef", "name", default=""),
             }
             for ip in inferencepools
         ],

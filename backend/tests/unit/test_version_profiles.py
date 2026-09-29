@@ -123,6 +123,21 @@ class TestBnkDeployableReleaseServiceSeed:
         db_session.commit()
         assert count == 3  # bnk-2.2, bnk-2.3.1 and bnk-2.4 were missing
 
+    def test_oci_refresh_matches_seeded_24_row(self, service, db_session):
+        """The 2.4 seed carries the real CNEInstance manifestVersion, so an OCI
+        refresh of 2.4.0 updates the seeded row instead of inserting a duplicate."""
+        from services.bare_metal.deployable_release_refresh import DeployableReleaseRefreshService
+
+        service.seed_profiles()
+        db_session.commit()
+        result = DeployableReleaseRefreshService(db_session)._upsert_entry(
+            {"manifest_version": "2.4.0",
+             "component_versions": {"charts/f5-lifecycle-operator": "v2.30.0-0.5.2"}},
+            is_active=True, overrides={},
+        )
+        assert result == "updated"
+        assert db_session.query(BnkDeployableRelease).count() == 4
+
 
 # ---------------------------------------------------------------------------
 # TestBnkDeployableReleaseServiceList

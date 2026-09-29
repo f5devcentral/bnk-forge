@@ -680,7 +680,7 @@ export default function F5BNK() {
     setTopologyLoading(true);
     try {
       // Map kind to the API resource type key (lowercase)
-      const resourceType = selection.kind.toLowerCase();
+      const resourceType = selection.resourceType || selection.kind.toLowerCase();
       const result = await api.getClusterResources(selectedCluster, resourceType, {
         namespace: selection.namespace,
       });

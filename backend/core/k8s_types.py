@@ -26,7 +26,7 @@ class ApiGroups:
     F5_NET = "k8s.f5net.com"        # Data-plane CRDs: fw-policies, vlans, irules, etc.
     F5_K8S = "k8s.f5.com"           # FLO-managed CRDs: CNEInstance, Analyzer, EPP, Observer
     F5_GATEWAY_NET = "gateway.k8s.f5net.com"  # Gateway extensions (legacy <=2.3): BNKSecPolicy, BNKNetPolicy, L4Route
-    F5_GATEWAY = "gateway.k8s.f5.com"         # Modern BNK 2.4+ Gateway CRDs: Infra, GatewaySettings, EgressGateway, SecPolicy, NetPolicy
+    F5_GATEWAY = "gateway.k8s.f5.com"         # Modern BNK 2.4+ Gateway CRDs: Infra, GatewaySettings, EgressGateway, SecPolicy, NetPolicy, L4Route
     F5_IPAM = "fic.f5.com"          # F5 IPAM Controller CRDs: IPAMRange, IPAM
     # Gateway API Inference Extension (GAIE)
     GAIE_INFERENCE = "inference.networking.k8s.io"  # InferencePool, InferenceModelRewrite

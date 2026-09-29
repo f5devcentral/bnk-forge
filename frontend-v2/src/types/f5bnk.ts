@@ -426,6 +426,7 @@ export interface TopologyRoute {
   name: string;
   namespace: string;
   kind: string;   // "HTTPRoute", "TCPRoute", "UDPRoute", "TLSRoute", "GRPCRoute", "L4Route"
+  resourceType?: string;  // registry key to fetch it by; L4Route has two (l4route, l4route_24)
   hostnames: string[];
   backends: TopologyRouteBackend[];
   analyzers: TopologyAnalyzer[];
@@ -444,6 +445,7 @@ export interface TopologyNetworkPolicyExtension {
 
 export interface TopologyNetworkPolicy {
   name: string;
+  kind?: string;  // "NetPolicy" (2.4) or "BNKNetPolicy"
   namespace: string;
   extensions: TopologyNetworkPolicyExtension[];
   resolvedCount: number;
@@ -473,6 +475,7 @@ export interface TopologyFirewallPolicy {
 
 export interface TopologySecurityPolicy {
   name: string;
+  kind?: string;  // "SecPolicy" (2.4) or "BNKSecPolicy"
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFirewallPolicy[];
@@ -507,6 +510,7 @@ export interface TopologyVlan {
   name: string;
   namespace: string;
   kind?: string;
+  infraName?: string;  // parent Infra when projected from a 2.4 Infra network
   interfaces: unknown[];
   selfipV4s: string[];
   prefixLen: number | null;
@@ -532,6 +536,7 @@ export interface TopologyStaticRoute {
   destination: string;
   gateway: string;
   kind?: string;
+  infraName?: string;
 }
 
 export interface TopologySnatPool {

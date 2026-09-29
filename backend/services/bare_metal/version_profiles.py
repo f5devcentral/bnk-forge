@@ -96,7 +96,7 @@ BNK_24_RELEASE = {
     "is_default": False,
     "is_active": True,
     "source_type": "manual",
-    "bnk_manifest_version": "2.4.0-3.3175.0+0.0.380",
+    "bnk_manifest_version": "2.4.0",  # CNEInstance spec.manifestVersion; FLO resolves bigip-k8s-manifest-2.4.0.yaml
     "bnk_cr_kind": "CNEInstance",
     "flo_version": "v2.30.0-0.5.2",
     "k8s_version": "1.32.0",

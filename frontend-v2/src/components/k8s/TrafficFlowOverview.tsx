@@ -262,12 +262,15 @@ function AttachmentBadge({
 function ClickableName({
   name,
   kind,
+  resourceName,
   namespace,
   onSelect,
   className: extraClass,
 }: {
   name: string;
   kind: string;
+  /** Resource to open when it differs from the label (Infra-projected VLANs and routes). */
+  resourceName?: string;
   namespace: string;
   onSelect?: (sel: { kind: string; name: string; namespace: string }) => void;
   className?: string;
@@ -278,7 +281,7 @@ function ClickableName({
   return (
     <button
       type="button"
-      onClick={() => onSelect({ kind, name, namespace })}
+      onClick={() => onSelect({ kind, name: resourceName || name, namespace })}
       className={cn(
         'font-medium text-xs hover:underline text-left truncate text-primary hover:text-primary/80',
         extraClass,
@@ -848,10 +851,10 @@ function InfrastructureCard({
               <div key={vlan.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Wifi className="h-3 w-3 shrink-0" />
-                  <ClickableName name={vlan.name} kind={vlan.kind || "F5SPKVlan"} namespace={vlan.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={vlan.name} kind={vlan.kind || "F5SPKVlan"} resourceName={vlan.infraName} namespace={vlan.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
-                  {vlan.selfipV4s.join(', ') || 'no self-IPs'} · {vlan.ready ? 'ready' : 'pending'}
+                  {vlan.selfipV4s.join(', ') || (vlan.kind === 'Infra' ? 'self-IPs from IPAM' : 'no self-IPs')} · {vlan.ready ? 'ready' : 'pending'}
                 </div>
               </div>
             ))}
@@ -870,7 +873,7 @@ function InfrastructureCard({
               <div key={sr.name} className="rounded px-2 py-1.5 text-xs bg-muted/50">
                 <div className="flex items-center gap-1.5">
                   <Route className="h-3 w-3 shrink-0" />
-                  <ClickableName name={sr.name} kind={sr.kind || "F5SPKStaticRoute"} namespace={sr.namespace} onSelect={onSelectResource} />
+                  <ClickableName name={sr.name} kind={sr.kind || "F5SPKStaticRoute"} resourceName={sr.infraName} namespace={sr.namespace} onSelect={onSelectResource} />
                 </div>
                 <div className="text-[10px] mt-0.5 text-muted-foreground">
                   {sr.destination} → {sr.gateway}

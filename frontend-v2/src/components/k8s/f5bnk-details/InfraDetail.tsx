@@ -3,7 +3,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Network, Globe, Route, Layers } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
-import type { BnkInfraIpam, BnkInfraNetwork, BnkInfraStaticRoute, BnkInfraVrf } from '@/types/kubernetes';
+import type {
+  BnkInfraEgressDefaults, BnkInfraIpam, BnkInfraNetwork, BnkInfraStaticRoute, BnkInfraVrf,
+} from '@/types/kubernetes';
 
 export function InfraDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
@@ -13,7 +15,7 @@ export function InfraDetail({ resource }: DetailPanelProps) {
   const ipams: BnkInfraIpam[] = spec.ipams || [];
   const staticRoutes: BnkInfraStaticRoute[] = spec.staticRoutes || [];
   const vrfs: BnkInfraVrf[] = spec.vrfs || [];
-  const egressDefaults = spec.egressDefaults;
+  const egressDefaults: BnkInfraEgressDefaults | undefined = spec.egressDefaults;
 
   return (
     <div className="space-y-4">
@@ -65,26 +67,20 @@ export function InfraDetail({ resource }: DetailPanelProps) {
             <Section title={`IPAM Pools (${ipams.length})`}>
               {ipams.map((ipam, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Globe className="h-3 w-3 text-success" />
-                      <code className="font-mono font-medium text-foreground/80">{ipam.name}</code>
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-3 w-3 text-success" />
+                    <code className="font-mono font-medium text-foreground/80">{ipam.name}</code>
+                  </div>
+                  {(ipam.ipPools || []).map((pool, pIdx) => (
+                    <div key={pIdx} className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-3 pl-5">
+                      <span>Range: <code className="font-mono">{pool.rangeStart} - {pool.rangeEnd}</code></span>
+                      {pool.availabilityZone && (
+                        <Badge variant="secondary" className="text-[10px] font-mono">
+                          AZ: {pool.availabilityZone}
+                        </Badge>
+                      )}
                     </div>
-                    {ipam.az && (
-                      <Badge variant="secondary" className="text-[10px] font-mono">
-                        AZ: {ipam.az}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex flex-wrap gap-3 pl-5">
-                    {ipam.cidr && <span>CIDR: <code className="font-mono">{ipam.cidr}</code></span>}
-                    {ipam.rangeStart && ipam.rangeEnd && (
-                      <span>Range: <code className="font-mono">{ipam.rangeStart} - {ipam.rangeEnd}</code></span>
-                    )}
-                    {ipam.networkRef?.name && (
-                      <span>Network: <code className="font-mono">{ipam.networkRef.name}</code></span>
-                    )}
-                  </div>
+                  ))}
                 </div>
               ))}
             </Section>
@@ -97,12 +93,11 @@ export function InfraDetail({ resource }: DetailPanelProps) {
                 <div key={idx} className="flex items-center justify-between p-1.5 rounded border bg-background/50">
                   <div className="flex items-center gap-2">
                     <Route className="h-3 w-3 text-muted-foreground" />
-                    <code className="font-mono text-foreground/80">{rt.destination}</code>
+                    <code className="font-mono text-foreground/80">{(rt.destinations || []).join(', ')}</code>
                   </div>
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <span>via</span>
-                    <code className="font-mono text-foreground/80">{rt.gateway}</code>
-                    {rt.vrf && <Badge variant="outline" className="text-[10px]">VRF: {rt.vrf}</Badge>}
+                    <code className="font-mono text-foreground/80">{rt.nextHop}</code>
                   </div>
                 </div>
               ))}
@@ -126,7 +121,11 @@ export function InfraDetail({ resource }: DetailPanelProps) {
                 </div>
               )}
               {egressDefaults && (
-                <InfoRow label="Egress SNAT Mode" value={egressDefaults.snatMode || egressDefaults.mode} mono />
+                <>
+                  <InfoRow label="Egress Network" value={egressDefaults.networkRef?.name} mono />
+                  <InfoRow label="Egress Subnet" value={egressDefaults.subnet} mono />
+                  <InfoRow label="Egress Tunnel Port" value={egressDefaults.port} mono />
+                </>
               )}
             </Section>
           )}

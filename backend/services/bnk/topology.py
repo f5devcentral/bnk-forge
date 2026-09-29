@@ -16,6 +16,7 @@ from services.bnk.helpers import (
     get_policy_operational_status,
     has_condition,
     make_resource_map,
+    resolve_egress_config,
     resolve_list_refs,
     resource_name,
     resource_ns,
@@ -32,6 +33,7 @@ _ROUTE_KINDS: list[tuple[str, str]] = [
     ("udproute", "UDPRoute"),
     ("tlsroute", "TLSRoute"),
     ("l4route", "L4Route"),
+    ("l4route_24", "L4Route"),
 ]
 
 
@@ -101,12 +103,12 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
     gatewaysettings = resources.get("gatewaysettings", [])
 
     # Unify all route types for topology matching
-    all_routes: list[tuple[dict, str]] = []
+    all_routes: list[tuple[dict, str, str]] = []
     route_counts: dict[str, int] = {}
     for res_key, kind in _ROUTE_KINDS:
         items = resources.get(res_key, [])
         route_counts[res_key] = len(items)
-        all_routes.extend((r, kind) for r in items)
+        all_routes.extend((r, kind, res_key) for r in items)
 
     # Build lookup maps
     fw_map = make_resource_map(resources.get("f5bigfwpolicy", []))
@@ -143,7 +145,7 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
         "topology": topology,
         "dataPlane": data_plane,
         "referenceGrants": ref_grants,
-        "counts": _build_counts(resources, gateways, route_counts, referencegrants),
+        "counts": _build_counts(resources, gateways, route_counts, referencegrants, data_plane),
     }
 
 
@@ -154,7 +156,7 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
 
 def _build_gateway_node(
     gw: dict,
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     bnknetpolicies: list[dict],
     irule_map: dict[str, dict],
@@ -221,7 +223,7 @@ def _build_gateway_node(
 
 def _build_listener_node(
     listener: dict,
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     bnknetpolicies: list[dict],
     irule_map: dict[str, dict],
@@ -253,7 +255,7 @@ def _build_listener_node(
 
 
 def _match_routes_to_listener(
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     gw_name: str,
     gw_ns: str,
@@ -261,7 +263,7 @@ def _match_routes_to_listener(
 ) -> list[dict]:
     """Find all routes (HTTP, GRPC, TCP, UDP, TLS, L4) targeting a gateway/listener."""
     routes_data: list[dict] = []
-    for route, route_kind in all_routes:
+    for route, route_kind, route_key in all_routes:
         route_meta = route.get("metadata", {})
         route_spec = route.get("spec", {})
         route_ns = route_meta.get("namespace", "")
@@ -321,6 +323,7 @@ def _match_routes_to_listener(
                 "name": route_name,
                 "namespace": route_ns,
                 "kind": route_kind,
+                "resourceType": route_key,
                 "hostnames": route_spec.get("hostnames", []),
                 "backends": backends,
                 "analyzers": _match_analyzers(
@@ -396,6 +399,7 @@ def _match_net_policies(
             status = _policy_status(np_item)
             result.append({
                 "name": resource_name(np_item),
+                "kind": np_item.get("kind", ""),
                 "namespace": np_ns,
                 "extensions": extensions,
                 "resolvedCount": resolved_count,
@@ -451,16 +455,10 @@ def _match_sec_policies(
             fw_refs = _build_firewall_refs(
                 sp_spec.get("extensionRefs", []), fw_map, addr_map, port_map, sp_ns,
             )
-            if not fw_refs and sp_spec.get("firewallPolicy"):
-                fp = sp_spec.get("firewallPolicy")
-                fp_name = fp.get("name") if isinstance(fp, dict) else str(fp)
-                if fp_name:
-                    fw_refs = _build_firewall_refs(
-                        [{"kind": "F5BigFwPolicy", "name": fp_name}], fw_map, addr_map, port_map, sp_ns,
-                    )
             status = _policy_status(sp)
             result.append({
                 "name": resource_name(sp),
+                "kind": sp.get("kind", ""),
                 "namespace": sp_ns,
                 "targetListener": target.get("sectionName", ""),
                 "firewallPolicies": fw_refs,
@@ -558,49 +556,43 @@ def _build_egress_gateway(
     sec_policies: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Build a single EgressGateway entry normalized for data plane and flow views."""
-    spec = eg.get("spec", {}) or {}
+    spec = eg.get("spec") or {}
     eg_name = resource_name(eg)
     eg_ns = resource_ns(eg)
 
-    source_selector = spec.get("sourceSelector", {}) or {}
-    namespaces = source_selector.get("namespaces", {}).get("matchNames", [])
+    source_selector = spec.get("sourceSelector") or {}
+    namespaces = (source_selector.get("namespaces") or {}).get("matchNames") or []
     if not namespaces and source_selector.get("selectionMode") == "NamespaceSelector":
         namespaces = [eg_ns]
 
-    params_ref = spec.get("infrastructure", {}).get("parametersRef", {}) or {}
-    gs_name = params_ref.get("name", "")
-    snat_type = "Automap"
-    if gs_map and gs_name:
-        gs = gs_map.get(f"{eg_ns}/{gs_name}") or gs_map.get(gs_name)
-        if gs:
-            egress_configs = gs.get("spec", {}).get("egressConfigs", [])
-            for ec in egress_configs:
-                snat_config = ec.get("sourceNATConfig", {})
-                if snat_config.get("type"):
-                    snat_type = snat_config.get("type")
-                    break
+    params_ref = (spec.get("infrastructure") or {}).get("parametersRef") or {}
+    egress_config = resolve_egress_config(eg, gs_map or {}) or {}
+    snat_config = egress_config.get("sourceNATConfig") or {}
 
     fw_policy_name = None
-    if sec_policies:
-        for sp in sec_policies:
-            sp_spec = sp.get("spec", {}) or {}
-            for target in sp_spec.get("targetRefs", []) or []:
-                if target.get("name") == eg_name and target.get("kind") in ("EgressGateway", "Gateway"):
-                    for ext in sp_spec.get("extensionRefs", []) or []:
-                        if ext.get("kind") == "F5BigFwPolicy":
-                            fw_policy_name = ext.get("name")
-                            break
-                    if not fw_policy_name and sp_spec.get("firewallPolicy"):
-                        fp = sp_spec.get("firewallPolicy")
-                        fw_policy_name = fp.get("name") if isinstance(fp, dict) else str(fp)
+    for sp in sec_policies or []:
+        if resource_ns(sp) != eg_ns:
+            continue
+        sp_spec = sp.get("spec") or {}
+        if not any(
+            t.get("kind") == "EgressGateway" and t.get("name") == eg_name
+            for t in sp_spec.get("targetRefs") or []
+        ):
+            continue
+        fw_policy_name = next(
+            (ext.get("name") for ext in sp_spec.get("extensionRefs") or [] if ext.get("kind") == "F5BigFwPolicy"),
+            None,
+        )
+        if fw_policy_name:
+            break
 
     return {
         "name": eg_name,
         "namespace": eg_ns,
         "kind": "EgressGateway",
         "gatewayClassName": spec.get("gatewayClassName", ""),
-        "snatType": snat_type,
-        "egressSnatpool": None,
+        "snatType": snat_config.get("type", ""),
+        "egressSnatpool": (snat_config.get("sourceNATPoolRef") or {}).get("name"),
         "firewallEnforcedPolicy": fw_policy_name,
         "logProfile": None,
         "capturedNamespaces": namespaces,
@@ -630,22 +622,23 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
     gs_entries = [_build_gateway_settings_entry(gs) for gs in gatewaysettings]
     egress_gw_entries = [_build_egress_gateway(eg, gs_map, all_sec_policies) for eg in egressgateways]
 
-    # Project networks from 2.4 Infra if legacy VLANs are absent
+    # Project networks from 2.4 Infra if legacy VLANs are absent. Clicks open the
+    # parent Infra (infraName); self IPs come from IPAM pools, so none are listed.
     projected_vlans: list[dict[str, Any]] = []
     if not vlans and infras:
         for infra in infras:
             infra_ns = resource_ns(infra)
             infra_ready = has_condition(infra, "Programmed") or has_condition(infra, "Ready")
-            for net in infra.get("spec", {}).get("networks", []):
-                v_cfg = net.get("vlan", {}) or {}
-                att_ref = v_cfg.get("networkAttachmentRef", {}).get("name", "")
-                ipam_refs = [r.get("name", "") for r in v_cfg.get("ipamRefs", []) if isinstance(r, dict)]
+            for net in (infra.get("spec") or {}).get("networks") or []:
+                v_cfg = net.get("vlan") or {}
+                att_ref = (v_cfg.get("networkAttachmentRef") or {}).get("name", "")
                 projected_vlans.append({
                     "name": net.get("name", ""),
                     "namespace": infra_ns,
                     "kind": "Infra",
+                    "infraName": resource_name(infra),
                     "interfaces": [att_ref] if att_ref else [],
-                    "selfipV4s": ipam_refs,
+                    "selfipV4s": [],
                     "prefixLen": None,
                     "mtu": v_cfg.get("mtu", 1500),
                     "internal": "int" in net.get("name", "").lower(),
@@ -660,12 +653,13 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
     if not staticroutes and infras:
         for infra in infras:
             infra_ns = resource_ns(infra)
-            for sr in infra.get("spec", {}).get("staticRoutes", []):
+            for sr in (infra.get("spec") or {}).get("staticRoutes") or []:
                 projected_static_routes.append({
                     "name": sr.get("name", ""),
                     "namespace": infra_ns,
                     "kind": "Infra",
-                    "destination": ", ".join(sr.get("destinations", [])),
+                    "infraName": resource_name(infra),
+                    "destination": ", ".join(sr.get("destinations") or []),
                     "gateway": sr.get("nextHop", ""),
                 })
 
@@ -795,6 +789,7 @@ def _build_counts(
     gateways: list[dict],
     route_counts: dict[str, int],
     referencegrants: list[dict],
+    data_plane: dict[str, Any],
 ) -> dict[str, int]:
     """Build the counts summary for the topology response."""
     all_sec_policies = resources.get("secpolicy", []) + resources.get("bnksecpolicy", [])
@@ -807,7 +802,7 @@ def _build_counts(
         "tcpRoutes": route_counts.get("tcproute", 0),
         "udpRoutes": route_counts.get("udproute", 0),
         "tlsRoutes": route_counts.get("tlsroute", 0),
-        "l4Routes": route_counts.get("l4route", 0),
+        "l4Routes": route_counts.get("l4route", 0) + route_counts.get("l4route_24", 0),
         "totalRoutes": sum(route_counts.values()),
         "referenceGrants": len(referencegrants),
         "securityPolicies": len(all_sec_policies),
@@ -815,9 +810,9 @@ def _build_counts(
         "firewallPolicies": len(resources.get("f5bigfwpolicy", [])),
         "iRules": len(resources.get("f5bigcneirule", [])),
         "analyzers": len(resources.get("f5biganalyzer", [])),
-        "vlans": len(resources.get("f5spkvlan", [])),
+        "vlans": len(data_plane["vlans"]),
         "cneInstances": len(resources.get("cneinstance", [])),
-        "staticRoutes": len(resources.get("f5spkstaticroute", [])),
+        "staticRoutes": len(data_plane["staticRoutes"]),
         "snatPools": len(resources.get("f5spksnatpool", [])),
         "egresses": len(resources.get("f5spkegress", [])) + len(resources.get("egressgateway", [])),
         "hslPublishers": len(resources.get("f5bigloghslpub", [])),

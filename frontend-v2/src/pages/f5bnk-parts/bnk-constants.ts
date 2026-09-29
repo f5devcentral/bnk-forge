@@ -67,6 +67,7 @@ export const bnkResourceCategories = [
       { key: 'udproute', label: 'UDP Routes', icon: Network },
       { key: 'tlsroute', label: 'TLS Routes', icon: Lock },
       { key: 'l4route', label: 'L4 Routes', icon: Route },
+      { key: 'l4route_24', label: 'L4 Routes (2.4)', icon: Route },
       { key: VIEW_BACKENDS, label: 'Backends', icon: Server },
       { key: 'referencegrant', label: 'Reference Grants', icon: Shield },
     ],

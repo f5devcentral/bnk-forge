@@ -3,7 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Cpu, Server } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
-import type { BnkEppEndpoint } from '@/types/kubernetes';
+import type { BnkEppEndpoint, BnkNamedRef } from '@/types/kubernetes';
 
 export function F5EPPDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
@@ -12,7 +12,7 @@ export function F5EPPDetail({ resource }: DetailPanelProps) {
 
   const engine = spec.engine || spec.runtime || 'vllm';
   const mode = spec.mode || 'aggregated';
-  const poolRef = spec.poolRef || spec.targetPool;
+  const poolRef: string | BnkNamedRef | undefined = spec.poolRef || spec.targetPool;
   const blockSize = spec.blockSize;
   const natsURL = spec.natsURL || spec.natsUrl;
   const tokenizer = spec.tokenizer;

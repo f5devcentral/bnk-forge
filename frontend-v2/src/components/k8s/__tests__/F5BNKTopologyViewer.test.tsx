@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { render, screen, waitFor } from '@/test/test-utils';
 import { F5BNKTopologyViewer } from '../F5BNKTopologyViewer';
 import { http, HttpResponse } from 'msw';
@@ -281,5 +282,56 @@ describe('F5BNKTopologyViewer', () => {
     });
     expect(screen.getByText('5 conns')).toBeInTheDocument();
     expect(screen.getByText('100 total')).toBeInTheDocument();
+  });
+
+  it('opens BNK 2.4 resources by their own kind and registry key', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+        return HttpResponse.json({
+          ...emptyBnkData,
+          topology: [{
+            name: 'bnk-gateway',
+            namespace: 'bnk-demo',
+            gatewayClassName: 'f5-bnk',
+            addresses: [],
+            accepted: true,
+            programmed: true,
+            conditions: [],
+            listeners: [{
+              name: 'tcp',
+              protocol: 'TCP',
+              port: 9000,
+              attachedRouteCount: 1,
+              conditions: [],
+              routes: [{
+                name: 'l4-route', namespace: 'bnk-demo', kind: 'L4Route', resourceType: 'l4route_24',
+                hostnames: [], backends: [], analyzers: [], accepted: true, conditions: [],
+              }],
+              networkPolicies: [{
+                name: 'np-24', kind: 'NetPolicy', namespace: 'bnk-demo', extensions: [],
+                resolvedCount: 0, totalExtensions: 0, resolved: true, programmed: true, messages: {},
+              }],
+            }],
+            securityPolicies: [{
+              name: 'sp-24', kind: 'SecPolicy', namespace: 'bnk-demo', targetListener: '',
+              firewallPolicies: [], resolved: true, programmed: true, messages: {},
+            }],
+          }],
+          topologyCounts: { ...emptyBnkData.topologyCounts, gateways: 1, listeners: 1 },
+        });
+      })
+    );
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(<F5BNKTopologyViewer clusterId={1} onSelectResource={onSelect} />);
+
+    await user.click(await screen.findByText('l4-route'));
+    expect(onSelect).toHaveBeenLastCalledWith(
+      { kind: 'L4Route', name: 'l4-route', namespace: 'bnk-demo', resourceType: 'l4route_24' },
+    );
+    await user.click(screen.getByText('np-24'));
+    expect(onSelect).toHaveBeenLastCalledWith({ kind: 'NetPolicy', name: 'np-24', namespace: 'bnk-demo' });
+    await user.click(screen.getByText('sp-24'));
+    expect(onSelect).toHaveBeenLastCalledWith({ kind: 'SecPolicy', name: 'sp-24', namespace: 'bnk-demo' });
   });
 });

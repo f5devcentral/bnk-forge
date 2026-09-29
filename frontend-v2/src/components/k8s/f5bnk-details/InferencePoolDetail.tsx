@@ -3,17 +3,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Cpu, Filter } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
+import type { GaieEndpointPickerRef } from '@/types/kubernetes';
 
 export function InferencePoolDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
   const status = resource.status || {};
   const conditions = status.conditions || [];
 
-  const modelName = spec.modelName;
-  const targetPort = spec.targetPortNumber || spec.targetPort;
-  const selector: Record<string, string> = spec.selector?.matchLabels || spec.selector || {};
-  const endpointPickerRef = spec.endpointPickerRef;
-  const failureMode = spec.failureMode;
+  // inference.networking.k8s.io/v1 InferencePool
+  const targetPorts: Array<{ number: number }> = spec.targetPorts || [];
+  const selector: Record<string, string> = spec.selector?.matchLabels || {};
+  const endpointPickerRef: GaieEndpointPickerRef | undefined = spec.endpointPickerRef;
 
   return (
     <div className="space-y-4">
@@ -25,9 +25,9 @@ export function InferencePoolDetail({ resource }: DetailPanelProps) {
 
         <TabsContent value="summary" className="space-y-3">
           <Section title="Inference Pool Configuration">
-            <InfoRow label="Model Name" value={modelName} mono />
-            <InfoRow label="Target Port" value={targetPort} mono />
-            <InfoRow label="Failure Mode" value={failureMode} mono />
+            <InfoRow label="Target Ports" value={targetPorts.map((p) => p.number).join(', ')} mono />
+            <InfoRow label="Endpoint Picker Port" value={endpointPickerRef?.port?.number} mono />
+            <InfoRow label="Failure Mode" value={endpointPickerRef?.failureMode} mono />
             {endpointPickerRef && (
               <div className="flex justify-between items-center text-xs">
                 <span className="text-muted-foreground">Endpoint Picker:</span>

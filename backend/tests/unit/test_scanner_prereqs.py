@@ -425,3 +425,23 @@ class TestAnalyzeGatewayApi:
         crd_names = {c["name"] for c in crds}
         result = analyze_gateway_api(crds, crd_names, [], [])
         assert result["crds_installed"] == 4  # includes F5 extension
+
+    def test_bnk_24_and_gaie_crds_not_counted(self):
+        crds = [
+            _make_crd("gateways.gateway.networking.k8s.io", "gateway.networking.k8s.io", "Gateway", ["v1"]),
+            _make_crd("infras.gateway.k8s.f5.com", "gateway.k8s.f5.com", "Infra", ["v1alpha1"]),
+            _make_crd("inferencepools.inference.networking.k8s.io", "inference.networking.k8s.io",
+                      "InferencePool", ["v1"]),
+        ]
+        crd_names = {c["name"] for c in crds}
+        result = analyze_gateway_api(crds, crd_names, [], [])
+        assert result["crds_installed"] == 1
+        assert result["api_versions"] == ["v1"]
+
+
+def test_gaie_alone_is_not_a_bnk_signal():
+    from core.k8s_types import ApiGroups
+    from services.scanner.fetch import _BNK_API_GROUPS
+
+    assert ApiGroups.GAIE_INFERENCE not in _BNK_API_GROUPS
+    assert ApiGroups.F5_GATEWAY in _BNK_API_GROUPS

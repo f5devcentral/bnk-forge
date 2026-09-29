@@ -232,43 +232,82 @@ export type K8sResourceStatus = Record<string, any>;
 
 // ── BNK 2.4 gateway.k8s.f5.com sub-resources ──
 
-/** Reference to a sibling object by name; the API accepts a bare string or an object. */
-export type BnkNamedRef = string | { name: string };
+/** Reference to a sibling object by name. */
+export interface BnkNamedRef {
+  name: string;
+}
 
 export interface BnkInfraNetwork {
   name: string;
   type?: string;
-  vlan?: { tag?: number; mtu?: number; networkAttachmentRef?: { name?: string } };
+  vlan?: { tag?: number; mtu?: number; networkAttachmentRef?: BnkNamedRef; ipamRefs?: BnkNamedRef[] };
   vxlan?: { port?: number; vni?: number };
+}
+
+export interface BnkIpPool {
+  rangeStart?: string;
+  rangeEnd?: string;
+  availabilityZone?: string;
 }
 
 export interface BnkInfraIpam {
   name: string;
-  az?: string;
-  cidr?: string;
-  rangeStart?: string;
-  rangeEnd?: string;
-  networkRef?: { name?: string };
+  ipPools?: BnkIpPool[];
 }
 
 export interface BnkInfraStaticRoute {
-  destination?: string;
-  gateway?: string;
-  vrf?: string;
+  name?: string;
+  destinations?: string[];
+  nextHop?: string;
+}
+
+export interface BnkInfraEgressDefaults {
+  subnet?: string;
+  port?: number;
+  networkRef?: BnkNamedRef;
 }
 
 export type BnkInfraVrf = string | { name: string };
 
+/** GatewaySettings sourceNATConfig: type is Automap or Pool (with sourceNATPoolRef). */
+export interface BnkSourceNatConfig {
+  type?: string;
+  sourceNATPoolRef?: BnkNamedRef;
+}
+
+export interface BnkListenerNetwork {
+  ipamRefs?: BnkNamedRef[];
+  networkRefs?: BnkNamedRef[];
+  sourceNATConfig?: BnkSourceNatConfig;
+}
+
 export interface BnkSourceNatPool {
   name: string;
-  mode?: string;
-  addresses?: string[] | string;
+  ipamRefs?: BnkNamedRef[];
 }
 
 export interface BnkEgressConfig {
   name: string;
-  snatMode?: string;
-  networkRefs?: BnkNamedRef[];
+  networkRef?: BnkNamedRef;
+  sourceNATConfig?: BnkSourceNatConfig;
+}
+
+/** Gateway / EgressGateway spec.infrastructure.parametersRef (sectionName selects an egressConfigs entry). */
+export interface BnkParametersRef {
+  group?: string;
+  kind?: string;
+  name: string;
+  sectionName?: string;
+}
+
+// ── Gateway API Inference Extension (inference.networking.k8s.io/v1) ──
+
+export interface GaieEndpointPickerRef {
+  group?: string;
+  kind?: string;
+  name: string;
+  port?: { number: number };
+  failureMode?: string;
 }
 
 /** F5EPP status.endpoints entry; some controller builds emit bare address strings. */

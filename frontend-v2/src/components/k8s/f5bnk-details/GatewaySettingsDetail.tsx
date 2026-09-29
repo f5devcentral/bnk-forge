@@ -3,14 +3,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Network, Server, Settings, Globe } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
-import type { BnkEgressConfig, BnkNamedRef, BnkSourceNatPool } from '@/types/kubernetes';
+import type { BnkEgressConfig, BnkListenerNetwork, BnkSourceNatPool } from '@/types/kubernetes';
 
 export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
   const status = resource.status || {};
   const conditions = status.conditions || [];
 
-  const ingressConfig = spec.ingressConfig;
+  const listenerNetwork: BnkListenerNetwork | undefined = spec.ingressConfig?.defaultListenerNetwork;
   const sourceNATPools: BnkSourceNatPool[] = spec.sourceNATPools || [];
   const egressConfigs: BnkEgressConfig[] = spec.egressConfigs || [];
 
@@ -24,30 +24,31 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
 
         <TabsContent value="summary" className="space-y-3">
           {/* Ingress Configuration */}
-          {ingressConfig && (
+          {listenerNetwork && (
             <Section title="Ingress Network Configuration">
-              <InfoRow label="SNAT Mode" value={ingressConfig.snatMode || ingressConfig.defaultListenerNetwork?.snatMode} mono />
-              {ingressConfig.defaultListenerNetwork?.networkRefs && (
+              <InfoRow label="SNAT Type" value={listenerNetwork.sourceNATConfig?.type} mono />
+              <InfoRow label="SNAT Pool" value={listenerNetwork.sourceNATConfig?.sourceNATPoolRef?.name} mono />
+              {listenerNetwork.networkRefs && (
                 <div className="space-y-1 pt-1">
                   <span className="text-muted-foreground block text-[11px]">Network References:</span>
                   <div className="flex flex-wrap gap-1.5 pl-2">
-                    {ingressConfig.defaultListenerNetwork.networkRefs.map((net: BnkNamedRef, idx: number) => (
+                    {listenerNetwork.networkRefs.map((net, idx) => (
                       <Badge key={idx} variant="outline" className="text-[10px] font-mono flex items-center gap-1">
                         <Network className="h-2.5 w-2.5 text-info" />
-                        {typeof net === 'string' ? net : net.name}
+                        {net.name}
                       </Badge>
                     ))}
                   </div>
                 </div>
               )}
-              {ingressConfig.defaultListenerNetwork?.ipamRefs && (
+              {listenerNetwork.ipamRefs && (
                 <div className="space-y-1 pt-1">
                   <span className="text-muted-foreground block text-[11px]">IPAM References:</span>
                   <div className="flex flex-wrap gap-1.5 pl-2">
-                    {ingressConfig.defaultListenerNetwork.ipamRefs.map((ipam: BnkNamedRef, idx: number) => (
+                    {listenerNetwork.ipamRefs.map((ipam, idx) => (
                       <Badge key={idx} variant="secondary" className="text-[10px] font-mono flex items-center gap-1">
                         <Globe className="h-2.5 w-2.5 text-success" />
-                        {typeof ipam === 'string' ? ipam : ipam.name}
+                        {ipam.name}
                       </Badge>
                     ))}
                   </div>
@@ -61,20 +62,13 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
             <Section title={`Source NAT Pools (${sourceNATPools.length})`}>
               {sourceNATPools.map((pool, idx) => (
                 <div key={idx} className="p-2 rounded border bg-background/50 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Server className="h-3 w-3 text-info" />
-                      <code className="font-mono font-medium text-foreground/80">{pool.name}</code>
-                    </div>
-                    {pool.mode && (
-                      <Badge variant="outline" className="text-[10px] font-mono">
-                        {pool.mode}
-                      </Badge>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <Server className="h-3 w-3 text-info" />
+                    <code className="font-mono font-medium text-foreground/80">{pool.name}</code>
                   </div>
-                  {pool.addresses && (
+                  {pool.ipamRefs && pool.ipamRefs.length > 0 && (
                     <div className="text-[11px] text-muted-foreground pl-5">
-                      Addresses: <code className="font-mono">{Array.isArray(pool.addresses) ? pool.addresses.join(', ') : pool.addresses}</code>
+                      IPAM: <code className="font-mono">{pool.ipamRefs.map((r) => r.name).join(', ')}</code>
                     </div>
                   )}
                 </div>
@@ -92,20 +86,20 @@ export function GatewaySettingsDetail({ resource }: DetailPanelProps) {
                       <Settings className="h-3 w-3 text-muted-foreground" />
                       <code className="font-mono font-medium text-foreground/80">{eg.name}</code>
                     </div>
-                    {eg.snatMode && (
+                    {eg.sourceNATConfig?.type && (
                       <Badge variant="secondary" className="text-[10px] font-mono">
-                        {eg.snatMode}
+                        {eg.sourceNATConfig.type}
                       </Badge>
                     )}
                   </div>
-                  {eg.networkRefs && (
-                    <div className="text-[11px] text-muted-foreground pl-5 flex gap-2 items-center">
-                      <span>Networks:</span>
-                      {eg.networkRefs.map((nr, nIdx) => (
-                        <code key={nIdx} className="font-mono">{typeof nr === 'string' ? nr : nr.name}</code>
-                      ))}
-                    </div>
-                  )}
+                  <div className="text-[11px] text-muted-foreground pl-5 flex flex-wrap gap-3">
+                    {eg.networkRef?.name && (
+                      <span>Network: <code className="font-mono">{eg.networkRef.name}</code></span>
+                    )}
+                    {eg.sourceNATConfig?.sourceNATPoolRef?.name && (
+                      <span>SNAT Pool: <code className="font-mono">{eg.sourceNATConfig.sourceNATPoolRef.name}</code></span>
+                    )}
+                  </div>
                 </div>
               ))}
             </Section>

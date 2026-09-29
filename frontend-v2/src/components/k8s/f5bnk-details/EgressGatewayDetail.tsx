@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Network, Settings, Filter } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
 import { InfoRow, Section, ConditionsTab, type DetailPanelProps } from './shared';
+import type { BnkParametersRef } from '@/types/kubernetes';
 
 export function EgressGatewayDetail({ resource }: DetailPanelProps) {
   const spec = resource.spec || {};
@@ -10,7 +11,7 @@ export function EgressGatewayDetail({ resource }: DetailPanelProps) {
   const conditions = status.conditions || [];
 
   const gatewayClassName = spec.gatewayClassName;
-  const parametersRef = spec.infrastructure?.parametersRef;
+  const parametersRef: BnkParametersRef | undefined = spec.infrastructure?.parametersRef;
   const sourceSelector = spec.sourceSelector || {};
   const selectionMode = sourceSelector.selectionMode || 'NamespaceSelector';
   const matchNamespaces: string[] = sourceSelector.namespaces?.matchNames || [];
@@ -34,7 +35,9 @@ export function EgressGatewayDetail({ resource }: DetailPanelProps) {
                 <div className="flex items-center gap-1.5 text-xs">
                   <Settings className="h-3 w-3 text-muted-foreground" />
                   <code className="font-mono text-foreground/80">{parametersRef.name}</code>
-                  <Badge variant="outline" className="text-[10px] font-mono">{parametersRef.kind}</Badge>
+                  {parametersRef.sectionName && (
+                    <Badge variant="outline" className="text-[10px] font-mono">{parametersRef.sectionName}</Badge>
+                  )}
                 </div>
               </div>
             )}

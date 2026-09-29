@@ -34,7 +34,6 @@ _BNK_API_GROUPS = frozenset({
     ApiGroups.F5_K8S,
     ApiGroups.F5_GATEWAY,
     ApiGroups.F5_GATEWAY_NET,
-    ApiGroups.GAIE_INFERENCE,
 })
 _DPF_API_GROUPS = frozenset({
     ApiGroups.DPF_PROVISIONING,

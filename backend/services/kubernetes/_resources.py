@@ -215,7 +215,9 @@ class ResourcesMixin:
             return result
 
         except ApiException as e:
-            logger.error(f"Failed to fetch {resource_type.kind}: {e}")
+            # 404 = CRD not installed (e.g. BNK 2.4 kinds on a 2.3 cluster); expected, not an error.
+            log = logger.debug if e.status == 404 else logger.error
+            log(f"Failed to fetch {resource_type.kind}: {e}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error fetching {resource_type.kind}: {e}")

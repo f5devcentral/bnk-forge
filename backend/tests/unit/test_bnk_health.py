@@ -724,7 +724,11 @@ class TestBNK24Health:
         }]
         data["resources"]["inferencepool"] = [{
             "metadata": {"name": "pool-llama", "namespace": "f5-bnk"},
-            "spec": {"modelName": "meta-llama/Llama-3-8b", "targetPortNumber": 8000},
+            "spec": {
+                "targetPorts": [{"number": 8000}],
+                "selector": {"matchLabels": {"app": "vllm-llama"}},
+                "endpointPickerRef": {"name": "pool-llama-epp", "port": {"number": 9002}},
+            },
         }]
         result = analyze_health(data)
         sec_h = result["security"]
@@ -735,5 +739,16 @@ class TestBNK24Health:
         assert ai_h["f5epps"] == 1
         assert ai_h["inferencePools"] == 1
         assert len(ai_h["inferencePoolDetails"]) == 1
-        assert ai_h["inferencePoolDetails"][0]["modelName"] == "meta-llama/Llama-3-8b"
+        assert ai_h["inferencePoolDetails"][0]["targetPorts"] == [8000]
+        assert ai_h["inferencePoolDetails"][0]["endpointPicker"] == "pool-llama-epp"
 
+
+    def test_24_null_spec_and_status(self):
+        data = _make_data()
+        for key in ("infra", "inferencepool"):
+            data["resources"][key] = [{"metadata": {"name": "x", "namespace": "ns"}, "spec": None, "status": None}]
+        result = analyze_health(data)
+        assert result["networking"]["infra"]["details"][0]["networks"] == 0
+        assert result["ai"]["inferencePoolDetails"][0] == {
+            "name": "x", "namespace": "ns", "targetPorts": [], "endpointPicker": "",
+        }

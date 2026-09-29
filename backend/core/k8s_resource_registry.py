@@ -114,7 +114,7 @@ def _f5_gateway_resource(kind: str, plural: str, display_name: str,
 
 
 def _gaie_resource(kind: str, plural: str, display_name: str,
-                   description: str, api_version: str = "v1alpha2",
+                   description: str, api_version: str = "v1",
                    namespaced: bool = True) -> K8sResourceType:
     """Helper for Gateway API Inference Extension resources (inference.networking.k8s.io)."""
     return K8sResourceType(
@@ -317,12 +317,13 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
                                         "Gateway API cross-namespace reference permissions",
                                         api_version="v1beta1"),
 
-    # --- Gateway API Inference Extension (GAIE v1.4.0) ---
+    # --- Gateway API Inference Extension (GAIE v1) ---
     "inferencepool": _gaie_resource("InferencePool", "inferencepools", "Inference Pool (GAIE)",
                                     "Gateway API Inference Extension target pool for LLM serving engines"),
     "inferencemodelrewrite": _gaie_resource("InferenceModelRewrite", "inferencemodelrewrites",
                                             "Inference Model Rewrite (GAIE)",
-                                            "Gateway API Inference Extension model header rewriter"),
+                                            "Gateway API Inference Extension model header rewriter",
+                                            api_version="v1alpha2"),
 
     # =========================================================================
     # CERT-MANAGER RESOURCES
@@ -465,6 +466,12 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
     "netpolicy": _f5_gateway_resource(
         "NetPolicy", "netpolicies", "F5 Network Policy",
         "F5 BNK network extensions (iRules, persistence profiles, TCP settings)"
+    ),
+    # Same kind as the legacy l4route, so a distinct key.
+    "l4route_24": _f5_gateway_resource(
+        "L4Route", "l4routes", "L4 Route (2.4)",
+        "F5 BNK Layer 4 route for TCP/UDP traffic (gateway.k8s.f5.com)",
+        api_version="v1"
     ),
 
     # =========================================================================

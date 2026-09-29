@@ -270,14 +270,14 @@ class TestMatchRoutesToListener:
 
     def test_route_matching_gateway(self):
         route = _httproute("r1", "gw", gw_ns="ns")
-        result = _match_routes_to_listener([(route, "HTTPRoute")], [], "gw", "ns", "http")
+        result = _match_routes_to_listener([(route, "HTTPRoute", "httproute")], [], "gw", "ns", "http")
         assert len(result) == 1
         assert result[0]["name"] == "r1"
         assert result[0]["kind"] == "HTTPRoute"
 
     def test_route_not_matching_different_gateway(self):
         route = _httproute("r1", "other-gw", gw_ns="ns")
-        result = _match_routes_to_listener([(route, "HTTPRoute")], [], "gw", "ns", "http")
+        result = _match_routes_to_listener([(route, "HTTPRoute", "httproute")], [], "gw", "ns", "http")
         assert result == []
 
 
@@ -573,33 +573,149 @@ class TestBuildDataPlane:
 
     def test_builds_24_infra_and_gatewaysettings(self):
         resources = _empty_resources()
-        resources["infra"] = [_resource("infra-main", spec={
-            "networks": [{"name": "net-external", "type": "vlan", "vlan": {"mtu": 9000, "tag": 100, "networkAttachmentRef": {"name": "net-att"}}}]
-        }, status={"conditions": [{"type": "Programmed", "status": "True"}]})]
-        resources["gatewaysettings"] = [_resource("gw-settings", spec={
-            "ingressConfig": {"defaultListenerNetwork": {"networkRefs": [{"name": "net-external"}]}}
-        })]
-        resources["egressgateway"] = [_resource("egress-gw", spec={
-            "gatewayClassName": "f5-gateway",
-            "sourceSelector": {"selectionMode": "NamespaceSelector", "namespaces": {"matchNames": ["tenant-a"]}},
-            "infrastructure": {"parametersRef": {"group": "gateway.k8s.f5.com", "kind": "GatewaySettings", "name": "gw-settings"}},
-        })]
+        resources["infra"] = [_infra_24()]
+        resources["gatewaysettings"] = [_egress_settings_24()]
+        resources["egressgateway"] = [_egress_gateway_24()]
 
         dp = _build_data_plane(resources)
         assert len(dp["infra"]) == 1
-        assert dp["infra"][0]["name"] == "infra-main"
+        assert dp["infra"][0]["name"] == "infra"
         assert len(dp["gatewaySettings"]) == 1
-        assert dp["gatewaySettings"][0]["name"] == "gw-settings"
+        assert dp["gatewaySettings"][0]["name"] == "egress-demo"
         assert len(dp["egressGateways"]) == 1
-        assert dp["egressGateways"][0]["name"] == "egress-gw"
-        assert dp["egressGateways"][0]["capturedNamespaces"] == ["tenant-a"]
+        assert dp["egressGateways"][0]["name"] == "egress-demo"
+        assert dp["egressGateways"][0]["capturedNamespaces"] == ["egress-demo"]
         # Egress gateways should also be present in combined egresses
         assert len(dp["egresses"]) == 1
         assert dp["egresses"][0]["kind"] == "EgressGateway"
         # Since vlans is empty, projected_vlans should populate from infra.spec.networks
-        assert len(dp["vlans"]) == 1
-        assert dp["vlans"][0]["name"] == "net-external"
-        assert dp["vlans"][0]["mtu"] == 9000
+        assert [v["name"] for v in dp["vlans"]] == ["ext-vlan", "int-vlan"]
+        assert dp["vlans"][1]["mtu"] == 9000
+
+    def test_infra_projection_links_to_parent_infra(self):
+        resources = _empty_resources()
+        resources["infra"] = [_infra_24()]
+
+        dp = _build_data_plane(resources)
+        vlan = dp["vlans"][0]
+        assert vlan["kind"] == "Infra"
+        assert vlan["infraName"] == "infra"
+        assert vlan["interfaces"] == ["ext-vlan-attach"]
+        # ipamRefs name IPAM pools, not self IPs
+        assert vlan["selfipV4s"] == []
+        route = dp["staticRoutes"][0]
+        assert route == {
+            "name": "egress-vpc", "namespace": "f5-cne-system", "kind": "Infra",
+            "infraName": "infra", "destination": "10.0.0.0/16", "gateway": "10.0.20.1",
+        }
+
+    def test_counts_include_infra_projected_items(self):
+        resources = _empty_resources()
+        resources["infra"] = [_infra_24()]
+
+        counts = analyze_topology({"resources": resources})["counts"]
+        assert counts["vlans"] == 2
+        assert counts["staticRoutes"] == 2
+
+    def test_egress_gateway_honours_section_name(self):
+        resources = _empty_resources()
+        settings = _egress_settings_24()
+        settings["spec"]["egressConfigs"].insert(0, {
+            "name": "other", "networkRef": {"name": "int-vlan"}, "sourceNATConfig": {"type": "Automap"},
+        })
+        resources["gatewaysettings"] = [settings]
+        resources["egressgateway"] = [_egress_gateway_24()]
+
+        eg = _build_data_plane(resources)["egressGateways"][0]
+        assert eg["snatType"] == "Pool"
+        assert eg["egressSnatpool"] == "egress-snat"
+
+    def test_egress_gateway_snat_unknown_without_gateway_settings(self):
+        resources = _empty_resources()
+        resources["egressgateway"] = [_egress_gateway_24()]
+
+        eg = _build_data_plane(resources)["egressGateways"][0]
+        assert eg["snatType"] == ""
+        assert eg["egressSnatpool"] is None
+
+    def test_egress_gateway_firewall_from_secpolicy(self):
+        resources = _empty_resources()
+        resources["egressgateway"] = [_egress_gateway_24()]
+        resources["secpolicy"] = [_secpolicy_24("egress-demo-fw", "EgressGateway", "egress-demo", "egress-demo-fw")]
+
+        eg = _build_data_plane(resources)["egressGateways"][0]
+        assert eg["firewallEnforcedPolicy"] == "egress-demo-fw"
+
+    def test_24_null_spec_and_status(self):
+        resources = _empty_resources()
+        for key in ("infra", "gatewaysettings", "egressgateway"):
+            resources[key] = [{"metadata": {"name": "x", "namespace": "ns"}, "spec": None, "status": None}]
+
+        dp = _build_data_plane(resources)
+        assert dp["vlans"] == []
+        assert dp["staticRoutes"] == []
+        assert dp["egressGateways"][0]["snatType"] == ""
+
+
+def _infra_24() -> dict:
+    """Infra shape from the awsbnkctl migrate golden (BNK 2.4 live)."""
+    return _resource("infra", "f5-cne-system", spec={
+        "egressDefaults": {"networkRef": {"name": "int-vlan"}, "subnet": "192.168.0.0/16"},
+        "ipams": [
+            {"name": "ext-vlan-selfip", "ipPools": [
+                {"availabilityZone": "ap-southeast-2a", "rangeStart": "10.0.10.224", "rangeEnd": "10.0.10.254"},
+            ]},
+            {"name": "int-vlan-selfip", "ipPools": [
+                {"availabilityZone": "ap-southeast-2a", "rangeStart": "10.0.20.224", "rangeEnd": "10.0.20.254"},
+            ]},
+        ],
+        "networkAttachments": [
+            {"name": "ext-vlan-attach", "networkAttachmentDefinitions": [{"name": "external-netdevice"}]},
+            {"name": "int-vlan-attach", "networkAttachmentDefinitions": [{"name": "internal-netdevice"}]},
+        ],
+        "networks": [
+            {"name": "ext-vlan", "type": "vlan", "vlan": {
+                "ipamRefs": [{"name": "ext-vlan-selfip"}], "networkAttachmentRef": {"name": "ext-vlan-attach"},
+                "tag": 0,
+            }},
+            {"name": "int-vlan", "type": "vlan", "vlan": {
+                "ipamRefs": [{"name": "int-vlan-selfip"}], "mtu": 9000,
+                "networkAttachmentRef": {"name": "int-vlan-attach"}, "tag": 0,
+            }},
+        ],
+        "staticRoutes": [
+            {"name": "egress-vpc", "destinations": ["10.0.0.0/16"], "nextHop": "10.0.20.1"},
+            {"name": "egress-default", "destinations": ["0.0.0.0/0"], "nextHop": "10.0.10.1"},
+        ],
+    }, status={"conditions": [{"type": "Programmed", "status": "True"}]})
+
+
+def _egress_settings_24() -> dict:
+    return _resource("egress-demo", "egress-demo", spec={
+        "egressConfigs": [{
+            "name": "egress-demo",
+            "networkRef": {"name": "int-vlan"},
+            "sourceNATConfig": {"type": "Pool", "sourceNATPoolRef": {"name": "egress-snat"}},
+        }],
+        "sourceNATPools": [{"name": "egress-snat", "ipamRefs": [{"name": "egress-snat-snat"}]}],
+    })
+
+
+def _egress_gateway_24() -> dict:
+    return _resource("egress-demo", "egress-demo", spec={
+        "gatewayClassName": "lab-gatewayclass",
+        "infrastructure": {"parametersRef": {"name": "egress-demo", "sectionName": "egress-demo"}},
+        "sourceSelector": {"selectionMode": "NamespaceSelector", "namespaces": {"matchNames": ["egress-demo"]}},
+    })
+
+
+def _secpolicy_24(name: str, target_kind: str, target_name: str, fw_name: str, namespace: str = "egress-demo") -> dict:
+    sp = _resource(name, namespace, spec={
+        "targetRefs": [{"group": "gateway.k8s.f5.com", "kind": target_kind, "name": target_name}],
+        "extensionRefs": [{"group": "k8s.f5net.com", "kind": "F5BigFwPolicy", "name": fw_name}],
+    }, status={"conditions": [{"type": "Programmed", "status": "True"}]})
+    sp["kind"] = "SecPolicy"
+    return sp
 
 
 class TestBNK24Topology:
@@ -607,17 +723,20 @@ class TestBNK24Topology:
         resources = _empty_resources()
         resources["gateway"] = [_resource("gw-prod", spec={
             "gatewayClassName": "f5-gateway",
-            "infrastructure": {"parametersRef": {"kind": "GatewaySettings", "name": "prod-settings"}},
+            "infrastructure": {"parametersRef": {
+                "group": "gateway.k8s.f5.com", "kind": "GatewaySettings", "name": "prod-settings",
+            }},
             "listeners": [{"name": "http", "port": 80, "protocol": "HTTP"}],
         })]
         resources["gatewaysettings"] = [_resource("prod-settings", spec={
-            "ingressConfig": {"defaultListenerNetwork": {"networkRefs": [{"name": "ext-net"}]}},
-            "sourceNATPools": [{"name": "snat-pool-1"}],
+            "ingressConfig": {"defaultListenerNetwork": {
+                "ipamRefs": [{"name": "listener-pool"}],
+                "networkRefs": [{"name": "ext-vlan"}],
+                "sourceNATConfig": {"type": "Automap"},
+            }},
+            "sourceNATPools": [{"name": "snat-pool-1", "ipamRefs": [{"name": "snat-ipam"}]}],
         })]
-        resources["secpolicy"] = [_resource("sec-1", spec={
-            "targetRefs": [{"name": "gw-prod", "kind": "Gateway"}],
-            "firewallPolicy": "fw-edge",
-        }, status={"conditions": [{"type": "Programmed", "status": "True"}]})]
+        resources["secpolicy"] = [_secpolicy_24("sec-1", "Gateway", "gw-prod", "fw-edge", namespace="f5-bnk")]
         resources["f5bigfwpolicy"] = [_resource("fw-edge", spec={
             "rule": [{"name": "drop-bad", "action": "drop", "ipProtocol": "tcp", "logging": True}],
         })]
@@ -632,6 +751,7 @@ class TestBNK24Topology:
         # Check 2.4 secpolicy match
         assert len(gw_node["securityPolicies"]) == 1
         assert gw_node["securityPolicies"][0]["name"] == "sec-1"
+        assert gw_node["securityPolicies"][0]["kind"] == "SecPolicy"
         assert len(gw_node["securityPolicies"][0]["firewallPolicies"]) == 1
         assert gw_node["securityPolicies"][0]["firewallPolicies"][0]["rules"][0]["action"] == "drop"
 
@@ -639,6 +759,34 @@ class TestBNK24Topology:
         counts = result["counts"]
         assert counts["gatewaySettings"] == 1
         assert counts["securityPolicies"] == 1
+
+    def test_netpolicy_carries_kind(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway()]
+        np = _resource("np-24", spec={
+            "targetRefs": [{"kind": "Gateway", "name": "gw-prod", "sectionName": "http"}],
+            "extensionRefs": [{"group": "k8s.f5net.com", "kind": "F5BigCneIrule", "name": "pp-prepend"}],
+        })
+        np["kind"] = "NetPolicy"
+        resources["netpolicy"] = [np]
+
+        listener = analyze_topology({"resources": resources})["topology"][0]["listeners"][0]
+        assert listener["networkPolicies"][0]["kind"] == "NetPolicy"
+
+    def test_24_l4route_matched_with_resource_type(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_gateway(listeners=[{"name": "tcp-listener", "protocol": "TCP", "port": 9000}])]
+        resources["l4route_24"] = [_resource("l4", spec={
+            "parentRefs": [{"name": "gw-prod", "sectionName": "tcp-listener"}],
+            "protocol": "TCP",
+            "rules": [{"backendRefs": [{"name": "grpcbin-l4-svc", "port": 9000}]}],
+        })]
+
+        result = analyze_topology({"resources": resources})
+        route = result["topology"][0]["listeners"][0]["routes"][0]
+        assert route["kind"] == "L4Route"
+        assert route["resourceType"] == "l4route_24"
+        assert result["counts"]["l4Routes"] == 1
 
     def test_mcp_route_detection(self):
         resources = _empty_resources()
