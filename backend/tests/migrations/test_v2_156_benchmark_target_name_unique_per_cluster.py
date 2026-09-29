@@ -81,6 +81,12 @@ def _two_clusters_can_share_a_name(engine) -> bool:
             return False
 
 
+def _name_index_is_unique(engine) -> bool:
+    """The pre-v2_156 shape: `ix_benchmark_targets_name` is a UNIQUE index."""
+    ix = {i["name"]: i for i in sa.inspect(engine).get_indexes("benchmark_targets")}
+    return bool(ix.get("ix_benchmark_targets_name", {}).get("unique"))
+
+
 def _same_cluster_duplicate_rejected(engine) -> bool:
     with engine.begin() as conn:
         conn.execute(sa.text("DELETE FROM benchmark_targets"))
@@ -133,6 +139,9 @@ class TestSqlitePath:
         _run(sqlite_engine, "upgrade")
         _run(sqlite_engine, "downgrade")
         assert _two_clusters_can_share_a_name(sqlite_engine) is False
+        assert _name_index_is_unique(sqlite_engine), (
+            "downgrade must restore the unique index ix_benchmark_targets_name"
+        )
 
     def test_upgrade_is_idempotent_on_a_fresh_orm_schema(self, tmp_path):
         """A brand-new install creates the table from the ORM (composite already
@@ -172,6 +181,17 @@ class TestPostgresPath:
             )).scalars().all()
         assert "uq_benchmark_targets_cluster_name" in cons
         assert "benchmark_targets_name_key" not in cons
+
+    def test_downgrade_restores_the_unique_name_index(self, pg_engine):
+        _run(pg_engine, "upgrade")
+        _run(pg_engine, "downgrade")
+        assert _two_clusters_can_share_a_name(pg_engine) is False
+        assert _name_index_is_unique(pg_engine)
+        with pg_engine.connect() as conn:
+            cons = conn.execute(sa.text(
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'benchmark_targets'::regclass"
+            )).scalars().all()
+        assert "uq_benchmark_targets_cluster_name" not in cons
 
     def test_downgrade_refuses_when_two_clusters_share_a_name(self, pg_engine):
         _run(pg_engine, "upgrade")

@@ -80,16 +80,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore the pre-v2_156 shape: a UNIQUE index `ix_benchmark_targets_name`
+    # (v2_045, and what the v2_155 ORM `unique=True, index=True` declares).
+    # Restoring it fails if multiple clusters now share a name, which is
+    # intentional: the operator must deduplicate first.
     bind = op.get_bind()
-    dialect = bind.dialect.name
-    if dialect == "sqlite":
+    if bind.dialect.name == "sqlite":
         with op.batch_alter_table(_TABLE, recreate="always") as batch:
             batch.drop_constraint(_NEW, type_="unique")
-            batch.create_unique_constraint("benchmark_targets_name_key", ["name"])
-        return
-
-    op.drop_constraint(_NEW, _TABLE, type_="unique")
+    else:
+        op.drop_constraint(_NEW, _TABLE, type_="unique")
     op.drop_index("ix_benchmark_targets_name", table_name=_TABLE, if_exists=True)
-    # Restoring the global unique will fail if multiple clusters now share a name,
-    # which is intentional: the operator must deduplicate first.
-    op.create_unique_constraint("benchmark_targets_name_key", _TABLE, ["name"])
+    op.create_index("ix_benchmark_targets_name", _TABLE, ["name"], unique=True)
