@@ -10927,9 +10927,10 @@ export interface paths {
          *     then need a token that carries the ``agent_id`` claim the agent WebSocket
          *     requires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the
          *     same token written to /etc/forge/agent.env; this route hands it to agents
-         *     Forge does not provision. Operator role, plus project ownership for
-         *     project-scoped agents (same gate as deregistration). Each call mints a new
-         *     token; earlier tokens stay valid until they expire.
+         *     Forge does not provision. Project-scoped agents need operator role plus
+         *     project ownership; unscoped agents (project_id NULL, every self-registered
+         *     agent) need admin. Each call mints a new token; earlier tokens stay valid
+         *     until they expire or the agent is deleted, which revokes them all.
          */
         post: operations["mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post"];
         delete?: never;

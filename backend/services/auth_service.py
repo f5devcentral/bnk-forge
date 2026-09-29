@@ -70,20 +70,23 @@ AGENT_TOKEN_LIFETIME = timedelta(days=365)
 
 
 def mint_agent_token(
-    agent_id: int, agent_name: str, expires_delta: timedelta | None = None
+    agent_id: int, expires_delta: timedelta | None = None
 ) -> tuple[str, datetime]:
     """Mint the bearer token a benchmark agent presents on its WebSocket and ingest calls.
 
     The token is bound to one agent: ``agent_id`` must match the path id the agent
-    connects as, ``role=agent`` grants only the agent-facing writes, and ``sub`` is
-    the agent name. Used by SSH host provisioning and by the operator-facing
-    ``POST /api/benchmarks/agents/{id}/token`` route for agents that run
-    outside Forge (awsbnkctl, customer hosts). Returns the token and its expiry.
+    connects as and must name an existing agent row, so deleting the agent revokes
+    every token minted for it. ``role=agent`` grants only the agent-facing writes and
+    is never accepted as a user session. ``sub`` is ``agent:<id>``, never the
+    free-text agent name, so it cannot collide with a username. Used by SSH host
+    provisioning and by the operator-facing ``POST /api/benchmarks/agents/{id}/token``
+    route for agents that run outside Forge (awsbnkctl, customer hosts). Returns the
+    token and its expiry.
     """
     lifetime = expires_delta or AGENT_TOKEN_LIFETIME
     expires_at = datetime.now(UTC) + lifetime
     token = create_access_token(
-        {"agent_id": agent_id, "role": "agent", "sub": agent_name}, expires_delta=lifetime
+        {"agent_id": agent_id, "role": "agent", "sub": f"agent:{agent_id}"}, expires_delta=lifetime
     )
     return token, expires_at
 
@@ -183,6 +186,10 @@ def enforce_password_change(path: str, user: User) -> None:
 def get_user_from_token(db: Session, token: str) -> User:
     """Get the user associated with a JWT token. Raises UnauthorizedError on failure."""
     payload = decode_token(token)
+    # Agent tokens (role=agent) identify a benchmark agent, not a person; never
+    # resolve one to a User, whatever its sub claim says.
+    if payload.get("role") == "agent":
+        raise UnauthorizedError("Agent tokens cannot be used as a user session")
     username = payload.get("sub")
 
     user = db.query(User).filter(User.username == username).first()

@@ -551,7 +551,7 @@ All QKView endpoints accept `cluster_id` as a query parameter.
 | POST | `/api/benchmarks/agents` | public | `BenchmarkAgentRegister` | `BenchmarkAgentResponse` | Register agent |
 | GET | `/api/benchmarks/agents` | viewer | — | `list[BenchmarkAgentResponse]` | List agents |
 | GET | `/api/benchmarks/agents/{id}` | viewer | — | `BenchmarkAgentResponse` | Get agent |
-| POST | `/api/benchmarks/agents/{id}/token` | operator | — | `BenchmarkAgentTokenResponse` | Mint an agent-bound bearer token (`agent_id` claim, `role=agent`, 365 days) for agents Forge does not provision, e.g. awsbnkctl |
+| POST | `/api/benchmarks/agents/{id}/token` | admin (unscoped agent) / operator + project owner | — | `BenchmarkAgentTokenResponse` | Mint an agent-bound bearer token (`agent_id` claim, `role=agent`, 365 days) for agents Forge does not provision, e.g. awsbnkctl. Deleting the agent revokes its tokens |
 | DELETE | `/api/benchmarks/agents/{id}` | public | — | 204 | Deregister agent |
 
 ### Analysis

@@ -27417,7 +27417,7 @@
     "/api/benchmarks/agents/{agent_id}/token": {
       "post": {
         "summary": "Mint Benchmark Agent Token",
-        "description": "Mint an agent-bound bearer token for a registered benchmark agent.\n\nExternal agents (awsbnkctl, customer hosts) register with an operator token,\nthen need a token that carries the ``agent_id`` claim the agent WebSocket\nrequires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the\nsame token written to /etc/forge/agent.env; this route hands it to agents\nForge does not provision. Operator role, plus project ownership for\nproject-scoped agents (same gate as deregistration). Each call mints a new\ntoken; earlier tokens stay valid until they expire.",
+        "description": "Mint an agent-bound bearer token for a registered benchmark agent.\n\nExternal agents (awsbnkctl, customer hosts) register with an operator token,\nthen need a token that carries the ``agent_id`` claim the agent WebSocket\nrequires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the\nsame token written to /etc/forge/agent.env; this route hands it to agents\nForge does not provision. Project-scoped agents need operator role plus\nproject ownership; unscoped agents (project_id NULL, every self-registered\nagent) need admin. Each call mints a new token; earlier tokens stay valid\nuntil they expire or the agent is deleted, which revokes them all.",
         "operationId": "mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post",
         "parameters": [
           {
