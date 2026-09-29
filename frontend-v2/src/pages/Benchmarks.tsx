@@ -42,6 +42,7 @@ import { BenchmarkRunGroupView } from './BenchmarkRunGroupView';
 import { BenchmarkOverviewTab } from './BenchmarkOverviewTab';
 import { RunBenchmarkWizard, type RunBenchmarkWizardLaunchResult } from './RunBenchmarkWizard';
 import { deriveRunsViewState, derivePrimaryTabState, type SetupSection } from './benchmark-runs-view';
+import { ClusterPicker } from '@/components/observability/pickers';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Getting Started Banner — dismissible, collapses to a re-openable pill (never
@@ -155,9 +156,11 @@ function SetupGuidePill({ onExpand }: { onExpand: () => void }) {
 function BenchmarkSetupSection({
   activeSection,
   onSectionChange,
+  selectedClusterId,
 }: {
   activeSection: SetupSection;
   onSectionChange: (section: SetupSection) => void;
+  selectedClusterId?: number;
 }) {
   return (
     <Tabs value={activeSection} onValueChange={(v) => onSectionChange(v as SetupSection)}>
@@ -173,7 +176,7 @@ function BenchmarkSetupSection({
         ]}
       />
       <TabsContent value="targets" className="mt-6">
-        <BenchmarkTargetsTab />
+        <BenchmarkTargetsTab selectedClusterId={selectedClusterId} />
       </TabsContent>
       <TabsContent value="agents" className="mt-6">
         <BenchmarkAgentsTab />
@@ -191,9 +194,10 @@ function BenchmarkSetupSection({
 // only additive support for ?group=<id> (scenario launches from the wizard).
 // ──────────────────────────────────────────────────────────────────────────────
 
-function BenchmarkRunsSection({ searchParams, setSearchParams }: {
+function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId }: {
   searchParams: URLSearchParams;
   setSearchParams: (params: URLSearchParams) => void;
+  selectedClusterId?: number;
 }) {
   const [proxyFilter, setProxyFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -320,6 +324,7 @@ function BenchmarkRunsSection({ searchParams, setSearchParams }: {
       onToggleCompare={toggleCompare}
       onCompare={() => goToCompare(pendingCompareIds)}
       onViewTrends={goToTrends}
+      selectedClusterId={selectedClusterId}
     />
   );
 }
@@ -336,10 +341,27 @@ export default function Benchmarks() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardReRunLast, setWizardReRunLast] = useState(false);
 
+  const clusterParam = searchParams.get('cluster');
+  const selectedClusterId = clusterParam ? Number(clusterParam) : undefined;
+
+  const handleClusterChange = useCallback((id: number | undefined) => {
+    const next = new URLSearchParams(searchParams);
+    if (id != null) {
+      next.set('cluster', String(id));
+    } else {
+      next.delete('cluster');
+    }
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
+
   const { primaryTab, setupSection } = derivePrimaryTabState(searchParams);
 
   const goToPrimaryTab = useCallback((tab: string) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     if (tab === 'runs') {
       next.set('tab', 'runs');
     } else if (tab === 'setup') {
@@ -349,35 +371,48 @@ export default function Benchmarks() {
       next.set('tab', 'overview');
     }
     setSearchParams(next);
-  }, [setSearchParams, setupSection]);
+  }, [searchParams, setSearchParams, setupSection]);
 
   const goToSetupSection = useCallback((section: SetupSection) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'setup');
     next.set('section', section);
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const goToRunDetail = useCallback((runId: number) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'runs');
     next.set('run', String(runId));
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const goToRunGroup = useCallback((groupId: number) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'runs');
     next.set('group', String(groupId));
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const goToTrends = useCallback(() => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
     next.set('tab', 'runs');
     next.set('view', 'trends');
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const openWizard = useCallback((reRunLast = false) => {
     setWizardReRunLast(reRunLast);
@@ -407,15 +442,18 @@ export default function Benchmarks() {
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <PageHeader
-          title="Performance Benchmarks"
-          subtitle="Compare proxy / load-balancer performance for LLM inference traffic."
-          onRefresh={handleRefresh}
-          isRefreshing={isRefreshing}
-        />
-        {guideCollapsed && <SetupGuidePill onExpand={expandGuide} />}
-      </div>
+      <PageHeader
+        title="Performance Benchmarks"
+        subtitle="Compare proxy / load-balancer performance for LLM inference traffic."
+        actions={
+          <div className="flex items-center gap-2">
+            <ClusterPicker value={selectedClusterId} onChange={handleClusterChange} />
+            {guideCollapsed && <SetupGuidePill onExpand={expandGuide} />}
+          </div>
+        }
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+      />
 
       <GettingStartedBanner
         collapsed={guideCollapsed}
@@ -443,13 +481,22 @@ export default function Benchmarks() {
             onGoToRunsList={() => goToPrimaryTab('runs')}
             onGoToTrends={goToTrends}
             onOpenWizard={() => openWizard(false)}
+            selectedClusterId={selectedClusterId}
           />
         </TabsContent>
         <TabsContent value="runs" className="mt-6">
-          <BenchmarkRunsSection searchParams={searchParams} setSearchParams={setSearchParams} />
+          <BenchmarkRunsSection
+            searchParams={searchParams}
+            setSearchParams={setSearchParams}
+            selectedClusterId={selectedClusterId}
+          />
         </TabsContent>
         <TabsContent value="setup" className="mt-6">
-          <BenchmarkSetupSection activeSection={setupSection} onSectionChange={goToSetupSection} />
+          <BenchmarkSetupSection
+            activeSection={setupSection}
+            onSectionChange={goToSetupSection}
+            selectedClusterId={selectedClusterId}
+          />
         </TabsContent>
       </Tabs>
 

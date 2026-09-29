@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # (connect, read) timeout for resource list calls. The ApiClient has retries
 # disabled, so this bounds how long one unreachable cluster can hold a worker.
 _LIST_REQUEST_TIMEOUT = (5, 15)
+_CUSTOM_LIST_REQUEST_TIMEOUT = (5, 30)
 
 # Single source-of-truth: api_group → typed client class.
 # Anything NOT in this map falls through to CustomObjectsApi.
@@ -175,7 +176,7 @@ class ResourcesMixin:
                             namespace=namespace,
                             plural=resource_type.plural,
                             label_selector=label_selector or "",
-                            _request_timeout=_LIST_REQUEST_TIMEOUT,
+                            _request_timeout=_CUSTOM_LIST_REQUEST_TIMEOUT,
                         )
                     else:
                         response = custom_api.list_cluster_custom_object(
@@ -183,7 +184,7 @@ class ResourcesMixin:
                             version=resource_type.api_version,
                             plural=resource_type.plural,
                             label_selector=label_selector or "",
-                            _request_timeout=_LIST_REQUEST_TIMEOUT,
+                            _request_timeout=_CUSTOM_LIST_REQUEST_TIMEOUT,
                         )
                 else:
                     response = custom_api.list_cluster_custom_object(
@@ -191,7 +192,7 @@ class ResourcesMixin:
                         version=resource_type.api_version,
                         plural=resource_type.plural,
                         label_selector=label_selector or "",
-                        _request_timeout=_LIST_REQUEST_TIMEOUT,
+                        _request_timeout=_CUSTOM_LIST_REQUEST_TIMEOUT,
                     )
 
                 resources = response.get('items', [])

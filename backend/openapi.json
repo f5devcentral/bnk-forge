@@ -27924,6 +27924,22 @@
             }
           },
           {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -35291,6 +35307,17 @@
             ],
             "title": "Target Id"
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "proxy_deployment_id": {
             "anyOf": [
               {
@@ -35698,6 +35725,17 @@
               }
             ],
             "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "proxy_deployment_id": {
             "anyOf": [
@@ -36156,6 +36194,17 @@
             "type": "integer",
             "title": "Cluster Id"
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "llm_base_url": {
             "type": "string",
             "title": "Llm Base Url"
@@ -36219,17 +36268,6 @@
             "type": "integer",
             "title": "Proxy Count",
             "default": 0
-          },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
           },
           "created_at": {
             "type": "string",
@@ -36318,6 +36356,17 @@
             "type": "integer",
             "title": "Cluster Id"
           },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
           "llm_base_url": {
             "type": "string",
             "title": "Llm Base Url"
@@ -36381,17 +36430,6 @@
             "type": "integer",
             "title": "Proxy Count",
             "default": 0
-          },
-          "cluster_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cluster Name"
           },
           "created_at": {
             "type": "string",
@@ -60395,6 +60433,17 @@
               }
             ],
             "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           },
           "proxy": {
             "anyOf": [

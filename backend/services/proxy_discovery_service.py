@@ -27,6 +27,7 @@ Follows the same pattern as services/bnk/fetch.py:
 
 import ipaddress
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
@@ -40,6 +41,9 @@ from models.enums import ProxyDeploymentStatus
 from services.kubernetes import KubernetesService
 
 logger = logging.getLogger(__name__)
+
+# Max bytes of a ConfigMap data value to parse for proxy backends (bounds CPU time)
+_MAX_CONFIGMAP_PARSE_BYTES = 256 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +131,7 @@ class ProxyDiscoveryService:
                 raise ValueError("cluster_id is required when target is None")
             cluster = self.k8s.get_cluster(cluster_id)
             api_client = self.k8s.load_kubeconfig(cluster)
-            return self.discover_inventory(api_client)
+            return self.discover_inventory(api_client, cluster_id=cluster_id)
 
         # --- Target-aware mode (original path, unchanged) ---
         cluster = self.k8s.get_cluster(target.cluster_id)
@@ -173,7 +177,11 @@ class ProxyDiscoveryService:
     # Inventory mode (target-independent, read-only, D-019 dynamic)
     # ------------------------------------------------------------------
 
-    def discover_inventory(self, api_client: k8s_client.ApiClient) -> list[dict[str, Any]]:
+    def discover_inventory(
+        self,
+        api_client: k8s_client.ApiClient,
+        cluster_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Enumerate all proxy / ingress controllers on the cluster.
 
         Thin entry point for the scan caller (which already holds an
@@ -294,10 +302,136 @@ class ProxyDiscoveryService:
                 "error": None,
             })
 
+        # --- Enumerate Workload Proxy Deployments (standalone/Helm workloads) ---
+        apps = k8s_client.AppsV1Api(api_client)
+        core = k8s_client.CoreV1Api(api_client)
+
+        all_deployments = _safe_list_all_deployments(apps)
+
+        # Track controllers already covered by IngressClass / GatewayClass to avoid duplication
+        covered_controllers = {
+            ic.get("spec", {}).get("controller", "").lower()
+            for ic in ingress_classes
+            if ic.get("spec", {}).get("controller")
+        }
+        covered_controllers |= {
+            gc.get("spec", {}).get("controllerName", "").lower()
+            for gc in gateway_classes
+            if gc.get("spec", {}).get("controllerName")
+        }
+
+        # Query active ProxyDeployments scoped strictly to the scanned cluster (INV-1)
+        # Keyed by (target proxy namespace, helm release): a Deployment is Forge's
+        # proxy only in the namespace Forge installed it into (as in
+        # _has_target_deployment_match), not a same-named workload elsewhere.
+        db_deploy_map: dict[tuple[str, str], Any] = {}
+        if self.db and cluster_id is not None:
+            try:
+                db_deploys = (
+                    self.db.query(ProxyDeployment)
+                    .join(BenchmarkTarget, ProxyDeployment.target_id == BenchmarkTarget.id)
+                    .filter(
+                        BenchmarkTarget.cluster_id == cluster_id,
+                        ProxyDeployment.status.in_([
+                            ProxyDeploymentStatus.READY,
+                            ProxyDeploymentStatus.DISCOVERED,
+                        ])
+                    )
+                    .all()
+                )
+                for d in db_deploys:
+                    if d.helm_release:
+                        proxy_ns = d.target.proxy_namespace or "perf-proxies"
+                        db_deploy_map[(proxy_ns, d.helm_release.lower())] = d
+            except Exception as e:
+                logger.debug("Failed to query ProxyDeployment records for inventory: %s", e)
+
+        for dep in all_deployments:
+            dep_name = dep.metadata.name or ""
+            dep_ns = dep.metadata.namespace or "default"
+            labels = dep.metadata.labels or {}
+            containers = (
+                dep.spec.template.spec.containers
+                if dep.spec and dep.spec.template and dep.spec.template.spec
+                else []
+            )
+            images = [c.image or "" for c in containers]
+
+            # Skip system/internal namespaces
+            if dep_ns in ("kube-system", "cert-manager", "kube-node-lease", "kube-public"):
+                continue
+
+            # Identify if this deployment is a proxy workload
+            proxy_type, display_name = _classify_deployment(dep_name, labels, images)
+            if not proxy_type:
+                continue
+
+            # If this is BNK / CIS controller, it is represented by GatewayClass or IngressClass
+            if any(cov in dep_name.lower() for cov in ["f5-cne", "f5-bigip-ctlr"]):
+                continue
+
+            # A controller already listed via its IngressClass / GatewayClass
+            # (e.g. ingress-nginx-controller, envoy-gateway): skip the duplicate.
+            if _is_covered_controller_workload(dep_name, labels, images, covered_controllers):
+                continue
+
+            # Extract backends from ConfigMaps in this namespace
+            backends = _extract_backends_from_configmaps(
+                core, dep_ns, proxy_type, _deployment_configmap_names(dep),
+            )
+
+            # Check matching DB proxy deployment for backend enrichment
+            matched_db_deploy = (
+                db_deploy_map.get((dep_ns, dep_name.lower()))
+                or db_deploy_map.get((dep_ns, labels.get("app.kubernetes.io/instance", "").lower()))
+            )
+            if matched_db_deploy and matched_db_deploy.target:
+                tgt = matched_db_deploy.target
+                tgt_svc = _extract_svc_name(tgt.llm_base_url)
+                tgt_ns = tgt.llm_namespace or "default"
+                if not any(b["service"] == tgt_svc for b in backends):
+                    backends.append({
+                        "service": tgt_svc,
+                        "namespace": tgt_ns,
+                        "via": f"Benchmark Target ({tgt.name})",
+                    })
+
+            # Resolve service for this deployment
+            proxy_url, external_url = self._find_proxy_service_for_deployment(core, dep)
+            if matched_db_deploy:
+                proxy_url = proxy_url or matched_db_deploy.proxy_url
+                external_url = external_url or matched_db_deploy.external_url
+
+            # Check helm release metadata if present
+            helm_release = labels.get("app.kubernetes.io/instance") or labels.get("helm.sh/chart")
+
+            # Format clean display name
+            formatted_display = f"{display_name} ({dep_name})" if dep_ns == "default" else f"{display_name} ({dep_ns}/{dep_name})"
+
+            items.append({
+                "proxy_type": proxy_type,
+                "display_name": formatted_display,
+                "controller": images[0] if images else dep_name,
+                "kind": "Deployment",
+                "found": True,
+                "namespace": dep_ns,
+                "proxy_url": proxy_url,
+                "external_url": external_url,
+                "backends": backends,
+                "is_bnk": False,
+                "details": {
+                    "deployment_name": dep_name,
+                    "namespace": dep_ns,
+                    "image": images[0] if images else None,
+                    "helm_release": helm_release,
+                },
+                "error": None,
+            })
+
         # Sort for stable ordering: BNK last (it's the migration target), others alpha
-        items.sort(key=lambda x: (x["is_bnk"], x["proxy_type"], x.get("details", {}).get("ingress_class_name") or x.get("details", {}).get("gateway_class_name") or ""))
+        items.sort(key=lambda x: (x["is_bnk"], x["proxy_type"], x.get("details", {}).get("ingress_class_name") or x.get("details", {}).get("gateway_class_name") or x.get("details", {}).get("deployment_name") or ""))
         logger.info(
-            "Proxy inventory: %d IngressClass(es) + %d GatewayClass(es) → %d items",
+            "Proxy inventory: %d IngressClass(es) + %d GatewayClass(es) + %d total items",
             len(ingress_classes), len(gateway_classes), len(items),
         )
         return items
@@ -485,10 +619,18 @@ class ProxyDiscoveryService:
         has_route = _has_ingress_to_backend(
             api_client, target_svc_name, target_svc_ns, ingress_class_filter="nginx",
         )
+        if not has_route:
+            has_route = _has_configmap_to_backend(
+                core, nginx_deploys, target_svc_name, target_svc_ns, proxy_type="nginx"
+            )
+        if not has_route and self.db:
+            has_route = _has_target_deployment_match(
+                self.db, target, nginx_deploys, proxy_type="nginx"
+            )
 
         if not has_route:
             logger.info(
-                "NGINX discovery: infra found but no Ingress routes to '%s.%s' — not marking as discovered",
+                "NGINX discovery: infra found but no Ingress/route routes to '%s.%s' — not marking as discovered",
                 target_svc_name, target_svc_ns,
             )
             return ProxyDiscoveryResult(
@@ -497,7 +639,7 @@ class ProxyDiscoveryService:
                 details={
                     "ingress_classes": [ic.get("metadata", {}).get("name") for ic in nginx_ic],
                     "deployments": [d.metadata.name for d in nginx_deploys],
-                    "reason": f"No NGINX Ingress routes to {target_svc_name}.{target_svc_ns}",
+                    "reason": f"No NGINX Ingress/route routes to {target_svc_name}.{target_svc_ns}",
                 },
             )
 
@@ -506,9 +648,13 @@ class ProxyDiscoveryService:
             core, nginx_ns,
             label_selector="app.kubernetes.io/name=ingress-nginx",
         )
+        if not proxy_url:
+            proxy_url, external_url = self._find_service_by_name_pattern(
+                core, "nginx", namespace=nginx_ns,
+            )
 
         logger.info(
-            "NGINX discovery: found Ingress routing to '%s.%s'",
+            "NGINX discovery: found routing to '%s.%s'",
             target_svc_name, target_svc_ns,
         )
 
@@ -531,7 +677,7 @@ class ProxyDiscoveryService:
     ) -> ProxyDiscoveryResult:
         """Detect HAProxy — only found if it routes to this target's LLM.
 
-        Checks for HAProxy deployments + Ingress objects with backend service
+        Checks for HAProxy deployments + Ingress objects or configmaps with backend service
         matching the target's LLM service.
         """
         apps = k8s_client.AppsV1Api(api_client)
@@ -577,10 +723,18 @@ class ProxyDiscoveryService:
         has_route = _has_ingress_to_backend(
             api_client, target_svc_name, target_svc_ns, ingress_class_filter="haproxy",
         )
+        # The Deployment that routes to this target (its own config or its Forge
+        # identity) — its Service, not any "haproxy" Service, is the proxy URL.
+        route_dep = next((
+            d for d in haproxy_deploys
+            if _has_configmap_to_backend(core, [d], target_svc_name, target_svc_ns, proxy_type="haproxy")
+            or (self.db and _has_target_deployment_match(self.db, target, [d], proxy_type="haproxy"))
+        ), None)
+        has_route = has_route or route_dep is not None
 
         if not has_route:
             logger.info(
-                "HAProxy discovery: infra found but no Ingress routes to '%s.%s' — not marking as discovered",
+                "HAProxy discovery: infra found but no Ingress/route routes to '%s.%s' — not marking as discovered",
                 target_svc_name, target_svc_ns,
             )
             return ProxyDiscoveryResult(
@@ -589,20 +743,20 @@ class ProxyDiscoveryService:
                 details={
                     "ingress_classes": [ic.get("metadata", {}).get("name") for ic in haproxy_ic],
                     "deployments": [d.metadata.name for d in haproxy_deploys],
-                    "reason": f"No HAProxy Ingress routes to {target_svc_name}.{target_svc_ns}",
+                    "reason": f"No HAProxy Ingress/route routes to {target_svc_name}.{target_svc_ns}",
                 },
             )
 
-        # Find the haproxy service
+        # Find the Service of the routing Deployment (else of the Ingress controller)
         proxy_url = None
         external_url = None
-        if haproxy_ns:
-            proxy_url, external_url = self._find_service_by_name_pattern(
-                core, "haproxy", namespace=haproxy_ns,
-            )
+        for dep in [route_dep] if route_dep else haproxy_deploys:
+            proxy_url, external_url = self._find_proxy_service_for_deployment(core, dep)
+            if proxy_url:
+                break
 
         logger.info(
-            "HAProxy discovery: found Ingress routing to '%s.%s'",
+            "HAProxy discovery: found routing to '%s.%s'",
             target_svc_name, target_svc_ns,
         )
 
@@ -1000,6 +1154,44 @@ class ProxyDiscoveryService:
 
         return None, None
 
+    def _find_proxy_service_for_deployment(
+        self,
+        core: k8s_client.CoreV1Api,
+        dep: Any,
+    ) -> tuple[str | None, str | None]:
+        """proxy_url / external_url of the Service in front of Deployment ``dep``.
+
+        Tied to the Deployment, never a name substring: the Service named like
+        the Deployment, else one whose selector matches its pod template labels,
+        else one carrying its Helm instance label. An exposed (NodePort /
+        LoadBalancer) Service wins among matches.
+        """
+        ns = dep.metadata.namespace or "default"
+        try:
+            svcs = core.list_namespaced_service(namespace=ns, _request_timeout=10).items or []
+        except ApiException:
+            return None, None
+        name = dep.metadata.name or ""
+        template = dep.spec.template.metadata if dep.spec and dep.spec.template else None
+        pod_labels = (template.labels if template else None) or {}
+        instance = (dep.metadata.labels or {}).get("app.kubernetes.io/instance")
+
+        def _selects(svc: Any) -> bool:
+            selector = svc.spec.selector or {}
+            return bool(selector) and all(pod_labels.get(k) == v for k, v in selector.items())
+
+        def _same_release(svc: Any) -> bool:
+            return bool(instance) and (svc.metadata.labels or {}).get("app.kubernetes.io/instance") == instance
+
+        for matches in (lambda s: s.metadata.name == name, _selects, _same_release):
+            hits = [s for s in svcs if s.spec.ports and matches(s)]
+            if hits:
+                exposed = [s for s in hits if s.spec.type in ("NodePort", "LoadBalancer")]
+                svc = (exposed or hits)[0]
+                port = svc.spec.ports[0]
+                return f"http://{svc.metadata.name}.{ns}:{port.port}", _resolve_external_url(core, svc, port)
+        return None, None
+
     # ------------------------------------------------------------------
     # Sync discovered proxies to ProxyDeployment records
     # ------------------------------------------------------------------
@@ -1316,7 +1508,10 @@ def _safe_list_namespaced_deployments(
         )
         return resp.items
     except ApiException as e:
-        if e.status == 404 or e.status == 403:
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing deployments in %s: %s", namespace, e.reason)
+            return []
+        if e.status == 404:
             return []
         logger.debug("Failed to list deployments in %s: %s", namespace, e.reason)
         return []
@@ -1477,4 +1672,256 @@ def _has_ingress_to_backend(
             if ing.spec.default_backend.service.name == target_svc_name:
                 return True
 
+    return False
+
+
+def _safe_list_all_deployments(apps: k8s_client.AppsV1Api) -> list:
+    """List deployments across all namespaces. Returns [] on error."""
+    try:
+        resp = apps.list_deployment_for_all_namespaces(_request_timeout=10)
+        return resp.items
+    except ApiException as e:
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing deployments for all namespaces: %s", e.reason)
+            return []
+        if e.status == 404:
+            return []
+        logger.debug("Failed to list deployments for all namespaces: %s", e.reason)
+        return []
+    except Exception as e:
+        logger.debug("Failed to list deployments for all namespaces: %s", e)
+        return []
+
+
+def _safe_list_namespaced_configmaps(
+    core: k8s_client.CoreV1Api,
+    namespace: str,
+) -> list:
+    """List ConfigMaps in a namespace. Returns [] on error."""
+    try:
+        resp = core.list_namespaced_config_map(namespace=namespace, _request_timeout=10)
+        return resp.items
+    except ApiException as e:
+        if e.status == 403:
+            logger.warning("Permission denied (403) listing ConfigMaps in %s: %s", namespace, e.reason)
+            return []
+        if e.status == 404:
+            return []
+        logger.debug("Failed to list ConfigMaps in %s: %s", namespace, e.reason)
+        return []
+    except Exception as e:
+        logger.debug("Failed to list ConfigMaps in %s: %s", namespace, e)
+        return []
+
+
+def _classify_deployment(
+    name: str,
+    labels: dict[str, str],
+    images: list[str],
+) -> tuple[str | None, str | None]:
+    """Classify a Deployment as a proxy workload based on name, labels, and container images."""
+    name_lower = name.lower()
+    labels_str = " ".join(f"{k}={v}" for k, v in labels.items()).lower()
+    images_str = " ".join(images).lower()
+    combined = f"{name_lower} {labels_str} {images_str}"
+
+    if "haproxy" in combined:
+        return "haproxy", "HAProxy"
+    if "envoy" in combined:
+        return "envoy", "Envoy"
+    if "nginx" in combined:
+        if "backend" in name_lower and not any(k in combined for k in ("ingress", "proxy", "gateway")):
+            return None, None
+        return "nginx", "NGINX"
+    if "traefik" in combined:
+        return "traefik", "Traefik"
+    if "kong" in combined:
+        return "kong", "Kong"
+    if "caddy" in combined:
+        return "caddy", "Caddy"
+
+    return None, None
+
+
+def _deployment_configmap_names(dep: Any) -> set[str]:
+    """Names of the ConfigMaps a Deployment mounts as volumes (its own config)."""
+    spec = dep.spec.template.spec if dep.spec and dep.spec.template else None
+    return {
+        v.config_map.name
+        for v in ((spec.volumes if spec else None) or [])
+        if v.config_map and v.config_map.name
+    }
+
+
+# Server lines only (anchored): `default-server inter 2s` and friends are not backends.
+_HAPROXY_SERVER_RE = re.compile(r"^\s*server\s+\S+\s+([a-zA-Z0-9_\-\.]+)(?::(\d+))?", re.MULTILINE)
+_NGINX_PROXY_PASS_RE = re.compile(r"proxy_pass\s+https?://([a-zA-Z0-9_\-\.]+)(?::(\d+))?")
+_ENVOY_ADDRESS_RE = re.compile(r"address:\s*[\"']?([a-zA-Z0-9_\-\.]+)[\"']?")
+_ENVOY_PORT_RE = re.compile(r"port_value:\s*(\d+)")
+
+
+def _service_backend(host: str, port_digits: str | None, namespace: str, via: str) -> dict[str, Any] | None:
+    """Map a config host:port to a Service backend, or None if it is not one.
+
+    IP literals (incl. 0.0.0.0 listeners and 127.0.0.1 admin) and localhost do
+    not name a Service; a port must be 1..65535 (absent = 80). Digits are
+    length-checked before int() so an unbounded run cannot raise ValueError.
+    """
+    port = 80 if port_digits is None else (int(port_digits) if len(port_digits) <= 5 else 0)
+    if not 1 <= port <= 65535 or host.lower() == "localhost":
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        pass
+    parts = host.split(".")
+    svc_ns = parts[1] if len(parts) > 1 and parts[1] not in ("svc", "cluster", "local") else namespace
+    return {"service": parts[0], "namespace": svc_ns, "port": port, "via": via}
+
+
+def _parse_config_backends(
+    content: str, fname: str, proxy_type: str, namespace: str, cm_name: str,
+) -> list[dict[str, Any]]:
+    """Parse one ConfigMap data value for Service backends."""
+    found: list[dict[str, Any] | None] = []
+    if proxy_type == "haproxy" or "haproxy" in fname.lower():
+        via = f"HAProxy Config ({cm_name})"
+        found = [
+            _service_backend(m.group(1), m.group(2), namespace, via)
+            for m in _HAPROXY_SERVER_RE.finditer(content)
+        ]
+    elif proxy_type == "nginx" or "nginx" in fname.lower() or "default.conf" in fname.lower():
+        via = f"NGINX Config ({cm_name})"
+        found = [
+            _service_backend(m.group(1), m.group(2), namespace, via)
+            for m in _NGINX_PROXY_PASS_RE.finditer(content)
+        ]
+    elif proxy_type == "envoy" or "envoy" in fname.lower():
+        # address: <host> then port_value: <port>, line by line (linear time);
+        # both may sit on one line in flow style ({address: x, port_value: n}).
+        via = f"Envoy Config ({cm_name})"
+        current_host: str | None = None
+        for line in content.splitlines():
+            addr_match = _ENVOY_ADDRESS_RE.search(line)
+            if addr_match:
+                current_host = addr_match.group(1)
+                line = line[addr_match.end():]
+            port_match = _ENVOY_PORT_RE.search(line) if current_host else None
+            if current_host and port_match:
+                found.append(_service_backend(current_host, port_match.group(1), namespace, via))
+                current_host = None
+    return [b for b in found if b]
+
+
+# Controller-string substring -> workload hints (image / label) of that
+# controller's own Deployments, for controllers whose image does not contain
+# the controller string (Envoy Gateway, HAProxy ingress, NGINX Inc).
+_CONTROLLER_WORKLOAD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("envoyproxy.io", ("envoyproxy/gateway", "app.kubernetes.io/managed-by=envoy-gateway")),
+    ("haproxy", ("haproxytech/kubernetes-ingress", "haproxy-ingress")),
+    ("nginx.org", ("nginx/nginx-ingress",)),
+)
+
+
+def _is_covered_controller_workload(
+    name: str,
+    labels: dict[str, str],
+    images: list[str],
+    covered_controllers: set[str],
+) -> bool:
+    """True if a Deployment is (part of) a controller inventory already lists."""
+    hay = " ".join([name, *images, *(f"{k}={v}" for k, v in labels.items())]).lower()
+    for cov in covered_controllers:
+        if not cov:
+            continue
+        if cov in hay:
+            return True
+        if any(sub in cov and any(h in hay for h in hints) for sub, hints in _CONTROLLER_WORKLOAD_HINTS):
+            return True
+    return False
+
+
+def _extract_backends_from_configmaps(
+    core: k8s_client.CoreV1Api,
+    namespace: str,
+    proxy_type: str,
+    configmap_names: set[str],
+) -> list[dict[str, Any]]:
+    """Extract backend services from the named ConfigMaps (a proxy's own config)."""
+    backends: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    if not configmap_names:
+        return backends
+
+    for cm in _safe_list_namespaced_configmaps(core, namespace):
+        cm_name = cm.metadata.name or ""
+        if cm_name not in configmap_names:
+            continue
+        try:
+            for fname, content in (cm.data or {}).items():
+                if not isinstance(content, str):
+                    continue
+                content = content[:_MAX_CONFIGMAP_PARSE_BYTES]
+                for b in _parse_config_backends(content, fname, proxy_type, namespace, cm_name):
+                    key = (b["service"], b["namespace"], b["port"])
+                    if key not in seen:
+                        seen.add(key)
+                        backends.append(b)
+        except Exception as e:
+            logger.debug("Failed to parse ConfigMap %s/%s for backends: %s", namespace, cm_name, e)
+
+    return backends
+
+
+def _has_configmap_to_backend(
+    core: k8s_client.CoreV1Api,
+    deployments: list,
+    target_svc_name: str,
+    target_svc_ns: str,
+    proxy_type: str = "haproxy",
+) -> bool:
+    """True if a proxy Deployment's own ConfigMap routes to the target Service."""
+    for dep in deployments:
+        backends = _extract_backends_from_configmaps(
+            core, dep.metadata.namespace or "default", proxy_type, _deployment_configmap_names(dep),
+        )
+        if any(b["service"] == target_svc_name and b["namespace"] == target_svc_ns for b in backends):
+            return True
+    return False
+
+
+def _has_target_deployment_match(
+    db: Session | None,
+    target: BenchmarkTarget,
+    deployments: list,
+    proxy_type: str = "haproxy",
+) -> bool:
+    """True if one of the live Deployments is this target's own Forge proxy.
+
+    Exact identity only: the Deployment lives in the target's proxy namespace
+    (where Forge installs it) and its name or Helm instance label equals the
+    helm_release recorded on this target's ProxyDeployment. A row alone (without
+    its live Deployment) never matches, so removed proxies drop out.
+    """
+    if not db or not getattr(target, "id", None):
+        return False
+    try:
+        releases = {
+            r for (r,) in db.query(ProxyDeployment.helm_release).filter(
+                ProxyDeployment.target_id == target.id,
+                ProxyDeployment.proxy_type == proxy_type,
+                ProxyDeployment.helm_release.isnot(None),
+            ).all()
+        }
+    except Exception as e:
+        logger.debug("Failed to query ProxyDeployment for target %s: %s", target.id, e)
+        return False
+    proxy_ns = target.proxy_namespace or "perf-proxies"
+    for d in deployments:
+        if d.metadata.namespace != proxy_ns:
+            continue
+        labels = d.metadata.labels or {}
+        if d.metadata.name in releases or labels.get("app.kubernetes.io/instance") in releases:
+            return True
     return False
