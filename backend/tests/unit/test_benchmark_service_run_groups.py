@@ -599,3 +599,29 @@ class TestFailInterruptedRunsForAgent:
         assert foreign.status == BenchmarkRunStatus.RUNNING
         assert group.failed_runs == 1
         assert svc.get_first_pending_run_for_agent(agent.id).id == nxt.id
+
+
+class TestFailInterruptedRunsScoping:
+    def test_only_and_keep_limit_which_runs_fail(self, db):
+        agent = _agent(db, name="agent-scoped")
+        a = _child(db, None, "running", agent_id=agent.id, variant_label="a")
+        b = _child(db, None, "running", agent_id=agent.id, variant_label="b")
+        c = _child(db, None, "running", agent_id=agent.id, variant_label="c")
+
+        svc = BenchmarkService(db)
+        assert svc.fail_interrupted_runs_for_agent(agent.id, only={a.id}, reason="closed") == [a.id]
+        assert svc.fail_interrupted_runs_for_agent(agent.id, keep={c.id}) == [b.id]
+        db.commit()
+        for r in (a, b, c):
+            db.refresh(r)
+        assert (a.status, b.status, c.status) == ("failed", "failed", "running")
+        assert a.error_message == "closed"
+
+    def test_complete_refuses_run_no_longer_running(self, db):
+        import pytest
+
+        from core.errors import ConflictError
+
+        run = _child(db, None, "failed", variant_label="late")
+        with pytest.raises(ConflictError):
+            BenchmarkService(db).complete_run_with_aiperf_result(run.id, {"request_count": {"avg": 1}})

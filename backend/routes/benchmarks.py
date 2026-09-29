@@ -15,6 +15,7 @@ Provides:
 import asyncio
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, Query, Request, WebSocket, WebSocketDisconnect
@@ -1191,11 +1192,16 @@ def trigger_benchmark_run(
     # run_benchmark_scenario does: a WS (re)connect drain during the send would
     # otherwise find the run PENDING and dispatch it a second time. If the send
     # fails the claim is released and the agent picks the run up on reconnect.
-    if bench_svc.claim_pending_run(run.id):
-        db.commit()
-        if not dispatch_to_agent(agent_id, command):
-            bench_svc.release_claimed_run(run.id)
+    _run_owner[run.id] = _DISPATCHING
+    try:
+        if bench_svc.claim_pending_run(run.id):
             db.commit()
+            if not dispatch_to_agent(agent_id, command):
+                bench_svc.release_claimed_run(run.id)
+                db.commit()
+    finally:
+        if _run_owner.get(run.id) is _DISPATCHING:
+            _run_owner.pop(run.id, None)
     db.refresh(run)
 
     if run.status == BenchmarkRunStatus.RUNNING:
@@ -1331,16 +1337,21 @@ def run_benchmark_scenario(
         # Going through the same atomic claim (group-guarded) makes initial-dispatch
         # and connect-drain mutually exclusive on this row — the loser skips — and
         # leaves no window where the row is PENDING while a dispatch is in flight.
-        if bench_svc.claim_pending_run(first_id, group_id=group.id):
-            db.commit()
-            command = {"type": "run", "run_id": first_id, "config": first_config}
-            if dispatch_to_agent(agent_id, command):
-                dispatched = 1
-            else:
-                # Send failed after a winning claim — revert RUNNING→PENDING so a
-                # later reconnect-drain can re-dispatch it (mirrors the drain path).
-                bench_svc.release_claimed_run(first_id)
+        _run_owner[first_id] = _DISPATCHING
+        try:
+            if bench_svc.claim_pending_run(first_id, group_id=group.id):
                 db.commit()
+                command = {"type": "run", "run_id": first_id, "config": first_config}
+                if dispatch_to_agent(agent_id, command):
+                    dispatched = 1
+                else:
+                    # Send failed after a winning claim — revert RUNNING→PENDING so a
+                    # later reconnect-drain can re-dispatch it (mirrors the drain path).
+                    bench_svc.release_claimed_run(first_id)
+                    db.commit()
+        finally:
+            if _run_owner.get(first_id) is _DISPATCHING:
+                _run_owner.pop(first_id, None)
 
     if dispatched:
         group.status = BenchmarkRunStatus.RUNNING
@@ -1418,6 +1429,14 @@ _agent_ws_connections: dict[int, WebSocket] = {}
 # via run_coroutine_threadsafe — sending on a WS from a freshly-created loop is
 # undefined and silently drops commands (the cause of stuck-pending runs).
 _main_loop: asyncio.AbstractEventLoop | None = None
+# run_id -> the WebSocket its "run" command was sent on, or _DISPATCHING while a
+# sync route holds the claim and its send is still queued. A run reports back
+# only on its own connection, so a RUNNING run whose connection is gone is failed
+# (connection teardown, or the agent's next connect).
+_DISPATCHING = object()
+_run_owner: dict[int, object] = {}
+# Close code sent to an agent connection replaced by a newer one for the same agent.
+_WS_CLOSE_SUPERSEDED = 4409
 
 
 def _status_for_heartbeat(reported_status: str | None) -> str:
@@ -1636,8 +1655,17 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     await websocket.accept()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    previous = _agent_ws_connections.get(agent_id)
     _agent_ws_connections[agent_id] = websocket
     logger.info("Agent %d connected via WebSocket", agent_id)
+    if previous is not None and previous is not websocket:
+        # One live connection per agent: a second process on the same agent row
+        # (or a half-open socket from before a restart) is closed.
+        logger.warning("Agent %d: closing the connection this one supersedes", agent_id)
+        try:
+            await previous.close(code=_WS_CLOSE_SUPERSEDED)
+        except Exception:
+            pass
 
     # Mark agent as connected and check for pending runs to dispatch
     db = next(get_db())
@@ -1645,9 +1673,13 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
         svc = BenchmarkService(db)
         svc.update_agent_status(agent_id, "connected")
         # A run still RUNNING for this agent was dispatched on a previous
-        # connection and can never report back on this one; fail it so it does
-        # not block the queue.
-        interrupted = svc.fail_interrupted_runs_for_agent(agent_id)
+        # connection (or before a backend restart) and can never report back on
+        # this one; fail it so it does not block the queue. Runs whose dispatch
+        # a route is still sending are spared.
+        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING}
+        interrupted = svc.fail_interrupted_runs_for_agent(agent_id, keep=in_flight)
+        for rid in interrupted:
+            _run_owner.pop(rid, None)
         if interrupted:
             logger.warning("Agent %d reconnected: failed interrupted runs %s", agent_id, interrupted)
         db.commit()
@@ -1695,7 +1727,12 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                 try:
                     svc = BenchmarkService(db)
                     svc.update_agent_status(agent_id, "connected")
-                    if run_id and result_data and _agent_owns_run(svc, agent_id, int(run_id)):
+                    owned = bool(run_id) and _agent_owns_run(svc, agent_id, int(run_id))
+                    if owned:
+                        _run_owner.pop(int(run_id), None)
+                    # Only a RUNNING run takes a result: a late one must not overwrite
+                    # a run already failed (connection gone) or cancelled.
+                    if owned and result_data and svc.get_run(int(run_id)).status == BenchmarkRunStatus.RUNNING:
                         svc.complete_run_with_aiperf_result(int(run_id), result_data)
                         logger.info("Run #%d completed by agent %d — result ingested", run_id, agent_id)
                         db.commit()
@@ -1727,8 +1764,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                     svc = BenchmarkService(db)
                     svc.update_agent_status(agent_id, "connected")
                     if run_id and _agent_owns_run(svc, agent_id, int(run_id)):
+                        _run_owner.pop(int(run_id), None)
                         run = svc.get_run(int(run_id))
-                        if run and run.status in ("pending", "running"):
+                        if run and run.status == BenchmarkRunStatus.RUNNING:
                             run.status = BenchmarkRunStatus.FAILED
                             run.error_message = str(error_msg)[:1000]
                             run.completed_at = datetime.now(UTC)
@@ -1758,16 +1796,30 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     except Exception as e:
         logger.error("Agent WebSocket error for agent %d: %s", agent_id, e)
     finally:
-        # Only tear down if THIS connection is still the registered one (see
-        # _owns_agent_connection): an agent pod restart replaces the registry entry
-        # before this old handler's finally runs, and clobbering would pop the new
-        # ws from the dispatch registry / flip a live agent to "disconnected".
-        if _owns_agent_connection(agent_id, websocket):
+        # Runs dispatched on THIS connection can no longer report back.
+        orphaned = {rid for rid, owner in list(_run_owner.items()) if owner is websocket}
+        for rid in orphaned:
+            _run_owner.pop(rid, None)
+        # Only mark the agent disconnected if THIS connection is still the
+        # registered one (see _owns_agent_connection): an agent pod restart
+        # replaces the registry entry before this old handler's finally runs, and
+        # clobbering would pop the new ws from the dispatch registry / flip a live
+        # agent to "disconnected".
+        registered = _owns_agent_connection(agent_id, websocket)
+        if registered:
             _agent_ws_connections.pop(agent_id, None)
+        if registered or orphaned:
             db = next(get_db())
             try:
                 svc = BenchmarkService(db)
-                svc.update_agent_status(agent_id, "disconnected")
+                if orphaned:
+                    failed = svc.fail_interrupted_runs_for_agent(
+                        agent_id, only=orphaned, reason="agent connection closed; run interrupted",
+                    )
+                    if failed:
+                        logger.warning("Agent %d disconnected: failed interrupted runs %s", agent_id, failed)
+                if registered:
+                    svc.update_agent_status(agent_id, "disconnected")
                 db.commit()
             except Exception:
                 pass
@@ -1846,18 +1898,44 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
 
 
 async def send_command_to_agent(agent_id: int, command: dict) -> bool:
-    """Send a command to a connected agent. Returns True if sent successfully."""
+    """Send a command to a connected agent. Returns True if sent successfully.
+
+    A "run" command records its connection in _run_owner (before the await, so
+    no other handler observes the run without an owner).
+    """
     ws = _agent_ws_connections.get(agent_id)
     if not ws:
         return False
+    run_id = command.get("run_id") if command.get("type") == "run" else None
+    if run_id is not None:
+        _run_owner[run_id] = ws
     try:
         await ws.send_text(json.dumps(command))
         return True
     except Exception:
+        if run_id is not None and _run_owner.get(run_id) is ws:
+            _run_owner.pop(run_id, None)
         return False
 
 
 _DISPATCH_TIMEOUT_S = 15
+
+
+class _DispatchAttempt:
+    """Hand-off between dispatch_to_agent (worker thread) and its queued send."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.started = False
+        self.abandoned = False
+
+
+async def _send_unless_abandoned(agent_id: int, command: dict, attempt: _DispatchAttempt) -> bool:
+    with attempt.lock:
+        if attempt.abandoned:
+            return False
+        attempt.started = True
+    return await send_command_to_agent(agent_id, command)
 
 
 def dispatch_to_agent(agent_id: int, command: dict) -> bool:
@@ -1868,19 +1946,27 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
     undefined — it worked intermittently and otherwise dropped the command,
     leaving runs stuck in 'pending'. Schedule the send on the loop that owns the
     socket and wait for the result.
+
+    On timeout: a send that has not started is abandoned (it will never write)
+    and False lets the caller release its claim. A send already writing may
+    still land, so True keeps the claim; the run's completion/failure or its
+    connection's teardown settles it.
     """
     loop = _main_loop
     if loop is not None and loop.is_running():
+        attempt = _DispatchAttempt()
         try:
-            fut = asyncio.run_coroutine_threadsafe(send_command_to_agent(agent_id, command), loop)
+            fut = asyncio.run_coroutine_threadsafe(_send_unless_abandoned(agent_id, command, attempt), loop)
             try:
                 return bool(fut.result(timeout=_DISPATCH_TIMEOUT_S))
             except TimeoutError:
-                # Cancel the scheduled send so it cannot land after the caller
-                # releases the claim. If it already finished, report its outcome.
-                if fut.cancel():
-                    return False
-                return bool(fut.result(timeout=0))
+                with attempt.lock:
+                    if not attempt.started:
+                        attempt.abandoned = True
+                        return False
+                logger.warning("Agent %d: send of %s still in progress after timeout; keeping claim",
+                               agent_id, command.get("type"))
+                return True
         except Exception:
             return False
     # No agent has connected yet (no loop captured) → nothing to send to.
