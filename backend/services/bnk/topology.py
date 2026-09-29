@@ -12,6 +12,7 @@ and returns a structured topology dict.
 import re
 from typing import Any
 
+from core.k8s_types import ApiGroups
 from services.bnk.helpers import (
     get_policy_operational_status,
     has_condition,
@@ -185,13 +186,12 @@ def _build_gateway_node(
         bnksecpolicies, fw_map, addr_map, port_map, gw_name,
     )
 
-    # Resolve 2.4 GatewaySettings
-    gw_infra = gw_spec.get("infrastructure", {}) or {}
-    params_ref = gw_infra.get("parametersRef", {}) or {}
+    # Resolve 2.4 GatewaySettings (a Gateway parametersRef is local to its namespace)
+    params_ref = (gw_spec.get("infrastructure") or {}).get("parametersRef") or {}
     gw_settings_data = None
-    if gs_map and (params_ref.get("kind") == "GatewaySettings" or params_ref.get("group") == "gateway.k8s.f5.com" or params_ref.get("name")):
+    if gs_map and params_ref.get("kind") == "GatewaySettings" and params_ref.get("group") == ApiGroups.F5_GATEWAY:
         gs_name = params_ref.get("name", "")
-        gs_obj = gs_map.get(f"{gw_ns}/{gs_name}") or gs_map.get(gs_name)
+        gs_obj = gs_map.get(f"{gw_ns}/{gs_name}")
         if gs_obj:
             gs_spec = gs_obj.get("spec", {}) or {}
             gw_settings_data = {
@@ -521,6 +521,11 @@ def _build_firewall_refs(
 # ---------------------------------------------------------------------------
 
 
+def _is_internal_network(name: str) -> bool:
+    """Infra networks carry no internal/external flag; read it from whole name tokens (int-vlan, internal)."""
+    return any(token in ("int", "internal") for token in re.split(r"[^a-z0-9]+", name.lower()))
+
+
 def _build_infra_entry(infra: dict) -> dict[str, Any]:
     """Build a single Infra underlay entry for the data plane section."""
     spec = infra.get("spec", {}) or {}
@@ -565,9 +570,8 @@ def _build_egress_gateway(
     eg_ns = resource_ns(eg)
 
     source_selector = spec.get("sourceSelector") or {}
+    # NamespaceSelector captures exactly the namespaces listed in matchNames
     namespaces = (source_selector.get("namespaces") or {}).get("matchNames") or []
-    if not namespaces and source_selector.get("selectionMode") == "NamespaceSelector":
-        namespaces = [eg_ns]
 
     params_ref = (spec.get("infrastructure") or {}).get("parametersRef") or {}
     egress_config = resolve_egress_config(eg, gs_map or {}) or {}
@@ -645,7 +649,7 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
                     "selfipV4s": [],
                     "prefixLen": None,
                     "mtu": v_cfg.get("mtu", 1500),
-                    "internal": "int" in net.get("name", "").lower(),
+                    "internal": _is_internal_network(net.get("name", "")),
                     "autoLasthop": "",
                     "ready": infra_ready,
                     "type": net.get("type", "vlan"),
@@ -735,6 +739,9 @@ def _build_vlan(vlan: dict) -> dict[str, Any]:
 def _build_cne_instance(cne: dict) -> dict[str, Any]:
     """Build a single CNE instance entry for the data plane section."""
     c_spec = cne.get("spec", {})
+    # Derive feature flags from live spec — any key whose value is a dict
+    # containing 'enabled' is a feature flag. This avoids a hardcoded key list
+    # that would drop newly-added features (e.g. coreCollection, envDiscovery).
     features: dict[str, bool] = {
         key: bool(val.get("enabled"))
         for key, val in c_spec.items()

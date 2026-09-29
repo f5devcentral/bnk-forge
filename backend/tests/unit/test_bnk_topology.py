@@ -13,6 +13,7 @@ from services.bnk.topology import (
     _build_data_plane,
     _build_egress,
     _build_vlan,
+    _is_internal_network,
     _match_analyzers,
     _match_net_policies,
     _match_routes_to_listener,
@@ -656,6 +657,22 @@ class TestBuildDataPlane:
         eg = _build_data_plane(resources)["egressGateways"][0]
         assert eg["firewallEnforcedPolicy"] == "egress-demo-fw"
 
+    def test_infra_network_internal_from_name_tokens(self):
+        assert _is_internal_network("int-vlan") is True
+        assert _is_internal_network("internal") is True
+        assert _is_internal_network("ext-vlan") is False
+        assert _is_internal_network("mgmt-interface") is False
+
+        dp = _build_data_plane({**_empty_resources(), "infra": [_infra_24()]})
+        assert [v["internal"] for v in dp["vlans"]] == [False, True]
+
+    def test_namespace_selector_without_match_names_captures_nothing(self):
+        eg = _egress_gateway_24()
+        eg["spec"]["sourceSelector"] = {"selectionMode": "NamespaceSelector"}
+        resources = {**_empty_resources(), "egressgateway": [eg]}
+
+        assert _build_data_plane(resources)["egressGateways"][0]["capturedNamespaces"] == []
+
     def test_24_null_spec_and_status(self):
         resources = _empty_resources()
         for key in ("infra", "gatewaysettings", "egressgateway"):
@@ -769,6 +786,20 @@ class TestBNK24Topology:
         counts = result["counts"]
         assert counts["gatewaySettings"] == 1
         assert counts["securityPolicies"] == 1
+
+    def test_gateway_settings_need_kind_group_and_same_namespace(self):
+        resources = _empty_resources()
+        resources["gatewaysettings"] = [_resource("gs", "other-ns", spec={"ingressConfig": {}})]
+        refs = [
+            {"name": "gs"},  # no kind/group
+            {"group": "gateway.k8s.f5.com", "kind": "GatewaySettings", "name": "gs"},  # other namespace
+        ]
+        resources["gateway"] = [
+            _resource(f"gw-{i}", spec={"infrastructure": {"parametersRef": ref}, "listeners": []})
+            for i, ref in enumerate(refs)
+        ]
+
+        assert [gw["gatewaySettings"] for gw in analyze_topology({"resources": resources})["topology"]] == [None, None]
 
     def test_netpolicy_carries_kind(self):
         resources = _empty_resources()

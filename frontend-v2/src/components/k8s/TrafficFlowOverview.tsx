@@ -56,11 +56,19 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+/** Resource click payload; resourceType is the registry key when kind alone is ambiguous (BNK 2.4 L4Route). */
+interface FlowResourceSelection {
+  kind: string;
+  name: string;
+  namespace: string;
+  resourceType?: string;
+}
+
 interface TrafficFlowOverviewProps {
   clusterId: number;
   namespace?: string;
   searchQuery?: string;
-  onSelectResource?: (selection: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (selection: FlowResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
 }
 
@@ -251,6 +259,7 @@ function ClickableName({
   name,
   kind,
   resourceName,
+  resourceType,
   namespace,
   onSelect,
   className: extraClass,
@@ -259,8 +268,9 @@ function ClickableName({
   kind: string;
   /** Resource to open when it differs from the label (Infra-projected VLANs and routes). */
   resourceName?: string;
+  resourceType?: string;
   namespace: string;
-  onSelect?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelect?: (sel: FlowResourceSelection) => void;
   className?: string;
 }) {
   if (!onSelect) {
@@ -269,7 +279,7 @@ function ClickableName({
   return (
     <button
       type="button"
-      onClick={() => onSelect({ kind, name: resourceName || name, namespace })}
+      onClick={() => onSelect({ kind, name: resourceName || name, namespace, ...(resourceType ? { resourceType } : {}) })}
       className={cn(
         'font-medium text-xs hover:underline text-left truncate text-primary hover:text-primary/80',
         extraClass,
@@ -314,7 +324,7 @@ function GatewayFlowRow({
   searchQuery,
 }: {
   flow: GatewayFlowData;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
   gatewayStatsMap: Map<string, { totalConns: number; curConns: number }>;
   listenerStatsMap: Map<string, { curConns: number; totConns: number; bytesIn: number; bytesOut: number }>;
   searchQuery?: string;
@@ -481,6 +491,7 @@ function GatewayFlowRow({
                   <ClickableName
                     name={route.name}
                     kind={route.kind}
+                    resourceType={route.resourceType}
                     namespace={route.namespace}
                     onSelect={onSelectResource}
                   />
@@ -595,7 +606,7 @@ function EgressFlowRow({
   searchQuery,
 }: {
   egress: TopologyEgress;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
   searchQuery?: string;
 }) {
   const isHighlighted = useMemo(() => {
@@ -712,7 +723,7 @@ function EgressSection({
 }: {
   egresses: TopologyEgress[];
   searchQuery?: string;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
 }) {
   if (egresses.length === 0) return null;
 
@@ -729,7 +740,7 @@ function EgressSection({
       </div>
       {egresses.map(egress => (
         <EgressFlowRow
-          key={`${egress.namespace}/${egress.name}`}
+          key={`${egress.kind || 'F5SPKEgress'}/${egress.namespace}/${egress.name}`}
           egress={egress}
           searchQuery={searchQuery}
           onSelectResource={onSelectResource}
@@ -785,7 +796,7 @@ function InfrastructureCard({
   onSelectResource,
 }: {
   dataPlane: TopologyDataPlane | undefined;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -885,7 +896,7 @@ function UnmappedServicesCard({
   onNavigateView,
 }: {
   backends: BnkBackendEntry[] | undefined;
-  onSelectResource?: (sel: { kind: string; name: string; namespace: string }) => void;
+  onSelectResource?: (sel: FlowResourceSelection) => void;
   onNavigateView?: (viewKey: string) => void;
 }) {
   const unmapped = useMemo(() => backends?.filter(b => !b.mapped) ?? [], [backends]);

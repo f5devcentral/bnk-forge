@@ -75,7 +75,7 @@ export function EgressGatewayDetail({ resource }: DetailPanelProps) {
             {matchNamespaces.length === 0 && Object.keys(matchLabels).length === 0 && (
               <div className="flex items-center gap-2 text-muted-foreground text-xs">
                 <Network className="h-3 w-3" />
-                <span>Captures all cluster traffic matching selection mode</span>
+                <span>No source namespaces selected</span>
               </div>
             )}
           </Section>

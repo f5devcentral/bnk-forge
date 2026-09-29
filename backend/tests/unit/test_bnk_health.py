@@ -780,6 +780,8 @@ class TestBNK24Health:
         assert net["egressGateways"] == 1
         # Legacy F5SPKStaticRoutes are absent, so the Infra routes count
         assert net["staticRoutes"] == 2
+        # Same rule for the VLAN count
+        assert result["counts"]["vlans"] == 1
 
         ai = BnkHealthAISection.model_validate(result["ai"]).model_dump()
         assert ai["f5epps"] == 1

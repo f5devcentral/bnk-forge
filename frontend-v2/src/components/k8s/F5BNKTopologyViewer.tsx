@@ -215,6 +215,7 @@ interface DataPlaneSnatPool {
 interface DataPlaneEgress {
   name: string;
   namespace: string;
+  kind?: string;
   snatType: string;
   egressSnatpool: string | null;
   firewallEnforcedPolicy: string | null;
@@ -1300,7 +1301,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     ) : undefined;
                     return (
                       <CollapsibleSection
-                        key={egressKey}
+                        key={`${eg.kind || 'F5SPKEgress'}/${egressKey}`}
                         title={`${eg.name}${eg.namespace ? ` (${eg.namespace})` : ''}`}
                         icon={ArrowRightLeft}
                         badge={egressBadges}

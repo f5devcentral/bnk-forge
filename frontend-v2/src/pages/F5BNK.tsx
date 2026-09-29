@@ -76,7 +76,7 @@ import {
   VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_UPGRADE, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA,
   VIEW_A2A_DISCOVERY, VIEW_A2A_TEMPLATES, VIEW_A2A_IRULE_LIBRARY, VIEW_A2A_REFERENCE,
   isSpecialView,
-  F5BNKSidebar, F5BNKResourceTable, F5BNKDetailPanel,
+  F5BNKSidebar, F5BNKResourceTable, F5BNKDetailPanel, getResourceTypeKey,
 } from './f5bnk-parts';
 import { useCrds } from '@/hooks/useCrds';
 import { buildBnkCategories, BNK_CRD_GROUPS } from './f5bnk-parts/bnk-categories';
@@ -1088,6 +1088,7 @@ export default function F5BNK() {
             resource={resourceToDescribe}
             clusterId={selectedCluster}
             namespace={resourceToDescribe?.metadata?.namespace}
+            resourceType={resourceToDescribe ? getResourceTypeKey(resourceToDescribe) : undefined}
           />
 
           <ResourceDeleteDialog
@@ -1099,7 +1100,7 @@ export default function F5BNK() {
                 try {
                   await api.deleteK8sResource(
                     selectedCluster,
-                    resourceToDelete.kind.toLowerCase(),
+                    getResourceTypeKey(resourceToDelete),
                     resourceToDelete.metadata.name,
                     { namespace: resourceToDelete.metadata.namespace }
                   );
@@ -1126,7 +1127,7 @@ export default function F5BNK() {
                 try {
                   await api.updateK8sResource(
                     selectedCluster,
-                    resourceToEdit.kind.toLowerCase(),
+                    getResourceTypeKey(resourceToEdit),
                     resourceToEdit.metadata.name,
                     {
                       resource_yaml: resourceYaml,

@@ -145,6 +145,20 @@ export interface HealthVlanComponent {
   }>;
 }
 
+/** BNK 2.4 Infra CRs (networks and IPAM pools that replace F5SPKVlan). */
+export interface HealthInfraComponent {
+  total: number;
+  programmed: number;
+  severity: HealthSeverity;
+  explanation: string;
+  details: Array<{
+    name: string;
+    programmed: boolean;
+    networks: number;
+    ipams: number;
+  }>;
+}
+
 export interface HealthIRulesComponent {
   total: number;
   accepted: number;
@@ -188,6 +202,9 @@ export interface BnkHealthResponse {
     severity: HealthSeverity;
     gateways: HealthGatewayComponent;
     vlans: HealthVlanComponent;
+    infra?: HealthInfraComponent | null;
+    gatewaySettings?: number;
+    egressGateways?: number;
     listeners: number;
     httpRoutes: number;
     staticRoutes: number;
@@ -209,6 +226,14 @@ export interface BnkHealthResponse {
       name: string;
       namespace: string;
       schedule: string;
+    }>;
+    f5epps?: number;
+    inferencePools?: number;
+    inferencePoolDetails?: Array<{
+      name: string;
+      namespace: string;
+      targetPorts: number[];
+      endpointPicker: string;
     }>;
   };
   counts: {

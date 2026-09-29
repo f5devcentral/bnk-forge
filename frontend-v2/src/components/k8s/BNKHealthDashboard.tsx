@@ -355,6 +355,32 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
       });
     }
 
+    // Networking — BNK 2.4 Infra (networks and IPAM pools that replace F5SPKVlan)
+    const infra = health.networking?.infra;
+    if (infra && infra.total > 0) {
+      cards.push({
+        name: 'Infra',
+        severity: infra.severity || 'unknown',
+        summary: `${infra.programmed}/${infra.total} programmed`,
+        explanation: infra.explanation || '',
+        podDetails: [],
+        remediationActions: [],
+        namespaces: [],
+        zones: [],
+        nodes: [],
+        children: (
+          <>
+            {infra.details.map((item) => (
+              <div key={item.name} className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{item.name}{item.programmed ? '' : ' (not programmed)'}</span>
+                <span className="font-mono">{item.networks} networks · {item.ipams} IPAM pools</span>
+              </div>
+            ))}
+          </>
+        ),
+      });
+    }
+
     // Security — iRules (if any have issues)
     const irules = health.security?.irules;
     if (irules && (irules.total ?? 0) > 0) {

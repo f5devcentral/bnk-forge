@@ -649,7 +649,10 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
             "gateways": len(gateways),
             "listeners": total_listeners,
             "httpRoutes": len(resources.get("httproute", [])),
-            "vlans": len(resources.get("f5spkvlan", [])),
+            # Legacy F5SPKVlans, else the networks BNK 2.4 Infra CRs carry (same rule as topology)
+            "vlans": len(resources.get("f5spkvlan", [])) or sum(
+                len(safe_get(i, "spec", "networks", default=[]) or []) for i in resources.get("infra", [])
+            ),
             "firewallPolicies": len(resources.get("f5bigfwpolicy", [])),
             "irules": len(resources.get("f5bigcneirule", [])),
             "analyzers": len(resources.get("f5biganalyzer", [])),
