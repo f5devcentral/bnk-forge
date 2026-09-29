@@ -8,10 +8,11 @@ proxy-vs-proxy comparison, and manages test client agents.
 """
 
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -127,7 +128,7 @@ class BenchmarkService(BaseService):
     # ================================================================
 
     def complete_run_with_aiperf_result(self, run_id: int, raw: dict) -> BenchmarkRun:
-        """Update an existing pending/running run with aiperf result data.
+        """Update an existing running run with aiperf result data.
 
         Used when an agent completes a run triggered from Forge.
         Unlike ingest_aiperf_result(), this updates the existing run row
@@ -136,6 +137,9 @@ class BenchmarkService(BaseService):
         run = self.db.query(BenchmarkRun).get(run_id)
         if not run:
             raise NotFoundError("benchmark_run", run_id)
+        if run.status != BenchmarkRunStatus.RUNNING:
+            # A late result must not overwrite a run already failed/cancelled/completed.
+            raise ConflictError("benchmark_run", f"Run #{run_id} is {run.status}, not running")
 
         # Parse the raw aiperf JSON (same logic as ingest_aiperf_result)
         req_lat = raw.get("request_latency", {})
@@ -889,7 +893,63 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int) -> bool:
+    def get_first_pending_run_for_agent(self, agent_id: int) -> BenchmarkRun | None:
+        """Find the earliest pending run assigned to an agent that has no sibling currently running."""
+        running = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+            )
+            .first()
+        )
+        if running:
+            return None
+        return (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+            )
+            .order_by(BenchmarkRun.id)
+            .first()
+        )
+
+    def fail_interrupted_runs_for_agent(
+        self,
+        agent_id: int,
+        *,
+        only: Collection[int] | None = None,
+        keep: Collection[int] = (),
+        reason: str = "agent reconnected; run interrupted",
+    ) -> list[int]:
+        """Mark an agent's RUNNING runs FAILED when their connection is gone.
+
+        A run's result is reported over the WebSocket it was dispatched on, so a
+        run whose connection is gone can never report back. Left RUNNING it
+        blocks get_first_pending_run_for_agent (and the group claim guard)
+        forever. ``only`` limits this to the given runs; ``keep`` spares runs
+        whose dispatch is still in flight. Rolls up affected run-groups. Caller
+        commits.
+        """
+        query = self.db.query(BenchmarkRun).filter(
+            BenchmarkRun.agent_id == agent_id,
+            BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+        )
+        if only is not None:
+            query = query.filter(BenchmarkRun.id.in_(list(only)))
+        runs = [r for r in query.all() if r.id not in keep]
+        now = datetime.now(UTC)
+        for run in runs:
+            run.status = BenchmarkRunStatus.FAILED
+            run.error_message = reason
+            run.completed_at = now
+        self.db.flush()
+        for group_id in {r.run_group_id for r in runs if r.run_group_id}:
+            self.maybe_finalize_run_group(group_id)
+        return [r.id for r in runs]
+
+    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
@@ -899,14 +959,40 @@ class BenchmarkService(BaseService):
         UPDATE (WHERE status='pending') means exactly one caller flips it to RUNNING
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
+
+        ``group_id`` adds the group-sequential guard (MAJOR-2 / MAJOR-A):
+        Under PostgreSQL READ COMMITTED, evaluating NOT EXISTS without a lock can
+        suffer write-skew if concurrent transactions claim different sibling rows.
+        To guarantee mutual exclusion across transactions, we acquire an exclusive row
+        lock on the group (``with_for_update()``) before evaluating the conditional
+        UPDATE requiring that NO sibling of that group is currently RUNNING.
+        This serializes all sibling claims within a group so two children can never
+        both be claimed/RUNNING simultaneously. Standalone (group-less) runs omit
+        ``group_id`` and rely on the single-row atomic guard.
         """
         now = datetime.now(UTC)
+        filters = [
+            BenchmarkRun.id == run_id,
+            BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+        ]
+        if group_id is not None:
+            # Lock the group row to serialize sibling claims across concurrent transactions
+            # under PostgreSQL READ COMMITTED (MAJOR-A / INV-8).
+            # SQLite (test env) ignores with_for_update() and serializes via its database write lock.
+            self.db.query(BenchmarkRunGroup).filter(BenchmarkRunGroup.id == group_id).with_for_update().first()
+            sibling = aliased(BenchmarkRun)
+            running_sibling = (
+                self.db.query(sibling.id)
+                .filter(
+                    sibling.run_group_id == group_id,
+                    sibling.status == BenchmarkRunStatus.RUNNING,
+                )
+                .exists()
+            )
+            filters.append(~running_sibling)
         result = (
             self.db.query(BenchmarkRun)
-            .filter(
-                BenchmarkRun.id == run_id,
-                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
-            )
+            .filter(*filters)
             .update(
                 {
                     BenchmarkRun.status: BenchmarkRunStatus.RUNNING,
@@ -937,6 +1023,31 @@ class BenchmarkService(BaseService):
             },
             synchronize_session=False,
         )
+
+    def mark_run_group_running_if_pending(self, group_id: int) -> bool:
+        """Atomically transition a run-group PENDING→RUNNING if it has a running child.
+
+        Returns True iff this call transitioned the row (rowcount == 1).
+        """
+        if not self.find_running_group_child(group_id):
+            return False
+        now = datetime.now(UTC)
+        result = (
+            self.db.query(BenchmarkRunGroup)
+            .filter(
+                BenchmarkRunGroup.id == group_id,
+                BenchmarkRunGroup.status == BenchmarkRunStatus.PENDING,
+            )
+            .update(
+                {
+                    BenchmarkRunGroup.status: BenchmarkRunStatus.RUNNING,
+                    BenchmarkRunGroup.started_at: now,
+                    BenchmarkRunGroup.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        return result == 1
 
     def maybe_finalize_run_group(self, group_id: int) -> BenchmarkRunGroup | None:
         """Recompute group counts; roll up aggregate metrics when all children terminal.

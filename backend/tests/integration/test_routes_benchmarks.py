@@ -1890,6 +1890,39 @@ class TestTriggerBenchmarkRun:
         assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "pending"
+        run = db.query(BenchmarkRun).get(data["run_id"])
+        db.refresh(run)
+        assert run.status == "pending"
+        assert run.started_at is None
+
+    def test_run_claimed_before_dispatch(self, client, operator_headers, make_k8s_cluster, db):
+        """The run is RUNNING (claimed + committed) while dispatch is in flight, so a
+        concurrent connect-drain cannot dispatch it a second time."""
+        cluster = make_k8s_cluster(name="trigger-claim-cluster")
+        target = _make_target(db, cluster.id, name="trigger-claim-target")
+        proxy = _make_proxy(db, target.id, status="ready")
+        agent = _make_agent(db, name="trigger-claim-agent", status="connected")
+        seen = []
+
+        import routes.benchmarks as bench_routes
+
+        def _dispatch(agent_id, command):
+            db.expire_all()
+            seen.append(db.query(BenchmarkRun).get(command["run_id"]).status)
+            # Marked in flight so a concurrent connect does not fail the claimed run.
+            seen.append(bench_routes._run_owner.get(command["run_id"]) is bench_routes._DISPATCHING)
+            return True
+
+        with patch("routes.benchmarks.dispatch_to_agent", side_effect=_dispatch):
+            resp = client.post(
+                f"/api/benchmarks/targets/{target.id}/proxies/{proxy.id}/run",
+                json={"agent_id": agent.id},
+                headers=operator_headers,
+            )
+        assert resp.status_code == 201
+        assert seen == ["running", True]
+        assert resp.json()["status"] == "running"
+        assert resp.json()["run_id"] not in bench_routes._run_owner
 
     def test_requires_valid_token(self, client, make_k8s_cluster, db):
         cluster = make_k8s_cluster(name="trigger-noauth-cluster")
@@ -2407,6 +2440,235 @@ class TestAgentWebSocketAuth:
         db.expire_all()
         db.refresh(run)
         assert run.status == "running"  # mutation was skipped by the spoof guard
+
+
+class TestAgentWebSocketQueue:
+    """Connect-drain and terminal-event dispatch of an agent's queued runs."""
+
+    @staticmethod
+    def _connect(client, agent):
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": agent.name, "role": "agent", "agent_id": agent.id})
+        return client.websocket_connect(f"/ws/benchmarks/agents/{agent.id}?token={token}")
+
+    def test_reconnect_fails_interrupted_run_and_drains_next(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-reconnect-agent", status="connected")
+        stale = _make_run(db, status="running", agent_id=agent.id)
+        queued = _make_run(db, status="pending", agent_id=agent.id)
+
+        sent = []
+
+        async def _send(agent_id, command):
+            sent.append(command["run_id"])
+            return True
+
+        with patch("routes.benchmarks.send_command_to_agent", _send):
+            with self._connect(client, agent) as ws:
+                ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        assert sent == [queued.id]
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(stale.id).status == "failed"
+        assert "interrupted" in db.query(BenchmarkRun).get(stale.id).error_message
+        assert db.query(BenchmarkRun).get(queued.id).status == "running"
+
+    def test_standalone_terminal_event_dispatches_next_queued_run(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-chain-agent", status="connected")
+        first = _make_run(db, status="pending", agent_id=agent.id)
+        second = _make_run(db, status="pending", agent_id=agent.id)
+
+        sent = []
+
+        async def _send(agent_id, command):
+            sent.append(command["run_id"])
+            return True
+
+        with patch("routes.benchmarks.send_command_to_agent", _send):
+            with self._connect(client, agent) as ws:
+                ws.send_json({"type": "run_failed", "run_id": first.id, "error": "boom"})
+                ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        assert sent == [first.id, second.id]
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(first.id).status == "failed"
+        assert db.query(BenchmarkRun).get(second.id).status == "running"
+
+
+class TestAgentRunOwnership:
+    """Runs are failed only when the connection they were dispatched on is gone."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registries(self):
+        import routes.benchmarks as bench_routes
+
+        bench_routes._run_owner.clear()
+        yield
+        bench_routes._run_owner.clear()
+
+    @staticmethod
+    def _connect(client, agent):
+        return TestAgentWebSocketQueue._connect(client, agent)
+
+    def test_connect_spares_run_whose_dispatch_is_in_flight(self, client, all_test_users, db):
+        import routes.benchmarks as bench_routes
+
+        agent = _make_agent(db, name="ws-inflight-agent", status="connected")
+        claimed = _make_run(db, status="running", agent_id=agent.id)
+        queued = _make_run(db, status="pending", agent_id=agent.id)
+        bench_routes._run_owner[claimed.id] = bench_routes._DISPATCHING
+        sent = []
+
+        async def _send(agent_id, command):
+            sent.append(command["run_id"])
+            return True
+
+        with patch("routes.benchmarks.send_command_to_agent", _send):
+            with self._connect(client, agent) as ws:
+                ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(claimed.id).status == "running"
+        assert db.query(BenchmarkRun).get(queued.id).status == "pending"
+        assert sent == []  # agent still busy with the claimed run
+
+    def test_late_result_does_not_overwrite_failed_run(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-late-agent", status="connected")
+        run = _make_run(db, status="failed", agent_id=agent.id, total_requests=0)
+
+        with self._connect(client, agent) as ws:
+            ws.send_json({"type": "run_completed", "run_id": run.id, "result": {
+                "request_count": {"avg": 10}, "request_latency": {"p50": 1.0, "p99": 2.0, "avg": 1.5},
+                "request_throughput": {"avg": 5.0}, "benchmark_duration": {"avg": 5.0},
+            }})
+            ws.send_json({"type": "heartbeat", "status": "connected"})
+
+        db.expire_all()
+        assert db.query(BenchmarkRun).get(run.id).status == "failed"
+        assert db.query(BenchmarkRun).get(run.id).total_requests == 0
+
+    def test_teardown_fails_runs_dispatched_on_that_connection(self, client, all_test_users, db):
+        agent = _make_agent(db, name="ws-teardown-agent", status="connected")
+        run = _make_run(db, status="pending", agent_id=agent.id)
+
+        with self._connect(client, agent) as ws:
+            assert ws.receive_json()["run_id"] == run.id  # drained over this socket
+
+        db.expire_all()
+        failed = db.query(BenchmarkRun).get(run.id)
+        assert failed.status == "failed"
+        assert "connection closed" in failed.error_message
+
+    def test_new_connection_supersedes_previous(self, client, all_test_users, db, monkeypatch):
+        from starlette.websockets import WebSocket
+
+        import routes.benchmarks as bench_routes
+
+        closes = []
+        real_close = WebSocket.close
+
+        async def _close(self, code=1000, reason=None):
+            closes.append((self, code))
+            await real_close(self, code=code, reason=reason)
+
+        monkeypatch.setattr(WebSocket, "close", _close)
+        agent = _make_agent(db, name="ws-dup-agent", status="connected")
+        with self._connect(client, agent) as first:
+            first.send_json({"type": "heartbeat", "status": "connected"})
+            first_server_ws = bench_routes._agent_ws_connections[agent.id]
+            with self._connect(client, agent) as second:
+                second.send_json({"type": "heartbeat", "status": "connected"})
+                second_server_ws = bench_routes._agent_ws_connections[agent.id]
+
+        assert second_server_ws is not first_server_ws
+        assert (first_server_ws, bench_routes._WS_CLOSE_SUPERSEDED) in closes
+
+    def test_connect_spares_run_sent_on_this_connection_while_closing_previous(
+        self, client, all_test_users, db, monkeypatch,
+    ):
+        from starlette.websockets import WebSocket
+
+        import routes.benchmarks as bench_routes
+
+        agent = _make_agent(db, name="ws-supersede-race-agent", status="connected")
+        run = _make_run(db, status="running", agent_id=agent.id)
+        bench_routes._run_owner[run.id] = bench_routes._DISPATCHING
+        real_close = WebSocket.close
+
+        async def _close(self, code=1000, reason=None):
+            if code == bench_routes._WS_CLOSE_SUPERSEDED:
+                # A worker-thread dispatch sends the run on the new connection
+                # while the superseded one is still closing.
+                bench_routes._run_owner[run.id] = bench_routes._agent_ws_connections[agent.id]
+            await real_close(self, code=code, reason=reason)
+
+        monkeypatch.setattr(WebSocket, "close", _close)
+        with self._connect(client, agent) as first:
+            first.send_json({"type": "heartbeat", "status": "connected"})
+            with self._connect(client, agent) as second:
+                second.send_json({"type": "heartbeat", "status": "connected"})
+
+        db.expire_all()
+        # Failed only by the teardown of the connection it was sent on, not by
+        # that connection's connect sweep.
+        assert "connection closed" in db.query(BenchmarkRun).get(run.id).error_message
+
+
+class TestDispatchToAgentTimeout:
+    """dispatch_to_agent's timeout: a send that never started is abandoned (False,
+    caller releases); one already writing keeps the claim (True)."""
+
+    @pytest.fixture
+    def loop(self, monkeypatch):
+        import asyncio
+        import threading
+
+        import routes.benchmarks as bench_routes
+
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        monkeypatch.setattr(bench_routes, "_main_loop", loop)
+        monkeypatch.setattr(bench_routes, "_DISPATCH_TIMEOUT_S", 0.05)
+        yield loop
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(timeout=2)
+        loop.close()
+
+    def test_unstarted_send_is_abandoned(self, loop, monkeypatch):
+        import time
+
+        import routes.benchmarks as bench_routes
+
+        landed = []
+
+        async def _send(agent_id, command):
+            landed.append(command["run_id"])
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", _send)
+        loop.call_soon_threadsafe(time.sleep, 0.3)  # loop busy: the send cannot start in time
+        assert bench_routes.dispatch_to_agent(1, {"type": "run", "run_id": 7}) is False
+        time.sleep(0.5)
+        assert landed == []
+
+    def test_started_send_keeps_claim(self, loop, monkeypatch):
+        import asyncio
+        import time
+
+        import routes.benchmarks as bench_routes
+
+        landed = []
+
+        async def _slow_send(agent_id, command):
+            await asyncio.sleep(0.3)
+            landed.append(command["run_id"])
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", _slow_send)
+        assert bench_routes.dispatch_to_agent(1, {"type": "run", "run_id": 7}) is True
+        time.sleep(0.5)
+        assert landed == [7]
 
 
 # ============================================================================
