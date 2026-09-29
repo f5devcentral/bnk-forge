@@ -23,6 +23,7 @@ Auth rules (global AuthMiddleware enforces JWT on ALL /api/ routes):
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -133,6 +134,7 @@ def _make_agent(db, **overrides):
         hostname=overrides.get("hostname", "bench-host"),
         ip_address=overrides.get("ip_address", "10.0.0.1"),
         status=overrides.get("status", "connected"),
+        project_id=overrides.get("project_id"),
     )
     db.add(agent)
     db.commit()
@@ -2853,3 +2855,188 @@ def test_complete_run_counts_aiperf_error_records_as_failures(db):
     assert run.success_rate_pct == 88.6
     assert run.result_json["failed"] == 114
     assert run.result_json["success_rate_pct"] == 88.6
+
+class TestMintBenchmarkAgentToken:
+    """POST /api/benchmarks/agents/{id}/token (require_operator).
+
+    External agents (awsbnkctl) register with an operator token and then need an
+    agent-bound token for the WebSocket, which requires an ``agent_id`` claim
+    under BENCHMARK_AGENT_AUTH_REQUIRED. This route mints exactly that token.
+    Unscoped agents need admin; project-scoped agents need project ownership.
+    """
+
+    def _mint(self, client, headers, agent_id):
+        return client.post(f"/api/benchmarks/agents/{agent_id}/token", headers=headers)
+
+    def _bearer(self, token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def _ws(self, token):
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+        return ws
+
+    def test_admin_mints_agent_bound_token(self, client, admin_headers, sample_user, db):
+        from services.auth_service import decode_token
+
+        agent = _make_agent(db, name="ext-agent")
+        resp = self._mint(client, admin_headers, agent.id)
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "no-store"
+        data = resp.json()
+        assert data["agent_id"] == agent.id
+        assert data["agent_name"] == "ext-agent"
+        payload = decode_token(data["token"])
+        assert payload["agent_id"] == agent.id
+        assert payload["role"] == "agent"
+        assert payload["sub"] == f"agent:{agent.id}"
+        # expires_at in the body matches the token's exp claim (365 days).
+        expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+        assert abs(expires_at.timestamp() - payload["exp"]) < 2
+        assert expires_at - datetime.now(UTC) > timedelta(days=364)
+
+    def test_minted_token_is_accepted_by_the_agent_websocket_gate(
+        self, client, admin_headers, sample_user, db, monkeypatch
+    ):
+        from routes.benchmarks import _agent_ws_authorized
+
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
+        agent = _make_agent(db, name="ws-agent")
+        other = _make_agent(db, name="ws-agent-other")
+        token = self._mint(client, admin_headers, agent.id).json()["token"]
+        assert _agent_ws_authorized(self._ws(token), agent.id) is None
+        # Bound to this agent only: connecting as another id is rejected.
+        assert _agent_ws_authorized(self._ws(token), other.id) == 4401
+
+    def test_agent_token_bound_on_global_jwt_ws_path(
+        self, client, admin_headers, sample_user, db, monkeypatch
+    ):
+        from routes.benchmarks import _agent_ws_authorized
+
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False)
+        monkeypatch.setattr("routes.benchmarks.settings.REQUIRE_AUTH", True)
+        agent = _make_agent(db, name="l2-agent")
+        other = _make_agent(db, name="l2-agent-other")
+        token = self._mint(client, admin_headers, agent.id).json()["token"]
+        assert _agent_ws_authorized(self._ws(token), agent.id) is None
+        # 4401 (re-mint), not 4001 (reconnect): the token is valid but not this agent's.
+        assert _agent_ws_authorized(self._ws(token), other.id) == 4401
+        assert client.delete(f"/api/benchmarks/agents/{agent.id}", headers=admin_headers).status_code == 204
+        assert _agent_ws_authorized(self._ws(token), agent.id) == 4401
+        assert _agent_ws_authorized(self._ws("not.a.token"), agent.id) == 4001
+
+    def test_viewer_cannot_mint(self, client, viewer_headers, all_test_users, db):
+        agent = _make_agent(db, name="viewer-agent")
+        assert self._mint(client, viewer_headers, agent.id).status_code == 403
+
+    def test_operator_cannot_mint_for_unscoped_agent(self, client, operator_headers, db):
+        agent = _make_agent(db, name="unscoped-agent")
+        assert self._mint(client, operator_headers, agent.id).status_code == 403
+
+    def test_project_owner_operator_mints(self, client, operator_headers, db, make_project):
+        owner = db.query(User).filter(User.username == "testoperator").one()
+        project = make_project(user_id=owner.id)
+        agent = _make_agent(db, name="owned-agent", project_id=project.id)
+        assert self._mint(client, operator_headers, agent.id).status_code == 200
+
+    def test_non_owner_operator_cannot_mint(self, client, operator_headers, db, make_project, make_user):
+        project = make_project(user_id=make_user(role="operator").id)
+        agent = _make_agent(db, name="foreign-agent", project_id=project.id)
+        assert self._mint(client, operator_headers, agent.id).status_code == 403
+
+    def test_unknown_agent_404(self, client, operator_headers, db):
+        assert self._mint(client, operator_headers, 999999).status_code == 404
+
+    def test_agent_named_like_a_user_cannot_act_as_that_user(self, client, admin_headers, sample_user, db):
+        from services.auth_service import create_access_token
+
+        agent = _make_agent(db, name="testadmin")
+        token = self._mint(client, admin_headers, agent.id).json()["token"]
+        assert client.get("/api/auth/me", headers=self._bearer(token)).status_code == 401
+        # A token shaped like the earlier sub=<agent name> form is refused too.
+        legacy = create_access_token({"agent_id": agent.id, "role": "agent", "sub": "testadmin"})
+        assert client.get("/api/auth/me", headers=self._bearer(legacy)).status_code == 401
+        assert client.get("/api/benchmarks/agents", headers=self._bearer(legacy)).status_code == 401
+
+    def test_agent_token_rejected_on_rest_routes(self, client, admin_headers, sample_user, db):
+        agent = _make_agent(db, name="rest-agent")
+        token = self._mint(client, admin_headers, agent.id).json()["token"]
+        assert client.get("/api/benchmarks/agents", headers=self._bearer(token)).status_code == 401
+        other = _make_agent(db, name="rest-agent-other")
+        assert self._mint(client, self._bearer(token), other.id).status_code == 401
+
+    def test_deleted_agent_token_rejected(self, client, admin_headers, sample_user, db, monkeypatch):
+        from routes.benchmarks import _agent_ws_authorized
+
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
+        agent = _make_agent(db, name="doomed-agent")
+        agent_id = agent.id
+        token = self._mint(client, admin_headers, agent_id).json()["token"]
+        assert client.delete(f"/api/benchmarks/agents/{agent_id}", headers=admin_headers).status_code == 204
+        assert _agent_ws_authorized(self._ws(token), agent_id) == 4401
+        resp = client.post(
+            "/api/benchmarks/agents",
+            json={"name": "doomed-agent", "hostname": "h", "ip_address": "10.0.0.9"},
+            headers=self._bearer(token),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "AGENT_AUTH_INVALID"
+
+    def test_agent_token_writes_only_as_its_own_agent(self, client, admin_headers, sample_user, db, monkeypatch):
+        monkeypatch.setattr("routes.benchmarks.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True)
+        agent = _make_agent(db, name="self-agent")
+        _make_agent(db, name="victim-agent")
+        headers = self._bearer(self._mint(client, admin_headers, agent.id).json()["token"])
+
+        resp = client.post(
+            "/api/benchmarks/agents",
+            json={"name": "victim-agent", "hostname": "h", "ip_address": "10.0.0.9"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "AGENT_AUTH_FORBIDDEN"
+        resp = client.post(
+            "/api/benchmarks/agents",
+            json={"name": "self-agent", "hostname": "h2", "ip_address": "10.0.0.9"},
+            headers=headers,
+        )
+        assert resp.status_code == 201
+
+        resp = client.post(
+            "/api/benchmarks/results/aiperf?agent_name=victim-agent",
+            json=_aiperf_raw_payload(),
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "AGENT_AUTH_FORBIDDEN"
+        resp = client.post("/api/benchmarks/results/aiperf", json=_aiperf_raw_payload(), headers=headers)
+        assert resp.status_code == 201
+        run = db.query(BenchmarkRun).filter(BenchmarkRun.id == resp.json()["id"]).one()
+        assert run.agent_id == agent.id
+
+    def test_delete_closes_the_agents_live_websocket(self, client, admin_headers, sample_user, db, monkeypatch):
+        import asyncio
+        import threading
+        from unittest.mock import AsyncMock
+
+        import routes.benchmarks as bm
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setattr(bm, "_main_loop", loop)
+            agent = _make_agent(db, name="live-agent")
+            keep = _make_agent(db, name="live-agent-keep")
+            ws, other_ws = MagicMock(close=AsyncMock()), MagicMock(close=AsyncMock())
+            monkeypatch.setitem(bm._agent_ws_connections, agent.id, ws)
+            monkeypatch.setitem(bm._agent_ws_connections, keep.id, other_ws)
+            assert client.delete(f"/api/benchmarks/agents/{agent.id}", headers=admin_headers).status_code == 204
+            ws.close.assert_awaited_once_with(code=4401)
+            assert agent.id not in bm._agent_ws_connections
+            other_ws.close.assert_not_awaited()
+            assert bm._agent_ws_connections[keep.id] is other_ws
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=5)
+            loop.close()
