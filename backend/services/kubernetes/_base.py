@@ -19,7 +19,8 @@ from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
-from services.reachability import with_breaker
+from services.reachability import registry, with_breaker
+from services.reachability.breaker import breaker_open_error
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +410,9 @@ class KubernetesServiceBase:
 
     def test_connection(self, cluster_id: int) -> dict[str, Any]:
         """Test connection to cluster."""
+        # An open breaker skips kubeconfig loading too (SSH tunnel, cloud token).
+        if registry.is_open("cluster", cluster_id):
+            raise breaker_open_error("cluster", cluster_id)
         try:
             cluster = self.get_cluster(cluster_id)
             api_client = self.load_kubeconfig(cluster)

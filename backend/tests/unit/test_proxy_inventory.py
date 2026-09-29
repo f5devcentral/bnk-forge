@@ -823,6 +823,13 @@ static_resources:
 """})
         assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
 
+    def test_envoy_flow_style_address(self):
+        backends = self._extract("envoy", {"envoy.yaml": (
+            "        - endpoint: {address: {socket_address: {address: vllm.inference, port_value: 8000}}}\n"
+            "          admin: {address: {socket_address: {address: 127.0.0.1, port_value: 9901}}}\n"
+        )})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
     def test_haproxy_only_server_lines(self):
         backends = self._extract("haproxy", {"haproxy.cfg": """
 defaults
@@ -851,9 +858,10 @@ backend llm
 
 class TestTargetDeploymentMatch:
     @staticmethod
-    def _dep(name, instance=None):
+    def _dep(name, instance=None, namespace="perf-proxies"):
         d = MagicMock()
         d.metadata.name = name
+        d.metadata.namespace = namespace
         d.metadata.labels = {"app.kubernetes.io/instance": instance} if instance else {}
         return d
 
@@ -864,6 +872,7 @@ class TestTargetDeploymentMatch:
         db.query.return_value.filter.return_value.all.return_value = [(r,) for r in releases]
         target = MagicMock(id=1)
         target.name = target_name
+        target.proxy_namespace = "perf-proxies"
         return _has_target_deployment_match(db, target, deployments, proxy_type="haproxy")
 
     def test_db_row_without_live_deployment_does_not_match(self):
@@ -876,6 +885,9 @@ class TestTargetDeploymentMatch:
     def test_exact_release_identity_matches(self):
         assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-llm-1")]) is True
         assert self._match(["rel-a"], [self._dep("rel-a-kubernetes-ingress", instance="rel-a")]) is True
+
+    def test_same_release_in_another_namespace_does_not_match(self):
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-llm-1", namespace="other")]) is False
 
 
 class TestCoveredControllerWorkload:
@@ -895,3 +907,90 @@ class TestCoveredControllerWorkload:
             "haproxy-kubernetes-ingress", {}, ["haproxytech/kubernetes-ingress:3.0"], hap,
         )
         assert not _is_covered_controller_workload("perf-haproxy-x", {}, ["haproxytech/haproxy-alpine:3.3"], hap)
+
+
+def _svc_obj(name, *, selector=None, labels=None, svc_type="ClusterIP", port=10080):
+    s = MagicMock()
+    s.metadata.name = name
+    s.metadata.labels = labels or {}
+    s.spec.selector = selector
+    s.spec.type = svc_type
+    p = MagicMock()
+    p.port = port
+    s.spec.ports = [p]
+    return s
+
+
+def _deployment(name, namespace="perf-proxies", pod_labels=None, labels=None, cm=None):
+    d = MagicMock()
+    d.metadata.name = name
+    d.metadata.namespace = namespace
+    d.metadata.labels = labels or {}
+    d.spec.template.metadata.labels = pod_labels or {}
+    vol = MagicMock()
+    vol.config_map.name = cm
+    d.spec.template.spec.volumes = [vol] if cm else []
+    return d
+
+
+class TestFindProxyServiceForDeployment:
+    def _find(self, services, dep):
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        core = MagicMock()
+        core.list_namespaced_service.return_value = MagicMock(items=services)
+        with patch("services.proxy_discovery_service._resolve_external_url", return_value=None):
+            return ProxyDiscoveryService(MagicMock())._find_proxy_service_for_deployment(core, dep)
+
+    def test_selector_match_beats_name_substring(self):
+        dep = _deployment("perf-haproxy", pod_labels={"app": "mine"})
+        services = [
+            _svc_obj("perf-haproxy-other", selector={"app": "other"}),
+            _svc_obj("front", selector={"app": "mine"}),
+        ]
+        assert self._find(services, dep) == ("http://front.perf-proxies:10080", None)
+
+    def test_exact_name_first_and_no_substring_fallback(self):
+        dep = _deployment("perf-haproxy", pod_labels={"app": "mine"})
+        assert self._find([_svc_obj("front", selector={"app": "mine"}), _svc_obj("perf-haproxy")], dep)[0] == \
+            "http://perf-haproxy.perf-proxies:10080"
+        assert self._find([_svc_obj("perf-haproxy-x", selector={"app": "x"})], dep) == (None, None)
+
+    def test_release_label_prefers_exposed_service(self):
+        dep = _deployment("rel-ingress-nginx-controller", labels={"app.kubernetes.io/instance": "rel"})
+        services = [
+            _svc_obj("rel-admission", labels={"app.kubernetes.io/instance": "rel"}, port=443),
+            _svc_obj("rel-controller", labels={"app.kubernetes.io/instance": "rel"}, svc_type="NodePort", port=80),
+        ]
+        assert self._find(services, dep)[0] == "http://rel-controller.perf-proxies:80"
+
+
+class TestHaproxyDiscoveryUsesRoutingDeployment:
+    def test_service_of_the_deployment_that_routes_to_target(self):
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        other = _deployment("perf-haproxy-a", pod_labels={"app": "a"}, cm="cfg-a")
+        mine = _deployment("perf-haproxy-b", pod_labels={"app": "b"}, cm="cfg-b")
+        cm_a = MagicMock()
+        cm_a.metadata.name = "cfg-a"
+        cm_a.data = {"haproxy.cfg": "    server s1 billing.finance:9000"}
+        cm_b = MagicMock()
+        cm_b.metadata.name = "cfg-b"
+        cm_b.data = {"haproxy.cfg": "    server s1 vllm.inference:8000"}
+        services = [_svc_obj("svc-a", selector={"app": "a"}), _svc_obj("svc-b", selector={"app": "b"})]
+
+        target = MagicMock(id=1, llm_base_url="http://vllm.inference:8000", llm_namespace="inference",
+                           proxy_namespace="perf-proxies")
+        core = MagicMock()
+        core.list_namespaced_service.return_value = MagicMock(items=services)
+        with patch("services.proxy_discovery_service._safe_list_namespaced_deployments",
+                   side_effect=lambda apps, ns, **kw: [other, mine] if ns == "haproxy-controller" else []), \
+             patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._has_ingress_to_backend", return_value=False), \
+             patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm_a, cm_b]), \
+             patch("services.proxy_discovery_service._resolve_external_url", return_value=None), \
+             patch("services.proxy_discovery_service.k8s_client.CoreV1Api", return_value=core):
+            result = ProxyDiscoveryService(None)._scan_haproxy(MagicMock(), target)
+
+        assert result.found is True
+        assert result.proxy_url == "http://svc-b.perf-proxies:10080"

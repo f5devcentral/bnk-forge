@@ -395,7 +395,7 @@ class ProxyDiscoveryService:
                     })
 
             # Resolve service for this deployment
-            proxy_url, external_url = self._find_proxy_service_for_deployment(core, dep_ns, dep_name, labels)
+            proxy_url, external_url = self._find_proxy_service_for_deployment(core, dep)
             if matched_db_deploy:
                 proxy_url = proxy_url or matched_db_deploy.proxy_url
                 external_url = external_url or matched_db_deploy.external_url
@@ -721,14 +721,14 @@ class ProxyDiscoveryService:
         has_route = _has_ingress_to_backend(
             api_client, target_svc_name, target_svc_ns, ingress_class_filter="haproxy",
         )
-        if not has_route:
-            has_route = _has_configmap_to_backend(
-                core, haproxy_deploys, target_svc_name, target_svc_ns, proxy_type="haproxy"
-            )
-        if not has_route and self.db:
-            has_route = _has_target_deployment_match(
-                self.db, target, haproxy_deploys, proxy_type="haproxy"
-            )
+        # The Deployment that routes to this target (its own config or its Forge
+        # identity) — its Service, not any "haproxy" Service, is the proxy URL.
+        route_dep = next((
+            d for d in haproxy_deploys
+            if _has_configmap_to_backend(core, [d], target_svc_name, target_svc_ns, proxy_type="haproxy")
+            or (self.db and _has_target_deployment_match(self.db, target, [d], proxy_type="haproxy"))
+        ), None)
+        has_route = has_route or route_dep is not None
 
         if not has_route:
             logger.info(
@@ -745,17 +745,13 @@ class ProxyDiscoveryService:
                 },
             )
 
-        # Find the haproxy service
+        # Find the Service of the routing Deployment (else of the Ingress controller)
         proxy_url = None
         external_url = None
-        if haproxy_ns:
-            proxy_url, external_url = self._find_service_by_name_pattern(
-                core, "haproxy", namespace=haproxy_ns,
-            )
-            if not proxy_url and haproxy_deploys:
-                proxy_url, external_url = self._find_service_by_name_pattern(
-                    core, haproxy_deploys[0].metadata.name, namespace=haproxy_ns,
-                )
+        for dep in [route_dep] if route_dep else haproxy_deploys:
+            proxy_url, external_url = self._find_proxy_service_for_deployment(core, dep)
+            if proxy_url:
+                break
 
         logger.info(
             "HAProxy discovery: found routing to '%s.%s'",
@@ -1159,25 +1155,40 @@ class ProxyDiscoveryService:
     def _find_proxy_service_for_deployment(
         self,
         core: k8s_client.CoreV1Api,
-        namespace: str,
-        deployment_name: str,
-        labels: dict[str, str],
+        dep: Any,
     ) -> tuple[str | None, str | None]:
-        """Find proxy_url and external_url for a deployment's associated Service."""
-        # 1. Try finding service by exact deployment name
-        proxy_url, external_url = self._find_service_by_name_pattern(
-            core, deployment_name, namespace=namespace
-        )
-        if proxy_url:
-            return proxy_url, external_url
+        """proxy_url / external_url of the Service in front of Deployment ``dep``.
 
-        # 2. Try by helm instance label
-        instance = labels.get("app.kubernetes.io/instance")
-        if instance and instance != deployment_name:
-            proxy_url, external_url = self._find_service_by_name_pattern(
-                core, instance, namespace=namespace
-            )
-        return proxy_url, external_url
+        Tied to the Deployment, never a name substring: the Service named like
+        the Deployment, else one whose selector matches its pod template labels,
+        else one carrying its Helm instance label. An exposed (NodePort /
+        LoadBalancer) Service wins among matches.
+        """
+        ns = dep.metadata.namespace or "default"
+        try:
+            svcs = core.list_namespaced_service(namespace=ns, _request_timeout=10).items or []
+        except ApiException:
+            return None, None
+        name = dep.metadata.name or ""
+        template = dep.spec.template.metadata if dep.spec and dep.spec.template else None
+        pod_labels = (template.labels if template else None) or {}
+        instance = (dep.metadata.labels or {}).get("app.kubernetes.io/instance")
+
+        def _selects(svc: Any) -> bool:
+            selector = svc.spec.selector or {}
+            return bool(selector) and all(pod_labels.get(k) == v for k, v in selector.items())
+
+        def _same_release(svc: Any) -> bool:
+            return bool(instance) and (svc.metadata.labels or {}).get("app.kubernetes.io/instance") == instance
+
+        for matches in (lambda s: s.metadata.name == name, _selects, _same_release):
+            hits = [s for s in svcs if s.spec.ports and matches(s)]
+            if hits:
+                exposed = [s for s in hits if s.spec.type in ("NodePort", "LoadBalancer")]
+                svc = (exposed or hits)[0]
+                port = svc.spec.ports[0]
+                return f"http://{svc.metadata.name}.{ns}:{port.port}", _resolve_external_url(core, svc, port)
+        return None, None
 
     # ------------------------------------------------------------------
     # Sync discovered proxies to ProxyDeployment records
@@ -1785,14 +1796,15 @@ def _parse_config_backends(
             for m in _NGINX_PROXY_PASS_RE.finditer(content)
         ]
     elif proxy_type == "envoy" or "envoy" in fname.lower():
-        # address: <host> then port_value: <port>, line by line (linear time).
+        # address: <host> then port_value: <port>, line by line (linear time);
+        # both may sit on one line in flow style ({address: x, port_value: n}).
         via = f"Envoy Config ({cm_name})"
         current_host: str | None = None
         for line in content.splitlines():
             addr_match = _ENVOY_ADDRESS_RE.search(line)
             if addr_match:
                 current_host = addr_match.group(1)
-                continue
+                line = line[addr_match.end():]
             port_match = _ENVOY_PORT_RE.search(line) if current_host else None
             if current_host and port_match:
                 found.append(_service_backend(current_host, port_match.group(1), namespace, via))
@@ -1885,7 +1897,8 @@ def _has_target_deployment_match(
 ) -> bool:
     """True if one of the live Deployments is this target's own Forge proxy.
 
-    Exact identity only: the Deployment's name or Helm instance label equals the
+    Exact identity only: the Deployment lives in the target's proxy namespace
+    (where Forge installs it) and its name or Helm instance label equals the
     helm_release recorded on this target's ProxyDeployment. A row alone (without
     its live Deployment) never matches, so removed proxies drop out.
     """
@@ -1902,7 +1915,10 @@ def _has_target_deployment_match(
     except Exception as e:
         logger.debug("Failed to query ProxyDeployment for target %s: %s", target.id, e)
         return False
+    proxy_ns = target.proxy_namespace or "perf-proxies"
     for d in deployments:
+        if d.metadata.namespace != proxy_ns:
+            continue
         labels = d.metadata.labels or {}
         if d.metadata.name in releases or labels.get("app.kubernetes.io/instance") in releases:
             return True

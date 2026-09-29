@@ -44,3 +44,17 @@ def test_success_is_recorded():
         version_api.return_value.get_code.return_value = SimpleNamespace(major="1", minor="30")
         assert svc.test_connection(_CLUSTER_ID)["success"] is True
     assert registry.get_last_success_iso("cluster", _CLUSTER_ID) is not None
+
+
+@pytest.mark.unit
+def test_open_breaker_skips_kubeconfig_load():
+    core = MagicMock()
+    core.list_namespace.side_effect = ConnectionRefusedError("refused")
+    svc = _svc()
+    with patch("services.kubernetes._base.client.CoreV1Api", return_value=core):
+        for _ in range(5):
+            svc.test_connection(_CLUSTER_ID)
+    loads = svc.load_kubeconfig.call_count
+    with pytest.raises(BreakerOpenError):
+        svc.test_connection(_CLUSTER_ID)
+    assert svc.load_kubeconfig.call_count == loads
