@@ -400,7 +400,10 @@ def _build_networking_health(resources: dict[str, list]) -> dict[str, Any]:
         "egressGateways": len(egressgateways),
         "listeners": total_listeners,
         "httpRoutes": len(resources.get("httproute", [])),
-        "staticRoutes": len(resources.get("f5spkstaticroute", [])),
+        # Legacy F5SPKStaticRoutes, else the routes BNK 2.4 Infra CRs carry (same rule as topology)
+        "staticRoutes": len(resources.get("f5spkstaticroute", [])) or sum(
+            len(safe_get(i, "spec", "staticRoutes", default=[]) or []) for i in infras
+        ),
         "snatPools": len(resources.get("f5spksnatpool", [])),
     }
     # Only include sub-components that have resources — a component with
@@ -490,7 +493,8 @@ def _build_ai_health(
                 "name": safe_get(ip, "metadata", "name", default=""),
                 "namespace": safe_get(ip, "metadata", "namespace", default=""),
                 "targetPorts": [
-                    p.get("number") for p in safe_get(ip, "spec", "targetPorts", default=[]) or [] if isinstance(p, dict)
+                    p["number"] for p in safe_get(ip, "spec", "targetPorts", default=[]) or []
+                    if isinstance(p, dict) and isinstance(p.get("number"), int)
                 ],
                 "endpointPicker": safe_get(ip, "spec", "endpointPickerRef", "name", default=""),
             }

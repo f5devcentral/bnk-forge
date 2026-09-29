@@ -197,9 +197,9 @@ def _build_gateway_node(
             gw_settings_data = {
                 "name": gs_name,
                 "namespace": resource_ns(gs_obj),
-                "ingressConfig": gs_spec.get("ingressConfig", {}),
-                "sourceNATPools": gs_spec.get("sourceNATPools", []),
-                "egressConfigs": gs_spec.get("egressConfigs", []),
+                "ingressConfig": gs_spec.get("ingressConfig") or {},
+                "sourceNATPools": gs_spec.get("sourceNATPools") or [],
+                "egressConfigs": gs_spec.get("egressConfigs") or [],
             }
 
     return {
@@ -524,12 +524,12 @@ def _build_infra_entry(infra: dict) -> dict[str, Any]:
     return {
         "name": resource_name(infra),
         "namespace": resource_ns(infra),
-        "networks": spec.get("networks", []),
-        "ipams": spec.get("ipams", []),
-        "networkAttachments": spec.get("networkAttachments", []),
-        "staticRoutes": spec.get("staticRoutes", []),
-        "vrfs": spec.get("vrfs", []),
-        "egressDefaults": spec.get("egressDefaults", {}),
+        "networks": spec.get("networks") or [],
+        "ipams": spec.get("ipams") or [],
+        "networkAttachments": spec.get("networkAttachments") or [],
+        "staticRoutes": spec.get("staticRoutes") or [],
+        "vrfs": spec.get("vrfs") or [],
+        "egressDefaults": spec.get("egressDefaults") or {},
         "ready": has_condition(infra, "Programmed") or has_condition(infra, "Ready"),
         "conditions": status.get("conditions", []) or [],
     }
@@ -542,9 +542,9 @@ def _build_gateway_settings_entry(gs: dict) -> dict[str, Any]:
     return {
         "name": resource_name(gs),
         "namespace": resource_ns(gs),
-        "ingressConfig": spec.get("ingressConfig", {}),
-        "sourceNATPools": spec.get("sourceNATPools", []),
-        "egressConfigs": spec.get("egressConfigs", []),
+        "ingressConfig": spec.get("ingressConfig") or {},
+        "sourceNATPools": spec.get("sourceNATPools") or [],
+        "egressConfigs": spec.get("egressConfigs") or [],
         "ready": has_condition(gs, "Programmed") or has_condition(gs, "Accepted") or not status.get("conditions"),
         "conditions": status.get("conditions", []) or [],
     }

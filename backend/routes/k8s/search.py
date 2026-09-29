@@ -41,6 +41,7 @@ class IngressSearchResult(BaseModel):
     region: str | None = None
     target_service: str | None = None
     status: str = "active"
+    resource_type: str | None = None  # registry key when kind alone is ambiguous (BNK 2.4 L4Route)
 
 
 class ClusterSearchResult(BaseModel):
@@ -252,12 +253,13 @@ def _scan_cluster_for_query(
         except Exception as e:
             logger.debug(f"F5 SPK Egress scan error on cluster {cluster_name}: {e}")
 
-        # F5 BNK Gateways & Standard Gateways (gateway.networking.k8s.io / k8s.f5net.com)
+        # F5 BNK Gateways, Standard Gateways and L4Routes (2.3 gateway.k8s.f5net.com, 2.4 gateway.k8s.f5.com)
         try:
-            for grp, ver, pl, kd in [
-                ("k8s.f5net.com", "v1", "f5-bnkgateways", "BNKGateway"),
-                ("gateway.networking.k8s.io", "v1", "gateways", "Gateway"),
-                ("gateway.k8s.f5net.com", "v1", "l4routes", "L4Route"),
+            for grp, ver, pl, kd, rt_key in [
+                ("k8s.f5net.com", "v1", "f5-bnkgateways", "BNKGateway", None),
+                ("gateway.networking.k8s.io", "v1", "gateways", "Gateway", None),
+                ("gateway.k8s.f5net.com", "v1", "l4routes", "L4Route", None),
+                ("gateway.k8s.f5.com", "v1", "l4routes", "L4Route", "l4route_24"),
             ]:
                 try:
                     gw_items = custom_api.list_cluster_custom_object(
@@ -283,6 +285,7 @@ def _scan_cluster_for_query(
                                 region=region,
                                 target_service=kd,
                                 status="active",
+                                resource_type=rt_key,
                             ))
                 except ApiException:
                     pass

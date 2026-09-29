@@ -840,3 +840,39 @@ class TestBNK24Topology:
         assert r2["isMcp"] is False
         assert r2["mcpInfo"] is None
 
+
+
+def test_24_fields_survive_gateway_topology_schema():
+    from schemas.f5bnk import GatewayTopologyResponse
+
+    resources = _empty_resources()
+    resources["infra"] = [_infra_24()]
+    resources["gatewaysettings"] = [_egress_settings_24(), _resource("gs-gw", spec={
+        "ingressConfig": {"defaultListenerNetwork": {"networkRefs": [{"name": "ext-vlan"}]}},
+    })]
+    resources["egressgateway"] = [_egress_gateway_24()]
+    resources["secpolicy"] = [_secpolicy_24("sp", "Gateway", "gw-prod", "fw", namespace="f5-bnk")]
+    resources["gateway"] = [_resource("gw-prod", spec={
+        "gatewayClassName": "f5-gateway",
+        "infrastructure": {"parametersRef": {"group": "gateway.k8s.f5.com", "kind": "GatewaySettings", "name": "gs-gw"}},
+        "listeners": [{"name": "tcp", "port": 9000, "protocol": "TCP"}],
+    })]
+    resources["l4route_24"] = [_resource("l4", spec={"parentRefs": [{"name": "gw-prod", "sectionName": "tcp"}]})]
+
+    result = analyze_topology({"resources": resources})
+    dumped = GatewayTopologyResponse.model_validate({**result, "cluster_id": 1}).model_dump(by_alias=True)
+
+    gw = dumped["topology"][0]
+    assert gw["gatewaySettings"]["name"] == "gs-gw"
+    assert gw["securityPolicies"][0]["kind"] == "SecPolicy"
+    assert gw["listeners"][0]["routes"][0]["resourceType"] == "l4route_24"
+    dp = dumped["dataPlane"]
+    assert dp["vlans"][0]["infraName"] == "infra"
+    assert dp["vlans"][0]["kind"] == "Infra"
+    assert dp["staticRoutes"][0]["infraName"] == "infra"
+    assert [i["name"] for i in dp["infra"]] == ["infra"]
+    assert len(dp["gatewaySettings"]) == 2
+    assert dp["egressGateways"][0]["snatType"] == "Pool"
+    assert dp["egresses"][0]["kind"] == "EgressGateway"
+    assert dumped["counts"]["infra"] == 1
+    assert dumped["counts"]["egressGateways"] == 1

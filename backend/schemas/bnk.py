@@ -85,6 +85,21 @@ class HealthVlanComponent(BaseModel):
     details: list[HealthVlanDetail]
 
 
+class HealthInfraDetail(BaseModel):
+    name: str
+    programmed: bool
+    networks: int
+    ipams: int
+
+
+class HealthInfraComponent(BaseModel):
+    total: int
+    programmed: int
+    severity: HealthSeverityV1
+    explanation: str
+    details: list[HealthInfraDetail]
+
+
 class HealthIRuleDetail(BaseModel):
     name: str
     accepted: bool
@@ -112,6 +127,13 @@ class HealthAnalyzerDetail(BaseModel):
     name: str
     namespace: str
     schedule: str
+
+
+class HealthInferencePoolDetail(BaseModel):
+    name: str
+    namespace: str
+    targetPorts: list[int]
+    endpointPicker: str
 
 
 class HealthCounts(BaseModel):
@@ -161,6 +183,9 @@ class BnkHealthNetworkingSection(BaseModel):
     severity: HealthSeverityV1
     gateways: HealthGatewayComponent
     vlans: HealthVlanComponent
+    infra: HealthInfraComponent | None = None
+    gatewaySettings: int = 0
+    egressGateways: int = 0
     listeners: int
     httpRoutes: int
     staticRoutes: int
@@ -181,6 +206,9 @@ class BnkHealthAISection(BaseModel):
     severity: HealthSeverityV1
     analyzers: int
     analyzerDetails: list[HealthAnalyzerDetail]
+    f5epps: int = 0
+    inferencePools: int = 0
+    inferencePoolDetails: list[HealthInferencePoolDetail] = Field(default_factory=list)
 
 
 class BnkHealthResponse(BaseModel):

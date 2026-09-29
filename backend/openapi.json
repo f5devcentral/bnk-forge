@@ -38565,6 +38565,23 @@
             },
             "type": "array",
             "title": "Analyzerdetails"
+          },
+          "f5epps": {
+            "type": "integer",
+            "title": "F5Epps",
+            "default": 0
+          },
+          "inferencePools": {
+            "type": "integer",
+            "title": "Inferencepools",
+            "default": 0
+          },
+          "inferencePoolDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthInferencePoolDetail"
+            },
+            "type": "array",
+            "title": "Inferencepooldetails"
           }
         },
         "type": "object",
@@ -38695,6 +38712,26 @@
           },
           "vlans": {
             "$ref": "#/components/schemas/HealthVlanComponent"
+          },
+          "infra": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthInfraComponent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gatewaySettings": {
+            "type": "integer",
+            "title": "Gatewaysettings",
+            "default": 0
+          },
+          "egressGateways": {
+            "type": "integer",
+            "title": "Egressgateways",
+            "default": 0
           },
           "listeners": {
             "type": "integer",
@@ -49486,6 +49523,107 @@
         ],
         "title": "HealthIRulesComponent"
       },
+      "HealthInferencePoolDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "targetPorts": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Targetports"
+          },
+          "endpointPicker": {
+            "type": "string",
+            "title": "Endpointpicker"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "targetPorts",
+          "endpointPicker"
+        ],
+        "title": "HealthInferencePoolDetail"
+      },
+      "HealthInfraComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthInfraDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthInfraComponent"
+      },
+      "HealthInfraDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "networks": {
+            "type": "integer",
+            "title": "Networks"
+          },
+          "ipams": {
+            "type": "integer",
+            "title": "Ipams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "programmed",
+          "networks",
+          "ipams"
+        ],
+        "title": "HealthInfraDetail"
+      },
       "HealthIntegrationStatus": {
         "properties": {
           "status": {
@@ -50812,6 +50950,17 @@
             "type": "string",
             "title": "Status",
             "default": "active"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
           }
         },
         "type": "object",
@@ -63713,6 +63862,31 @@
           "logProfiles": {
             "type": "integer",
             "title": "Logprofiles"
+          },
+          "infra": {
+            "type": "integer",
+            "title": "Infra",
+            "default": 0
+          },
+          "gatewaySettings": {
+            "type": "integer",
+            "title": "Gatewaysettings",
+            "default": 0
+          },
+          "egressGateways": {
+            "type": "integer",
+            "title": "Egressgateways",
+            "default": 0
+          },
+          "inferencePools": {
+            "type": "integer",
+            "title": "Inferencepools",
+            "default": 0
+          },
+          "f5epps": {
+            "type": "integer",
+            "title": "F5Epps",
+            "default": 0
           }
         },
         "type": "object",
@@ -63781,6 +63955,27 @@
           },
           "logging": {
             "$ref": "#/components/schemas/TopologyLogging"
+          },
+          "infra": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyInfra"
+            },
+            "type": "array",
+            "title": "Infra"
+          },
+          "gatewaySettings": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyGatewaySettings"
+            },
+            "type": "array",
+            "title": "Gatewaysettings"
+          },
+          "egressGateways": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyEgress"
+            },
+            "type": "array",
+            "title": "Egressgateways"
           }
         },
         "type": "object",
@@ -63832,6 +64027,11 @@
           "namespace": {
             "type": "string",
             "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
           },
           "snatType": {
             "type": "string",
@@ -63894,6 +64094,41 @@
           "ready": {
             "type": "boolean",
             "title": "Ready"
+          },
+          "gatewayClassName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gatewayclassname"
+          },
+          "parametersRef": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parametersref"
+          },
+          "sourceSelector": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceselector"
           }
         },
         "type": "object",
@@ -64022,6 +64257,16 @@
             },
             "type": "array",
             "title": "Securitypolicies"
+          },
+          "gatewaySettings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TopologyGatewaySettingsRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -64034,6 +64279,97 @@
           "securityPolicies"
         ],
         "title": "TopologyGateway"
+      },
+      "TopologyGatewaySettings": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ingressConfig": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Ingressconfig"
+          },
+          "sourceNATPools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sourcenatpools"
+          },
+          "egressConfigs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Egressconfigs"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "ready"
+        ],
+        "title": "TopologyGatewaySettings"
+      },
+      "TopologyGatewaySettingsRef": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ingressConfig": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Ingressconfig"
+          },
+          "sourceNATPools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sourcenatpools"
+          },
+          "egressConfigs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Egressconfigs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace"
+        ],
+        "title": "TopologyGatewaySettingsRef",
+        "description": "GatewaySettings resolved from a Gateway's spec.infrastructure.parametersRef (BNK 2.4)."
       },
       "TopologyGraphResponse": {
         "properties": {
@@ -64080,6 +64416,78 @@
         ],
         "title": "TopologyGraphResponse",
         "description": "Response for GET /api/k8s/clusters/{cluster_id}/topology."
+      },
+      "TopologyInfra": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "networks": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Networks"
+          },
+          "ipams": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Ipams"
+          },
+          "networkAttachments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Networkattachments"
+          },
+          "staticRoutes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Staticroutes"
+          },
+          "vrfs": {
+            "items": {},
+            "type": "array",
+            "title": "Vrfs"
+          },
+          "egressDefaults": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Egressdefaults"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "ready"
+        ],
+        "title": "TopologyInfra"
       },
       "TopologyListener": {
         "properties": {
@@ -64164,11 +64572,37 @@
         ],
         "title": "TopologyLogging"
       },
+      "TopologyMcpInfo": {
+        "properties": {
+          "auth": {
+            "type": "string",
+            "title": "Auth"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "auth",
+          "tools"
+        ],
+        "title": "TopologyMcpInfo"
+      },
       "TopologyNetworkPolicy": {
         "properties": {
           "name": {
             "type": "string",
             "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
           },
           "namespace": {
             "type": "string",
@@ -64423,6 +64857,17 @@
             "type": "string",
             "title": "Kind"
           },
+          "resourceType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resourcetype"
+          },
           "hostnames": {
             "items": {
               "type": "string"
@@ -64466,6 +64911,21 @@
               }
             ],
             "title": "Conditionmessage"
+          },
+          "isMcp": {
+            "type": "boolean",
+            "title": "Ismcp",
+            "default": false
+          },
+          "mcpInfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TopologyMcpInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -64540,6 +65000,11 @@
           "name": {
             "type": "string",
             "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
           },
           "namespace": {
             "type": "string",
@@ -64631,6 +65096,22 @@
           "gateway": {
             "type": "string",
             "title": "Gateway"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "infraName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infraname"
           }
         },
         "type": "object",
@@ -64651,6 +65132,22 @@
           "namespace": {
             "type": "string",
             "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "infraName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infraname"
           },
           "interfaces": {
             "items": {},
@@ -64700,6 +65197,28 @@
           "ready": {
             "type": "boolean",
             "title": "Ready"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
           }
         },
         "type": "object",

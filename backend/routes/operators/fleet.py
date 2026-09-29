@@ -304,6 +304,7 @@ _BNK_API_GROUPS: frozenset[str] = frozenset({
     ApiGroups.F5_NET,
     ApiGroups.F5_K8S,
     ApiGroups.F5_GATEWAY_NET,
+    ApiGroups.F5_GATEWAY,
 })
 
 # DPF API groups — presence of any of these indicates NVIDIA DOCA Platform

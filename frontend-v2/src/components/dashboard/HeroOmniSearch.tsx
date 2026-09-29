@@ -216,7 +216,7 @@ export function HeroOmniSearch({
     return k || 'ingress';
   };
 
-  const handleSelectIngress = (clusterId: number, namespace: string, name: string, kind?: string) => {
+  const handleSelectIngress = (clusterId: number, namespace: string, name: string, kind?: string, resourceType?: string) => {
     setIsOpen(false);
     const k = (kind || '').toLowerCase().replace(/[-_]/g, '');
 
@@ -232,7 +232,7 @@ export function HeroOmniSearch({
 
     // Other F5 BNK resources route to F5 BNK page with appropriate resource selected
     if (isBnkResource(kind)) {
-      const resource = mapKindToResourceParam(kind);
+      const resource = resourceType || mapKindToResourceParam(kind);
       navigate(
         `/bnk?cluster=${clusterId}&namespace=${encodeURIComponent(
           namespace
@@ -242,7 +242,7 @@ export function HeroOmniSearch({
     }
 
     // Standard Kubernetes resources route to Kubernetes Advanced view
-    const resource = mapKindToResourceParam(kind);
+    const resource = resourceType || mapKindToResourceParam(kind);
     navigate(
       `/kubernetes?cluster=${clusterId}&namespace=${encodeURIComponent(
         namespace
@@ -431,7 +431,7 @@ export function HeroOmniSearch({
                       return (
                         <div
                           key={`ing-${item.cluster_id}-${item.namespace}-${item.name}-${idx}`}
-                          onClick={() => handleSelectIngress(item.cluster_id, item.namespace, item.name, item.kind)}
+                          onClick={() => handleSelectIngress(item.cluster_id, item.namespace, item.name, item.kind, item.resource_type)}
                           className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-accent/80 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">

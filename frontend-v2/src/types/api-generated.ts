@@ -14853,6 +14853,18 @@ export interface components {
             analyzers: number;
             /** Analyzerdetails */
             analyzerDetails: components["schemas"]["HealthAnalyzerDetail"][];
+            /**
+             * F5Epps
+             * @default 0
+             */
+            f5epps: number;
+            /**
+             * Inferencepools
+             * @default 0
+             */
+            inferencePools: number;
+            /** Inferencepooldetails */
+            inferencePoolDetails?: components["schemas"]["HealthInferencePoolDetail"][];
         };
         /** BnkHealthDataPlaneSection */
         BnkHealthDataPlaneSection: {
@@ -14906,6 +14918,17 @@ export interface components {
             severity: "healthy" | "warning" | "critical" | "unknown";
             gateways: components["schemas"]["HealthGatewayComponent"];
             vlans: components["schemas"]["HealthVlanComponent"];
+            infra?: components["schemas"]["HealthInfraComponent"] | null;
+            /**
+             * Gatewaysettings
+             * @default 0
+             */
+            gatewaySettings: number;
+            /**
+             * Egressgateways
+             * @default 0
+             */
+            egressGateways: number;
             /** Listeners */
             listeners: number;
             /** Httproutes */
@@ -18452,6 +18475,44 @@ export interface components {
             /** Details */
             details: components["schemas"]["HealthIRuleDetail"][];
         };
+        /** HealthInferencePoolDetail */
+        HealthInferencePoolDetail: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Targetports */
+            targetPorts: number[];
+            /** Endpointpicker */
+            endpointPicker: string;
+        };
+        /** HealthInfraComponent */
+        HealthInfraComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthInfraDetail"][];
+        };
+        /** HealthInfraDetail */
+        HealthInfraDetail: {
+            /** Name */
+            name: string;
+            /** Programmed */
+            programmed: boolean;
+            /** Networks */
+            networks: number;
+            /** Ipams */
+            ipams: number;
+        };
         /** HealthIntegrationStatus */
         HealthIntegrationStatus: {
             /**
@@ -18951,6 +19012,8 @@ export interface components {
              * @default active
              */
             status: string;
+            /** Resource Type */
+            resource_type?: string | null;
         };
         /** InstallChartRequest */
         InstallChartRequest: {
@@ -23621,6 +23684,31 @@ export interface components {
             hslPublishers: number;
             /** Logprofiles */
             logProfiles: number;
+            /**
+             * Infra
+             * @default 0
+             */
+            infra: number;
+            /**
+             * Gatewaysettings
+             * @default 0
+             */
+            gatewaySettings: number;
+            /**
+             * Egressgateways
+             * @default 0
+             */
+            egressGateways: number;
+            /**
+             * Inferencepools
+             * @default 0
+             */
+            inferencePools: number;
+            /**
+             * F5Epps
+             * @default 0
+             */
+            f5epps: number;
         };
         /** TopologyDataPlane */
         TopologyDataPlane: {
@@ -23635,6 +23723,12 @@ export interface components {
             /** Egresses */
             egresses: components["schemas"]["TopologyEgress"][];
             logging: components["schemas"]["TopologyLogging"];
+            /** Infra */
+            infra?: components["schemas"]["TopologyInfra"][];
+            /** Gatewaysettings */
+            gatewaySettings?: components["schemas"]["TopologyGatewaySettings"][];
+            /** Egressgateways */
+            egressGateways?: components["schemas"]["TopologyEgress"][];
         };
         /**
          * TopologyEdge
@@ -23656,6 +23750,11 @@ export interface components {
             name: string;
             /** Namespace */
             namespace: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
             /** Snattype */
             snatType: string;
             /** Egresssnatpool */
@@ -23672,6 +23771,16 @@ export interface components {
             } | null;
             /** Ready */
             ready: boolean;
+            /** Gatewayclassname */
+            gatewayClassName?: string | null;
+            /** Parametersref */
+            parametersRef?: {
+                [key: string]: unknown;
+            } | null;
+            /** Sourceselector */
+            sourceSelector?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** TopologyFirewallPolicy */
         TopologyFirewallPolicy: {
@@ -23721,6 +23830,52 @@ export interface components {
             listeners: components["schemas"]["TopologyListener"][];
             /** Securitypolicies */
             securityPolicies: components["schemas"]["TopologySecurityPolicy"][];
+            gatewaySettings?: components["schemas"]["TopologyGatewaySettingsRef"] | null;
+        };
+        /** TopologyGatewaySettings */
+        TopologyGatewaySettings: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Ingressconfig */
+            ingressConfig?: {
+                [key: string]: unknown;
+            };
+            /** Sourcenatpools */
+            sourceNATPools?: {
+                [key: string]: unknown;
+            }[];
+            /** Egressconfigs */
+            egressConfigs?: {
+                [key: string]: unknown;
+            }[];
+            /** Ready */
+            ready: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+        };
+        /**
+         * TopologyGatewaySettingsRef
+         * @description GatewaySettings resolved from a Gateway's spec.infrastructure.parametersRef (BNK 2.4).
+         */
+        TopologyGatewaySettingsRef: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Ingressconfig */
+            ingressConfig?: {
+                [key: string]: unknown;
+            };
+            /** Sourcenatpools */
+            sourceNATPools?: {
+                [key: string]: unknown;
+            }[];
+            /** Egressconfigs */
+            egressConfigs?: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * TopologyGraphResponse
@@ -23737,6 +23892,39 @@ export interface components {
             namespace: string;
             /** Info */
             info?: string | null;
+        };
+        /** TopologyInfra */
+        TopologyInfra: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Networks */
+            networks?: {
+                [key: string]: unknown;
+            }[];
+            /** Ipams */
+            ipams?: {
+                [key: string]: unknown;
+            }[];
+            /** Networkattachments */
+            networkAttachments?: {
+                [key: string]: unknown;
+            }[];
+            /** Staticroutes */
+            staticRoutes?: {
+                [key: string]: unknown;
+            }[];
+            /** Vrfs */
+            vrfs?: unknown[];
+            /** Egressdefaults */
+            egressDefaults?: {
+                [key: string]: unknown;
+            };
+            /** Ready */
+            ready: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
         };
         /** TopologyListener */
         TopologyListener: {
@@ -23769,10 +23957,22 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** TopologyMcpInfo */
+        TopologyMcpInfo: {
+            /** Auth */
+            auth: string;
+            /** Tools */
+            tools: string[];
+        };
         /** TopologyNetworkPolicy */
         TopologyNetworkPolicy: {
             /** Name */
             name: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
             /** Namespace */
             namespace: string;
             /** Extensions */
@@ -23876,6 +24076,8 @@ export interface components {
             namespace: string;
             /** Kind */
             kind: string;
+            /** Resourcetype */
+            resourceType?: string | null;
             /** Hostnames */
             hostnames: string[];
             /** Backends */
@@ -23891,6 +24093,12 @@ export interface components {
             conditions?: components["schemas"]["TopologyCondition"][];
             /** Conditionmessage */
             conditionMessage?: string | null;
+            /**
+             * Ismcp
+             * @default false
+             */
+            isMcp: boolean;
+            mcpInfo?: components["schemas"]["TopologyMcpInfo"] | null;
         };
         /** TopologyRouteBackend */
         TopologyRouteBackend: {
@@ -23917,6 +24125,11 @@ export interface components {
         TopologySecurityPolicy: {
             /** Name */
             name: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
             /** Namespace */
             namespace: string;
             /** Targetlistener */
@@ -23957,6 +24170,13 @@ export interface components {
             destination: string;
             /** Gateway */
             gateway: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Infraname */
+            infraName?: string | null;
         };
         /** TopologyVlan */
         TopologyVlan: {
@@ -23964,6 +24184,13 @@ export interface components {
             name: string;
             /** Namespace */
             namespace: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Infraname */
+            infraName?: string | null;
             /** Interfaces */
             interfaces: unknown[];
             /** Selfipv4S */
@@ -23978,6 +24205,10 @@ export interface components {
             autoLasthop: string;
             /** Ready */
             ready: boolean;
+            /** Type */
+            type?: string | null;
+            /** Tag */
+            tag?: number | null;
         };
         /**
          * TransferOwnershipRequest

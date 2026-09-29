@@ -8,6 +8,8 @@ import { render } from '@/test/test-utils';
 import { HeroOmniSearch } from '../HeroOmniSearch';
 import type { Project } from '@/types/project';
 import type { KubernetesCluster } from '@/types/k8s';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/mocks/server';
 
 // Mock navigation
 const mockNavigate = vi.fn();
@@ -122,5 +124,28 @@ describe('HeroOmniSearch', () => {
 
     await user.click(screen.getByText('ecommerce-api'));
     expect(mockNavigate).toHaveBeenCalledWith('/projects/1');
+  });
+
+  it('deep-links a BNK 2.4 L4Route by its registry key', async () => {
+    server.use(
+      http.get('*/api/k8s/search', () => HttpResponse.json({
+        query: 'l4',
+        ingresses: [{
+          kind: 'L4Route', name: 'grpc-l4', namespace: 'grpc', matched_host: 'grpc-l4', all_hosts: [],
+          cluster_id: 1, cluster_name: 'test-cluster', target_service: 'L4Route', status: 'active',
+          resource_type: 'l4route_24',
+        }],
+        clusters: [],
+        projects: [],
+      })),
+    );
+    const user = userEvent.setup();
+    render(<HeroOmniSearch projects={[]} clusters={mockClusters} debounceMs={0} />);
+
+    await user.type(screen.getByPlaceholderText(/search fqdn/i), 'grpc-l4');
+    await user.click(await screen.findByText('grpc-l4'));
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      '/kubernetes?cluster=1&namespace=grpc&resource=l4route_24&name=grpc-l4&view=advanced',
+    );
   });
 });

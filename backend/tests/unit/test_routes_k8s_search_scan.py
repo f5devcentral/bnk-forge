@@ -175,6 +175,33 @@ class TestScanClusterParsing:
         assert svc.matched_host == "lb-example"
         assert "203.0.113.9" in svc.all_hosts and "10.96.0.1" in svc.all_hosts
 
+    def test_l4routes_from_both_bnk_groups(self):
+        """2.3 (gateway.k8s.f5net.com) and 2.4 (gateway.k8s.f5.com) L4Routes are both found;
+        the 2.4 one carries the registry key its deep link needs."""
+        items = {
+            "gateway.k8s.f5net.com": [{"metadata": {"name": "example-l4-23", "namespace": "a"}}],
+            "gateway.k8s.f5.com": [{"metadata": {"name": "example-l4-24", "namespace": "b"}}],
+        }
+
+        def _custom(_api_client):
+            m = MagicMock()
+
+            def _list(group=None, plural=None, **_kw):
+                if plural != "l4routes" or group not in items:
+                    raise ApiException(status=404)
+                return {"items": items[group]}
+
+            m.list_cluster_custom_object.side_effect = _list
+            return m
+
+        with _wire({1: _FakeApiClient()}):
+            with patch.object(search_mod.k8s_client, "CustomObjectsApi", side_effect=_custom):
+                results = _scan_cluster_for_query(1, "c", None, None, "example-l4")
+        assert {(r.kind, r.name, r.resource_type) for r in results} == {
+            ("L4Route", "example-l4-23", None),
+            ("L4Route", "example-l4-24", "l4route_24"),
+        }
+
     def test_empty_query_short_circuits_without_client_load(self):
         # A blank query must not even open a DB session / load a kubeconfig.
         with patch.object(search_mod, "SessionLocal") as sl:

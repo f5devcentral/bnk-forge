@@ -752,3 +752,38 @@ class TestBNK24Health:
         assert result["ai"]["inferencePoolDetails"][0] == {
             "name": "x", "namespace": "ns", "targetPorts": [], "endpointPicker": "",
         }
+
+    def test_24_fields_survive_response_schema(self):
+        from schemas.bnk import BnkHealthAISection, BnkHealthNetworkingSection
+
+        data = _make_data()
+        data["resources"]["infra"] = [{
+            "metadata": {"name": "infra", "namespace": "f5-cne-system"},
+            "spec": {"networks": [{"name": "ext-vlan"}], "staticRoutes": [
+                {"name": "vpc", "destinations": ["10.0.0.0/16"], "nextHop": "10.0.20.1"},
+                {"name": "default", "destinations": ["0.0.0.0/0"], "nextHop": "10.0.10.1"},
+            ]},
+            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+        }]
+        data["resources"]["gatewaysettings"] = [{"metadata": {"name": "gs", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["egressgateway"] = [{"metadata": {"name": "eg", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["f5epp"] = [{"metadata": {"name": "epp", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["inferencepool"] = [{
+            "metadata": {"name": "pool", "namespace": "ns"},
+            "spec": {"targetPorts": [{"number": 8000}], "endpointPickerRef": {"name": "pool-epp"}},
+        }]
+        result = analyze_health(data)
+
+        net = BnkHealthNetworkingSection.model_validate(result["networking"]).model_dump()
+        assert net["infra"]["details"] == [{"name": "infra", "programmed": True, "networks": 1, "ipams": 0}]
+        assert net["gatewaySettings"] == 1
+        assert net["egressGateways"] == 1
+        # Legacy F5SPKStaticRoutes are absent, so the Infra routes count
+        assert net["staticRoutes"] == 2
+
+        ai = BnkHealthAISection.model_validate(result["ai"]).model_dump()
+        assert ai["f5epps"] == 1
+        assert ai["inferencePools"] == 1
+        assert ai["inferencePoolDetails"] == [
+            {"name": "pool", "namespace": "ns", "targetPorts": [8000], "endpointPicker": "pool-epp"},
+        ]

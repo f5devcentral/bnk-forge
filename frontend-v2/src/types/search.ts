@@ -10,6 +10,7 @@ export interface IngressSearchResult {
   region?: string;
   target_service?: string;
   status: string;
+  resource_type?: string;  // registry key when kind alone is ambiguous (BNK 2.4 L4Route)
 }
 
 export interface ClusterSearchResult {
