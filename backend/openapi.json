@@ -1357,22 +1357,6 @@
               "type": "integer",
               "title": "Cluster Id"
             }
-          },
-          {
-            "name": "project_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project Id"
-            }
           }
         ],
         "responses": {
@@ -1404,10 +1388,19 @@
         "tags": [
           "k8s-clusters"
         ],
-        "summary": "Delete Cluster",
-        "description": "Delete cluster configuration (owner or admin only).",
-        "operationId": "delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete",
+        "summary": "Delete Project Cluster",
+        "description": "Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.",
+        "operationId": "delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete",
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
           {
             "name": "cluster_id",
             "in": "path",
@@ -1415,22 +1408,6 @@
             "schema": {
               "type": "integer",
               "title": "Cluster Id"
-            }
-          },
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project Id"
             }
           }
         ],
@@ -41264,6 +41241,17 @@
             "type": "string",
             "title": "Name"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "cloud_provider": {
             "anyOf": [
               {
@@ -49318,6 +49306,13 @@
             },
             "type": "array",
             "title": "Projects"
+          },
+          "timed_out_clusters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Timed Out Clusters"
           }
         },
         "type": "object",
@@ -50885,6 +50880,17 @@
           "cluster_name": {
             "type": "string",
             "title": "Cluster Name"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "cloud_provider": {
             "anyOf": [

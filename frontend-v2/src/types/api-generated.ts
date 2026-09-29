@@ -625,10 +625,10 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete Cluster
-         * @description Delete cluster configuration (owner or admin only).
+         * Delete Project Cluster
+         * @description Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.
          */
-        delete: operations["delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
+        delete: operations["delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -15845,6 +15845,8 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+            /** Project Id */
+            project_id?: number | null;
             /** Cloud Provider */
             cloud_provider?: string | null;
             /** Region */
@@ -18373,6 +18375,8 @@ export interface components {
             clusters?: components["schemas"]["ClusterSearchResult"][];
             /** Projects */
             projects?: components["schemas"]["ProjectSearchResult"][];
+            /** Timed Out Clusters */
+            timed_out_clusters?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -18967,6 +18971,8 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Project Id */
+            project_id?: number | null;
             /** Cloud Provider */
             cloud_provider?: string | null;
             /** Region */
@@ -25742,9 +25748,7 @@ export interface operations {
     };
     delete_cluster_api_k8s_clusters__cluster_id__delete: {
         parameters: {
-            query?: {
-                project_id?: number | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 cluster_id: number;
@@ -25773,13 +25777,13 @@ export interface operations {
             };
         };
     };
-    delete_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
+    delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
+                project_id: number;
                 cluster_id: number;
-                project_id: number | null;
             };
             cookie?: never;
         };
