@@ -2628,6 +2628,36 @@ class TestAgentRunOwnership:
         assert second_server_ws is not first_server_ws
         assert (first_server_ws, bench_routes._WS_CLOSE_SUPERSEDED) in closes
 
+    def test_connect_spares_run_sent_on_this_connection_while_closing_previous(
+        self, client, all_test_users, db, monkeypatch,
+    ):
+        from starlette.websockets import WebSocket
+
+        import routes.benchmarks as bench_routes
+
+        agent = _make_agent(db, name="ws-supersede-race-agent", status="connected")
+        run = _make_run(db, status="running", agent_id=agent.id)
+        bench_routes._run_owner[run.id] = bench_routes._DISPATCHING
+        real_close = WebSocket.close
+
+        async def _close(self, code=1000, reason=None):
+            if code == bench_routes._WS_CLOSE_SUPERSEDED:
+                # A worker-thread dispatch sends the run on the new connection
+                # while the superseded one is still closing.
+                bench_routes._run_owner[run.id] = bench_routes._agent_ws_connections[agent.id]
+            await real_close(self, code=code, reason=reason)
+
+        monkeypatch.setattr(WebSocket, "close", _close)
+        with self._connect(client, agent) as first:
+            first.send_json({"type": "heartbeat", "status": "connected"})
+            with self._connect(client, agent) as second:
+                second.send_json({"type": "heartbeat", "status": "connected"})
+
+        db.expire_all()
+        # Failed only by the teardown of the connection it was sent on, not by
+        # that connection's connect sweep.
+        assert "connection closed" in db.query(BenchmarkRun).get(run.id).error_message
+
 
 class TestDispatchToAgentTimeout:
     """dispatch_to_agent's timeout: a send that never started is abandoned (False,
