@@ -114,7 +114,12 @@ def _find_http_backend_services(
                 deduped_http_refs.append(r)
 
         ports = [
-            {"port": p.get("port"), "name": p.get("name"), "protocol": p.get("protocol", "TCP")}
+            {
+                "port": p.get("port"),
+                "targetPort": p.get("targetPort") or p.get("target_port") or p.get("port"),
+                "name": p.get("name"),
+                "protocol": p.get("protocol", "TCP"),
+            }
             for p in (spec.get("ports") or [])
         ]
 
@@ -205,7 +210,7 @@ def _probe_agent_cards(
     ``GET /api/v1/namespaces/{ns}/services/{name}:{port}/proxy/.well-known/agent-card.json``
     If service proxy fails (e.g. 503 Service Unavailable / no endpoints available
     on VPC-native GKE clusters), falls back to direct pod proxy:
-    ``GET /api/v1/namespaces/{ns}/pods/{pod_name}:{port}/proxy/.well-known/agent-card.json``
+    ``GET /api/v1/namespaces/{ns}/pods/{pod_name}:{targetPort}/proxy/.well-known/agent-card.json``
 
     Mutates candidates in-place, setting ``agentCard`` and ``probeStatus``.
     """
@@ -225,7 +230,7 @@ def _probe_agent_cards(
                 pods_cache[ns] = []
         return pods_cache[ns]
 
-    def backing_pod(candidate: dict) -> str | None:
+    def backing_pod(candidate: dict) -> Any | None:
         """A Running pod behind the Service, matched by its label selector."""
         selector = candidate.get("selector") or {}
         if not selector:
@@ -233,13 +238,24 @@ def _probe_agent_cards(
         for p in get_namespace_pods(candidate["namespace"]):
             labels = getattr(p.metadata, "labels", None) or {}
             if getattr(p.status, "phase", "") == "Running" and all(labels.get(k) == v for k, v in selector.items()):
-                return p.metadata.name
+                return p
+        return None
+
+    def pod_port(pod: Any, target: Any) -> int | None:
+        """The container port a Service targetPort maps to on the pod; None if a named port is not found."""
+        if isinstance(target, int):
+            return target
+        for container in getattr(pod.spec, "containers", None) or []:
+            for cp in container.ports or []:
+                if cp.name == target:
+                    return cp.container_port
         return None
 
     def probe_one(candidate: dict) -> None:
         svc_name = candidate["name"]
         svc_ns = candidate["namespace"]
         ports_to_try = _candidate_probe_ports(candidate)
+        target_ports = {p.get("port"): p.get("targetPort") or p.get("port") for p in candidate.get("ports", [])}
 
         if not ports_to_try:
             candidate["probeStatus"] = "skipped"
@@ -269,7 +285,7 @@ def _probe_agent_cards(
         # or failing service proxy from spending the budget before the pod
         # fallback runs. The pod is looked up only once the service proxy fails.
         card_found = None
-        pod: list[str | None] = []
+        pod: list[Any] = []
         for port in ports_to_try:
             for path in _AGENT_CARD_PATHS:
                 if not budget_left():
@@ -279,8 +295,11 @@ def _probe_agent_cards(
                     break
                 if not pod:
                     pod.append(backing_pod(candidate))
-                if pod[0] and budget_left():
-                    card_found = attempt(core_v1.connect_get_namespaced_pod_proxy_with_path, f"{pod[0]}:{port}", path)
+                pod_target = pod_port(pod[0], target_ports.get(port, port)) if pod[0] else None
+                if pod_target and budget_left():
+                    card_found = attempt(
+                        core_v1.connect_get_namespaced_pod_proxy_with_path, f"{pod[0].metadata.name}:{pod_target}", path
+                    )
                     if card_found:
                         break
             if card_found or not budget_left():
