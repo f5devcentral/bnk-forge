@@ -459,7 +459,8 @@ class ProxyDeployService:
             api_client = k8s_svc.load_kubeconfig(cluster)
             core_v1 = k8s_client.CoreV1Api(api_client)
 
-            # Look up service by exact name or matching pattern in namespace
+            # Look up the service by exact name, else by the Helm release label
+            # (a name substring match would pick up another release's service).
             svc = None
             try:
                 svc = core_v1.read_namespaced_service(name=release, namespace=namespace, _request_timeout=10)
@@ -467,12 +468,16 @@ class ProxyDeployService:
                 pass
 
             if not svc:
-                svcs = core_v1.list_namespaced_service(namespace=namespace, _request_timeout=10)
-                for item in svcs.items:
-                    item_name = item.metadata.name or ""
-                    if release in item_name or item_name in release:
-                        svc = item
-                        break
+                svcs = core_v1.list_namespaced_service(
+                    namespace=namespace,
+                    label_selector=f"app.kubernetes.io/instance={release}",
+                    _request_timeout=10,
+                )
+                items = svcs.items or []
+                # Prefer an externally exposed service (e.g. the ingress-nginx
+                # controller over its ClusterIP admission webhook).
+                exposed = [i for i in items if i.spec.type in ("NodePort", "LoadBalancer")]
+                svc = (exposed or items or [None])[0]
 
             if not svc:
                 self._emit(on_status, f"Could not find K8s Service for release '{release}' to resolve external URL")

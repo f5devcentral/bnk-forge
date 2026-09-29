@@ -438,7 +438,16 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     Called via curl or script. If an agent with the same name
     already exists, it updates its info and marks it as connected.
     """
-    _require_agent_bearer(request)
+    claims = _require_agent_bearer(request)
+    if claims and _is_bootstrap_token(claims):
+        # The bootstrap token may only (re)register the built-in agent; upserting
+        # another agent's row would let it connect as that agent over the WS.
+        existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
+        if existing and not _is_builtin_agent(existing):
+            raise BadRequestError(
+                f"Bootstrap token may not re-register agent '{data.name}'",
+                code="AGENT_AUTH_FORBIDDEN",
+            )
     svc = BenchmarkService(db)
     result = svc.register_agent(data.model_dump())
     db.commit()
@@ -1177,14 +1186,18 @@ def trigger_benchmark_run(
         "config": config_json,
     }
 
-    # If the agent isn't connected via WS, the run stays pending and the agent
-    # can pick it up when it reconnects.
-    sent = dispatch_to_agent(agent_id, command)
-
-    if sent:
-        run.status = BenchmarkRunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
+    # Claim (PENDING→RUNNING) and persist BEFORE the blocking dispatch, as
+    # run_benchmark_scenario does: a WS (re)connect drain during the send would
+    # otherwise find the run PENDING and dispatch it a second time. If the send
+    # fails the claim is released and the agent picks the run up on reconnect.
+    if bench_svc.claim_pending_run(run.id):
         db.commit()
+        if not dispatch_to_agent(agent_id, command):
+            bench_svc.release_claimed_run(run.id)
+            db.commit()
+    db.refresh(run)
+
+    if run.status == BenchmarkRunStatus.RUNNING:
         msg = f"Run #{run.id} dispatched to agent '{agent.name}'"
     else:
         msg = f"Run #{run.id} created but agent '{agent.name}' not connected via WS — run is pending"
@@ -1307,11 +1320,26 @@ def run_benchmark_scenario(
     dispatched = 0
     if runs:
         first = runs[0]
-        command = {"type": "run", "run_id": first.id, "config": first.config_snapshot}
-        if dispatch_to_agent(agent_id, command):
-            first.status = BenchmarkRunStatus.RUNNING
-            first.started_at = datetime.now(UTC)
-            dispatched = 1
+        first_id = first.id
+        first_config = first.config_snapshot
+        # Claim the first child ATOMICALLY (PENDING→RUNNING) and PERSIST the claim
+        # BEFORE the blocking dispatch_to_agent round-trip (MAJOR-1). The group +
+        # children were already committed PENDING above, so a WS (re)connect firing
+        # during this dispatch window would otherwise find the child still PENDING,
+        # win claim_pending_run, and send a SECOND {"type":"run"} for the same run.
+        # Going through the same atomic claim (group-guarded) makes initial-dispatch
+        # and connect-drain mutually exclusive on this row — the loser skips — and
+        # leaves no window where the row is PENDING while a dispatch is in flight.
+        if bench_svc.claim_pending_run(first_id, group_id=group.id):
+            db.commit()
+            command = {"type": "run", "run_id": first_id, "config": first_config}
+            if dispatch_to_agent(agent_id, command):
+                dispatched = 1
+            else:
+                # Send failed after a winning claim — revert RUNNING→PENDING so a
+                # later reconnect-drain can re-dispatch it (mirrors the drain path).
+                bench_svc.release_claimed_run(first_id)
+                db.commit()
 
     if dispatched:
         group.status = BenchmarkRunStatus.RUNNING
@@ -1434,6 +1462,34 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
     return True
 
 
+_BOOTSTRAP_TOKEN_SUB = "forge-builtin-agent"
+
+
+def _is_bootstrap_token(payload: dict) -> bool:
+    """True for the built-in agent's claimless bootstrap token (startup_steps).
+
+    A user login token carries sub=<username> and the user's role (never
+    "agent"), so a user named like the bootstrap subject does not pass.
+    """
+    return (
+        payload.get("sub") == _BOOTSTRAP_TOKEN_SUB
+        and payload.get("role") == "agent"
+        and payload.get("agent_id") is None
+    )
+
+
+def _is_builtin_agent(agent: BenchmarkAgent | None) -> bool:
+    """The built-in agent registers unmanaged with tags.builtin=true (forge_agent.py)."""
+    return bool(agent and not agent.managed and (agent.tags or {}).get("builtin") is True)
+
+
+def _is_builtin_agent_id(agent_id: int) -> bool:
+    from database import get_db_context
+
+    with get_db_context() as db:
+        return _is_builtin_agent(db.get(BenchmarkAgent, agent_id))
+
+
 def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     """Validate the agent WS handshake JWT (M2 + agent-auth layer).
 
@@ -1479,9 +1535,9 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
-            # The built-in agent container connects using the bootstrap token minted
-            # before registration (carrying sub=forge-builtin-agent, role=agent, and no agent_id).
-            if payload.get("sub") == "forge-builtin-agent":
+            # The built-in agent container connects with the claimless bootstrap
+            # token (startup_steps). It may connect only as a built-in agent row.
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
                 return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
@@ -1587,39 +1643,15 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     try:
         svc = BenchmarkService(db)
         svc.update_agent_status(agent_id, "connected")
+        # A run still RUNNING for this agent was dispatched on a previous
+        # connection and can never report back on this one; fail it so it does
+        # not block the queue.
+        interrupted = svc.fail_interrupted_runs_for_agent(agent_id)
+        if interrupted:
+            logger.warning("Agent %d reconnected: failed interrupted runs %s", agent_id, interrupted)
         db.commit()
 
-        pending_run = svc.get_first_pending_run_for_agent(agent_id)
-        if pending_run:
-            group_id = pending_run.run_group_id
-            if group_id:
-                # Route grouped runs through the SAME gated dispatcher the terminal
-                # WS handlers use (MAJOR-2). Its group-guarded atomic claim is the
-                # single serialization point, so a connect-drain racing a
-                # run_completed/run_failed handler can never leave two children of
-                # one group RUNNING — the loser's claim fails the NOT-EXISTS guard.
-                # It claims, sends, and reverts the claim on send failure.
-                await _dispatch_next_group_child(svc, agent_id, group_id)
-                # Reflect the group as RUNNING only once a child is actually running (NIT-D atomic flip).
-                if svc.mark_run_group_running_if_pending(group_id):
-                    db.commit()
-            elif svc.claim_pending_run(pending_run.id):
-                # Standalone (group-less) run: no siblings, single-row atomic claim.
-                db.commit()
-                sent = await send_command_to_agent(
-                    agent_id, {"type": "run", "run_id": pending_run.id, "config": pending_run.config_snapshot}
-                )
-                if sent:
-                    logger.info("Agent %d connect: dispatched pending run #%d", agent_id, pending_run.id)
-                    if pending_run.run_group_id:
-                        group = svc.get_run_group(pending_run.run_group_id)
-                        if group and group.status == BenchmarkRunStatus.PENDING:
-                            group.status = BenchmarkRunStatus.RUNNING
-                            group.started_at = datetime.now(UTC)
-                            db.commit()
-                else:
-                    svc.release_claimed_run(pending_run.id)
-                    db.commit()
+        await _drain_next_pending_run(svc, agent_id)
     except Exception as e:
         logger.warning("Error checking pending runs on agent connect: %s", e)
     finally:
@@ -1671,6 +1703,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                         done = svc.get_run(int(run_id))
                         if done and done.run_group_id:
                             await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
+                        else:
+                            # Standalone run done: send the agent's next queued run.
+                            await _drain_next_pending_run(svc, agent_id)
                     else:
                         db.commit()
                 except Exception as e:
@@ -1704,6 +1739,8 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                             # Gated dispatch: continue the sweep with the next child.
                             if run.run_group_id:
                                 await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
+                            else:
+                                await _drain_next_pending_run(svc, agent_id)
                     else:
                         db.commit()
                 except Exception as e:
@@ -1736,6 +1773,36 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
             finally:
                 db.close()
         logger.info("Agent %d disconnected from WebSocket", agent_id)
+
+
+async def _drain_next_pending_run(svc: "BenchmarkService", agent_id: int) -> None:
+    """Claim and dispatch the agent's earliest pending run, if it has none running."""
+    pending_run = svc.get_first_pending_run_for_agent(agent_id)
+    if not pending_run:
+        return
+    group_id = pending_run.run_group_id
+    if group_id:
+        # Route grouped runs through the SAME gated dispatcher the terminal
+        # WS handlers use (MAJOR-2). Its group-guarded atomic claim is the
+        # single serialization point, so a connect-drain racing a
+        # run_completed/run_failed handler can never leave two children of
+        # one group RUNNING — the loser's claim fails the NOT-EXISTS guard.
+        # It claims, sends, and reverts the claim on send failure.
+        await _dispatch_next_group_child(svc, agent_id, group_id)
+        # Reflect the group as RUNNING only once a child is actually running (NIT-D atomic flip).
+        if svc.mark_run_group_running_if_pending(group_id):
+            svc.db.commit()
+    elif svc.claim_pending_run(pending_run.id):
+        # Standalone (group-less) run: no siblings, single-row atomic claim.
+        svc.db.commit()
+        sent = await send_command_to_agent(
+            agent_id, {"type": "run", "run_id": pending_run.id, "config": pending_run.config_snapshot}
+        )
+        if sent:
+            logger.info("Agent %d: dispatched pending run #%d", agent_id, pending_run.id)
+        else:
+            svc.release_claimed_run(pending_run.id)
+            svc.db.commit()
 
 
 async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, group_id: int) -> None:
@@ -1789,6 +1856,9 @@ async def send_command_to_agent(agent_id: int, command: dict) -> bool:
         return False
 
 
+_DISPATCH_TIMEOUT_S = 15
+
+
 def dispatch_to_agent(agent_id: int, command: dict) -> bool:
     """Dispatch a command to an agent from a SYNC route handler, reliably.
 
@@ -1802,7 +1872,14 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
     if loop is not None and loop.is_running():
         try:
             fut = asyncio.run_coroutine_threadsafe(send_command_to_agent(agent_id, command), loop)
-            return bool(fut.result(timeout=15))
+            try:
+                return bool(fut.result(timeout=_DISPATCH_TIMEOUT_S))
+            except TimeoutError:
+                # Cancel the scheduled send so it cannot land after the caller
+                # releases the claim. If it already finished, report its outcome.
+                if fut.cancel():
+                    return False
+                return bool(fut.result(timeout=0))
         except Exception:
             return False
     # No agent has connected yet (no loop captured) → nothing to send to.

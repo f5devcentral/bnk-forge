@@ -920,6 +920,32 @@ class BenchmarkService(BaseService):
             .first()
         )
 
+    def fail_interrupted_runs_for_agent(self, agent_id: int) -> list[int]:
+        """Mark an agent's RUNNING runs FAILED when it (re)connects.
+
+        A run's result is reported over the WebSocket it was dispatched on, so a
+        run still RUNNING when the agent opens a new connection can never report
+        back. Left RUNNING it blocks get_first_pending_run_for_agent (and the
+        group claim guard) forever. Rolls up affected run-groups. Caller commits.
+        """
+        runs = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+            )
+            .all()
+        )
+        now = datetime.now(UTC)
+        for run in runs:
+            run.status = BenchmarkRunStatus.FAILED
+            run.error_message = "agent reconnected; run interrupted"
+            run.completed_at = now
+        self.db.flush()
+        for group_id in {r.run_group_id for r in runs if r.run_group_id}:
+            self.maybe_finalize_run_group(group_id)
+        return [r.id for r in runs]
+
     def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
