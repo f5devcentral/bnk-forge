@@ -22,6 +22,19 @@ from services.azure_oauth_service import request_azure_oauth_token
 logger = logging.getLogger(__name__)
 
 
+def azure_refresh_failure_key(template_id: int) -> str:
+    return f"azure_sso_refresh_failed:{template_id}"
+
+
+def resolve_azure_refresh_failure(db: Session, template_id: int) -> None:
+    """Mark the open refresh-failure notification read once the SSO session works again."""
+    db.query(Notification).filter(
+        Notification.user == "admin",
+        Notification.dedupe_key == azure_refresh_failure_key(template_id),
+        Notification.is_read == False,  # noqa: E712
+    ).update({"is_read": True, "read_at": datetime.now(UTC)}, synchronize_session=False)
+
+
 class CredentialRefreshService:
     """Service for monitoring and refreshing cloud credentials"""
 
@@ -299,6 +312,7 @@ class CredentialRefreshService:
             template.last_error_at = None
             template.last_error_code = None
             template.last_error_message = None
+            resolve_azure_refresh_failure(db, template.id)
 
             db.commit()
             logger.info(f"✓ Successfully refreshed Azure SSO credentials for template '{template.name}' (ID {template.id})")
@@ -318,7 +332,7 @@ class CredentialRefreshService:
                 message=f"Failed to refresh credentials for '{template.name}': {str(e)}. Manual re-authentication may be required.",
                 resource_type="credential_template",
                 resource_id=template.id,
-                dedupe_key=f"azure_sso_refresh_failed:{template.id}",
+                dedupe_key=azure_refresh_failure_key(template.id),
             )
             return False
 
@@ -749,6 +763,7 @@ class CredentialRefreshService:
                 ).first()
                 if existing:
                     existing.message = message
+                    existing.created_at = datetime.now(UTC)
                     db.commit()
                     return
             notification = Notification(

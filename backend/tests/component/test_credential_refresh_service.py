@@ -349,3 +349,22 @@ class TestRefreshAzureTemplate:
         assert t.azure_sso_refresh_token_encrypted is None
         assert t.azure_sso_access_token_encrypted is None
         assert len(self._notifications(db, t)) == 1
+
+    @patch("services.azure_auth_service.AzureAuthService")
+    def test_recovery_marks_failure_notification_read(self, mock_azure_cls, db):
+        from services.azure_auth_service import AzureAuthError
+        t = self._template(db, minutes_left=5)
+        svc = CredentialRefreshService()
+        mock_azure_cls.return_value.refresh_credentials.side_effect = AzureAuthError("Network error")
+        svc.check_and_refresh_template(t, db)
+        first_created = self._notifications(db, t)[0].created_at
+        svc.check_and_refresh_template(t, db)
+        (notification,) = self._notifications(db, t)
+        assert notification.created_at >= first_created
+        mock_azure_cls.return_value.refresh_credentials.side_effect = None
+        mock_azure_cls.return_value.refresh_credentials.return_value = {
+            "access_token": "new", "refresh_token": "r", "expires_in": 3600,
+        }
+        assert svc.check_and_refresh_template(t, db) is True
+        db.refresh(notification)
+        assert notification.is_read is True
