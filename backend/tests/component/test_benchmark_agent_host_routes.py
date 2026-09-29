@@ -186,6 +186,25 @@ class TestAgentHostDelete:
         resp2 = client.get(f"/api/benchmarks/agent-hosts/{host_id}", headers=admin_headers)
         assert resp2.status_code == 404
 
+    def test_delete_closes_the_hosts_live_websocket(self, client, admin_headers, sample_user, db, monkeypatch):
+        import routes.benchmarks as bm
+
+        project = ProjectFactory(db, user_id=sample_user.id)
+        cred = _cred(db)
+        db.commit()
+        create_resp = client.post(
+            "/api/benchmarks/agent-hosts",
+            json={"name": "ws-host-01", "project_id": project.id, "host_ip": "10.0.4.9", "ssh_credential_id": cred.id},
+            headers=admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        host_id = create_resp.json()["id"]
+
+        closed: list[int] = []
+        monkeypatch.setattr(bm, "close_agent_connection", closed.append)
+        assert client.delete(f"/api/benchmarks/agent-hosts/{host_id}", headers=admin_headers).status_code == 204
+        assert closed == [host_id]
+
     def test_delete_provisioned_dispatches_cleanup_to_celery(
         self, client, admin_headers, sample_user, db
     ):

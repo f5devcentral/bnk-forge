@@ -345,8 +345,28 @@ class TestWSTokenValidationLogic:
         ws = MagicMock()
         ws.query_params = {"token": token}
 
-        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True),
+            patch("routes.benchmarks._agent_exists", return_value=True),
+        ):
             assert _agent_ws_authorized(ws, 7) is None
+
+    def test_matching_claim_for_deleted_agent_rejected(self):
+        """Deleting the agent revokes its tokens: a matching claim for a missing row fails."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent:7", "role": "agent", "agent_id": 7})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True),
+            patch("routes.benchmarks._agent_exists", return_value=False),
+        ):
+            assert _agent_ws_authorized(ws, 7) == 4401
 
     def test_mismatched_agent_id_claim_rejected_through_helper(self):
         from unittest.mock import MagicMock, patch
