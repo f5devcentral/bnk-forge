@@ -172,6 +172,15 @@ class TestFindHttpBackendServices:
         assert refs[0]["name"] == "agent-route"
         assert refs[0]["gatewayName"] == "gw-prod"
 
+    def test_target_port_carried_and_defaults_to_port(self):
+        services = [_service("my-svc", ports=[
+            {"port": 80, "targetPort": 8080, "name": "http"},
+            {"port": 81, "target_port": "web", "name": "alt"},
+            {"port": 82, "name": "plain"},
+        ])]
+        candidates = _find_http_backend_services(services, build_route_ref_map(_topology_http("my-svc")))
+        assert [p["targetPort"] for p in candidates[0]["ports"]] == [8080, "web", 82]
+
 
 # ---------------------------------------------------------------------------
 # _candidate_probe_ports
@@ -336,8 +345,13 @@ class TestGovernanceSanitised:
         assert _normalize_agent_card({"name": "a", "governance": "text"})["governance"] is None
 
 
-def _pod(name, labels, phase="Running"):
-    return SimpleNamespace(metadata=SimpleNamespace(name=name, labels=labels), status=SimpleNamespace(phase=phase))
+def _pod(name, labels, phase="Running", container_ports=()):
+    containers = [SimpleNamespace(ports=[SimpleNamespace(name=n, container_port=p) for n, p in container_ports])]
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, labels=labels),
+        status=SimpleNamespace(phase=phase),
+        spec=SimpleNamespace(containers=containers),
+    )
 
 
 def _candidate(name="api", ports=(8080,), selector=None):
@@ -420,4 +434,29 @@ class TestProbeAgentCards:
         cand = _candidate(selector={})
         self._run(cand, core)
         core.list_namespaced_pod.assert_not_called()
+        assert cand["probeStatus"] == "error"
+
+    def _pod_targets(self, cand, pod):
+        core = MagicMock()
+        core.connect_get_namespaced_service_proxy_with_path.side_effect = Exception("503")
+        core.connect_get_namespaced_pod_proxy_with_path.side_effect = Exception("404")
+        core.list_namespaced_pod.return_value.items = [pod]
+        self._run(cand, core)
+        return {c.kwargs["name"] for c in core.connect_get_namespaced_pod_proxy_with_path.call_args_list}
+
+    def test_pod_fallback_uses_numeric_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = 8080
+        assert self._pod_targets(cand, _pod("api-0", {"app": "api"})) == {"api-0:8080"}
+
+    def test_pod_fallback_resolves_named_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = "web"
+        pod = _pod("api-0", {"app": "api"}, container_ports=[("metrics", 9100), ("web", 8080)])
+        assert self._pod_targets(cand, pod) == {"api-0:8080"}
+
+    def test_pod_fallback_skips_unresolved_named_target_port(self):
+        cand = _candidate(ports=(80,))
+        cand["ports"][0]["targetPort"] = "web"
+        assert self._pod_targets(cand, _pod("api-0", {"app": "api"}, container_ports=[("metrics", 9100)])) == set()
         assert cand["probeStatus"] == "error"
