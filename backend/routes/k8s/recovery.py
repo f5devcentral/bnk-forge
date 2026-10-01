@@ -37,6 +37,7 @@ from services.qkview_service import (
     _detect_cwc_namespace,
     _restart_cwc_pod,
     _wait_for_secret,
+    invalidate_license_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -372,7 +373,7 @@ def _invalidate_cwc_caches(cluster_id: int) -> None:
     cache.delete(f"recovery:status:{cluster_id}")
     cache.delete(f"cwc:setup_status:{cluster_id}")
     cache.delete(f"cwc:available:{cluster_id}")
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
 
 
 @router.post(

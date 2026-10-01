@@ -174,9 +174,9 @@ export const kubernetesApi = {
   },
 
   // CNF: Namespace topology graph (D-018 P4)
-  getTopology: (clusterId: number, namespace: string) =>
+  getTopology: (clusterId: number, namespace: string, force?: boolean) =>
     apiClient
-      .get<TopologyGraphResponse>(`/api/k8s/clusters/${clusterId}/topology`, { params: { namespace } })
+      .get<TopologyGraphResponse>(`/api/k8s/clusters/${clusterId}/topology`, { params: { namespace, force } })
       .then((res) => res.data),
 
   getClusterNodeCount: (clusterId: number) =>

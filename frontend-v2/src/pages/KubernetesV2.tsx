@@ -51,7 +51,7 @@ import { MigrationPanel } from '@/components/k8s/migration';
 import { DetectClustersConfirmDialog } from '@/components/k8s/DetectClustersConfirmDialog';
 import { useHelmReleases, useUninstallHelmRelease } from '@/hooks/useHelm';
 import { useProjects } from '@/hooks/useProjects';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { countDetectedClusters } from '@/lib/api/kubernetes';
 import { queryKeys } from '@/lib/queryKeys';
@@ -175,8 +175,12 @@ export default function KubernetesV2() {
     if (viewParam && ['advanced', 'migration', 'dashboard', 'crds'].includes(viewParam)) {
       setViewMode(viewParam as 'dashboard' | 'advanced' | 'crds' | 'migration');
     }
+    const crdParam = searchParams.get('crd');
+    if (crdParam) {
+      setInitialCrd(crdParam);
+    }
 
-    const paramsToClean = ['project', 'cluster', 'namespace', 'resource', 'name', 'view'];
+    const paramsToClean = ['project', 'cluster', 'namespace', 'resource', 'name', 'view', 'crd'];
     const hasAny = paramsToClean.some((p) => searchParams.has(p));
     if (hasAny) {
       const next = new URLSearchParams(searchParams);
@@ -247,6 +251,7 @@ export default function KubernetesV2() {
     if (stored === 'advanced' || stored === 'migration' || stored === 'crds') return stored;
     return 'dashboard';
   });
+  const [initialCrd, setInitialCrd] = useState<string | null>(() => searchParams.get('crd'));
 
   // ── UI State ───────────────────────────────────────────────────────────
   const [expandedCategories, setExpandedCategories] = useState(['Workloads', 'Networking']);
@@ -430,6 +435,7 @@ export default function KubernetesV2() {
   const {
     data: helmReleasesData,
     isLoading: isLoadingHelmReleases,
+    isFetching: isFetchingHelmReleases,
     fetchStatus: helmFetchStatus,
     isError: isHelmError,
     error: helmError,
@@ -451,6 +457,18 @@ export default function KubernetesV2() {
     enabled: !!selectedCluster,
     staleTime: 30000,
   });
+
+  const k8sFetchingCount = useIsFetching({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        (key[0] === 'k8s' && key[1] === 'clusters' && key[2] === selectedCluster) ||
+        (key[0] === 'helm' && key[2] === selectedCluster)
+      );
+    },
+  });
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const isRefreshingAny = isManualRefreshing || isRefreshing || isFetchingHelmReleases || k8sFetchingCount > 0;
 
   // ── Derived / Memoized ─────────────────────────────────────────────────
   const toggleCategory = useCallback((category: string) => {
@@ -560,10 +578,18 @@ export default function KubernetesV2() {
   // ── Handlers ───────────────────────────────────────────────────────────
   const handleRefresh = async () => {
     if (!selectedCluster) return;
-    // The toolbar shows the refetch via isRefreshing (isFetching) — no toast needed.
-    await queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    if (isHelmView) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.helm.releases.byCluster(selectedCluster) });
+    setIsManualRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await Promise.all([
+        minWait,
+        queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] }),
+        isHelmView
+          ? queryClient.invalidateQueries({ queryKey: queryKeys.helm.releases.byCluster(selectedCluster) })
+          : Promise.resolve(),
+      ]);
+    } finally {
+      setIsManualRefreshing(false);
     }
   };
 
@@ -708,7 +734,7 @@ export default function KubernetesV2() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing || isLoadingHelmReleases}
+        isRefreshing={isRefreshingAny}
       >
         <div className="flex items-center gap-4 px-4 py-1.5 rounded-lg text-xs hidden md:flex bg-muted/50">
           <div className="flex items-center gap-1.5">
@@ -851,7 +877,7 @@ export default function KubernetesV2() {
             />
           ) : viewMode === 'crds' ? (
             <div className="p-6 space-y-6">
-              <K8sCrdExplorerPanel clusterId={selectedCluster} />
+              <K8sCrdExplorerPanel clusterId={selectedCluster} initialCrd={initialCrd} />
             </div>
           ) : viewMode === 'migration' ? (
             /* Migration mode: proxy/CIS migration surface (D-022 P6 Slice A).

@@ -133,7 +133,7 @@ export const router = createBrowserRouter([
       {
         // K8S-UX-005: Operators merged into Fleet page
         path: 'operators',
-        element: <Navigate to="/fleet?tab=operators" replace />,
+        element: <Navigate to="/fleet?tab=overview" replace />,
       },
       {
         path: 'fleet',

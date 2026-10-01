@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useCrds, type CRDInfo } from '@/hooks/useCrds';
 import { useClusterResources, useClusterNamespaces } from '@/hooks/useK8s';
 import { Input } from '@/components/ui/input';
@@ -12,9 +12,10 @@ import type { K8sResource } from '@/types';
 
 interface K8sCrdExplorerPanelProps {
   clusterId: number | null;
+  initialCrd?: string | null;
 }
 
-export function K8sCrdExplorerPanel({ clusterId }: K8sCrdExplorerPanelProps) {
+export function K8sCrdExplorerPanel({ clusterId, initialCrd }: K8sCrdExplorerPanelProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [selectedCrd, setSelectedCrd] = useState<CRDInfo | null>(null);
@@ -24,6 +25,23 @@ export function K8sCrdExplorerPanel({ clusterId }: K8sCrdExplorerPanelProps) {
   const { data: crdsData, isLoading: crdsLoading, refetch: refetchCrds } = useCrds(clusterId ?? 0, {
     enabled: !!clusterId,
   });
+
+  const crds = useMemo(() => crdsData?.crds ?? [], [crdsData]);
+
+  // When initialCrd is provided, auto-select the matching CRD once crds are loaded
+  useEffect(() => {
+    if (initialCrd && crds.length > 0 && !selectedCrd) {
+      const match = crds.find(
+        (c) =>
+          c.name.toLowerCase() === initialCrd.toLowerCase() ||
+          c.kind.toLowerCase() === initialCrd.toLowerCase()
+      );
+      if (match) {
+        setSelectedCrd(match);
+        if (match.group) setSelectedGroup(match.group);
+      }
+    }
+  }, [initialCrd, crds, selectedCrd]);
 
   const { data: namespacesData } = useClusterNamespaces(clusterId ?? 0);
   const namespaces = useMemo(() => namespacesData?.namespaces ?? [], [namespacesData]);
@@ -38,8 +56,6 @@ export function K8sCrdExplorerPanel({ clusterId }: K8sCrdExplorerPanelProps) {
     { namespace: selectedNamespace === 'all' ? undefined : selectedNamespace },
     { enabled: !!clusterId && !!selectedCrd }
   );
-
-  const crds = useMemo(() => crdsData?.crds ?? [], [crdsData]);
 
   const groups = useMemo(() => {
     const map = new Map<string, number>();

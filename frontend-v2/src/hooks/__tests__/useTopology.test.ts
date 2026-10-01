@@ -18,7 +18,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { useTopology } from '@/hooks/useTopology';
+import { refreshTopology, useTopology } from '@/hooks/useTopology';
 import React from 'react';
 
 // Make the cluster appear reachable so the query is not disabled.
@@ -199,5 +199,28 @@ describe('useTopology', () => {
     const edge = result.current.data!.edges[0];
     expect(edge.kind).toBe('owns');
     expect(edge.source).toBe('Deployment/default/my-dep');
+  });
+});
+
+describe('refreshTopology', () => {
+  it('forces exactly the next fetch past the backend cache', async () => {
+    const forceParams: (string | null)[] = [];
+    server.use(
+      http.get('*/api/k8s/clusters/1/topology', ({ request }) => {
+        forceParams.push(new URL(request.url).searchParams.get('force'));
+        return HttpResponse.json(makeResponse());
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0 } } });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(() => useTopology(1, 'default'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    await refreshTopology(queryClient, 1);
+    await queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', 1, 'topology'] });
+
+    expect(forceParams).toEqual([null, 'true', null]);
   });
 });

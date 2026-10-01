@@ -24,6 +24,8 @@ import {
     History,
     Layers,
     Shield,
+    HardDrive,
+    KeyRound,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useDeployments } from '@/hooks/useDeployments';
@@ -123,7 +125,28 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             label: 'Fleet: Operators',
             icon: Radio,
             shortcut: 'G O',
-            action: () => navigate('/fleet?tab=operators'),
+            action: () => navigate('/fleet?tab=overview'),
+        },
+        {
+            id: 'cnf',
+            label: 'CNF Resources',
+            icon: Layers,
+            shortcut: 'G C',
+            action: () => navigate('/cnf'),
+        },
+        {
+            id: 'infrastructure',
+            label: 'Infrastructure & DPUs',
+            icon: HardDrive,
+            shortcut: 'G I',
+            action: () => navigate('/infrastructure'),
+        },
+        {
+            id: 'auth-templates',
+            label: 'Access Methods',
+            icon: KeyRound,
+            shortcut: 'G A',
+            action: () => navigate('/auth-templates'),
         },
         {
             id: 'tasks',
