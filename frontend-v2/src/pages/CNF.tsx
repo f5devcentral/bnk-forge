@@ -33,7 +33,7 @@ import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import { useClusterResources } from '@/hooks/useK8sResources';
 import { useCrds } from '@/hooks/useCrds';
-import { useTopology } from '@/hooks/useTopology';
+import { refreshTopology, useTopology } from '@/hooks/useTopology';
 import { parseApiError } from '@/lib/error-handler';
 import { STORAGE_KEYS } from '@/lib/storage-keys';
 import type { K8sResource } from '@/types/kubernetes';
@@ -50,6 +50,12 @@ import {
 // Main Component
 // ---------------------------------------------------------------------------
 
+// The integer id in a URL param or localStorage value, or null.
+function parseId(value: string | null): number | null {
+  const id = value ? parseInt(value, 10) : NaN;
+  return Number.isNaN(id) ? null : id;
+}
+
 export default function CNF() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -62,23 +68,17 @@ export default function CNF() {
   const allClusters = allClustersResponse?.clusters ?? [];
 
   const [selectedProject, setSelectedProject] = useState<number | null>(() => {
-    const urlProj = searchParams.get('project');
-    if (urlProj) return parseInt(urlProj);
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_PROJECT);
-    return stored ? parseInt(stored) : null;
+    return parseId(searchParams.get('project')) ?? parseId(localStorage.getItem(STORAGE_KEYS.CNF_PROJECT));
   });
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
-    const urlClust = searchParams.get('cluster');
-    if (urlClust) return parseInt(urlClust);
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_CLUSTER);
-    return stored ? parseInt(stored) : null;
+    return parseId(searchParams.get('cluster')) ?? parseId(localStorage.getItem(STORAGE_KEYS.CNF_CLUSTER));
   });
 
   useEffect(() => {
-    const p = searchParams.get('project');
-    const c = searchParams.get('cluster');
-    if (p) setSelectedProject(parseInt(p));
-    if (c) setSelectedCluster(parseInt(c));
+    const p = parseId(searchParams.get('project'));
+    const c = parseId(searchParams.get('cluster'));
+    if (p !== null) setSelectedProject(p);
+    if (c !== null) setSelectedCluster(c);
   }, [searchParams]);
 
   const { data: clusters = [], isLoading: isLoadingClusters } = useProjectClusters(selectedProject ?? 0, {
@@ -141,9 +141,9 @@ export default function CNF() {
     if (selectedProject && selectedCluster) {
       const exists = visibleClusters.some((c) => c.id === selectedCluster);
       if (!exists && visibleClusters.length > 0) setSelectedCluster(visibleClusters[0].id);
-      else if (!exists && (clusters ?? []).length > 0) setSelectedCluster(null);
+      else if (!exists) setSelectedCluster(null);
     }
-  }, [isLoadingClusters, selectedProject, visibleClusters, selectedCluster, clusters]);
+  }, [isLoadingClusters, selectedProject, visibleClusters, selectedCluster]);
 
   // CRD discovery
   const { data: crdsData, isLoading: crdsLoading, isFetching: crdsFetching, error: crdsError } = useCrds(
@@ -237,7 +237,7 @@ export default function CNF() {
         queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.crds(selectedCluster) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.allResources(selectedCluster) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.namespaces(selectedCluster) }),
-        queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster, 'topology'] }),
+        refreshTopology(queryClient, selectedCluster),
       ]);
     } finally {
       setIsManualRefreshing(false);

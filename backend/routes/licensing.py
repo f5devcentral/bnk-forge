@@ -29,6 +29,7 @@ from services.operator_registry import (
 )
 from services.qkview_service import (
     QKViewError,
+    invalidate_license_status,
 )
 from services.qkview_service import (
     activate_license as legacy_activate_license,
@@ -352,7 +353,7 @@ async def activate_license_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to activate license"),
             )
-        cache.delete(f"license:status:{cluster_id}")
+        invalidate_license_status(cluster_id)
         cache.delete(f"license:report:{cluster_id}")
         return {**result, "operator_dispatch": True}
 
@@ -370,7 +371,7 @@ async def activate_license_endpoint(
             status_code=502,
             detail=result.get("error_message", "License activation failed"),
         )
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
     cache.delete(f"license:report:{cluster_id}")
     return result
 
@@ -419,7 +420,7 @@ async def renew_license_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "Failed to renew license"),
             )
-        cache.delete(f"license:status:{cluster_id}")
+        invalidate_license_status(cluster_id)
         cache.delete(f"license:report:{cluster_id}")
         return {**result, "operator_dispatch": True}
 
@@ -439,7 +440,7 @@ async def renew_license_endpoint(
             status_code=502,
             detail=result.get("error_message", "License renewal failed"),
         )
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
     cache.delete(f"license:report:{cluster_id}")
     return result
 
@@ -578,6 +579,7 @@ async def run_cwc_setup_endpoint(
                 status_code=502,
                 detail=result.get("error_message", "CWC cert setup failed via operator"),
             )
+        invalidate_license_status(cluster_id)
         return {**result, "operator_dispatch": True}
 
     k8s_service = KubernetesService(db)
@@ -599,7 +601,8 @@ async def get_cwc_status_endpoint(
 
     Returns: certs_mounted, cwc_service_found, cwc_reachable, setup_complete,
     cert_manager_available, and the full CWC /status response if reachable.
-    Cached for 120 seconds to prevent repeated WAN round-trips.
+    Cached for 120 seconds (cleared by CWC setup and license changes); pass
+    force=true to bypass the cache.
     """
     from core.cache import cache
 
@@ -663,14 +666,7 @@ async def get_cwc_status_endpoint(
         # get the full health check, not just boolean flags (FEAT-0261 / ERR-0008).
         if cwc_found:
             try:
-                # Reuse license:status cache if present to avoid duplicate heavy remote exec
-                license_cache_key = f"license:status:{cluster_id}"
-                cached_status = None if force else cache.get(license_cache_key)
-                if cached_status is not None:
-                    response["status"] = cached_status
-                else:
-                    from services.qkview_service import get_license_status
-                    response["status"] = get_license_status(k8s_service, cluster_id, force=force)
+                response["status"] = legacy_get_license_status(k8s_service, cluster_id, force=force)
             except Exception as status_err:
                 logger.debug("Could not fetch CWC /status payload: %s", status_err)
 

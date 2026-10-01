@@ -155,6 +155,7 @@ export const queryKeys = {
       crds: (clusterId: number, params?: { group?: string[] }) =>
         ['k8s', 'clusters', clusterId, 'crds', params] as const,
       // CNF: Namespace topology graph (D-018 P4)
+      topologyAll: (clusterId: number) => ['k8s', 'clusters', clusterId, 'topology'] as const,
       topology: (clusterId: number, namespace: string) =>
         ['k8s', 'clusters', clusterId, 'topology', namespace] as const,
       // DPF (NVIDIA DPU infrastructure)

@@ -242,12 +242,18 @@ export default function ProjectDetailV2() {
     }, { replace: true });
   }, [setSearchParams, defaultTab]);
 
-  // Open edit dialog if deep linked via ?tab=settings or ?action=edit
+  // Open edit dialog if deep linked via ?tab=settings or ?action=edit, then drop
+  // the params so later URL updates (tab switches, Back) don't reopen it.
   useEffect(() => {
     if (searchParams.get('tab') === 'settings' || searchParams.get('action') === 'edit') {
       setShowEditDialog(true);
+      setSearchParams(prev => {
+        prev.delete('action');
+        if (prev.get('tab') === 'settings') prev.delete('tab');
+        return prev;
+      }, { replace: true });
     }
-  }, [searchParams]);
+  }, [searchParams, setSearchParams]);
   const [pipelineCollapsed, setPipelineCollapsed] = useState(() => {
     const stored = localStorage.getItem(`bnk-forge:project-${projectId}:pipeline-collapsed`);
     return stored !== null ? stored === 'true' : false;

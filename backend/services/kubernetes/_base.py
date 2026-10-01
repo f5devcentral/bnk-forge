@@ -211,7 +211,8 @@ class KubernetesServiceBase:
         # bound on the wire attempt itself.
         cfg = client.Configuration.get_default_copy()
         cfg.retries = 0
-        return client.ApiClient(cfg)
+        cfg.connection_pool_maxsize = 128
+        return client.ApiClient(cfg, pool_threads=128)
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:

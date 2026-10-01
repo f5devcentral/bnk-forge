@@ -39,15 +39,19 @@ def build_namespace_topology(
     k8s_service: KubernetesService,
     cluster_id: int,
     namespace: str,
+    *,
+    force: bool = False,
 ) -> TopologyGraphResponse:
     """Fetch all relevant resources then assemble the topology graph.
+
+    The graph is cached for 60 seconds per namespace; ``force`` bypasses the cache.
 
     Raises BreakerOpenError (503) automatically via @with_breaker on get_resources
     if the cluster is unreachable.  The route just needs @handle_route_errors.
     """
     cache_key = f"k8s:topology:{cluster_id}:{namespace}"
-    cached = cache.get(cache_key)
-    if cached is not None and isinstance(cached, dict):
+    cached = None if force else cache.get(cache_key)
+    if isinstance(cached, dict):
         try:
             return TopologyGraphResponse(**cached)
         except Exception:

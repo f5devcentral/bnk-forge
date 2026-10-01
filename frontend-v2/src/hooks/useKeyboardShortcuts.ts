@@ -186,6 +186,7 @@ export function useNavigationShortcuts() {
         { leader: 'g', followUp: 'c', action: () => navigate('/cnf'), description: 'Go to CNF' },
         { leader: 'g', followUp: 'k', action: () => navigate('/kubernetes'), description: 'Go to Kubernetes' },
         { leader: 'g', followUp: 'i', action: () => navigate('/infrastructure'), description: 'Go to Infrastructure' },
+        { leader: 'g', followUp: 'a', action: () => navigate('/auth-templates'), description: 'Go to Access Methods' },
         { leader: 'g', followUp: 'o', action: () => navigate('/fleet?tab=overview'), description: 'Go to Operators' },
         { leader: 'g', followUp: 't', action: () => navigate('/tasks'), description: 'Go to Tasks' },
         { leader: 'g', followUp: 'h', action: () => navigate('/helm'), description: 'Go to Helm' },

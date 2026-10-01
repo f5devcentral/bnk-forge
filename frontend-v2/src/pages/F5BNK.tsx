@@ -26,7 +26,7 @@ import {
   Server, AlertTriangle, Activity, Plus, Globe, Shield, ShieldAlert,
   ChevronDown, List, FileText, Code, Download, Network,
 } from 'lucide-react';
-import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
@@ -568,11 +568,11 @@ export default function F5BNK() {
       const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
       if (!clusterExistsInProject && visibleClusters.length > 0) {
         setSelectedCluster(visibleClusters[0].id);
-      } else if (!clusterExistsInProject && (clusters ?? []).length > 0) {
+      } else if (!clusterExistsInProject) {
         setSelectedCluster(null);
       }
     }
-  }, [linkPending, isLoadingClusters, selectedProject, visibleClusters, selectedCluster, clusters]);
+  }, [linkPending, isLoadingClusters, selectedProject, visibleClusters, selectedCluster]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
@@ -605,20 +605,8 @@ export default function F5BNK() {
   });
   const namespaces = namespacesResponse?.namespaces || [];
 
-  const bnkFetchingCount = useIsFetching({
-    predicate: (query) => {
-      const key = query.queryKey;
-      return (
-        (key[0] === 'k8s' && key[1] === 'clusters' && key[2] === selectedCluster) ||
-        (key[0] === 'bnk-resources' && key[1] === selectedCluster) ||
-        key[0] === 'runbooks' ||
-        key[0] === 'tmm-debug' ||
-        key[0] === 'qkview' ||
-        key[0] === 'licensing'
-      );
-    },
-  });
-  const isRefreshingAny = isRefreshing || bnkFetchingCount > 0;
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const isRefreshingAny = isRefreshing || isManualRefreshing;
 
   // Filter resources by search
   const filteredResources: K8sResource[] = (resources?.resources?.filter((resource: K8sResource) => {
@@ -653,7 +641,7 @@ export default function F5BNK() {
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     if (!selectedCluster) return;
     // Invalidate ALL queries related to this cluster:
     //   - 'bnk-resources' → resource list views (gateways, routes, policies, etc.)
@@ -662,14 +650,25 @@ export default function F5BNK() {
     //   - 'tmm-debug' → TMM debug pod discovery
     //   - 'qkview' → QKView operations
     //   - 'licensing' → BNK licensing status
-    queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-    queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    queryClient.invalidateQueries({ queryKey: ['runbooks'] });
-    queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
-    queryClient.invalidateQueries({ queryKey: ['qkview'] });
-    queryClient.invalidateQueries({ queryKey: ['licensing'] });
-    // Last, so its forced BNK data fetch is not cancelled by the broader invalidations above.
-    refreshBnkData(queryClient, selectedCluster);
+    // The spinner tracks the BNK data on screen; the slower diagnostics queries
+    // (QKView pod exec, CWC licensing) refresh in the background.
+    void queryClient.invalidateQueries({ queryKey: ['runbooks'] });
+    void queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
+    void queryClient.invalidateQueries({ queryKey: ['qkview'] });
+    void queryClient.invalidateQueries({ queryKey: ['licensing'] });
+    setIsManualRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await Promise.all([
+        minWait,
+        queryClient.invalidateQueries({ queryKey: ['bnk-resources'] }),
+        queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] }),
+        // Last, so its forced BNK data fetch is not cancelled by the broader invalidations above.
+        refreshBnkData(queryClient, selectedCluster),
+      ]);
+    } finally {
+      setIsManualRefreshing(false);
+    }
   };
 
   const handleDescribe = (resource: K8sResource) => {

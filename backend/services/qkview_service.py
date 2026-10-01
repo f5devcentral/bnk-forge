@@ -499,8 +499,26 @@ def _delete_client_pod(
         logger.warning(f"Failed to delete qkview client pod {pod_name}: {e}")
 
 
+# CWC client metadata (namespace, cert secret, REST port) is shared through the
+# cache. The admin token stays in process memory so it never lands in Redis.
+_CWC_META_TTL_SEC = 300
+_cwc_token_cache: dict[str, tuple[float, str]] = {}
+
+
+def _cwc_meta_key(api_client: k8s_client.ApiClient) -> str:
+    return f"cwc:client_meta:{getattr(api_client.configuration, 'host', 'default')}"
+
+
+def _invalidate_cwc_client_meta(api_client: k8s_client.ApiClient) -> None:
+    key = _cwc_meta_key(api_client)
+    cache.delete(key)
+    _cwc_token_cache.pop(key, None)
+
+
 def _cleanup_all_client_pods(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_DEFAULT_NAMESPACE):
     """Delete ALL bnk-forge agent pods (both new and legacy labels)."""
+    # The certs these pods mount changed, so the cached client metadata is stale too.
+    _invalidate_cwc_client_meta(api_client)
     core_v1 = k8s_client.CoreV1Api(api_client)
     for label in [CLIENT_POD_LABEL, "bnk-forge-qkview-client"]:
         try:
@@ -702,18 +720,24 @@ def _cwc_request(
         raw_body: Raw string body (sent as-is, for /reactivate and /receipt)
         stream: If True, return raw bytes (for binary downloads)
     """
-    meta_cache_key = f"cwc:client_meta:{getattr(api_client.configuration, 'host', 'default')}"
-    cached_meta = cache.get(meta_cache_key)
-    if cached_meta and isinstance(cached_meta, (tuple, list)) and len(cached_meta) == 4:
-        cwc_ns, cert_secret, cwc_port, bearer_token = cached_meta
+    meta_key = _cwc_meta_key(api_client)
+    cached_meta = cache.get(meta_key)
+    if isinstance(cached_meta, list) and len(cached_meta) == 3:
+        cwc_ns, cert_secret, cwc_port = cached_meta
     else:
         cwc_ns = _detect_cwc_namespace(api_client)
         cert_secret = _find_cert_secret(api_client, cwc_ns)
         cwc_port = _get_cwc_rest_port(api_client, cwc_ns)
-        bearer_token = _get_admin_token(api_client, cwc_ns)
-        cache.set(meta_cache_key, (cwc_ns, cert_secret, cwc_port, bearer_token), ttl_seconds=300)
-
+        cache.set(meta_key, [cwc_ns, cert_secret, cwc_port], ttl_seconds=_CWC_META_TTL_SEC)
     cwc_url = f"https://{CWC_SERVICE}.{cwc_ns}:{cwc_port}{path}"
+    token_entry = _cwc_token_cache.get(meta_key)
+    if token_entry and token_entry[0] > time.monotonic():
+        bearer_token: str | None = token_entry[1]
+    else:
+        bearer_token = _get_admin_token(api_client, cwc_ns)
+        if bearer_token:
+            _cwc_token_cache[meta_key] = (time.monotonic() + _CWC_META_TTL_SEC, bearer_token)
+
     pod_name = _get_or_create_client_pod(api_client, cert_secret, cwc_ns)
 
     try:
@@ -1308,7 +1332,7 @@ def setup_cwc_api_certs(
     # Invalidate cached CWC status
     cache.delete(f"cwc:setup_status:{cluster_id}")
     cache.delete(f"cwc:available:{cluster_id}")
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
 
     return {
         "success": True,
@@ -1661,6 +1685,12 @@ def _format_switch_failure_message(
     )
 
 
+def invalidate_license_status(cluster_id: int) -> None:
+    """Drop the cached license status and the CWC status payload that embeds it."""
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"cwc:status:{cluster_id}")
+
+
 def get_license_status(
     k8s_service: KubernetesService, cluster_id: int, force: bool = False
 ) -> dict[str, Any]:
@@ -1672,7 +1702,7 @@ def get_license_status(
     status, etc.  The raw CWC response is included as ``raw_cwc_response``
     for debugging.
 
-    Results are cached for 30 seconds per cluster; pass ``force=True`` to
+    Results are cached for 120 seconds per cluster; pass ``force=True`` to
     bypass the cache.
     """
     cache_key = f"license:status:{cluster_id}"
@@ -1815,7 +1845,7 @@ def activate_license(
 
     # Activation changed license state; invalidate cached status/report so the
     # next read reflects the new state instead of a stale cached value.
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
     cache.delete(f"license:report:{cluster_id}")
     return response
 
