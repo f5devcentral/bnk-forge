@@ -44,10 +44,11 @@ import {
   Terminal, FileOutput, Rocket,
   Database, Plus, GitBranch, ChevronDown,
   CloudCog, Shield, Server, Layers, Camera, UserCheck, AlertTriangle, Search, CheckCircle, CircuitBoard, Cpu,
-  Clock, FileText, ScrollText,
+  Clock, FileText, ScrollText, RefreshCw,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/authStore';
 import { useProject, useDeleteProject } from '@/hooks/useProjects';
@@ -124,6 +125,26 @@ export default function ProjectDetailV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const projectId = parseInt(id || '0');
+
+  const queryClient = useQueryClient();
+  const [isPageRefreshing, setIsPageRefreshing] = useState(false);
+
+  const handlePageRefresh = useCallback(async () => {
+    setIsPageRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await Promise.all([
+        minWait,
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.modules.project.byProject(projectId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.drift.all }),
+        queryClient.invalidateQueries({ queryKey: ['tasks', 'project', projectId] }),
+      ]);
+    } finally {
+      setIsPageRefreshing(false);
+    }
+  }, [queryClient, projectId]);
 
   const currentUser = useAuthStore((s) => s.user);
   const { data: project, isLoading: projectLoading } = useProject(projectId);
@@ -220,6 +241,13 @@ export default function ProjectDetailV2() {
       return prev;
     }, { replace: true });
   }, [setSearchParams, defaultTab]);
+
+  // Open edit dialog if deep linked via ?tab=settings or ?action=edit
+  useEffect(() => {
+    if (searchParams.get('tab') === 'settings' || searchParams.get('action') === 'edit') {
+      setShowEditDialog(true);
+    }
+  }, [searchParams]);
   const [pipelineCollapsed, setPipelineCollapsed] = useState(() => {
     const stored = localStorage.getItem(`bnk-forge:project-${projectId}:pipeline-collapsed`);
     return stored !== null ? stored === 'true' : false;
@@ -579,6 +607,17 @@ export default function ProjectDetailV2() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-9 p-0"
+                onClick={handlePageRefresh}
+                disabled={isPageRefreshing}
+                title="Refresh project"
+                aria-label="Refresh project"
+              >
+                <RefreshCw className={cn('h-4 w-4', isPageRefreshing && 'animate-spin')} aria-hidden="true" />
+              </Button>
             </div>
           )}
         </div>
@@ -695,7 +734,7 @@ export default function ProjectDetailV2() {
                 <p className="text-sm mb-4 text-muted-foreground">
                   View and manage Kubernetes resources (pods, deployments, services, etc.) on the dedicated K8s page.
                 </p>
-                <Button variant="outline" size="sm" onClick={() => navigate(`/kubernetes?project=${projectId}`)}>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/kubernetes?project=${projectId}&view=advanced`)}>
                   <CloudCog className="h-4 w-4 mr-1.5" />Go to Kubernetes page
                 </Button>
               </div>

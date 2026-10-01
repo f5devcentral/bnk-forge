@@ -26,7 +26,7 @@ import {
   Server, AlertTriangle, Activity, Plus, Globe, Shield, ShieldAlert,
   ChevronDown, List, FileText, Code, Download, Network,
 } from 'lucide-react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
@@ -389,7 +389,7 @@ export default function F5BNK() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const redirectToFleetDpf = useCallback((clusterId: number) => {
-    navigate(`/fleet?tab=dpf&cluster=${clusterId}`, { replace: true });
+    navigate(`/infrastructure?tab=dpus&cluster=${clusterId}`, { replace: true });
   }, [navigate]);
 
   // Project and cluster selection (persisted to localStorage)
@@ -416,7 +416,7 @@ export default function F5BNK() {
     return stored ? parseInt(stored) : null;
   });
 
-  const { data: clusters = [] } = useProjectClusters(selectedProject ?? 0, {
+  const { data: clusters = [], isLoading: isLoadingClusters } = useProjectClusters(selectedProject ?? 0, {
     pollingEnabled: false,
   });
 
@@ -461,7 +461,7 @@ export default function F5BNK() {
     );
     if (fromUrl) {
       if (fromUrl === VIEW_DPF_INFRA) {
-        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        setTimeout(() => navigate('/infrastructure?tab=dpus'), 0);
         return VIEW_TOPOLOGY;
       }
       return fromUrl;
@@ -470,9 +470,9 @@ export default function F5BNK() {
     const initialView = localStorage.getItem('bnk-forge-bnk-initial-view');
     if (initialView) {
       localStorage.removeItem('bnk-forge-bnk-initial-view');
-      // DPF moved to Fleet — redirect if deep-link targets it
+      // DPF moved to Infrastructure — redirect if deep-link targets it
       if (initialView === VIEW_DPF_INFRA) {
-        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        setTimeout(() => navigate('/infrastructure?tab=dpus'), 0);
         return VIEW_TOPOLOGY;
       }
       return initialView;
@@ -563,16 +563,16 @@ export default function F5BNK() {
 
   // Clear cluster selection when project changes
   useEffect(() => {
-    if (linkPending) return;
+    if (linkPending || isLoadingClusters) return;
     if (selectedProject && selectedCluster) {
       const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
       if (!clusterExistsInProject && visibleClusters.length > 0) {
         setSelectedCluster(visibleClusters[0].id);
-      } else if (!clusterExistsInProject) {
+      } else if (!clusterExistsInProject && (clusters ?? []).length > 0) {
         setSelectedCluster(null);
       }
     }
-  }, [linkPending, selectedProject, visibleClusters, selectedCluster]);
+  }, [linkPending, isLoadingClusters, selectedProject, visibleClusters, selectedCluster, clusters]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
@@ -604,6 +604,21 @@ export default function F5BNK() {
     enabled: !!selectedCluster && clusterReachable,
   });
   const namespaces = namespacesResponse?.namespaces || [];
+
+  const bnkFetchingCount = useIsFetching({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        (key[0] === 'k8s' && key[1] === 'clusters' && key[2] === selectedCluster) ||
+        (key[0] === 'bnk-resources' && key[1] === selectedCluster) ||
+        key[0] === 'runbooks' ||
+        key[0] === 'tmm-debug' ||
+        key[0] === 'qkview' ||
+        key[0] === 'licensing'
+      );
+    },
+  });
+  const isRefreshingAny = isRefreshing || bnkFetchingCount > 0;
 
   // Filter resources by search
   const filteredResources: K8sResource[] = (resources?.resources?.filter((resource: K8sResource) => {
@@ -944,7 +959,7 @@ export default function F5BNK() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
+        isRefreshing={isRefreshingAny}
       >
         {selectedCluster && !isSpecialView(selectedResourceType) && (
           <Badge variant="outline" className="text-xs h-7">
