@@ -14,18 +14,26 @@
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-export function usePageRefresh() {
+export function usePageRefresh(queryKeys?: readonly (readonly unknown[])[]) {
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
     try {
-      await queryClient.invalidateQueries();
+      if (queryKeys && queryKeys.length > 0) {
+        await Promise.all([
+          minWait,
+          ...queryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key })),
+        ]);
+      } else {
+        await Promise.all([minWait, queryClient.invalidateQueries()]);
+      }
     } finally {
       setIsRefreshing(false);
     }
-  }, [queryClient]);
+  }, [queryClient, queryKeys]);
 
   return { refresh, isRefreshing };
 }

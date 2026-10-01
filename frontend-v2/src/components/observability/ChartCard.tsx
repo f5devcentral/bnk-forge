@@ -116,7 +116,7 @@ export function ChartCard({
           <p className="text-xs">{unavailableReason || 'Data source unavailable'}</p>
         </div>
       ) : (
-        <div className="flex-1">{children}</div>
+        <div className="flex-1 min-w-0">{children}</div>
       )}
 
       {!loading && available && shown.length > 0 && (

@@ -246,7 +246,7 @@ const ModuleRow = memo(function ModuleRow({
   );
 });
 
-export default function Modules() {
+export default function Modules({ embedded }: { embedded?: boolean } = {}) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>(undefined);
   const [selectedSourceId, setSelectedSourceId] = useState<number | null>(null);
@@ -373,15 +373,42 @@ export default function Modules() {
     : `${modules?.length || 0} modules across ${sources?.length || 0} source${sources?.length === 1 ? '' : 's'}`;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className={cn(embedded ? 'space-y-6' : 'p-6 space-y-6 max-w-7xl mx-auto')}>
       {/* Header */}
-      <PageHeader
-        title="Module Catalog"
-        subtitle={subtitle}
-        onRefresh={refresh}
-        isRefreshing={isRefreshing}
-        actions={
-          <>
+      {!embedded ? (
+        <PageHeader
+          title="Module Catalog"
+          subtitle={subtitle}
+          onRefresh={refresh}
+          isRefreshing={isRefreshing}
+          actions={
+            <>
+              <Button onClick={() => setSourcesDialogOpen(true)} variant="outline" size="sm">
+                <Settings className="h-4 w-4 mr-1.5" />
+                Sources
+              </Button>
+              <Button onClick={() => setRegistryBrowseDialogOpen(true)} variant="outline" size="sm">
+                <Globe className="h-4 w-4 mr-1.5" />
+                Browse registry
+              </Button>
+              <Button
+                onClick={() => syncLibraryMutation.mutate(false)}
+                disabled={syncLibraryMutation.isPending}
+                variant="outline"
+                size="sm"
+              >
+                <RefreshCw
+                  className={cn('h-4 w-4 mr-1.5', syncLibraryMutation.isPending && 'animate-spin')}
+                />
+                Sync all
+              </Button>
+            </>
+          }
+        />
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
+          <div className="flex items-center gap-2">
             <Button onClick={() => setSourcesDialogOpen(true)} variant="outline" size="sm">
               <Settings className="h-4 w-4 mr-1.5" />
               Sources
@@ -401,9 +428,9 @@ export default function Modules() {
               />
               Sync all
             </Button>
-          </>
-        }
-      />
+          </div>
+        </div>
+      )}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

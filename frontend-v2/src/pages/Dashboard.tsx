@@ -414,7 +414,7 @@ export default function Dashboard() {
 
             {/* Offline operators */}
             {offlineOperators.map((op) => (
-              <Link key={`offline-${op.operator_id}`} to="/fleet?tab=operators">
+              <Link key={`offline-${op.operator_id}`} to="/fleet?tab=overview">
                 <div className="flex items-center gap-3 p-4 rounded-xl border border-border hover:border-border/80 hover:shadow-sm transition-all">
                   <div className="p-2 rounded-lg bg-muted">
                     <WifiOff className="h-5 w-5 text-muted-foreground" />
