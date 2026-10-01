@@ -160,6 +160,7 @@ class TestGetBnkData:
     ):
         """Unified endpoint returns health, topology, backends, palette, policy."""
         cluster = make_k8s_cluster(project=sample_project, name="bnk-data-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data",
@@ -215,6 +216,7 @@ class TestGetBnkData:
     ):
         """Namespace query param is forwarded to fetch_all_bnk_data."""
         cluster = make_k8s_cluster(project=sample_project, name="ns-filter-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data?namespace=f5-bnk",
@@ -224,6 +226,70 @@ class TestGetBnkData:
 
         _, kwargs = mock_fetch.call_args
         assert kwargs.get("namespace") == "f5-bnk" or mock_fetch.call_args[0][2] == "f5-bnk"
+
+
+    @patch("routes.k8s.f5bnk.fetch_tmm_traffic_stats")
+    @patch("routes.k8s.f5bnk.fetch_all_bnk_data")
+    @patch("routes.k8s.f5bnk.KubernetesService")
+    def test_traffic_stats_map_to_analysed_listeners(
+        self, mock_k8s_svc_cls, mock_fetch, mock_stats,
+        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+    ):
+        """TMM virtual-server rows map onto the gateway listeners from the real pipeline."""
+        cluster = make_k8s_cluster(project=sample_project, name="traffic-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
+        mock_fetch.return_value = _make_bnk_data()
+        mock_stats.return_value = {
+            "source": "tmctl",
+            "podName": "f5-tmm-abc",
+            "namespace": "f5-bnk",
+            "virtualServerStat": {
+                "columns": ["name", "clientside.bytes_in", "clientside.bytes_out",
+                            "clientside.cur_conns", "clientside.tot_conns"],
+                "rows": [["gw-prod_http", "1024", "2048", "5", "100"]],
+                "exit_code": 0,
+            },
+            "fwRuleStat": {"columns": ["name", "hit_count", "action"], "rows": [], "exit_code": 0},
+            "configviewMappings": [],
+            "error": None,
+        }
+
+        response = client.get(
+            f"/api/k8s/clusters/{cluster.id}/f5bnk/data",
+            headers=viewer_headers,
+        )
+        assert response.status_code == 200
+        listeners = response.json()["trafficStats"]["listeners"]
+        assert len(listeners) == 1
+        assert listeners[0]["gatewayName"] == "gw-prod"
+        assert listeners[0]["listenerName"] == "http"
+
+    @pytest.mark.parametrize("mode", ["reverse_ssh", "ngrok_tunnel", "in_cluster"])
+    @patch("routes.k8s.f5bnk.fetch_all_bnk_data")
+    @patch("routes.k8s.f5bnk.KubernetesService")
+    def test_linked_operator_mode_is_accepted(
+        self, mock_k8s_svc_cls, mock_fetch, mode,
+        client, db, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+    ):
+        """Every operator connectivity mode validates in the integration context."""
+        from models import ConnectedOperator
+
+        cluster = make_k8s_cluster(project=sample_project, name=f"op-{mode}")
+        db.add(ConnectedOperator(
+            operator_id=f"op-{mode}", cluster_name=cluster.name,
+            cluster_id=cluster.id, connectivity_mode=mode,
+        ))
+        db.flush()
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
+        mock_fetch.return_value = _make_bnk_data()
+
+        for path in ("data", "health"):
+            response = client.get(
+                f"/api/k8s/clusters/{cluster.id}/f5bnk/{path}",
+                headers=viewer_headers,
+            )
+            assert response.status_code == 200, path
+        assert response.json()["integration"]["operatorMode"] == mode
 
 
 class TestGetBnkHealth:
@@ -237,6 +303,7 @@ class TestGetBnkHealth:
     ):
         """Health endpoint runs real analysis and returns structured result."""
         cluster = make_k8s_cluster(project=sample_project, name="bnk-health-cluster")
+        mock_k8s_svc_cls.return_value.get_cluster.return_value = cluster
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/health",

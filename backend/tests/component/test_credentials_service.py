@@ -14,6 +14,7 @@ from models import ApplicationSetting, CloudCredentialTemplate, Project
 from services.credentials_service import (
     CredentialUnavailableError,
     _decrypt_credential,
+    get_azure_service_principal_info,
     get_cloud_credentials_env,
     get_gcp_service_account_info,
 )
@@ -127,6 +128,40 @@ class TestCredentialTemplate:
         assert env["IBMCLOUD_API_KEY"] == "ibm-api-key"
         assert env["IBMCLOUD_REGION"] == "us-south"
 
+    @patch("services.credentials_service.decrypt_value", return_value="ibm-api-key")
+    def test_misspelled_ibmcloud_provider_injects_nothing(self, mock_dec, db):
+        """Issue #191 reproduction at the injection layer.
+
+        A template stored with provider='ibmcloud' (the natural misspelling of
+        the canonical 'ibm', matching every adjacent ibmcloud_* field name)
+        matches NO branch in the resolver, so it silently contributes no IBM
+        credentials — the deploy then fails far away with a BearerToken error.
+        The create/update validation (issue #191) now prevents such a row from
+        being created; this locks the resolver contract that made it dangerous.
+        """
+        template = _make_template(
+            db,
+            name="IBM ROKs Testing",
+            provider="ibmcloud",  # unknown to the resolver -> no-op
+            region="us-east",
+            aws_auth_method=None,
+            aws_access_key_id=None,
+            aws_secret_access_key_encrypted=None,
+            ibmcloud_api_key_encrypted="enc_ibm_key",
+        )
+        project = _make_project(
+            db,
+            credential_template_id=template.id,
+            project_type="cloud-aws",
+            cloud_provider="ibm",
+        )
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        # The stored API key never reaches the deployment environment.
+        assert "IC_API_KEY" not in env
+        assert "IBMCLOUD_API_KEY" not in env
+
     @patch("services.credentials_service.decrypt_value", side_effect=Exception("Bad key"))
     def test_ibm_template_decrypt_failure_omits_api_key(self, mock_dec, db):
         template = _make_template(
@@ -151,6 +186,29 @@ class TestCredentialTemplate:
         assert "IC_API_KEY" not in env
         assert "IBMCLOUD_API_KEY" not in env
         assert env["IBMCLOUD_REGION"] == "eu-de"
+
+    @pytest.mark.parametrize("method, exported", [("service_principal", True), ("sso", False)])
+    @patch("services.credentials_service.decrypt_value", return_value="sp-secret")
+    def test_azure_template_exports_client_secret_only_for_service_principal(
+        self, mock_dec, method, exported, db, monkeypatch
+    ):
+        for key in ("ARM_CLIENT_ID", "ARM_CLIENT_SECRET", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"):
+            monkeypatch.delenv(key, raising=False)
+        template = _make_template(
+            db, name="Azure Template", provider="azure", region="eastus",
+            aws_auth_method=None, aws_access_key_id=None, aws_secret_access_key_encrypted=None,
+            azure_auth_method=method, azure_tenant_id="tenant-1", azure_subscription_id="sub-1",
+            azure_client_id="client-1", azure_client_secret_encrypted="enc",
+        )
+        project = _make_project(db, credential_template_id=template.id,
+                                project_type="cloud-azure", cloud_provider="azure")
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        assert env["ARM_TENANT_ID"] == "tenant-1"
+        assert env["ARM_SUBSCRIPTION_ID"] == "sub-1"
+        assert ("ARM_CLIENT_SECRET" in env) is exported
+        assert ("ARM_CLIENT_ID" in env) is exported
 
 
 # ── Priority 2: Legacy Encrypted Credentials ────────────────────────
@@ -575,3 +633,30 @@ class TestAwsTfVarMirroring:
 
         assert "TF_VAR_aws_access_key_id" not in env
         assert "TF_VAR_aws_secret_access_key" not in env
+
+
+class TestAzureSSOTemplateNotProvisioning:
+    def _sso_template(self, db, **kwargs):
+        return _make_template(
+            db, name="Azure SSO", provider="azure", aws_auth_method=None, aws_access_key_id=None,
+            aws_secret_access_key_encrypted=None, azure_auth_method="sso", azure_tenant_id="tenant-1",
+            **kwargs,
+        )
+
+    def test_sso_default_template_not_used_for_unbound_azure_project(self, db, monkeypatch):
+        monkeypatch.delenv("ARM_TENANT_ID", raising=False)
+        self._sso_template(db, is_default=True)
+        project = _make_project(db, name="Unbound Azure", project_type="cloud-azure", cloud_provider="azure")
+
+        env = get_cloud_credentials_env(project, db=db)
+
+        assert "ARM_TENANT_ID" not in env
+
+    @patch("services.credentials_service.decrypt_value",
+           return_value='{"client_id": "c", "client_secret": "s"}')
+    def test_sp_resolver_ignores_sso_template_blob(self, mock_dec, db):
+        template = self._sso_template(db, azure_credentials_encrypted="enc")
+        project = _make_project(db, name="Azure SSO Bound", project_type="cloud-azure",
+                                cloud_provider="azure", credential_template_id=template.id)
+
+        assert get_azure_service_principal_info(project, db) is None

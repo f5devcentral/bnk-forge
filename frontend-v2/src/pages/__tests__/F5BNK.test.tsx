@@ -215,9 +215,7 @@ describe('F5BNK', () => {
   it('renders the active category\'s items in the sidebar', () => {
     render(<F5BNK />);
     // D-020: top-level categories are now header tabs; the sidebar shows the
-    // active category's items flat. The default selection lands on the
-    // Insights category, so its items (e.g. Health Dashboard) are listed.
-    const sidebarItem = screen.queryByText(/health dashboard/i) || screen.queryByText(/traffic flow/i);
+    const sidebarItem = screen.queryByText(/object topology graph/i) || screen.queryByText(/traffic flow pipeline/i) || screen.queryByText(/health dashboard/i);
     expect(sidebarItem).toBeInTheDocument();
   });
 

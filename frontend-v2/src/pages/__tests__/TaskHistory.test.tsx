@@ -150,6 +150,12 @@ describe('TaskHistory', () => {
     expect(screen.getByText(/Total \(7d\)/i)).toBeInTheDocument();
   });
 
+  it('scopes the embedded 7-day KPI strip to its project', () => {
+    setupDefaultMocks();
+    render(<TaskHistory projectId={7} embedded />);
+    expect(vi.mocked(useTaskStats)).toHaveBeenCalledWith({ days: 7, project_id: 7 });
+  });
+
   it('renders loading skeletons while data is fetching', () => {
     setupDefaultMocks({ tasks: [], isLoading: true });
     render(<TaskHistory />);

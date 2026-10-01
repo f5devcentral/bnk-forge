@@ -44,7 +44,7 @@ import {
   Terminal, FileOutput, Rocket,
   Database, Plus, GitBranch, ChevronDown,
   CloudCog, Shield, Server, Layers, Camera, UserCheck, AlertTriangle, Search, CheckCircle, CircuitBoard, Cpu,
-  Clock, FileText,
+  Clock, FileText, ScrollText,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -95,6 +95,9 @@ const BareMetalPanel = lazy(() =>
 );
 const DpuPanel = lazy(() =>
   import('@/components/dpu/DpuPanel').then((m) => ({ default: m.DpuPanel }))
+);
+const TaskHistory = lazy(() =>
+  import('@/pages/TaskHistory').then((m) => ({ default: m.default }))
 );
 import { useActiveRunHandle, useRunProgress, useExecutionPlan } from '@/hooks/useParallelExecution';
 import { getCloudProviderBadgeInfo, getProjectLocationInfo } from '@/lib/aws-regions';
@@ -198,7 +201,7 @@ export default function ProjectDetailV2() {
 
   // IMP-018: Sync page tab with URL query parameter for deep-linking & back/forward navigation
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['modules', 'variables', 'secrets', 'clusters', 'discovery', 'drift', 'snapshots', 'bare-metal', 'dpu'] as const;
+  const validTabs = ['modules', 'variables', 'secrets', 'clusters', 'discovery', 'drift', 'snapshots', 'bare-metal', 'dpu', 'operations'] as const;
   type PageTab = typeof validTabs[number];
   const urlTab = searchParams.get('tab');
   // K8S-UX-001: Default tab depends on project mode — K8s-only projects
@@ -638,6 +641,7 @@ export default function ProjectDetailV2() {
                 { key: 'snapshots', label: 'Snapshots', icon: Camera },
               ]
             : []),
+          { key: 'operations', label: 'Operations Log', icon: ScrollText },
         ];
         return (
           <ResourceViewTabs
@@ -751,6 +755,17 @@ export default function ProjectDetailV2() {
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="max-w-7xl">
             <SnapshotHistory projectId={projectId} />
+          </div>
+        </div>
+      )}
+
+      {/* Operations Log Tab */}
+      {pageTab === 'operations' && (
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          <div className="max-w-7xl">
+            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+              <TaskHistory projectId={projectId} embedded />
+            </Suspense>
           </div>
         </div>
       )}

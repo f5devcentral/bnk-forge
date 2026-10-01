@@ -5,7 +5,7 @@
  * create/update/delete mutations, test connection, EKS detection,
  * kubeconfig refresh, namespaces, and cluster resources.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -25,6 +25,7 @@ import {
   useClusterResources,
 } from '../useClusterCRUD';
 import type { K8sClusterCreateRequest, K8sClusterUpdateRequest } from '@/types';
+import { notify } from '@/lib/notify';
 import React from 'react';
 
 // ============================================================================
@@ -280,17 +281,57 @@ describe('useTestClusterConnection', () => {
 });
 
 // ============================================================================
-// useDetectEKSClusters
+// useDetectClusters
 // ============================================================================
 
-describe('useDetectEKSClusters', () => {
-  it('detects and registers EKS clusters', async () => {
+describe('useDetectClusters', () => {
+  it('registers module outputs when no credential template is bound', async () => {
+    server.use(
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'No cloud credential template bound to this project', reason: 'no_bound_template',
+          registered: [],
+          skipped: [],
+          errors: [],
+        }),
+      ),
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'Found 1 managed cluster module(s), registered 1 cluster(s)',
+          registered: [{ id: 9, name: 'eks-module', module_id: 3, status: 'registered' }],
+          skipped: [],
+          errors: [],
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useDetectEKSClusters(), { wrapper: createWrapper() });
+    act(() => {
+      result.current.mutate(1);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-module']);
+  });
+
+  it('registers module outputs first, then clusters from the bound credential template', async () => {
     server.use(
       http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
         return HttpResponse.json({
           success: true,
-          message: 'Found 2 EKS clusters',
-          registered: [{ id: 10, name: 'eks-1', module_id: 1, status: 'connected' }],
+          message: 'Found 1 managed cluster module(s), registered 1 cluster(s)',
+          registered: [{ id: 9, name: 'eks-module', module_id: 3, status: 'registered' }],
+          skipped: [],
+          errors: [],
+        });
+      }),
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () => {
+        return HttpResponse.json({
+          success: true,
+          message: 'Discovered 2 cluster(s) from credential templates, registered 1 new cluster(s)',
+          registered: [{ id: 10, name: 'eks-1', provider: 'aws', status: 'registered' }],
           skipped: [],
           errors: [],
         });
@@ -305,8 +346,44 @@ describe('useDetectEKSClusters', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data!.registered).toHaveLength(1);
-    expect(result.current.data!.registered[0].name).toBe('eks-1');
+    expect(result.current.data!.registered.map((c) => c.name)).toEqual(['eks-module', 'eks-1']);
+  });
+
+  it('does not claim already-registered clusters as newly registered', async () => {
+    const success = vi.spyOn(notify, 'success');
+    server.use(
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'Found 1 managed cluster module(s), registered 1 cluster(s)',
+          registered: [{ id: 9, name: 'eks-module', module_id: 3, status: 'registered' }],
+          skipped: [],
+          errors: [],
+        }),
+      ),
+      http.post('*/api/projects/:projectId/k8s/clusters/detect-credentials', () =>
+        HttpResponse.json({
+          success: true,
+          message: 'Discovered 1 cluster(s)',
+          registered: [],
+          skipped: [{ name: 'eks-module', provider: 'aws', reason: 'already_registered' }],
+          errors: [],
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useDetectEKSClusters(), { wrapper: createWrapper() });
+    act(() => {
+      result.current.mutate(1);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(success).toHaveBeenCalledWith(
+      'Detected 1 cluster(s)',
+      'New clusters were registered; existing ones were left unchanged',
+      { category: 'cluster' },
+    );
+    success.mockRestore();
   });
 });
 

@@ -27,7 +27,7 @@ import {
   ArrowUp, ArrowDown, Eye, Play, Check, Code, Wand2, Copy,
   AlertTriangle,
 } from 'lucide-react';
-import { useBnkData } from '@/hooks/k8s/useBnk';
+import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -768,6 +768,7 @@ export function PolicyBuilder({ clusterId, namespace }: PolicyBuilderProps) {
       } else {
         queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
         queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', clusterId] });
+        refreshBnkData(queryClient, clusterId);
         // Reset form
         setState(createInitialState(namespace || 'default'));
       }

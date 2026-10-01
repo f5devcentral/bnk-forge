@@ -27,7 +27,7 @@ import {
   Play, Copy, AlertTriangle, ArrowLeft, ArrowRight, Code, Wand2,
   ArrowUp, ArrowDown,
 } from 'lucide-react';
-import { useBnkData } from '@/hooks/k8s/useBnk';
+import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -900,6 +900,7 @@ export function ConfigBuilder({ clusterId, namespace }: ConfigBuilderProps) {
         notify.success(`Configuration applied — ${docs.length} resources created`, undefined, { category: 'cluster' });
         queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
         queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', clusterId] });
+        refreshBnkData(queryClient, clusterId);
         setState(createInitialState(namespace || 'default'));
         setStep('gateway');
       }

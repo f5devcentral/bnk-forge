@@ -41,7 +41,7 @@ import {
   useRunScenario,
 } from '@/hooks/useBenchmarks';
 import { parseApiError } from '@/lib/error-handler';
-import { ProxyBadge } from './benchmark-utils';
+import { ProxyBadge, targetOptionLabel } from './benchmark-utils';
 import type { SetupSection } from './benchmark-runs-view';
 import {
   emptyWizardState,
@@ -298,7 +298,9 @@ export function RunBenchmarkWizard({
                   <SelectTrigger><SelectValue placeholder="Select a target" /></SelectTrigger>
                   <SelectContent>
                     {targets.map((t) => (
-                      <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                      <SelectItem key={t.id} value={String(t.id)}>
+                        {targetOptionLabel(t)}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

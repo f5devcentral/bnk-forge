@@ -10,7 +10,6 @@
  */
 
 import type { CRDInfo } from '@/hooks/useCrds';
-import { crdCategoryLabel } from '@/lib/crd-category-labels';
 import { bnkResourceCategories } from './bnk-constants';
 
 /**
@@ -55,14 +54,23 @@ export function buildBnkCategories(crds: CRDInfo[]): BnkCategory[] {
   const curatedNames = new Set(result.map((c) => c.category));
   const catIndex = new Map<string, BnkCategory>(result.map((c) => [c.category, c]));
 
-  // Global kind-based dedup: a curated item can live in ANY curated bucket, not just
-  // whichever tab the discovered CRD's backend category slug happens to map to. Curated
-  // display names ('Traffic Management', 'Security', 'System', 'Networking') don't line
-  // up 1:1 with backend ResourceCategory slugs — an installed Gateway CRD carries slug
-  // 'gateway-api' (which isn't a curated tab name -> would land in 'Other') while curated
-  // 'gateway' lives in 'Traffic Management'; BNKSecPolicy carries 'f5-bnk' (-> 'Other')
-  // while curated 'bnksecpolicy' lives in 'Security'. Checking only the target bucket
-  // missed this cross-tab case; a kind lookup across ALL curated buckets catches it.
+  const domainSlugMap: Record<string, string> = {
+    'gateway-api': 'Gateways & Traffic',
+    'traffic-management': 'Gateways & Traffic',
+    'gateways': 'Gateways & Traffic',
+    'security': 'Policies & Security',
+    'firewall': 'Policies & Security',
+    'policies': 'Policies & Security',
+    'networking': 'System & Configuration',
+    'f5-bnk': 'System & Configuration',
+    'logging': 'System & Configuration',
+    'system': 'System & Configuration',
+    'ai-gateway': 'AI Gateway & A2A',
+    'a2a': 'AI Gateway & A2A',
+    'health': 'Health & Diagnostics',
+    'diagnostics': 'Health & Diagnostics',
+  };
+
   const curatedKinds = new Set<string>();
   for (const cat of result) {
     for (const item of cat.items) {
@@ -71,26 +79,13 @@ export function buildBnkCategories(crds: CRDInfo[]): BnkCategory[] {
   }
 
   for (const crd of crds) {
-    // Only a CURATED category gets its own top-level tab. crdCategoryLabel maps a
-    // backend category slug ('gateway-api', 'cert-manager', 'networking') to its
-    // curated display name so a registry-enriched CRD lands in its real tab; raw CRD
-    // groups ('monitoring.coreos.com', 'k8s.f5.com'), unmapped slugs ('f5-bnk'), and
-    // uncategorized CRDs still collapse into ONE "Other" bucket. Otherwise a CRD-heavy
-    // cluster (e.g. aws-syd-test: 110 CRDs) explodes the F5 BNK strip into ~27 tabs
-    // that overflow and truncate to single letters.
-    const discovered = crdCategoryLabel(crd.category) ?? crd.group;
-    const categoryName = discovered && curatedNames.has(discovered) ? discovered : 'Other';
+    const rawCategory = crd.category?.toLowerCase() || '';
+    const mappedDomain = domainSlugMap[rawCategory] || (curatedNames.has(crd.category ?? '') ? crd.category : undefined);
+    const categoryName = mappedDomain || (curatedNames.has(crd.group) ? crd.group : 'Other');
     const label = crd.display_name ?? crd.kind;
-    // Stable, globally-unique identity (<plural>.<group>) — avoids resolve_crd's
-    // ambiguous-bare-plural 400 when the same plural exists in multiple groups.
     const key = crd.name;
-    // Static registry keys are conventionally kind.lower() (see
-    // core/k8s_resource_registry.py) — used to detect a registry-enriched CRD
-    // that's already represented by a static item, so it isn't double-listed.
     const registryKey = crd.kind.toLowerCase();
 
-    // Already represented by a curated item somewhere — skip regardless of which
-    // bucket this discovered CRD would otherwise target (see curatedKinds above).
     if (curatedKinds.has(registryKey)) continue;
 
     let bucket = catIndex.get(categoryName);
