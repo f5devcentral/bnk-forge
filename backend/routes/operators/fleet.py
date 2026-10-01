@@ -395,7 +395,7 @@ def _cluster_has_dpf_api_groups(cluster: KubernetesCluster, db: Session) -> bool
 # fetch burst when multiple tabs/users poll the endpoint within a short window.
 # Keyed by (sorted cluster IDs tuple, max updated_at) so create/update/delete
 # of a cluster naturally invalidates the cache without needing explicit hooks.
-_FLEET_HEALTH_TTL_SEC = 15.0
+_FLEET_HEALTH_TTL_SEC = 60.0
 _fleet_health_cache: dict[tuple, tuple[float, dict]] = {}
 _fleet_health_lock = Lock()
 
