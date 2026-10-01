@@ -18,8 +18,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Info, ArrowUpDown } from 'lucide-react';
+import { Info, ArrowUpDown, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { usePageRefresh } from '@/hooks/usePageRefresh';
 import {
   ChartCard,
   ChartTypeToggle,
@@ -65,6 +67,7 @@ const requestSeriesColor = (name: string): string =>
 export default function LlmDashboard() {
   const f = useObservabilityFilters('overview');
   const { data: filterData } = useLlmFilterData(f.clusterId, f.range);
+  const { refresh, isRefreshing } = usePageRefresh([['llm-observability']]);
 
   return (
     <div className="space-y-6 p-6">
@@ -95,6 +98,17 @@ export default function LlmDashboard() {
             width="w-[130px]"
             ariaLabel="Status filter"
           />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={refresh}
+            disabled={isRefreshing}
+            title="Refresh dashboard"
+            aria-label="Refresh dashboard"
+          >
+            <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
+          </Button>
         </div>
       </div>
 

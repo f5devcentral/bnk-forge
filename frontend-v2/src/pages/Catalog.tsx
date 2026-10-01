@@ -103,7 +103,7 @@ export default function Catalog() {
 
         <TabsContent value="modules" className="mt-6">
           <Suspense fallback={<TabFallback />}>
-            <Modules />
+            <Modules embedded />
           </Suspense>
         </TabsContent>
 
