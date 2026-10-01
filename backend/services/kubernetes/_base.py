@@ -463,18 +463,32 @@ class KubernetesServiceBase:
 
     def list_namespaces(self, cluster_id: int) -> list[str]:
         """List all namespaces in a cluster."""
+        cache_key = f"k8s:namespaces:{cluster_id}"
+        cached = cache.get(cache_key)
+        if cached is not None and isinstance(cached, list):
+            return cached
+
         cluster = self.get_cluster(cluster_id)
         api_client = self.load_kubeconfig(cluster)
         v1 = client.CoreV1Api(api_client)
 
         namespaces = v1.list_namespace()
-        return [ns.metadata.name for ns in namespaces.items]
+        result = [ns.metadata.name for ns in namespaces.items]
+        cache.set(cache_key, result, ttl_seconds=60)
+        return result
 
     def get_node_count(self, cluster_id: int) -> int:
         """Get the total number of nodes in a cluster."""
+        cache_key = f"k8s:nodes:count:{cluster_id}"
+        cached = cache.get(cache_key)
+        if cached is not None and isinstance(cached, int):
+            return cached
+
         cluster = self.get_cluster(cluster_id)
         api_client = self.load_kubeconfig(cluster)
         v1 = client.CoreV1Api(api_client)
 
         nodes = v1.list_node()
-        return len(nodes.items)
+        result = len(nodes.items)
+        cache.set(cache_key, result, ttl_seconds=60)
+        return result

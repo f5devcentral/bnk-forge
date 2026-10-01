@@ -702,12 +702,18 @@ def _cwc_request(
         raw_body: Raw string body (sent as-is, for /reactivate and /receipt)
         stream: If True, return raw bytes (for binary downloads)
     """
-    cwc_ns = _detect_cwc_namespace(api_client)
-    cert_secret = _find_cert_secret(api_client, cwc_ns)
-    cwc_port = _get_cwc_rest_port(api_client, cwc_ns)
-    cwc_url = f"https://{CWC_SERVICE}.{cwc_ns}:{cwc_port}{path}"
-    bearer_token = _get_admin_token(api_client, cwc_ns)
+    meta_cache_key = f"cwc:client_meta:{getattr(api_client.configuration, 'host', 'default')}"
+    cached_meta = cache.get(meta_cache_key)
+    if cached_meta and isinstance(cached_meta, (tuple, list)) and len(cached_meta) == 4:
+        cwc_ns, cert_secret, cwc_port, bearer_token = cached_meta
+    else:
+        cwc_ns = _detect_cwc_namespace(api_client)
+        cert_secret = _find_cert_secret(api_client, cwc_ns)
+        cwc_port = _get_cwc_rest_port(api_client, cwc_ns)
+        bearer_token = _get_admin_token(api_client, cwc_ns)
+        cache.set(meta_cache_key, (cwc_ns, cert_secret, cwc_port, bearer_token), ttl_seconds=300)
 
+    cwc_url = f"https://{CWC_SERVICE}.{cwc_ns}:{cwc_port}{path}"
     pod_name = _get_or_create_client_pod(api_client, cert_secret, cwc_ns)
 
     try:
@@ -1680,7 +1686,7 @@ def get_license_status(
     result = _cwc_request(api_client, "GET", "/status")
     normalized = _normalize_cwc_status(result if isinstance(result, dict) else {})
     response = {"success": True, **normalized}
-    cache.set(cache_key, response, ttl_seconds=30)
+    cache.set(cache_key, response, ttl_seconds=120)
     return response
 
 

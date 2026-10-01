@@ -20,6 +20,7 @@ Key snake_case notes (to_dict() output from kubernetes-client):
 import logging
 from typing import Any
 
+from core.cache import cache
 from schemas.k8s import TopologyEdge, TopologyGraphResponse, TopologyNode
 from services.kubernetes import KubernetesService
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Guard: do not build a graph for huge namespaces
 _POD_TRUNCATION_THRESHOLD = 300
+_TOPOLOGY_CACHE_TTL_SEC = 60
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,14 @@ def build_namespace_topology(
     Raises BreakerOpenError (503) automatically via @with_breaker on get_resources
     if the cluster is unreachable.  The route just needs @handle_route_errors.
     """
+    cache_key = f"k8s:topology:{cluster_id}:{namespace}"
+    cached = cache.get(cache_key)
+    if cached is not None and isinstance(cached, dict):
+        try:
+            return TopologyGraphResponse(**cached)
+        except Exception:
+            pass
+
     pods = k8s_service.get_resources(cluster_id, "pod", namespace=namespace)
     services = k8s_service.get_resources(cluster_id, "service", namespace=namespace)
     deployments = k8s_service.get_resources(cluster_id, "deployment", namespace=namespace)
@@ -50,7 +60,7 @@ def build_namespace_topology(
     statefulsets = k8s_service.get_resources(cluster_id, "statefulset", namespace=namespace)
     daemonsets = k8s_service.get_resources(cluster_id, "daemonset", namespace=namespace)
 
-    return assemble_topology(
+    result = assemble_topology(
         pods=pods,
         services=services,
         deployments=deployments,
@@ -60,6 +70,8 @@ def build_namespace_topology(
         cluster_id=cluster_id,
         namespace=namespace,
     )
+    cache.set(cache_key, result.model_dump(), ttl_seconds=_TOPOLOGY_CACHE_TTL_SEC)
+    return result
 
 
 # ---------------------------------------------------------------------------
