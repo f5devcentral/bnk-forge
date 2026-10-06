@@ -22,7 +22,7 @@ def _slow_pods(*_a, **_k):
 
 
 class TestFetchDeadline:
-    def test_slow_call_returns_partial_and_is_cached_briefly(self):
+    def test_slow_call_returns_partial_and_is_not_cached(self):
         cache = MagicMock()
         cache.get.return_value = None
         with (
@@ -41,7 +41,7 @@ class TestFetchDeadline:
         assert elapsed < 0.9
         assert result["partial"] is True
         assert result["pods"] == {"tenant": [], "utils": []}
-        assert cache.set.call_args.kwargs["ttl_seconds"] == fetch_mod._BNK_PARTIAL_CACHE_TTL
+        cache.set.assert_not_called()
 
     def test_complete_fetch_uses_the_normal_ttl(self):
         cache = MagicMock()
