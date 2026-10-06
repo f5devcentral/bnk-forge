@@ -10938,6 +10938,7 @@ export interface paths {
          *       config_id           — link to a BenchmarkConfig row
          *       proxy_deployment_id — link to a ProxyDeployment row
          *       dataset_name        — dataset label (stored in result_json)
+         *       tags                — JSON object stored as the run's tags
          */
         post: operations["ingest_aiperf_result_api_benchmarks_results_aiperf_post"];
         delete?: never;
@@ -11707,6 +11708,46 @@ export interface paths {
         get: operations["get_benchmark_run_group_api_benchmarks_run_groups__group_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/run-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Benchmark Run Groups
+         * @description Run-groups (scenario sweeps), newest first.
+         */
+        get: operations["list_benchmark_run_groups_api_benchmarks_run_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/run-groups/curves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Benchmark Run Group Curves
+         * @description Load curves for several sweeps (latency / throughput / goodput per load point).
+         */
+        post: operations["benchmark_run_group_curves_api_benchmarks_run_groups_curves_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13540,6 +13581,11 @@ export interface components {
              * @default false
              */
             context_mismatch: boolean;
+            /**
+             * Server Mismatch
+             * @default false
+             */
+            server_mismatch: boolean;
         };
         /**
          * BenchmarkCompareRunMetrics
@@ -13582,8 +13628,18 @@ export interface components {
             duration_seconds: number | null;
             /** Ttft Avg */
             ttft_avg?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P90 */
+            ttft_p90?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
             /** Itl Avg */
             itl_avg?: number | null;
+            /** Itl P50 */
+            itl_p50?: number | null;
+            /** Itl P99 */
+            itl_p99?: number | null;
             /** Tst Avg */
             tst_avg?: number | null;
             /** Osl Avg */
@@ -13592,6 +13648,42 @@ export interface components {
             isl_avg?: number | null;
             /** Per User Throughput Avg */
             per_user_throughput_avg?: number | null;
+            /** Per User Throughput P50 */
+            per_user_throughput_p50?: number | null;
+            /** Goodput */
+            goodput?: number | null;
+            /** Good Request Pct */
+            good_request_pct?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+            /** Requested Osl */
+            requested_osl?: number | null;
+            /** Effective Concurrency */
+            effective_concurrency?: number | null;
+            /** Cache Hit Pct */
+            cache_hit_pct?: number | null;
+            /** Load Spread */
+            load_spread?: number | null;
+            /** Max Share Pct */
+            max_share_pct?: number | null;
+            /** Preemptions */
+            preemptions?: number | null;
+            /** Ttft P10 */
+            ttft_p10?: number | null;
+            /** Ttft P25 */
+            ttft_p25?: number | null;
+            /** Pods */
+            pods?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Tags */
+            tags?: {
+                [key: string]: unknown;
+            } | null;
+            /** Config Snapshot */
+            config_snapshot?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * BenchmarkConfigCreate
@@ -16752,6 +16844,99 @@ export interface components {
             ssh_key_passphrase?: string | null;
             /** Is Default */
             is_default?: boolean | null;
+        };
+        /** CurveGroup */
+        CurveGroup: {
+            /** Id */
+            id: number;
+            /** Scenario Key */
+            scenario_key: string;
+            /** Scenario Name */
+            scenario_name: string | null;
+            /** Run Label */
+            run_label: string | null;
+            /** Status */
+            status: string;
+            /** Target Id */
+            target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
+            /** Proxy */
+            proxy: string | null;
+            /** Model */
+            model: string | null;
+            /** Total Runs */
+            total_runs: number;
+            /** Completed Runs */
+            completed_runs: number;
+            /** Failed Runs */
+            failed_runs: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Points */
+            points: components["schemas"]["CurvePoint"][];
+            /**
+             * Load Axis
+             * @default concurrency
+             */
+            load_axis: string;
+            /** Goodput Targets */
+            goodput_targets?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * CurvePoint
+         * @description One load point of a sweep (a completed child run); latencies in ms except latency_p50/p99 (s).
+         */
+        CurvePoint: {
+            /** Run Id */
+            run_id: number;
+            /** Variant Label */
+            variant_label: string | null;
+            /** Concurrency */
+            concurrency?: number | null;
+            /** Request Rate */
+            request_rate?: number | null;
+            /** Benchmark Duration */
+            benchmark_duration?: number | null;
+            /** Total Requests */
+            total_requests?: number | null;
+            /** Latency P50 */
+            latency_p50?: number | null;
+            /** Latency P99 */
+            latency_p99?: number | null;
+            /** Overall Rps */
+            overall_rps?: number | null;
+            /** Tokens Per Sec */
+            tokens_per_sec?: number | null;
+            /** Success Rate Pct */
+            success_rate_pct?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
+            /** Itl P50 */
+            itl_p50?: number | null;
+            /** Itl P99 */
+            itl_p99?: number | null;
+            /** Per User Throughput P50 */
+            per_user_throughput_p50?: number | null;
+            /** Goodput */
+            goodput?: number | null;
+            /** Good Request Pct */
+            good_request_pct?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+            /** Osl Avg */
+            osl_avg?: number | null;
+            /** Requested Osl */
+            requested_osl?: number | null;
+            /** Effective Concurrency */
+            effective_concurrency?: number | null;
         };
         /** DecisionOut */
         DecisionOut: {
@@ -21227,6 +21412,10 @@ export interface components {
             proxy_url: string | null;
             /** External Url */
             external_url: string | null;
+            /** Routing Info */
+            routing_info?: {
+                [key: string]: unknown;
+            } | null;
             /** Status */
             status: string;
             /** Status Message */
@@ -22495,6 +22684,8 @@ export interface components {
             status: string;
             /** Concurrency */
             concurrency?: number | null;
+            /** Request Rate */
+            request_rate?: number | null;
             /** Latency P50 */
             latency_p50?: number | null;
             /** Latency P99 */
@@ -22503,6 +22694,44 @@ export interface components {
             overall_rps?: number | null;
             /** Tokens Per Sec */
             tokens_per_sec?: number | null;
+            /** Cache Hit Pct */
+            cache_hit_pct?: number | null;
+            /** Ttft Avg */
+            ttft_avg?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+        };
+        /**
+         * RunGroupCurvesRequest
+         * @description Sweeps to plot against each other (one line per group).
+         */
+        RunGroupCurvesRequest: {
+            /** Group Ids */
+            group_ids: number[];
+        };
+        /**
+         * RunGroupCurvesResponse
+         * @description Load curves for several sweeps, aligned by variant label.
+         */
+        RunGroupCurvesResponse: {
+            /** Groups */
+            groups: components["schemas"]["CurveGroup"][];
+            /** Mismatch Reasons */
+            mismatch_reasons?: string[];
+        };
+        /**
+         * RunGroupListResponse
+         * @description Response from GET /api/benchmarks/run-groups.
+         */
+        RunGroupListResponse: {
+            /** Groups */
+            groups: components["schemas"]["RunGroupSummary"][];
+            /** Total */
+            total: number;
         };
         /**
          * RunGroupResponse
@@ -22571,6 +22800,41 @@ export interface components {
             updated_at: string;
             /** Runs */
             runs?: components["schemas"]["RunGroupChildSummary"][];
+        };
+        /**
+         * RunGroupSummary
+         * @description Compact run-group summary (list view).
+         */
+        RunGroupSummary: {
+            /** Id */
+            id: number;
+            /** Scenario Key */
+            scenario_key: string;
+            /** Scenario Name */
+            scenario_name: string | null;
+            /** Run Label */
+            run_label: string | null;
+            /** Status */
+            status: string;
+            /** Target Id */
+            target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
+            /** Proxy */
+            proxy: string | null;
+            /** Model */
+            model: string | null;
+            /** Total Runs */
+            total_runs: number;
+            /** Completed Runs */
+            completed_runs: number;
+            /** Failed Runs */
+            failed_runs: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** RunProgress */
         RunProgress: {
@@ -22901,6 +23165,16 @@ export interface components {
             child_run_count: number;
             /** Tags */
             tags?: string[];
+            /** Sweep Param */
+            sweep_param?: string | null;
+            /** Default Steps */
+            default_steps?: number[];
+            /** Step Warmup S */
+            step_warmup_s?: number | null;
+            /** Step Duration Floor S */
+            step_duration_floor_s?: number | null;
+            /** Step Min Requests */
+            step_min_requests?: number | null;
         };
         /**
          * ScenarioCatalogResponse
@@ -22944,6 +23218,11 @@ export interface components {
             overrides?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Steps
+             * @description Load steps for a sweep preset (e.g. request rates in req/s); replaces its default steps.
+             */
+            steps?: number[] | null;
         };
         /**
          * ScenarioRunResponse
@@ -24384,6 +24663,13 @@ export interface components {
              * @description Override HTTP request timeout (seconds)
              */
             timeout?: number | null;
+            /**
+             * Overrides
+             * @description aiperf settings applied over the saved config (e.g. {'concurrency': 64}). url/model/endpoint always come from the target/proxy.
+             */
+            overrides?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * TriggerRunResponse
@@ -43026,6 +43312,8 @@ export interface operations {
                 config_id?: number | null;
                 proxy_deployment_id?: number | null;
                 dataset_name?: string | null;
+                /** @description JSON object of run tags, e.g. the simulated model profile */
+                tags?: string | null;
             };
             header?: never;
             path?: never;
@@ -43226,6 +43514,11 @@ export interface operations {
                 model?: string | null;
                 status?: string | null;
                 cluster_id?: number | null;
+                /** @description Search run label, model or proxy */
+                q?: string | null;
+                /** @description Sort column; unknown values sort by created_at */
+                sort?: string;
+                order?: string;
                 limit?: number;
                 offset?: number;
             };
@@ -44492,6 +44785,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_benchmark_run_groups_api_benchmarks_run_groups_get: {
+        parameters: {
+            query?: {
+                scenario_key?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunGroupListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    benchmark_run_group_curves_api_benchmarks_run_groups_curves_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunGroupCurvesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunGroupCurvesResponse"];
                 };
             };
             /** @description Validation Error */

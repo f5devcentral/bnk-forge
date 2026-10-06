@@ -66,6 +66,9 @@ from schemas.benchmarks import (
     ProxyDeployRequest,
     ProxyDiscoveryResponse,
     ProxyTaskStatusResponse,
+    RunGroupCurvesRequest,
+    RunGroupCurvesResponse,
+    RunGroupListResponse,
     RunGroupResponse,
     ScenarioCatalogResponse,
     ScenarioRunRequest,
@@ -73,8 +76,9 @@ from schemas.benchmarks import (
     TriggerRunRequest,
     TriggerRunResponse,
 )
-from services.benchmark_service import BenchmarkService
+from services.benchmark_service import BenchmarkService, run_point_metrics
 from services.benchmark_target_service import BenchmarkTargetService
+from services.proxy_deploy_service import model_server_tags, proxy_request_settings, router_tags
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +241,7 @@ def ingest_aiperf_result(
     config_id: int | None = Query(None),
     proxy_deployment_id: int | None = Query(None),
     dataset_name: str | None = Query(None),
+    tags: str | None = Query(None, description="JSON object of run tags, e.g. the simulated model profile"),
     db: Session = Depends(get_db),
 ):
     """Ingest a raw aiperf profile_export_aiperf.json file directly.
@@ -261,6 +266,7 @@ def ingest_aiperf_result(
       config_id           — link to a BenchmarkConfig row
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
+      tags                — JSON object stored as the run's tags
     """
     claims = _require_agent_bearer(request)
     bound = _token_agent(claims, db)
@@ -277,6 +283,7 @@ def ingest_aiperf_result(
         config_id=config_id,
         proxy_deployment_id=proxy_deployment_id,
         dataset_name=dataset_name,
+        tags=_parse_tags_param(tags),
     )
     db.commit()
     return {
@@ -318,7 +325,7 @@ def get_benchmark_config(config_id: int, db: Session = Depends(get_db)):
     return svc.get_config(config_id)
 
 
-@router.post("/api/benchmarks/configs", response_model=BenchmarkConfigResponse, status_code=201)
+@router.post("/api/benchmarks/configs", response_model=BenchmarkConfigResponse, status_code=201, dependencies=[Depends(require_operator)])
 @handle_route_errors("create benchmark config")
 def create_benchmark_config(data: BenchmarkConfigCreate, db: Session = Depends(get_db)):
     """Create a new saved benchmark configuration."""
@@ -328,7 +335,7 @@ def create_benchmark_config(data: BenchmarkConfigCreate, db: Session = Depends(g
     return result
 
 
-@router.put("/api/benchmarks/configs/{config_id}", response_model=BenchmarkConfigResponse)
+@router.put("/api/benchmarks/configs/{config_id}", response_model=BenchmarkConfigResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("update benchmark config")
 def update_benchmark_config(config_id: int, data: BenchmarkConfigUpdate, db: Session = Depends(get_db)):
     """Update a saved benchmark configuration."""
@@ -338,7 +345,7 @@ def update_benchmark_config(config_id: int, data: BenchmarkConfigUpdate, db: Ses
     return result
 
 
-@router.delete("/api/benchmarks/configs/{config_id}", status_code=204)
+@router.delete("/api/benchmarks/configs/{config_id}", status_code=204, dependencies=[Depends(require_operator)])
 @handle_route_errors("delete benchmark config")
 def delete_benchmark_config(config_id: int, db: Session = Depends(get_db)):
     """Delete a saved benchmark configuration."""
@@ -359,6 +366,9 @@ def list_benchmark_runs(
     model: str | None = Query(None),
     status: str | None = Query(None),
     cluster_id: int | None = Query(None),
+    q: str | None = Query(None, max_length=200, description="Search run label, model or proxy"),
+    sort: str = Query("created_at", description="Sort column; unknown values sort by created_at"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -371,6 +381,9 @@ def list_benchmark_runs(
         model=model,
         status=status,
         cluster_id=cluster_id,
+        q=q,
+        sort=sort,
+        order=order,
         limit=limit,
         offset=offset,
     )
@@ -939,7 +952,7 @@ def delete_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-@router.post("/api/benchmarks/targets/{target_id}/validate", response_model=BenchmarkTargetResponse)
+@router.post("/api/benchmarks/targets/{target_id}/validate", response_model=BenchmarkTargetResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("validate benchmark target")
 def validate_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     """Test connectivity to the target's LLM endpoint."""
@@ -956,6 +969,7 @@ def validate_benchmark_target(target_id: int, db: Session = Depends(get_db)):
 @router.post(
     "/api/benchmarks/discover-targets",
     response_model=DiscoverTargetsResponse,
+    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("discover benchmark targets on cluster")
 def discover_targets(data: DiscoverTargetsRequest, db: Session = Depends(get_db)):
@@ -989,6 +1003,7 @@ def discover_targets(data: DiscoverTargetsRequest, db: Session = Depends(get_db)
 @router.post(
     "/api/benchmarks/targets/{target_id}/discover-proxies",
     response_model=ProxyDiscoveryResponse,
+    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("discover proxies on cluster")
 def discover_proxies(target_id: int, db: Session = Depends(get_db)):
@@ -1066,7 +1081,7 @@ def deploy_proxy(target_id: int, data: ProxyDeployRequest, db: Session = Depends
     return result
 
 
-@router.put("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", response_model=ProxyDeploymentResponse)
+@router.put("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", response_model=ProxyDeploymentResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("update proxy deployment")
 def update_proxy_deployment(target_id: int, proxy_id: int, data: ProxyDeploymentUpdate, db: Session = Depends(get_db)):
     """Update a proxy deployment."""
@@ -1100,7 +1115,7 @@ def delete_proxy_deployment(target_id: int, proxy_id: int, db: Session = Depends
     db.commit()
 
 
-@router.post("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/redeploy", response_model=ProxyDeploymentResponse)
+@router.post("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/redeploy", response_model=ProxyDeploymentResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("redeploy proxy")
 def redeploy_proxy(target_id: int, proxy_id: int, db: Session = Depends(get_db)):
     """Redeploy a proxy after config change.
@@ -1216,40 +1231,58 @@ def trigger_benchmark_run(
     #    See: https://github.com/ai-dynamo/aiperf/blob/main/docs/cli-options.md
     base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
-    config_json: dict = {
-        "url": base_url,
-        "model": target.llm_model,
+    # Load-shape defaults. Sane values so a quick "Run Test" is a meaningful
+    # benchmark, not aiperf's bare defaults (concurrency 1, ~10 requests,
+    # UNBOUNDED output) which yield ~20s/req throughput that reads as a
+    # catastrophic proxy regression. Mirrors the `baseline` scenario's single
+    # operating point.
+    defaults: dict = {
         "endpoint_type": "chat",
-        "endpoint": target.llm_endpoint or "/v1/chat/completions",
         "streaming": True,
-        "request_timeout_seconds": data.timeout or 600,
-        # Sane defaults so a quick "Run Test" is a meaningful benchmark, not
-        # aiperf's bare defaults (concurrency 1, ~10 requests, UNBOUNDED output)
-        # which yield ~20s/req throughput that reads as a catastrophic proxy
-        # regression. Mirrors the `baseline` scenario's single operating point.
+        "request_timeout_seconds": 600,
         "concurrency": 50,
         "request_count": 250,
         "synthetic_input_tokens_mean": 500,
         "output_tokens_mean": 128,
         "extra_inputs": ["ignore_eos:true"],
         "ui": "none",
+    }
+    # Explicit request fields (settings edited at launch) override a saved config;
+    # an override of null drops the saved value so the default applies again.
+    overrides = data.overrides or {}
+    cleared = {k for k, v in overrides.items() if v is None}
+    explicit: dict = {k: v for k, v in overrides.items() if v is not None}
+    if data.timeout:
+        explicit["request_timeout_seconds"] = data.timeout
+    if data.total_requests:
+        explicit["request_count"] = data.total_requests
+    if data.max_tokens:
+        explicit["output_tokens_mean"] = data.max_tokens
+    # What is being tested comes from the target/proxy, never from a saved config.
+    identity: dict = {
+        "url": base_url,
+        "model": target.llm_model,
+        "endpoint": target.llm_endpoint or "/v1/chat/completions",
         # Forge metadata (not aiperf flags)
         "_proxy_type": deploy.proxy_type,
         "_target_name": target.name,
     }
+    identity.update(proxy_request_settings(deploy))
 
-    if data.total_requests:
-        config_json["request_count"] = data.total_requests
-    if data.max_tokens:
-        config_json["output_tokens_mean"] = data.max_tokens
-
-    # Merge saved config if provided
+    # A saved config's load shape wins over the defaults (it is why the user
+    # picked it); explicit request fields and the target/proxy identity win over it.
+    saved: dict = {}
     if data.config_id:
-        config = bench_svc.get_config(data.config_id)
-        saved = config.config_json or {}
-        # Saved config provides defaults, but target/proxy info overrides
-        merged = {**saved, **config_json}
-        config_json = merged
+        saved = bench_svc.get_config(data.config_id).config_json or {}
+    saved = {k: v for k, v in saved.items() if k not in cleared}
+    config_json = {**defaults, **saved, **explicit, **identity}
+    # Open loop (a request rate or a fixed duration): the closed-loop defaults
+    # would cap in-flight requests at 50 and end a timed run at 250 requests.
+    chosen = {**saved, **explicit}
+    if chosen.get("request_rate") or chosen.get("benchmark_duration"):
+        for key in ("concurrency", "request_count"):
+            if key not in chosen:
+                config_json.pop(key, None)
 
     # 4. Create BenchmarkRun
     run = bench_svc.create_run({
@@ -1262,7 +1295,7 @@ def trigger_benchmark_run(
         "model": target.llm_model,
         "base_url": base_url,
         "run_label": data.run_label or f"{deploy.proxy_type}-{target.name}",
-        "tags": data.tags,
+        "tags": {**model_server_tags(db, target), **router_tags(deploy), **(data.tags or {})},
         "config_snapshot": config_json,
         "status": BenchmarkRunStatus.PENDING,
     })
@@ -1337,6 +1370,25 @@ def get_benchmark_run_group(group_id: int, db: Session = Depends(get_db)):
     return _serialize_run_group(group)
 
 
+@router.get("/api/benchmarks/run-groups", response_model=RunGroupListResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("list benchmark run-groups")
+def list_benchmark_run_groups(
+    scenario_key: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Run-groups (scenario sweeps), newest first."""
+    groups, total = BenchmarkService(db).list_run_groups(scenario_key=scenario_key, limit=limit)
+    return {"groups": groups, "total": total}
+
+
+@router.post("/api/benchmarks/run-groups/curves", response_model=RunGroupCurvesResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("benchmark load curves")
+def benchmark_run_group_curves(data: RunGroupCurvesRequest, db: Session = Depends(get_db)):
+    """Load curves for several sweeps (latency / throughput / goodput per load point)."""
+    return BenchmarkService(db).run_group_curves(data.group_ids)
+
+
 @router.post(
     "/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/run-scenario",
     response_model=ScenarioRunResponse,
@@ -1401,8 +1453,9 @@ def run_benchmark_scenario(
         proxy_type=deploy.proxy_type,
         agent_id=agent_id,
         run_label=data.run_label,
-        tags=data.tags,
+        tags={**model_server_tags(db, target), **router_tags(deploy), **(data.tags or {})},
         overrides=data.overrides,
+        steps=data.steps,
     )
     db.commit()
 
@@ -1495,10 +1548,13 @@ def _serialize_run_group(group) -> RunGroupResponse:
                 "variant_label": r.variant_label,
                 "status": r.status,
                 "concurrency": (r.config_snapshot or {}).get("concurrency"),
+                "request_rate": (r.config_snapshot or {}).get("request_rate"),
                 "latency_p50": r.latency_p50,
                 "latency_p99": r.latency_p99,
                 "overall_rps": r.overall_rps,
                 "tokens_per_sec": r.tokens_per_sec,
+                **{k: v for k, v in run_point_metrics(r).items()
+                   if k in ("cache_hit_pct", "ttft_avg", "ttft_p50", "ttft_p99", "error_rate_pct")},
             }
             for r in group.runs
         ],
@@ -1898,10 +1954,19 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                     db.close()
 
             elif msg_type == "progress":
-                # Broadcast to any dashboard WebSocket watchers
+                # Broadcast to any dashboard WebSocket watchers — only for a run
+                # dispatched to this agent, so a peer cannot spoof another run's progress.
                 run_id = msg.get("run_id")
                 if run_id:
-                    await broadcast_run_update(int(run_id), msg)
+                    db = next(get_db())
+                    try:
+                        owned = _agent_owns_run(BenchmarkService(db), agent_id, int(run_id))
+                    except (TypeError, ValueError):
+                        owned = False
+                    finally:
+                        db.close()
+                    if owned:
+                        await broadcast_run_update(int(run_id), msg)
 
             elif msg_type == "run_completed":
                 # Agent finished a run — update run with result data
@@ -2192,7 +2257,15 @@ _run_ws_connections: dict[int, set[WebSocket]] = {}
 
 @ws_router.websocket("/ws/benchmarks/runs/{run_id}")
 async def run_progress_ws(websocket: WebSocket, run_id: int):
-    """WebSocket for dashboard clients watching a benchmark run's progress."""
+    """WebSocket for dashboard clients watching a benchmark run's progress.
+
+    Auth: ``?token=<JWT>``. The /ws/ path is exempt from the HTTP AuthMiddleware,
+    so this endpoint validates the token itself (same gate as pod exec/logs).
+    """
+    from routes.k8s_websocket import _validate_ws_token
+
+    if not await _validate_ws_token(websocket, websocket.query_params.get("token")):
+        return
     await websocket.accept()
     if run_id not in _run_ws_connections:
         _run_ws_connections[run_id] = set()
@@ -2225,3 +2298,16 @@ async def broadcast_run_update(run_id: int, message: dict) -> None:
             disconnected.add(ws)
     for ws in disconnected:
         connections.discard(ws)
+
+
+def _parse_tags_param(raw: str | None) -> dict | None:
+    """The ``tags`` query parameter: a JSON object of string values."""
+    if not raw:
+        return None
+    try:
+        tags = json.loads(raw)
+    except ValueError as exc:
+        raise BadRequestError("tags must be a JSON object", code="INVALID_TAGS") from exc
+    if not isinstance(tags, dict):
+        raise BadRequestError("tags must be a JSON object", code="INVALID_TAGS")
+    return {str(k): str(v) for k, v in tags.items()}

@@ -27468,7 +27468,7 @@
     "/api/benchmarks/results/aiperf": {
       "post": {
         "summary": "Ingest Aiperf Result",
-        "description": "Ingest a raw aiperf profile_export_aiperf.json file directly.\n\nUsers can push results with a single curl command:\n    curl -X POST \"https://forge/api/benchmarks/results/aiperf?proxy=nodeport&agent_name=my-agent\" \\\n      -H \"Content-Type: application/json\" \\\n      -H \"Authorization: Bearer <token>\" \\\n      -d @profile_export_aiperf.json\n\nThe server detects the aiperf export format (has `benchmark_id`,\n`request_latency`, `request_throughput` keys) and transforms it into\nForge's canonical schema before ingestion.\n\nOptional query params:\n  proxy               \u2014 proxy type label (default: nodeport)\n  model               \u2014 override model name (auto-detected from aiperf config if absent)\n  url                 \u2014 base URL of the LLM endpoint\n  agent_name          \u2014 associate with a registered agent\n  run_label           \u2014 human-readable label\n  target_id           \u2014 link to a BenchmarkTarget row\n  config_id           \u2014 link to a BenchmarkConfig row\n  proxy_deployment_id \u2014 link to a ProxyDeployment row\n  dataset_name        \u2014 dataset label (stored in result_json)",
+        "description": "Ingest a raw aiperf profile_export_aiperf.json file directly.\n\nUsers can push results with a single curl command:\n    curl -X POST \"https://forge/api/benchmarks/results/aiperf?proxy=nodeport&agent_name=my-agent\" \\\n      -H \"Content-Type: application/json\" \\\n      -H \"Authorization: Bearer <token>\" \\\n      -d @profile_export_aiperf.json\n\nThe server detects the aiperf export format (has `benchmark_id`,\n`request_latency`, `request_throughput` keys) and transforms it into\nForge's canonical schema before ingestion.\n\nOptional query params:\n  proxy               \u2014 proxy type label (default: nodeport)\n  model               \u2014 override model name (auto-detected from aiperf config if absent)\n  url                 \u2014 base URL of the LLM endpoint\n  agent_name          \u2014 associate with a registered agent\n  run_label           \u2014 human-readable label\n  target_id           \u2014 link to a BenchmarkTarget row\n  config_id           \u2014 link to a BenchmarkConfig row\n  proxy_deployment_id \u2014 link to a ProxyDeployment row\n  dataset_name        \u2014 dataset label (stored in result_json)\n  tags                \u2014 JSON object stored as the run's tags",
         "operationId": "ingest_aiperf_result_api_benchmarks_results_aiperf_post",
         "parameters": [
           {
@@ -27608,6 +27608,24 @@
               ],
               "title": "Dataset Name"
             }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "JSON object of run tags, e.g. the simulated model profile",
+              "title": "Tags"
+            },
+            "description": "JSON object of run tags, e.g. the simulated model profile"
           }
         ],
         "requestBody": {
@@ -27937,6 +27955,48 @@
                 }
               ],
               "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Search run label, model or proxy",
+              "title": "Q"
+            },
+            "description": "Search run label, model or proxy"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Sort column; unknown values sort by created_at",
+              "default": "created_at",
+              "title": "Sort"
+            },
+            "description": "Sort column; unknown values sort by created_at"
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(asc|desc)$",
+              "default": "desc",
+              "title": "Order"
             }
           },
           {
@@ -29688,6 +29748,104 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RunGroupResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmarks/run-groups": {
+      "get": {
+        "summary": "List Benchmark Run Groups",
+        "description": "Run-groups (scenario sweeps), newest first.",
+        "operationId": "list_benchmark_run_groups_api_benchmarks_run_groups_get",
+        "parameters": [
+          {
+            "name": "scenario_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario Key"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunGroupListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmarks/run-groups/curves": {
+      "post": {
+        "summary": "Benchmark Run Group Curves",
+        "description": "Load curves for several sweeps (latency / throughput / goodput per load point).",
+        "operationId": "benchmark_run_group_curves_api_benchmarks_run_groups_curves_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunGroupCurvesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunGroupCurvesResponse"
                 }
               }
             }
@@ -34544,6 +34702,11 @@
             "type": "boolean",
             "title": "Context Mismatch",
             "default": false
+          },
+          "server_mismatch": {
+            "type": "boolean",
+            "title": "Server Mismatch",
+            "default": false
           }
         },
         "type": "object",
@@ -34719,6 +34882,39 @@
             ],
             "title": "Ttft Avg"
           },
+          "ttft_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P50"
+          },
+          "ttft_p90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P90"
+          },
+          "ttft_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P99"
+          },
           "itl_avg": {
             "anyOf": [
               {
@@ -34729,6 +34925,28 @@
               }
             ],
             "title": "Itl Avg"
+          },
+          "itl_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Itl P50"
+          },
+          "itl_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Itl P99"
           },
           "tst_avg": {
             "anyOf": [
@@ -34773,6 +34991,177 @@
               }
             ],
             "title": "Per User Throughput Avg"
+          },
+          "per_user_throughput_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per User Throughput P50"
+          },
+          "goodput": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goodput"
+          },
+          "good_request_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Good Request Pct"
+          },
+          "error_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate Pct"
+          },
+          "requested_osl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Osl"
+          },
+          "effective_concurrency": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Concurrency"
+          },
+          "cache_hit_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Hit Pct"
+          },
+          "load_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Spread"
+          },
+          "max_share_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Share Pct"
+          },
+          "preemptions": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preemptions"
+          },
+          "ttft_p10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P10"
+          },
+          "ttft_p25": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P25"
+          },
+          "pods": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pods"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "config_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Snapshot"
           }
         },
         "type": "object",
@@ -44302,6 +44691,387 @@
         },
         "type": "object",
         "title": "CredentialTemplateUpdate"
+      },
+      "CurveGroup": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "scenario_key": {
+            "type": "string",
+            "title": "Scenario Key"
+          },
+          "scenario_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Name"
+          },
+          "run_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Label"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "total_runs": {
+            "type": "integer",
+            "title": "Total Runs"
+          },
+          "completed_runs": {
+            "type": "integer",
+            "title": "Completed Runs"
+          },
+          "failed_runs": {
+            "type": "integer",
+            "title": "Failed Runs"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/CurvePoint"
+            },
+            "type": "array",
+            "title": "Points"
+          },
+          "load_axis": {
+            "type": "string",
+            "title": "Load Axis",
+            "default": "concurrency"
+          },
+          "goodput_targets": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Goodput Targets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "scenario_key",
+          "scenario_name",
+          "run_label",
+          "status",
+          "target_id",
+          "proxy",
+          "model",
+          "total_runs",
+          "completed_runs",
+          "failed_runs",
+          "created_at",
+          "points"
+        ],
+        "title": "CurveGroup"
+      },
+      "CurvePoint": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "variant_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Label"
+          },
+          "concurrency": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concurrency"
+          },
+          "request_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Rate"
+          },
+          "benchmark_duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Duration"
+          },
+          "total_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Requests"
+          },
+          "latency_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency P50"
+          },
+          "latency_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency P99"
+          },
+          "overall_rps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Rps"
+          },
+          "tokens_per_sec": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Per Sec"
+          },
+          "success_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Rate Pct"
+          },
+          "ttft_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P50"
+          },
+          "ttft_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P99"
+          },
+          "itl_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Itl P50"
+          },
+          "itl_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Itl P99"
+          },
+          "per_user_throughput_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per User Throughput P50"
+          },
+          "goodput": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goodput"
+          },
+          "good_request_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Good Request Pct"
+          },
+          "error_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate Pct"
+          },
+          "osl_avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osl Avg"
+          },
+          "requested_osl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Osl"
+          },
+          "effective_concurrency": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Concurrency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "variant_label"
+        ],
+        "title": "CurvePoint",
+        "description": "One load point of a sweep (a completed child run); latencies in ms except latency_p50/p99 (s)."
       },
       "DecisionOut": {
         "properties": {
@@ -57256,6 +58026,18 @@
             ],
             "title": "External Url"
           },
+          "routing_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Routing Info"
+          },
           "status": {
             "type": "string",
             "title": "Status"
@@ -60403,6 +61185,17 @@
             ],
             "title": "Concurrency"
           },
+          "request_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Rate"
+          },
           "latency_p50": {
             "anyOf": [
               {
@@ -60446,6 +61239,61 @@
               }
             ],
             "title": "Tokens Per Sec"
+          },
+          "cache_hit_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Hit Pct"
+          },
+          "ttft_avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft Avg"
+          },
+          "ttft_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P50"
+          },
+          "ttft_p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft P99"
+          },
+          "error_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate Pct"
           }
         },
         "type": "object",
@@ -60456,6 +61304,71 @@
         ],
         "title": "RunGroupChildSummary",
         "description": "Compact child-run summary within a run-group response."
+      },
+      "RunGroupCurvesRequest": {
+        "properties": {
+          "group_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Group Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group_ids"
+        ],
+        "title": "RunGroupCurvesRequest",
+        "description": "Sweeps to plot against each other (one line per group)."
+      },
+      "RunGroupCurvesResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CurveGroup"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "mismatch_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mismatch Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "title": "RunGroupCurvesResponse",
+        "description": "Load curves for several sweeps, aligned by variant label."
+      },
+      "RunGroupListResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/RunGroupSummary"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups",
+          "total"
+        ],
+        "title": "RunGroupListResponse",
+        "description": "Response from GET /api/benchmarks/run-groups."
       },
       "RunGroupResponse": {
         "properties": {
@@ -60721,6 +61634,122 @@
         ],
         "title": "RunGroupResponse",
         "description": "Full run-group response: group + child runs + aggregate metrics."
+      },
+      "RunGroupSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "scenario_key": {
+            "type": "string",
+            "title": "Scenario Key"
+          },
+          "scenario_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Name"
+          },
+          "run_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Label"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "total_runs": {
+            "type": "integer",
+            "title": "Total Runs"
+          },
+          "completed_runs": {
+            "type": "integer",
+            "title": "Completed Runs"
+          },
+          "failed_runs": {
+            "type": "integer",
+            "title": "Failed Runs"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "scenario_key",
+          "scenario_name",
+          "run_label",
+          "status",
+          "target_id",
+          "proxy",
+          "model",
+          "total_runs",
+          "completed_runs",
+          "failed_runs",
+          "created_at"
+        ],
+        "title": "RunGroupSummary",
+        "description": "Compact run-group summary (list view)."
       },
       "RunProgress": {
         "properties": {
@@ -61713,6 +62742,57 @@
             },
             "type": "array",
             "title": "Tags"
+          },
+          "sweep_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sweep Param"
+          },
+          "default_steps": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Default Steps"
+          },
+          "step_warmup_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Warmup S"
+          },
+          "step_duration_floor_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Duration Floor S"
+          },
+          "step_min_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Min Requests"
           }
         },
         "type": "object",
@@ -61802,6 +62882,23 @@
             ],
             "title": "Overrides",
             "description": "Per-child aiperf flag overrides applied to every child config (e.g. {'model': '...'})."
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array",
+                "maxItems": 12,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps",
+            "description": "Load steps for a sweep preset (e.g. request rates in req/s); replaces its default steps."
           }
         },
         "type": "object",
@@ -65695,6 +66792,19 @@
             ],
             "title": "Timeout",
             "description": "Override HTTP request timeout (seconds)"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides",
+            "description": "aiperf settings applied over the saved config (e.g. {'concurrency': 64}). url/model/endpoint always come from the target/proxy."
           }
         },
         "type": "object",

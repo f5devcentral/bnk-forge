@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Valid proxy types (nodeport = direct to LLM, no proxy layer)
 VALID_PROXY_TYPES = frozenset(
-    {"envoy", "nginx", "haproxy", "f5-bnk", "nodeport", "envoy-ai-gateway", "llm-d-router"}
+    {"envoy", "nginx", "haproxy", "f5-bnk", "f5-bnk-epp", "nodeport", "envoy-ai-gateway", "llm-d-router"}
 )
 
 # Real Helm chart references — used when deploying proxies that aren't already on cluster.
@@ -74,19 +74,19 @@ DEFAULT_HELM_CHARTS: dict[str, dict[str, str]] = {
         "version": "v0.6.0",
         "repo": "",  # OCI — no repo add needed
     },
-    # llm-d-router — the llm-d inference scheduler with PRECISE (KV-event-driven)
-    # prefix-cache-aware routing. The PRIMARY release below is the GAIE InferencePool
-    # chart (EPP + InferencePool); proxy_deploy_service runs the EPP as the llm-d
-    # inference-scheduler image with a UDS tokenizer sidecar and fronts it with
-    # AGENTGATEWAY (its own control plane + `agentgateway` GatewayClass) — NOT Envoy
-    # AI Gateway; llm-d-router shares no gateway infra with envoy-ai-gateway.
-    # Versions verified against ~/go/src/llm-d guides/precise-prefix-cache-aware
-    # (inferencepool chart v1.4.0; llm-d-inference-scheduler:v0.7.1).
+    # llm-d-router — llm-d's router with PRECISE (KV-event-driven) prefix-cache-aware
+    # routing. The PRIMARY release below is llm-d-router's own gateway chart (EPP +
+    # InferencePool), fronted by AGENTGATEWAY (its own control plane + `agentgateway`
+    # GatewayClass) — NOT Envoy AI Gateway; llm-d-router shares no gateway infra with
+    # envoy-ai-gateway. Version pairing per llm-d/llm-d v0.10.0 guides/env.sh.
     "llm-d-router": {
-        "chart": "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool",
-        "version": "v1.4.0",
+        "chart": "oci://ghcr.io/llm-d/charts/llm-d-router-gateway",
+        "version": "v0.11.0",
         "repo": "",  # OCI — no repo add needed
     },
+    # f5-bnk-epp — BNK 2.4's F5 Endpoint Picker on an existing BNK Gateway: F5EPP +
+    # InferencePool + an HTTPRoute of its own hostname (proxy_deploy_service._deploy_f5_epp).
+    "f5-bnk-epp": {"chart": "", "version": ""},
 }
 
 
@@ -430,6 +430,10 @@ class BenchmarkTargetService(BaseService):
         status to 'pending'.
         """
         deploy = self.get_proxy_deployment(target_id, proxy_id)
+        # An uninstalled row has no Helm release left: let the deploy derive the
+        # name again so it follows the current naming rules (e.g. the ingress-nginx cap).
+        if deploy.status == ProxyDeploymentStatus.UNINSTALLED:
+            deploy.helm_release = None
         deploy.status = ProxyDeploymentStatus.PENDING
         deploy.status_message = "Redeploy requested — awaiting Helm install (Phase 4c)"
         deploy.deployed_at = None

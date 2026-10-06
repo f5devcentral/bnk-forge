@@ -637,6 +637,14 @@ def start_scheduler_step(scheduler):
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        func=_benchmark_reaper_job,
+        trigger=IntervalTrigger(minutes=1),
+        id='benchmark_reaper',
+        name='Mark dead benchmark agents disconnected and fail stuck runs',
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("  Credential auto-refresh every 5m")
     logger.info("  Project stats recompute every 5m")
@@ -672,6 +680,26 @@ def _stale_execution_janitor_job():
             reset_stale_executions(db)
     except Exception as e:
         logger.warning(f"Stale-execution janitor job failed: {e}")
+
+
+def _benchmark_reaper_job():
+    """APScheduler entry point — reconciles benchmark agent/run status.
+
+    Runs in the backend process because only it holds the live agent WebSocket
+    registry (which agents can actually take and report runs).
+    """
+    from database import get_db_context
+    from routes.benchmarks import _DISPATCHING, _agent_ws_connections, _run_owner
+    from services.benchmark_service import BenchmarkService
+
+    try:
+        live = set(list(_agent_ws_connections))
+        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING}
+        with get_db_context() as db:
+            BenchmarkService(db).reap_stale_state(live, in_flight)
+            db.commit()
+    except Exception as e:
+        logger.warning(f"Benchmark reaper job failed: {e}")
 
 
 def _stale_entity_lock_sweep_job():

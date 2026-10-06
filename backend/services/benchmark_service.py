@@ -11,7 +11,7 @@ import logging
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
@@ -24,10 +24,30 @@ from models.benchmark import (
     ProxyDeployment,
 )
 from models.enums import BenchmarkAgentStatus, BenchmarkRunStatus
+from services import model_server_stats
 from services.base_service import BaseService
 from services.benchmark_scenarios import expand_scenario, get_scenario
+from services.proxy_deploy_service import proxy_request_settings
 
 logger = logging.getLogger(__name__)
+
+NO_REQUESTS_ERROR = "No requests were recorded (0 total): nothing was measured"
+
+# Reaper thresholds (reap_stale_state). Agents heartbeat every 15s.
+AGENT_STALE_SECONDS = 90
+RUN_MAX_SECONDS = 12 * 3600
+PENDING_MAX_SECONDS = 6 * 3600
+
+# Sortable run-list columns (API name → model attribute); anything else sorts by created_at.
+RUN_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "latency_p50": "latency_p50",
+    "latency_p99": "latency_p99",
+    "overall_rps": "overall_rps",
+    "tokens_per_sec": "tokens_per_sec",
+    "success_rate_pct": "success_rate_pct",
+    "total_requests": "total_requests",
+}
 
 
 class BenchmarkService(BaseService):
@@ -81,6 +101,7 @@ class BenchmarkService(BaseService):
         if proxy_deployment_id is not None and not self.db.query(ProxyDeployment).filter(ProxyDeployment.id == proxy_deployment_id).first():
             proxy_deployment_id = None
 
+        total_requests = result_data.get("total_requests")
         run = BenchmarkRun(
             tool=tool,
             proxy=proxy,
@@ -92,16 +113,18 @@ class BenchmarkService(BaseService):
             target_id=target_id,
             config_id=config_id,
             proxy_deployment_id=proxy_deployment_id,
-            status=BenchmarkRunStatus.COMPLETED,
+            # A result with no requests measured nothing: keep it, but as failed.
+            status=BenchmarkRunStatus.COMPLETED if total_requests else BenchmarkRunStatus.FAILED,
+            error_message=None if total_requests else NO_REQUESTS_ERROR,
             config_snapshot=config,
             result_json=result_data,
 
             # Denormalized metrics
             duration_seconds=result_data.get("duration_seconds"),
-            total_requests=result_data.get("total_requests"),
+            total_requests=total_requests,
             successful_requests=result_data.get("successful"),
             failed_requests=result_data.get("failed"),
-            success_rate_pct=result_data.get("success_rate_pct"),
+            success_rate_pct=result_data.get("success_rate_pct") if total_requests else None,
             latency_p50=latency.get("p50"),
             latency_p99=latency.get("p99"),
             overall_rps=throughput.get("overall_rps"),
@@ -159,7 +182,8 @@ class BenchmarkService(BaseService):
         successful_reqs = int(req_count.get("avg", 0)) if isinstance(req_count, dict) else int(req_count or 0)
         failed_reqs = int(err_count.get("avg", 0)) if isinstance(err_count, dict) else int(err_count or 0)
         total_reqs = successful_reqs + failed_reqs
-        success_rate = round(successful_reqs / total_reqs * 100, 2) if total_reqs else 100.0
+        # No requests means no measurement: leave success empty rather than claim 100%.
+        success_rate = round(successful_reqs / total_reqs * 100, 2) if total_reqs else None
         avg_osl = osl.get("avg", 0) if isinstance(osl, dict) else float(osl or 0)
         avg_isl = isl.get("avg", 0) if isinstance(isl, dict) else float(isl or 0)
 
@@ -193,7 +217,8 @@ class BenchmarkService(BaseService):
             },
             "throughput": {
                 "overall_rps": req_thr.get("avg", 0),
-                "peak_rps": req_thr.get("avg", 0),
+                # aiperf exports an average only; no per-second series to take a peak from.
+                "peak_rps": None,
                 "gen_tokens_per_sec": out_thr.get("avg", 0),
             },
             "phases": {
@@ -211,11 +236,18 @@ class BenchmarkService(BaseService):
                 "isl": isl,
                 "output_token_throughput_per_user": raw.get("output_token_throughput_per_user", {}),
                 "time_to_second_token": raw.get("time_to_second_token", {}),
+                **_aiperf_service_level_metrics(raw),
             },
         }
 
+        stats = self._model_server_stats(run)
+        if stats:
+            result_data["model_server"] = stats
+
         # Update the existing run
-        run.status = BenchmarkRunStatus.COMPLETED
+        run.status = BenchmarkRunStatus.COMPLETED if total_reqs else BenchmarkRunStatus.FAILED
+        if not total_reqs:
+            run.error_message = NO_REQUESTS_ERROR
         run.result_json = result_data
         run.duration_seconds = duration_sec
         run.total_requests = total_reqs
@@ -258,6 +290,7 @@ class BenchmarkService(BaseService):
         config_id: int | None = None,
         proxy_deployment_id: int | None = None,
         dataset_name: str | None = None,
+        tags: dict | None = None,
     ) -> BenchmarkRun:
         """Transform raw aiperf profile_export_aiperf.json into Forge format and ingest.
 
@@ -288,7 +321,8 @@ class BenchmarkService(BaseService):
         successful_reqs = int(req_count.get("avg", 0)) if isinstance(req_count, dict) else int(req_count or 0)
         failed_reqs = int(err_count.get("avg", 0)) if isinstance(err_count, dict) else int(err_count or 0)
         total_reqs = successful_reqs + failed_reqs
-        success_rate = round(successful_reqs / total_reqs * 100, 2) if total_reqs else 100.0
+        # No requests means no measurement: leave success empty rather than claim 100%.
+        success_rate = round(successful_reqs / total_reqs * 100, 2) if total_reqs else None
         avg_osl = osl.get("avg", 0) if isinstance(osl, dict) else float(osl or 0)
         avg_isl = isl.get("avg", 0) if isinstance(isl, dict) else float(isl or 0)
 
@@ -355,6 +389,7 @@ class BenchmarkService(BaseService):
                 "run_label": run_label or f"aiperf-{proxy}",
             },
             "tags": {
+                **(tags or {}),
                 "source": "aiperf-raw-push",
                 "aiperf_version": raw.get("aiperf_version"),
             },
@@ -389,7 +424,8 @@ class BenchmarkService(BaseService):
             },
             "throughput": {
                 "overall_rps": req_thr.get("avg", 0),
-                "peak_rps": req_thr.get("avg", 0),
+                # aiperf exports an average only; no per-second series to take a peak from.
+                "peak_rps": None,
                 "gen_tokens_per_sec": out_thr.get("avg", 0),
             },
             "phases": {
@@ -408,6 +444,7 @@ class BenchmarkService(BaseService):
                 "isl": isl,
                 "output_token_throughput_per_user": raw.get("output_token_throughput_per_user", {}),
                 "time_to_second_token": raw.get("time_to_second_token", {}),
+                **_aiperf_service_level_metrics(raw),
             },
             "agent_name": agent_name,
         }
@@ -500,10 +537,13 @@ class BenchmarkService(BaseService):
         model: str | None = None,
         status: str | None = None,
         cluster_id: int | None = None,
+        q: str | None = None,
+        sort: str = "created_at",
+        order: str = "desc",
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[BenchmarkRun], int]:
-        """List benchmark runs with optional filters."""
+        """List benchmark runs with optional filters, search and sort (nulls last)."""
         query = self.db.query(BenchmarkRun).options(
             joinedload(BenchmarkRun.target).joinedload(BenchmarkTarget.cluster),
         )
@@ -519,9 +559,21 @@ class BenchmarkService(BaseService):
             query = query.join(BenchmarkTarget, BenchmarkRun.target_id == BenchmarkTarget.id).filter(
                 BenchmarkTarget.cluster_id == cluster_id
             )
+        if q:
+            like = f"%{q}%"
+            query = query.filter(or_(
+                BenchmarkRun.run_label.ilike(like),
+                BenchmarkRun.model.ilike(like),
+                BenchmarkRun.proxy.ilike(like),
+            ))
 
         total = query.count()
-        runs = query.order_by(desc(BenchmarkRun.created_at)).limit(limit).offset(offset).all()
+        column = getattr(BenchmarkRun, RUN_SORT_COLUMNS.get(sort, "created_at"))
+        ordered = column.asc() if order == "asc" else column.desc()
+        runs = (
+            query.order_by(ordered.nulls_last(), desc(BenchmarkRun.id))
+            .limit(limit).offset(offset).all()
+        )
         self._attach_baseline_context(runs)
         return runs, total
 
@@ -700,8 +752,28 @@ class BenchmarkService(BaseService):
         run = self.get_run(run_id)
         if run.status == BenchmarkRunStatus.RUNNING:
             raise BadRequestError("Cannot delete a running benchmark — cancel it first", code="RUN_ACTIVE")
+        group_id = run.run_group_id
         self.db.delete(run)
         self.db.flush()
+        if group_id:
+            self.recount_run_group(group_id)
+
+    def recount_run_group(self, group_id: int) -> None:
+        """Re-derive a group's counters from the children that still exist.
+
+        A deleted child must not leave the group claiming runs it no longer has;
+        a group with no children left holds nothing and is removed.
+        """
+        group = self.db.query(BenchmarkRunGroup).get(group_id)
+        if not group:
+            return
+        remaining = self.db.query(BenchmarkRun).filter(BenchmarkRun.run_group_id == group_id).count()
+        if remaining == 0:
+            self.db.delete(group)
+            self.db.flush()
+            return
+        group.total_runs = remaining
+        self.maybe_finalize_run_group(group_id)
 
     def _cancel_single_run(self, run: BenchmarkRun, now: datetime) -> None:
         """Mark one run CANCELLED in place. No status-transition guard — callers
@@ -803,6 +875,7 @@ class BenchmarkService(BaseService):
         run_label: str | None = None,
         tags: dict | None = None,
         overrides: dict | None = None,
+        steps: list[float] | None = None,
     ) -> tuple[BenchmarkRunGroup, list[BenchmarkRun]]:
         """Expand a scenario into a parent run-group + N child runs (one per variant).
 
@@ -817,13 +890,22 @@ class BenchmarkService(BaseService):
                 f"Unknown scenario '{scenario_key}'", code="UNKNOWN_SCENARIO"
             ) from exc
 
-        child_configs = expand_scenario(
-            scenario_key,
-            base_url=base_url,
-            endpoint=endpoint,
-            model=model,
-            overrides=overrides,
-        )
+        try:
+            child_configs = expand_scenario(
+                scenario_key,
+                base_url=base_url,
+                endpoint=endpoint,
+                model=model,
+                overrides=overrides,
+                steps=steps,
+            )
+        except ValueError as exc:
+            raise BadRequestError(str(exc), code="INVALID_SCENARIO_STEPS") from exc
+        if proxy_id:
+            # What is being tested comes from the proxy, never from overrides.
+            extras = proxy_request_settings(self.db.get(ProxyDeployment, proxy_id))
+            for config in child_configs:
+                config.update(extras)
 
         group = BenchmarkRunGroup(
             scenario_key=scenario_key,
@@ -884,6 +966,73 @@ class BenchmarkService(BaseService):
         if not group:
             raise NotFoundError("benchmark_run_group", group_id)
         return group
+
+    def list_run_groups(self, scenario_key: str | None = None, limit: int = 100) -> tuple[list[BenchmarkRunGroup], int]:
+        """Run-groups (sweeps), newest first."""
+        query = self.db.query(BenchmarkRunGroup)
+        if scenario_key:
+            query = query.filter(BenchmarkRunGroup.scenario_key == scenario_key)
+        total = query.count()
+        return query.order_by(desc(BenchmarkRunGroup.created_at)).limit(limit).all(), total
+
+    def run_group_curves(self, group_ids: list[int]) -> dict:
+        """Load curves: each group's completed children as points, in sweep order.
+
+        Groups of the same scenario share variant labels, so points line up across
+        proxies (one line per group). ``mismatch_reasons`` says why they may not.
+        """
+        groups = (
+            self.db.query(BenchmarkRunGroup)
+            .options(joinedload(BenchmarkRunGroup.runs))
+            .filter(BenchmarkRunGroup.id.in_(group_ids))
+            .all()
+        )
+        found = {g.id for g in groups}
+        missing = [gid for gid in group_ids if gid not in found]
+        if missing:
+            raise NotFoundError("benchmark_run_groups", missing)
+        by_id = {g.id: g for g in groups}
+
+        out = []
+        for gid in dict.fromkeys(group_ids):
+            group = by_id[gid]
+            runs = sorted(group.runs, key=lambda r: r.id)
+            points = []
+            for run in runs:
+                if run.status != BenchmarkRunStatus.COMPLETED:
+                    continue
+                snap = run.config_snapshot if isinstance(run.config_snapshot, dict) else {}
+                points.append({
+                    "run_id": run.id,
+                    "variant_label": run.variant_label,
+                    "concurrency": snap.get("concurrency"),
+                    "request_rate": snap.get("request_rate"),
+                    "benchmark_duration": snap.get("benchmark_duration"),
+                    "total_requests": run.total_requests,
+                    "latency_p50": run.latency_p50,
+                    "latency_p99": run.latency_p99,
+                    "overall_rps": run.overall_rps,
+                    "tokens_per_sec": run.tokens_per_sec,
+                    "success_rate_pct": run.success_rate_pct,
+                    **run_point_metrics(run),
+                })
+            first = next((r.config_snapshot for r in runs if isinstance(r.config_snapshot, dict)), {})
+            out.append({
+                **{c: getattr(group, c) for c in (
+                    "id", "scenario_key", "scenario_name", "run_label", "status", "target_id", "proxy",
+                    "model", "total_runs", "completed_runs", "failed_runs", "created_at",
+                )},
+                "points": points,
+                # Open-loop sweeps step the request rate; the rest step concurrency.
+                "load_axis": "request_rate" if first.get("request_rate") is not None else "concurrency",
+                "goodput_targets": parse_goodput(first.get("goodput")),
+            })
+
+        reasons = []
+        for attr, label in (("scenario_key", "scenarios"), ("model", "models"), ("target_id", "targets")):
+            if len({getattr(g, attr) for g in groups}) > 1:
+                reasons.append(f"different {label}")
+        return {"groups": out, "mismatch_reasons": reasons}
 
     def get_next_pending_group_run(self, group_id: int) -> BenchmarkRun | None:
         """Next not-yet-dispatched (pending) child of a run-group, lowest id first.
@@ -958,6 +1107,79 @@ class BenchmarkService(BaseService):
             self.maybe_finalize_run_group(group_id)
         return [r.id for r in runs]
 
+    def reap_stale_state(
+        self,
+        live_agent_ids: Collection[int],
+        in_flight_run_ids: Collection[int] = (),
+        now: datetime | None = None,
+    ) -> dict:
+        """Reconcile agent/run status with reality (periodic job; caller commits).
+
+        Status is only trustworthy while a WebSocket is open: a backend restart or
+        an agent that vanished without closing leaves rows saying "connected" /
+        "running" forever. Here:
+          * an agent marked connected/running with no live WS and no heartbeat for
+            AGENT_STALE_SECONDS is marked disconnected;
+          * a RUNNING run whose agent has no live WS (after the same grace) can
+            never report back, so it fails; one RUNNING past RUN_MAX_SECONDS fails;
+          * a PENDING run never dispatched within PENDING_MAX_SECONDS fails.
+        Affected run-groups are rolled up.
+        """
+        now = now or datetime.now(UTC)
+        live = set(live_agent_ids)
+        stale_before = now - timedelta(seconds=AGENT_STALE_SECONDS)
+
+        def _older(ts: datetime | None, cutoff: datetime) -> bool:
+            if ts is None:
+                return True
+            return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)) < cutoff
+
+        disconnected = []
+        for agent in self.db.query(BenchmarkAgent).filter(
+            BenchmarkAgent.status.in_([BenchmarkAgentStatus.CONNECTED, BenchmarkAgentStatus.RUNNING])
+        ):
+            if agent.id not in live and _older(agent.last_heartbeat, stale_before):
+                agent.status = BenchmarkAgentStatus.DISCONNECTED
+                disconnected.append(agent.id)
+
+        failed: dict[int, str] = {}
+        active = self.db.query(BenchmarkRun).filter(
+            BenchmarkRun.status.in_([BenchmarkRunStatus.RUNNING, BenchmarkRunStatus.PENDING])
+        ).all()
+        # A sweep runs its children one at a time, so a pending child of a group
+        # that is still progressing is queued, not stuck.
+        progressing_groups = {
+            r.run_group_id for r in active
+            if r.run_group_id and r.status == BenchmarkRunStatus.RUNNING and r.agent_id in live
+        }
+        for run in active:
+            if run.id in in_flight_run_ids:
+                continue
+            if run.status == BenchmarkRunStatus.PENDING and run.run_group_id in progressing_groups:
+                continue
+            if run.status == BenchmarkRunStatus.RUNNING:
+                started = run.started_at or run.updated_at or run.created_at
+                if run.agent_id not in live and _older(started, stale_before):
+                    failed[run.id] = "agent not connected; run cannot report back"
+                elif _older(started, now - timedelta(seconds=RUN_MAX_SECONDS)):
+                    failed[run.id] = f"still running after {RUN_MAX_SECONDS // 3600}h; timed out"
+            elif _older(run.created_at, now - timedelta(seconds=PENDING_MAX_SECONDS)):
+                failed[run.id] = f"not dispatched within {PENDING_MAX_SECONDS // 3600}h"
+
+        groups = set()
+        for run in (r for r in active if r.id in failed):
+            run.status = BenchmarkRunStatus.FAILED
+            run.error_message = failed[run.id]
+            run.completed_at = now
+            if run.run_group_id:
+                groups.add(run.run_group_id)
+        self.db.flush()
+        for group_id in groups:
+            self.maybe_finalize_run_group(group_id)
+        if disconnected or failed:
+            logger.info("Benchmark reaper: agents disconnected %s, runs failed %s", disconnected, sorted(failed))
+        return {"agents_disconnected": disconnected, "runs_failed": sorted(failed)}
+
     def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
@@ -1010,7 +1232,23 @@ class BenchmarkService(BaseService):
                 synchronize_session=False,
             )
         )
+        if result == 1:
+            self._record_model_server_start(run_id)
         return result == 1
+
+    def _record_model_server_start(self, run_id: int) -> None:
+        """Snapshot the target's model-server counters as the run starts (see model_server_stats)."""
+        run = self.db.get(BenchmarkRun, run_id)
+        target = self.db.get(BenchmarkTarget, run.target_id) if run and run.target_id else None
+        snap = model_server_stats.snapshot(self.db, target) if target else None
+        if snap:
+            run.result_json = {"model_server_before": snap}
+
+    def _model_server_stats(self, run: BenchmarkRun) -> dict | None:
+        """Counter deltas since the run started, or None when there is no start snapshot."""
+        before = run.result_json.get("model_server_before") if isinstance(run.result_json, dict) else None
+        target = self.db.get(BenchmarkTarget, run.target_id) if before and run.target_id else None
+        return model_server_stats.delta(before, model_server_stats.snapshot(self.db, target)) if target else None
 
     def release_claimed_run(self, run_id: int) -> None:
         """Revert a claimed run RUNNING→PENDING (e.g. WS send failed after claim).
@@ -1118,7 +1356,8 @@ class BenchmarkService(BaseService):
         """Write rolled-up aggregate metrics onto the group from its completed children."""
         p50s = [r.latency_p50 for r in completed if r.latency_p50 is not None]
         p99s = [r.latency_p99 for r in completed if r.latency_p99 is not None]
-        rpss = [r.peak_rps for r in completed if r.peak_rps is not None]
+        # Peak across the sweep = the best child throughput (aiperf reports averages).
+        rpss = [r.overall_rps for r in completed if r.overall_rps is not None]
         tok = [r.total_output_tokens for r in completed if r.total_output_tokens is not None]
         group.avg_latency_p50 = sum(p50s) / len(p50s) if p50s else None
         group.avg_latency_p99 = sum(p99s) / len(p99s) if p99s else None
@@ -1141,7 +1380,7 @@ class BenchmarkService(BaseService):
             existing.ip_address = data.get("ip_address", existing.ip_address)
             existing.tags = data.get("tags", existing.tags)
             existing.capabilities = data.get("capabilities", existing.capabilities)
-            existing.status = BenchmarkAgentStatus.CONNECTED
+            # Status is left alone: only the agent WebSocket marks an agent connected.
             existing.last_heartbeat = datetime.now(UTC)
             existing.updated_at = datetime.now(UTC)
             self.db.flush()
@@ -1149,7 +1388,8 @@ class BenchmarkService(BaseService):
 
         agent = BenchmarkAgent(
             **data,
-            status=BenchmarkAgentStatus.CONNECTED,
+            # Connected once its WebSocket opens; registering alone cannot take runs.
+            status=BenchmarkAgentStatus.DISCONNECTED,
             last_heartbeat=datetime.now(UTC),
         )
         self.db.add(agent)
@@ -1209,23 +1449,6 @@ class BenchmarkService(BaseService):
         # Build per-run metrics
         run_metrics = []
         for run in runs:
-            # Extract aiperf-specific avg values from result_json if available
-            aiperf = {}
-            rj = run.result_json or {}
-            am = rj.get("aiperf_metrics") if isinstance(rj, dict) else None
-            if am and isinstance(am, dict):
-                for key, out_key in [
-                    ("ttft", "ttft_avg"),
-                    ("itl", "itl_avg"),
-                    ("time_to_second_token", "tst_avg"),
-                    ("osl", "osl_avg"),
-                    ("isl", "isl_avg"),
-                    ("output_token_throughput_per_user", "per_user_throughput_avg"),
-                ]:
-                    metric_data = am.get(key)
-                    if isinstance(metric_data, dict) and metric_data.get("avg") is not None:
-                        aiperf[out_key] = metric_data["avg"]
-
             run_metrics.append({
                 "run_id": run.id,
                 "proxy": run.proxy,
@@ -1244,7 +1467,11 @@ class BenchmarkService(BaseService):
                 "peak_rps": run.peak_rps,
                 "tokens_per_sec": run.tokens_per_sec,
                 "duration_seconds": run.duration_seconds,
-                **aiperf,
+                "tags": run.tags,
+                "config_snapshot": run.config_snapshot,
+                "pods": ((run.result_json or {}).get("model_server") or {}).get("pods")
+                if isinstance(run.result_json, dict) else None,
+                **run_point_metrics(run),
             })
 
         # Determine winners per metric
@@ -1252,12 +1479,19 @@ class BenchmarkService(BaseService):
         completed_metrics = [m for m in run_metrics if m["status"] == "completed"]
         if completed_metrics:
             # Lower is better
-            for metric in ["latency_p50", "latency_p99", "ttft_avg", "itl_avg", "tst_avg"]:
+            for metric in [
+                "latency_p50", "latency_p99", "ttft_avg", "ttft_p10", "ttft_p25", "ttft_p50", "ttft_p90", "ttft_p99",
+                "itl_avg", "itl_p99", "tst_avg", "error_rate_pct", "load_spread", "preemptions",
+            ]:
                 vals = [(m["run_id"], m.get(metric)) for m in completed_metrics if m.get(metric) is not None]
                 if vals:
                     winners[metric] = min(vals, key=lambda x: x[1])[0]
             # Higher is better
-            for metric in ["overall_rps", "peak_rps", "tokens_per_sec", "success_rate_pct", "per_user_throughput_avg"]:
+            for metric in [
+                "overall_rps", "peak_rps", "tokens_per_sec", "success_rate_pct",
+                "per_user_throughput_avg", "per_user_throughput_p50", "goodput", "good_request_pct",
+                "cache_hit_pct",
+            ]:
                 vals = [(m["run_id"], m.get(metric)) for m in completed_metrics if m.get(metric) is not None]
                 if vals:
                     winners[metric] = max(vals, key=lambda x: x[1])[0]
@@ -1271,11 +1505,14 @@ class BenchmarkService(BaseService):
             len(config_ids) > 1
             or len(scenario_keys) > 1
         )
+        # Simulated and real model servers (or different replica counts) are not comparable.
+        server_mismatch = len({_model_server_key(r.tags) for r in runs}) > 1
 
         return {
             "runs": run_metrics,
             "winners": winners,
             "context_mismatch": context_mismatch,
+            "server_mismatch": server_mismatch,
         }
 
     # ================================================================
@@ -1388,6 +1625,100 @@ class BenchmarkService(BaseService):
 # ================================================================
 # Helpers
 # ================================================================
+
+# aiperf summary metrics kept verbatim (unit + stats) for service-level views:
+# goodput (DistServe/MLPerf SLO attainment), error rate, output-length integrity,
+# total token throughput. Absent keys (older aiperf, no --goodput) are skipped.
+_SERVICE_LEVEL_KEYS = (
+    "goodput",
+    "good_request_count",
+    "good_request_fraction",
+    "request_error_rate",
+    "osl_mismatch_count",
+    "osl_mismatch_diff_pct",
+    "total_token_throughput",
+    "time_to_first_output_token",
+    "prefill_throughput_per_user",
+    "effective_concurrency",
+)
+
+
+def parse_goodput(value: object) -> dict[str, float]:
+    """aiperf goodput string ("time_to_first_token:2000 inter_token_latency:200") → {metric: ms}."""
+    out: dict[str, float] = {}
+    if isinstance(value, str):
+        for pair in value.split():
+            key, _, num = pair.partition(":")
+            try:
+                out[key] = float(num)
+            except ValueError:
+                continue
+    return out
+
+
+def _stat(metric: object, *names: str) -> float | None:
+    if not isinstance(metric, dict):
+        return None
+    for name in names:
+        if metric.get(name) is not None:
+            return metric[name]
+    return None
+
+
+def _model_server_key(tags: object) -> tuple:
+    """What served a run (engine, simulated profile, replicas) — runs differing here are not comparable."""
+    t = tags if isinstance(tags, dict) else {}
+    return (t.get("model_server"), t.get("sim_profile"), t.get("model_server_replicas"))
+
+
+def run_point_metrics(run: BenchmarkRun) -> dict:
+    """Per-run tail-latency and service-level metrics (ms for latencies), from result_json.
+
+    Percentiles rather than averages: industry comparisons (InferenceMAX, MLPerf)
+    judge p50/p99 TTFT and inter-token latency, plus goodput / SLO attainment.
+    """
+    rj = run.result_json if isinstance(run.result_json, dict) else {}
+    am = rj.get("aiperf_metrics") if isinstance(rj.get("aiperf_metrics"), dict) else {}
+    ttft, itl, per_user = am.get("ttft"), am.get("itl"), am.get("output_token_throughput_per_user")
+    good = _stat(am.get("good_request_fraction"), "avg")
+    total = run.total_requests or 0
+    snapshot = run.config_snapshot if isinstance(run.config_snapshot, dict) else {}
+    served = (rj.get("model_server") or {}).get("totals") or {}
+    return {
+        # What the router did, from the model-server pods (model_server_stats).
+        "cache_hit_pct": served.get("hit_pct"),
+        "load_spread": served.get("load_spread"),
+        "max_share_pct": served.get("max_share_pct"),
+        "preemptions": served.get("preemptions"),
+        "ttft_avg": _stat(ttft, "avg", "mean"),
+        "ttft_p10": _stat(ttft, "p10"),
+        "ttft_p25": _stat(ttft, "p25"),
+        "ttft_p50": _stat(ttft, "p50"),
+        "ttft_p90": _stat(ttft, "p90"),
+        "ttft_p99": _stat(ttft, "p99"),
+        "itl_avg": _stat(itl, "avg", "mean"),
+        "itl_p50": _stat(itl, "p50"),
+        "itl_p99": _stat(itl, "p99"),
+        "tst_avg": _stat(am.get("time_to_second_token"), "avg", "mean"),
+        "osl_avg": _stat(am.get("osl"), "avg", "mean"),
+        "isl_avg": _stat(am.get("isl"), "avg", "mean"),
+        "per_user_throughput_avg": _stat(per_user, "avg", "mean"),
+        "per_user_throughput_p50": _stat(per_user, "p50"),
+        "goodput": _stat(am.get("goodput"), "avg"),
+        "good_request_pct": good * 100 if good is not None else None,
+        "error_rate_pct": (run.failed_requests or 0) / total * 100 if total else None,
+        "requested_osl": snapshot.get("output_tokens_mean") or snapshot.get("osl"),
+        # Open loop: requests in flight on average; it climbs as the proxy queues.
+        "effective_concurrency": _stat(am.get("effective_concurrency"), "avg", "mean"),
+    }
+
+
+def _aiperf_service_level_metrics(raw: dict) -> dict:
+    out = {k: raw[k] for k in _SERVICE_LEVEL_KEYS if isinstance(raw.get(k), dict)}
+    if isinstance(raw.get("error_summary"), list) and raw["error_summary"]:
+        out["error_summary"] = raw["error_summary"][:20]
+    return out
+
 
 def _aggregate_children(
     completed: list[BenchmarkRun],
