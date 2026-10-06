@@ -16,8 +16,7 @@
 > to *all* personas.
 >
 > Human-readable version: [`E2E_PERSONAS.html`](./E2E_PERSONAS.html)
-> Grounded in: `docs/bnk-forge-features.csv` (461 features), the real app nav (`frontend-v2/src/router.tsx`),
-> and the existing harness (`scripts/e2e/`).
+> Grounded in: the real app nav (`frontend-v2/src/router.tsx`) and the existing harness (`scripts/e2e/`).
 
 ---
 
@@ -367,4 +366,4 @@ Each **rough-edge probe is a negative-path test** — those surface bugs and rou
 
 ---
 
-*Last updated: 2026-06-28. Maintained alongside `docs/bnk-forge-features.csv`. Regenerate the HTML view after edits.*
+*Last updated: 2026-06-28. Regenerate the HTML view after edits.*

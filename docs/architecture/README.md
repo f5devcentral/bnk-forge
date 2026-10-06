@@ -14,24 +14,11 @@ This directory contains architecture decisions, technical design docs, and the r
 | Document | Description |
 |---|---|
 | [**../PRODUCT_VISION.md**](../PRODUCT_VISION.md) | *(Current)* Product direction and strategic priorities |
-| [**../UX_ROADMAP.md**](../UX_ROADMAP.md) | *(Current)* UX direction and implementation status |
-| [**../ENGINEERING_IMPROVEMENTS.md**](../ENGINEERING_IMPROVEMENTS.md) | *(Current)* Reliability and technical debt workstream |
+| [**../ROADMAP.md**](../ROADMAP.md) | *(Current)* Platform roadmap and milestones |
 | [CUSTOMER_PRODUCT_VISION.md](./CUSTOMER_PRODUCT_VISION.md) | *(Historical)* Original product direction analysis |
 
-## Archive (completed planning docs)
-
-Historical documents that drove the initial build (Weeks 1-8). Work is complete.
-
-| Document | Description |
-|---|---|
-| [archive/ARCHITECTURE_REVIEW.md](./archive/ARCHITECTURE_REVIEW.md) | Original codebase analysis (Feb 15) |
-| [archive/HYBRID_ENGINE_DESIGN.md](./archive/HYBRID_ENGINE_DESIGN.md) | kr8s engine design (implemented) |
-| [archive/IMPLEMENTATION_PLAN.md](./archive/IMPLEMENTATION_PLAN.md) | Phased implementation plan (executed) |
-| [archive/DEVELOPMENT_STRATEGY.md](./archive/DEVELOPMENT_STRATEGY.md) | Branching, testing, migration strategy |
-| [archive/AWS_AUDIT.md](./archive/AWS_AUDIT.md) | AWS assumptions audit (fixes applied in Sprint 5-6) |
-| [archive/QUICK_WINS.md](./archive/QUICK_WINS.md) | 17 quick wins (all completed in Week 1) |
-
 ## Architecture Overview
+
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
