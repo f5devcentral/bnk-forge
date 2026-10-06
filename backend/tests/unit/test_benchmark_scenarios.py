@@ -33,7 +33,7 @@ def test_catalog_lists_all_presets():
     assert keys == set(SCENARIO_PRESETS.keys())
     for item in catalog:
         assert item["child_run_count"] >= 1
-        assert set(item.keys()) == {"key", "name", "description", "trace_driven", "child_run_count", "tags"}
+        assert {"key", "name", "description", "trace_driven", "child_run_count", "tags", "sweep_param"} <= set(item.keys())
 
 
 def test_catalog_child_count_matches_expansion():
@@ -58,6 +58,8 @@ def test_catalog_child_count_matches_expansion():
         ("bimodal", 4),
         ("sustained-load", 5),           # sweep {50,100,150,200,250}
         ("burst-recovery", 5 * 2),       # 5 rounds x (burst + probe)
+        ("poisson-rate", 5),             # rates {2,4,8,16,32}
+        ("poisson-rate-prefix", 5),      # rates {1,2,4,8,16}
         ("mooncake", 1),                 # single open-loop trace
     ],
 )
@@ -277,3 +279,32 @@ def test_expand_scenario_benign_override_applied():
     for c in children:
         assert c["model"] == "tinyllama"
         assert c["request_timeout_seconds"] == 60
+
+
+# ---------------------------------------------------------------------------
+# Open-loop Poisson rate sweeps
+# ---------------------------------------------------------------------------
+
+def test_poisson_steps_keep_rate_warmup_and_duration_floor():
+    """Custom rates replace the defaults; overrides cannot shorten a step or cap it by count."""
+    children = _expand(
+        "poisson-rate",
+        steps=[8, 0.5, 8],
+        overrides={"request_rate": 99, "benchmark_duration": 10, "warmup_duration": 5, "request_count": 50},
+    )
+    assert [c["request_rate"] for c in children] == [0.5, 8]
+    assert [c["_variant_label"] for c in children] == ["0.5rps", "8rps"]
+    for c in children:
+        assert c["arrival_pattern"] == "poisson"
+        assert c["goodput"] == "time_to_first_token:2000 inter_token_latency:200"
+        assert c["warmup_duration"] == 30
+        assert "request_count" not in c
+    # 300 requests at 0.5 req/s need 600 s; 8 req/s gets the 120 s floor.
+    assert [c["benchmark_duration"] for c in children] == [600, 120]
+
+
+def test_steps_rejected_for_fixed_sweeps():
+    with pytest.raises(ValueError):
+        _expand("baseline", steps=[1, 2])
+    with pytest.raises(ValueError):
+        _expand("poisson-rate", steps=[0])

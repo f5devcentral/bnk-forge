@@ -17,6 +17,7 @@ Reference: f5-epp/benchmarks (analyzed). All synthetic scenarios target
 The mooncake scenario is the production trace: open-loop, trace-driven, no concurrency sweep.
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -36,18 +37,26 @@ HEAVY_CONC_ISL: tuple[tuple[int, int], ...] = ((150, 5000), (200, 7000), (250, 9
 class ScenarioPreset:
     """A scenario recipe: metadata + a pure variant-expansion function.
 
-    ``build_variants`` receives no arguments and returns a list of per-child config
-    dicts (the variant-specific aiperf flags + Forge ``_variant_label``). The base
-    flags (url/model/endpoint/etc.) are merged in by ``expand_scenario``.
+    ``build_variants`` returns a list of per-child config dicts (the variant-specific
+    aiperf flags + Forge ``_variant_label``). The base flags (url/model/endpoint/etc.)
+    are merged in by ``expand_scenario``. Presets with a ``sweep_param`` take the
+    load steps as an argument, so a launch can replace ``default_steps``.
     """
 
     key: str
     name: str
     description: str
     base_flags: dict
-    build_variants: Callable[[], list[dict]]
+    build_variants: Callable[..., list[dict]]
     trace_driven: bool = False
     tags: list[str] = field(default_factory=list)
+    sweep_param: str | None = None
+    default_steps: tuple[float, ...] = ()
+
+    def variants(self, steps: list[float] | None = None) -> list[dict]:
+        if self.sweep_param:
+            return self.build_variants(tuple(steps or self.default_steps))
+        return self.build_variants()
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +250,91 @@ def _burst_recovery_variants() -> list[dict]:
     return variants
 
 
+# Open-loop Poisson request-rate sweeps — the gateway-comparison standard
+# (MLPerf Server, GAIE / llm-d QPS sweeps). Requests arrive on a schedule no
+# matter how fast the proxy answers, so a slower proxy shows up as queueing
+# (higher TTFT) instead of hiding behind fewer requests as in a closed loop.
+POISSON_RATES: tuple[float, ...] = (2, 4, 8, 16, 32)
+POISSON_PREFIX_RATES: tuple[float, ...] = (1, 2, 4, 8, 16)
+POISSON_AGENTIC_RATES: tuple[float, ...] = (8, 16, 24, 32)
+# MLPerf Server-style per-request targets (Llama-2-70B: TTFT 2 s, TPOT 200 ms).
+DEFAULT_GOODPUT = "time_to_first_token:2000 inter_token_latency:200"
+# Every step warms up, then measures for at least STEP_DURATION_FLOOR_S, and long
+# enough to collect STEP_MIN_REQUESTS so p99 rests on a few hundred samples.
+STEP_WARMUP_S = 30
+STEP_DURATION_FLOOR_S = 120
+STEP_MIN_REQUESTS = 300
+MAX_STEPS = 12
+
+
+def step_duration_s(rate: float) -> int:
+    """Measured seconds for one rate step: the floor, longer at low rates."""
+    return max(STEP_DURATION_FLOOR_S, math.ceil(STEP_MIN_REQUESTS / rate))
+
+
+def _rate_label(rate: float) -> str:
+    return f"{rate:g}rps"
+
+
+def _poisson_step(rate: float, workload: dict, index: int = 0) -> dict:
+    duration = step_duration_s(rate)
+    return {
+        "_variant_label": _rate_label(rate),
+        "request_rate": rate,
+        "arrival_pattern": "poisson",
+        "warmup_duration": STEP_WARMUP_S,
+        "benchmark_duration": duration,
+        "goodput": DEFAULT_GOODPUT,
+        # A distinct prompt for every request the step sends: aiperf otherwise cycles
+        # through 100, which a KV cache holds whole and every request then hits.
+        "num_dataset_entries": math.ceil(rate * (STEP_WARMUP_S + duration)),
+        # Same prompts for every proxy, so sweeps compare like for like; a new seed per
+        # step so each step brings new sessions instead of replaying the last step's.
+        "random_seed": 42 + index,
+        **workload,
+    }
+
+
+def _poisson_rate_variants(rates: tuple[float, ...]) -> list[dict]:
+    """Chat 1k in / 128 out (ISL random ±10%), one step per request rate."""
+    workload = {
+        "synthetic_input_tokens_mean": 1000,
+        "synthetic_input_tokens_stddev": 100,
+        "output_tokens_mean": 128,
+    }
+    return [_poisson_step(r, workload, i) for i, r in enumerate(rates)]
+
+
+def _poisson_prefix_variants(rates: tuple[float, ...]) -> list[dict]:
+    """KV-aware routing workload: 5k prompts, 80% shared prefix over 20 groups."""
+    workload = {
+        "synthetic_input_tokens_mean": 1000,
+        "synthetic_input_tokens_stddev": 100,
+        "prefix_prompt_length": 4000,
+        "num_prefix_prompts": 20,
+        "output_tokens_mean": 128,
+    }
+    return [_poisson_step(r, workload, i) for i, r in enumerate(rates)]
+
+
+def _poisson_agentic_variants(rates: tuple[float, ...]) -> list[dict]:
+    """Agentic long context: 300 sessions sharing a 16k-token context, 1k new tokens / 64 out.
+
+    The shared contexts (~4.8M tokens) exceed the KV cache of four 70B replicas, as with
+    real agent traffic, so replicas evict: cache-aware routing keeps a session's context on
+    one replica and must track evictions; round robin re-prefills it everywhere. Short
+    outputs (tool calls) make prefill the larger share of each request.
+    """
+    workload = {
+        "synthetic_input_tokens_mean": 1000,
+        "synthetic_input_tokens_stddev": 100,
+        "prefix_prompt_length": 16000,
+        "num_prefix_prompts": 300,
+        "output_tokens_mean": 64,
+    }
+    return [_poisson_step(r, workload, i) for i, r in enumerate(rates)]
+
+
 # Mooncake production trace — open-loop, single variant, no sweep.
 MOONCAKE_MODEL = "Qwen/Qwen3-32B"
 MOONCAKE_TRACE_URL = (
@@ -353,6 +447,45 @@ SCENARIO_PRESETS: dict[str, ScenarioPreset] = {
         build_variants=_burst_recovery_variants,
         tags=["synthetic", "multi-phase"],
     ),
+    "poisson-rate": ScenarioPreset(
+        key="poisson-rate",
+        name="Poisson Rate Sweep (chat)",
+        description="Open-loop Poisson arrivals, one step per request rate. ISL 1000±100 / OSL 128. "
+        f"Each step: {STEP_WARMUP_S} s warmup, then at least {STEP_DURATION_FLOOR_S} s and "
+        f"{STEP_MIN_REQUESTS} requests measured. Goodput targets TTFT 2000 ms, ITL 200 ms.",
+        base_flags=_synthetic_base(),
+        build_variants=_poisson_rate_variants,
+        tags=["synthetic", "open-loop"],
+        sweep_param="request_rate",
+        default_steps=POISSON_RATES,
+    ),
+    "poisson-rate-prefix": ScenarioPreset(
+        key="poisson-rate-prefix",
+        name="Poisson Rate Sweep (shared prefix)",
+        description="Open-loop Poisson arrivals for KV-aware routing: 5000-token prompts with an 80% "
+        "shared prefix (20 groups) / OSL 128, one step per request rate. "
+        f"Each step: {STEP_WARMUP_S} s warmup, then at least {STEP_DURATION_FLOOR_S} s and "
+        f"{STEP_MIN_REQUESTS} requests measured. Goodput targets TTFT 2000 ms, ITL 200 ms.",
+        base_flags=_synthetic_base(),
+        build_variants=_poisson_prefix_variants,
+        tags=["synthetic", "open-loop", "prefix-cache"],
+        sweep_param="request_rate",
+        default_steps=POISSON_PREFIX_RATES,
+    ),
+    "poisson-rate-agentic": ScenarioPreset(
+        key="poisson-rate-agentic",
+        name="Poisson Rate Sweep (agentic long context)",
+        description="Open-loop Poisson arrivals for cache-aware routing on agent traffic: 300 sessions "
+        "sharing a 16000-token context, 1000 new tokens / OSL 64 per request, one step per request rate. "
+        "The shared contexts exceed the KV cache of several replicas, so run it against several replicas. "
+        f"Each step: {STEP_WARMUP_S} s warmup, then at least {STEP_DURATION_FLOOR_S} s and "
+        f"{STEP_MIN_REQUESTS} requests measured. Goodput targets TTFT 2000 ms, ITL 200 ms.",
+        base_flags=_synthetic_base(),
+        build_variants=_poisson_agentic_variants,
+        tags=["synthetic", "open-loop", "prefix-cache", "agentic"],
+        sweep_param="request_rate",
+        default_steps=POISSON_AGENTIC_RATES,
+    ),
     "mooncake": ScenarioPreset(
         key="mooncake",
         name="Mooncake Trace (production)",
@@ -374,6 +507,13 @@ SCENARIO_PRESETS: dict[str, ScenarioPreset] = {
 # Public API
 # ---------------------------------------------------------------------------
 
+_RATE_STEP_INFO = {
+    "step_warmup_s": STEP_WARMUP_S,
+    "step_duration_floor_s": STEP_DURATION_FLOOR_S,
+    "step_min_requests": STEP_MIN_REQUESTS,
+}
+
+
 def list_scenarios() -> list[dict]:
     """Return catalog metadata for every scenario (for the catalog endpoint)."""
     return [
@@ -382,8 +522,11 @@ def list_scenarios() -> list[dict]:
             "name": p.name,
             "description": p.description,
             "trace_driven": p.trace_driven,
-            "child_run_count": len(p.build_variants()),
+            "child_run_count": len(p.variants()),
             "tags": p.tags,
+            "sweep_param": p.sweep_param,
+            "default_steps": list(p.default_steps),
+            **(_RATE_STEP_INFO if p.sweep_param == "request_rate" else {}),
         }
         for p in SCENARIO_PRESETS.values()
     ]
@@ -394,6 +537,15 @@ def get_scenario(scenario_key: str) -> ScenarioPreset:
     return SCENARIO_PRESETS[scenario_key]
 
 
+def _check_steps(preset: ScenarioPreset, steps: list[float]) -> list[float]:
+    if not preset.sweep_param:
+        raise ValueError(f"Scenario '{preset.key}' has a fixed sweep; load steps cannot be changed")
+    clean = sorted({float(s) for s in steps})
+    if not clean or len(clean) > MAX_STEPS or clean[0] <= 0:
+        raise ValueError(f"Give 1-{MAX_STEPS} load steps, each above 0")
+    return clean
+
+
 def expand_scenario(
     scenario_key: str,
     *,
@@ -401,17 +553,21 @@ def expand_scenario(
     endpoint: str,
     model: str | None = None,
     overrides: dict | None = None,
+    steps: list[float] | None = None,
 ) -> list[dict]:
     """Expand a scenario into a list of per-child aiperf config dicts.
 
     Each child config = scenario ``base_flags`` ∪ variant flags, with ``url``/``endpoint``
     injected and an optional ``model`` override (e.g. the target's deployed model). The
     caller's ``overrides`` are applied LAST so users can tune a single run-group.
+    ``steps`` replaces the load steps of a sweep preset (ValueError otherwise).
 
     Immutable: returns fresh dicts; never mutates the registry presets.
     """
     preset = SCENARIO_PRESETS[scenario_key]
     overrides = overrides or {}
+    if steps is not None:
+        steps = _check_steps(preset, steps)
 
     # Belt-and-suspenders SSRF guard: strip keys that select or affect the
     # fetched dataset (trace_url) and any _-prefixed internal keys before
@@ -426,7 +582,7 @@ def expand_scenario(
     }
 
     child_configs: list[dict] = []
-    for variant in preset.build_variants():
+    for variant in preset.variants(steps):
         config = {
             **preset.base_flags,
             **variant,
@@ -434,9 +590,20 @@ def expand_scenario(
             "endpoint": endpoint,
             "_scenario_key": scenario_key,
         }
+        config.update(safe_overrides)
+        # What is being tested comes from the target/proxy, never from overrides.
+        config["url"] = base_url
+        config["endpoint"] = endpoint
         if model:
             config["model"] = model
-        config.update(safe_overrides)
+        if preset.sweep_param == "request_rate":
+            # The step's rate, warmup and duration floor hold whatever the
+            # overrides say; a request count would end the step early.
+            rate = variant["request_rate"]
+            config["request_rate"] = rate
+            config["warmup_duration"] = max(config.get("warmup_duration") or 0, STEP_WARMUP_S)
+            config["benchmark_duration"] = max(config.get("benchmark_duration") or 0, step_duration_s(rate))
+            config.pop("request_count", None)
         child_configs.append(config)
 
     return child_configs

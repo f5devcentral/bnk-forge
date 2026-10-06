@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
@@ -66,6 +66,9 @@ from schemas.benchmarks import (
     ProxyDeployRequest,
     ProxyDiscoveryResponse,
     ProxyTaskStatusResponse,
+    RunGroupCurvesRequest,
+    RunGroupCurvesResponse,
+    RunGroupListResponse,
     RunGroupResponse,
     ScenarioCatalogResponse,
     ScenarioRunRequest,
@@ -73,8 +76,9 @@ from schemas.benchmarks import (
     TriggerRunRequest,
     TriggerRunResponse,
 )
-from services.benchmark_service import BenchmarkService
+from services.benchmark_service import BenchmarkService, run_point_metrics
 from services.benchmark_target_service import BenchmarkTargetService
+from services.proxy_deploy_service import model_server_tags, proxy_request_settings, router_tags
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +118,6 @@ def _require_agent_bearer(request: Request) -> dict:
     token = auth_header.split(" ", 1)[1]
     from core.errors import UnauthorizedError
     from services.auth_service import decode_token
-
     try:
         payload = decode_token(token)
     except UnauthorizedError as exc:
@@ -133,7 +136,6 @@ def _require_agent_bearer(request: Request) -> dict:
     if role != "agent":
         from core.errors import ForbiddenError
         from services.auth_service import enforce_password_change, token_user_state
-
         agent_user = token_user_state(token)
         # token_user_state's contract: the caller refuses on None -- fail CLOSED.
         # A non-agent role that resolves to no live User (deleted/disabled row, or
@@ -156,9 +158,8 @@ def _token_agent(payload: dict, db: Session) -> BenchmarkAgent | None:
     """The agent an agent-bound token (role=agent + agent_id) belongs to, or None.
 
     A bound token whose agent row is gone is refused, so deleting the agent
-    revokes every token minted for it. Checks token_version for per-agent
-    revocation and created_by for active minter offboarding.
-    Returns None for human tokens and the claimless bootstrap token.
+    revokes every token minted for it. Returns None for human tokens and the
+    claimless bootstrap token.
     """
     if payload.get("role") != "agent" or payload.get("agent_id") is None:
         return None
@@ -169,35 +170,23 @@ def _token_agent(payload: dict, db: Session) -> BenchmarkAgent | None:
     agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.id == token_agent_id).first()
     if agent is None:
         raise BadRequestError("Token's agent is no longer registered", code="AGENT_AUTH_INVALID")
-
-    # M1: Per-agent token revocation via token_version
-    token_ver = payload.get("token_version")
-    if token_ver is not None and token_ver != agent.token_version:
-        raise BadRequestError("Agent token has been revoked", code="AGENT_AUTH_REVOKED")
-
-    # M1: Tie to minting identity; offboarding minter invalidates the token
-    created_by = payload.get("created_by")
-    if created_by is not None:
-        minter = db.query(User).filter(User.id == created_by).first()
-        if not minter or not minter.is_active:
-            raise BadRequestError("Agent token minter is no longer active", code="AGENT_AUTH_REVOKED")
-
     return agent
 
 
 def _bind_agent_name(bound: BenchmarkAgent | None, agent_name: str | None) -> str | None:
-    """Bind an agent-token write to its own agent name: refuse another agent's name, default to its own (foreign keys like target_id remain cluster-scoped)."""
+    """Bind an agent-token write to its own agent: refuse another agent's name, default to its own."""
     if bound is None:
         return agent_name
     if agent_name is not None and agent_name != bound.name:
-        raise BadRequestError(f"Token is bound to agent '{bound.name}'", code="AGENT_AUTH_FORBIDDEN")
+        raise BadRequestError(
+            f"Token is bound to agent '{bound.name}'", code="AGENT_AUTH_FORBIDDEN"
+        )
     return str(bound.name)
 
 
 def _agent_exists(agent_id: int) -> bool:
     """True if a BenchmarkAgent row with this id exists. Fails closed on a DB error."""
     from database import get_db_context
-
     try:
         with get_db_context() as db:
             return db.query(BenchmarkAgent.id).filter(BenchmarkAgent.id == agent_id).first() is not None
@@ -205,36 +194,9 @@ def _agent_exists(agent_id: int) -> bool:
         return False
 
 
-def _agent_token_active(agent_id: int, payload: dict) -> bool:
-    """True if the agent exists, token_version matches, and minter is active."""
-    if not _agent_exists(agent_id):
-        return False
-    token_ver = payload.get("token_version")
-    created_by = payload.get("created_by")
-    if token_ver is None and created_by is None:
-        return True
-    from database import get_db_context
-
-    try:
-        with get_db_context() as db:
-            agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.id == agent_id).first()
-            if agent is None:
-                return False
-            if token_ver is not None and token_ver != agent.token_version:
-                return False
-            if created_by is not None:
-                minter = db.query(User).filter(User.id == created_by).first()
-                if not minter or not minter.is_active:
-                    return False
-            return True
-    except Exception:
-        return False
-
-
 # ============================================================================
 # Result Ingestion — called by aiperf CLI or user curl
 # ============================================================================
-
 
 @router.post("/api/benchmarks/results", response_model=BenchmarkResultPushResponse, status_code=201)
 @handle_route_errors("ingest benchmark result")
@@ -248,8 +210,8 @@ def ingest_benchmark_result(request: Request, data: BenchmarkResultPush, db: Ses
     claims = _require_agent_bearer(request)
     bound = _token_agent(claims, db)
     result_data = data.model_dump()
-    name = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
-    result_data["agent_name"] = _bind_agent_name(bound, name)
+    name = _bind_agent_name(bound, result_data.get("agent_name"))
+    result_data["agent_name"] = _bootstrap_agent_name(claims, db, name)
     svc = BenchmarkService(db)
     run = svc.ingest_result(result_data)
     db.commit()
@@ -279,6 +241,7 @@ def ingest_aiperf_result(
     config_id: int | None = Query(None),
     proxy_deployment_id: int | None = Query(None),
     dataset_name: str | None = Query(None),
+    tags: str | None = Query(None, description="JSON object of run tags, e.g. the simulated model profile"),
     db: Session = Depends(get_db),
 ):
     """Ingest a raw aiperf profile_export_aiperf.json file directly.
@@ -303,11 +266,11 @@ def ingest_aiperf_result(
       config_id           — link to a BenchmarkConfig row
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
+      tags                — JSON object stored as the run's tags
     """
     claims = _require_agent_bearer(request)
     bound = _token_agent(claims, db)
-    agent_name = _bootstrap_agent_name(claims, db, agent_name)
-    agent_name = _bind_agent_name(bound, agent_name)
+    agent_name = _bootstrap_agent_name(claims, db, _bind_agent_name(bound, agent_name))
     svc = BenchmarkService(db)
     run = svc.ingest_aiperf_result(
         raw,
@@ -320,6 +283,7 @@ def ingest_aiperf_result(
         config_id=config_id,
         proxy_deployment_id=proxy_deployment_id,
         dataset_name=dataset_name,
+        tags=_parse_tags_param(tags),
     )
     db.commit()
     return {
@@ -338,10 +302,7 @@ def ingest_aiperf_result(
 # Config Endpoints — saved RunConfig presets
 # ============================================================================
 
-
-@router.get(
-    "/api/benchmarks/configs", response_model=list[BenchmarkConfigResponse], dependencies=[Depends(require_viewer)]
-)
+@router.get("/api/benchmarks/configs", response_model=list[BenchmarkConfigResponse], dependencies=[Depends(require_viewer)])
 @handle_route_errors("list benchmark configs")
 def list_benchmark_configs(
     tool: str | None = Query(None),
@@ -352,11 +313,7 @@ def list_benchmark_configs(
     return svc.list_configs(tool=tool)
 
 
-@router.get(
-    "/api/benchmarks/configs/{config_id}",
-    response_model=BenchmarkConfigResponse,
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/configs/{config_id}", response_model=BenchmarkConfigResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get benchmark config")
 def get_benchmark_config(config_id: int, db: Session = Depends(get_db)):
     """Get a saved benchmark configuration by ID.
@@ -368,7 +325,7 @@ def get_benchmark_config(config_id: int, db: Session = Depends(get_db)):
     return svc.get_config(config_id)
 
 
-@router.post("/api/benchmarks/configs", response_model=BenchmarkConfigResponse, status_code=201)
+@router.post("/api/benchmarks/configs", response_model=BenchmarkConfigResponse, status_code=201, dependencies=[Depends(require_operator)])
 @handle_route_errors("create benchmark config")
 def create_benchmark_config(data: BenchmarkConfigCreate, db: Session = Depends(get_db)):
     """Create a new saved benchmark configuration."""
@@ -378,7 +335,7 @@ def create_benchmark_config(data: BenchmarkConfigCreate, db: Session = Depends(g
     return result
 
 
-@router.put("/api/benchmarks/configs/{config_id}", response_model=BenchmarkConfigResponse)
+@router.put("/api/benchmarks/configs/{config_id}", response_model=BenchmarkConfigResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("update benchmark config")
 def update_benchmark_config(config_id: int, data: BenchmarkConfigUpdate, db: Session = Depends(get_db)):
     """Update a saved benchmark configuration."""
@@ -388,7 +345,7 @@ def update_benchmark_config(config_id: int, data: BenchmarkConfigUpdate, db: Ses
     return result
 
 
-@router.delete("/api/benchmarks/configs/{config_id}", status_code=204)
+@router.delete("/api/benchmarks/configs/{config_id}", status_code=204, dependencies=[Depends(require_operator)])
 @handle_route_errors("delete benchmark config")
 def delete_benchmark_config(config_id: int, db: Session = Depends(get_db)):
     """Delete a saved benchmark configuration."""
@@ -401,7 +358,6 @@ def delete_benchmark_config(config_id: int, db: Session = Depends(get_db)):
 # Run Endpoints
 # ============================================================================
 
-
 @router.get("/api/benchmarks/runs", response_model=BenchmarkRunListResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("list benchmark runs")
 def list_benchmark_runs(
@@ -410,6 +366,9 @@ def list_benchmark_runs(
     model: str | None = Query(None),
     status: str | None = Query(None),
     cluster_id: int | None = Query(None),
+    q: str | None = Query(None, max_length=200, description="Search run label, model or proxy"),
+    sort: str = Query("created_at", description="Sort column; unknown values sort by created_at"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -422,15 +381,16 @@ def list_benchmark_runs(
         model=model,
         status=status,
         cluster_id=cluster_id,
+        q=q,
+        sort=sort,
+        order=order,
         limit=limit,
         offset=offset,
     )
     return {"runs": runs, "total": total, "limit": limit, "offset": offset}
 
 
-@router.get(
-    "/api/benchmarks/runs/{run_id}", response_model=BenchmarkRunDetailResponse, dependencies=[Depends(require_viewer)]
-)
+@router.get("/api/benchmarks/runs/{run_id}", response_model=BenchmarkRunDetailResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get benchmark run")
 def get_benchmark_run(run_id: int, db: Session = Depends(get_db)):
     """Get a benchmark run by ID with full result JSON."""
@@ -438,12 +398,7 @@ def get_benchmark_run(run_id: int, db: Session = Depends(get_db)):
     return svc.get_run(run_id, with_details=True)
 
 
-@router.post(
-    "/api/benchmarks/runs",
-    response_model=BenchmarkRunResponse,
-    status_code=201,
-    dependencies=[Depends(require_operator)],
-)
+@router.post("/api/benchmarks/runs", response_model=BenchmarkRunResponse, status_code=201, dependencies=[Depends(require_operator)])
 @handle_route_errors("create benchmark run")
 def create_benchmark_run(data: BenchmarkRunCreate, db: Session = Depends(get_db)):
     """Create a new benchmark run (typically triggered from UI to send to an agent)."""
@@ -453,11 +408,7 @@ def create_benchmark_run(data: BenchmarkRunCreate, db: Session = Depends(get_db)
     return result
 
 
-@router.post(
-    "/api/benchmarks/runs/{run_id}/cancel",
-    response_model=BenchmarkRunResponse,
-    dependencies=[Depends(require_operator)],
-)
+@router.post("/api/benchmarks/runs/{run_id}/cancel", response_model=BenchmarkRunResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("cancel benchmark run")
 def cancel_benchmark_run(run_id: int, db: Session = Depends(get_db)):
     """Cancel a benchmark run.
@@ -540,7 +491,6 @@ def unset_benchmark_run_baseline(run_id: int, db: Session = Depends(get_db)):
 # Agent Endpoints — test client machine registration
 # ============================================================================
 
-
 @router.post("/api/benchmarks/agents", response_model=BenchmarkAgentResponse, status_code=201)
 @handle_route_errors("register benchmark agent")
 def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db: Session = Depends(get_db)):
@@ -553,8 +503,7 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     # An agent-bound token may only re-register (upsert by name) its own agent.
     _bind_agent_name(_token_agent(claims, db), data.name)
     bootstrap = _is_bootstrap_token(claims)
-    existing_agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
-    builtin_row = _is_builtin_agent(existing_agent)
+    builtin_row = _is_builtin_agent(db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first())
     if bootstrap:
         _check_bootstrap_register(db, data.name)
     elif builtin_row and settings.BENCHMARK_AGENT_AUTH_REQUIRED:
@@ -570,9 +519,7 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     return result
 
 
-@router.get(
-    "/api/benchmarks/agents", response_model=list[BenchmarkAgentResponse], dependencies=[Depends(require_viewer)]
-)
+@router.get("/api/benchmarks/agents", response_model=list[BenchmarkAgentResponse], dependencies=[Depends(require_viewer)])
 @handle_route_errors("list benchmark agents")
 def list_benchmark_agents(db: Session = Depends(get_db)):
     """List all registered test client agents."""
@@ -580,9 +527,7 @@ def list_benchmark_agents(db: Session = Depends(get_db)):
     return svc.list_agents()
 
 
-@router.get(
-    "/api/benchmarks/agents/{agent_id}", response_model=BenchmarkAgentResponse, dependencies=[Depends(require_viewer)]
-)
+@router.get("/api/benchmarks/agents/{agent_id}", response_model=BenchmarkAgentResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get benchmark agent")
 def get_benchmark_agent(agent_id: int, db: Session = Depends(get_db)):
     """Get a registered test client agent by ID."""
@@ -595,7 +540,6 @@ def get_benchmark_agent(agent_id: int, db: Session = Depends(get_db)):
 def mint_benchmark_agent_token(
     agent_id: int,
     response: Response,
-    expires_in_days: int = Query(365, ge=1, le=3650, description="Token lifetime in days (1-3650, default 365)"),
     user: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ):
@@ -607,8 +551,8 @@ def mint_benchmark_agent_token(
     same token written to /etc/forge/agent.env; this route hands it to agents
     Forge does not provision. Project-scoped agents need operator role plus
     project ownership; unscoped agents (project_id NULL, every self-registered
-    agent) need admin. Each token records the minting user and agent token_version;
-    calling rotate bumps the token_version and immediately revokes all prior tokens.
+    agent) need admin. Each call mints a new token; earlier tokens stay valid
+    until they expire or the agent is deleted, which revokes them all.
     """
     from services.auth_service import mint_agent_token
 
@@ -618,67 +562,11 @@ def mint_benchmark_agent_token(
         _check_project_access(agent.project_id, user, db)
     elif effective_role(user) != "admin":
         raise ForbiddenError("Minting a token for an unscoped agent requires admin")
-    token, expires_at = mint_agent_token(
-        agent.id,
-        expires_delta=timedelta(days=expires_in_days),
-        created_by=user.id,
-        token_version=agent.token_version,
-    )
+    token, expires_at = mint_agent_token(agent.id)
     response.headers["Cache-Control"] = "no-store"
-    return BenchmarkAgentTokenResponse(agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at)
-
-
-@router.post("/api/benchmarks/agents/{agent_id}/token/rotate", response_model=BenchmarkAgentTokenResponse)
-@handle_route_errors("rotate benchmark agent token")
-def rotate_benchmark_agent_token(
-    agent_id: int,
-    response: Response,
-    expires_in_days: int = Query(365, ge=1, le=3650, description="Token lifetime in days (1-3650, default 365)"),
-    user: User = Depends(require_operator),
-    db: Session = Depends(get_db),
-):
-    """Rotate an agent's token: bumps token_version, revokes earlier tokens, and force-closes live WS."""
-    from services.auth_service import mint_agent_token
-
-    svc = BenchmarkService(db)
-    agent = svc.get_agent(agent_id)
-    if agent.project_id:
-        _check_project_access(agent.project_id, user, db)
-    elif effective_role(user) != "admin":
-        raise ForbiddenError("Rotating a token for an unscoped agent requires admin")
-
-    agent.token_version += 1
-    db.commit()
-    close_agent_connection(agent.id)
-
-    token, expires_at = mint_agent_token(
-        agent.id,
-        expires_delta=timedelta(days=expires_in_days),
-        created_by=user.id,
-        token_version=agent.token_version,
+    return BenchmarkAgentTokenResponse(
+        agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at
     )
-    response.headers["Cache-Control"] = "no-store"
-    return BenchmarkAgentTokenResponse(agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at)
-
-
-@router.delete("/api/benchmarks/agents/{agent_id}/token", status_code=204)
-@handle_route_errors("revoke benchmark agent tokens")
-def revoke_benchmark_agent_token(
-    agent_id: int,
-    user: User = Depends(require_operator),
-    db: Session = Depends(get_db),
-):
-    """Revoke all tokens for an agent without deleting the agent: bumps token_version and drops live WS."""
-    svc = BenchmarkService(db)
-    agent = svc.get_agent(agent_id)
-    if agent.project_id:
-        _check_project_access(agent.project_id, user, db)
-    elif effective_role(user) != "admin":
-        raise ForbiddenError("Revoking tokens for an unscoped agent requires admin")
-
-    agent.token_version += 1
-    db.commit()
-    close_agent_connection(agent.id)
 
 
 @router.delete("/api/benchmarks/agents/{agent_id}", status_code=204)
@@ -692,15 +580,13 @@ def delete_benchmark_agent(
 
     Mutation route: requires operator role and, for project-scoped (managed)
     agents, project ownership — same pattern as delete_agent_host. Global /
-    self-registered agents (project_id NULL) have no owner, so admin role
-    is required (matching the mint gate).
+    self-registered agents (project_id NULL) have no owner, so operator alone
+    gates them.
     """
     svc = BenchmarkService(db)
     agent = svc.get_agent(agent_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
-    elif effective_role(user) != "admin":
-        raise ForbiddenError("Deleting an unscoped agent requires admin")
     svc.delete_agent(agent_id)
     db.commit()
     close_agent_connection(agent_id)
@@ -716,7 +602,6 @@ def delete_benchmark_agent(
 #   The project ownership check is inlined here since project_id lives in
 #   the request body (POST) or on the host row (DELETE), not in the path.
 # ============================================================================
-
 
 def _check_project_access(project_id: int, user: User, db: Session) -> Project:
     """Raise NotFoundError/ForbiddenError if the user cannot access the project."""
@@ -765,11 +650,7 @@ def create_agent_host(
     return agent
 
 
-@router.get(
-    "/api/benchmarks/agent-hosts",
-    response_model=list[BenchmarkAgentHostResponse],
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/agent-hosts", response_model=list[BenchmarkAgentHostResponse], dependencies=[Depends(require_viewer)])
 @handle_route_errors("list benchmark agent hosts")
 def list_agent_hosts(
     project_id: int | None = Query(None, description="Filter by project. Required for non-admin users."),
@@ -782,22 +663,14 @@ def list_agent_hosts(
     return query.order_by(BenchmarkAgent.created_at.desc()).all()
 
 
-@router.get(
-    "/api/benchmarks/agent-hosts/{host_id}",
-    response_model=BenchmarkAgentHostResponse,
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/agent-hosts/{host_id}", response_model=BenchmarkAgentHostResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get benchmark agent host")
 def get_agent_host(host_id: int, db: Session = Depends(get_db)):
     """Get a Forge-managed remote benchmark agent host by ID."""
-    agent = (
-        db.query(BenchmarkAgent)
-        .filter(
-            BenchmarkAgent.id == host_id,
-            BenchmarkAgent.managed.is_(True),
-        )
-        .first()
-    )
+    agent = db.query(BenchmarkAgent).filter(
+        BenchmarkAgent.id == host_id,
+        BenchmarkAgent.managed.is_(True),
+    ).first()
     if not agent:
         raise NotFoundError("agent host", host_id)
     return agent
@@ -816,14 +689,10 @@ def delete_agent_host(
     thread) so an unreachable host can't stall the HTTP DELETE. The row is
     deleted immediately; the async task disables the forge-agent service.
     """
-    agent = (
-        db.query(BenchmarkAgent)
-        .filter(
-            BenchmarkAgent.id == host_id,
-            BenchmarkAgent.managed.is_(True),
-        )
-        .first()
-    )
+    agent = db.query(BenchmarkAgent).filter(
+        BenchmarkAgent.id == host_id,
+        BenchmarkAgent.managed.is_(True),
+    ).first()
     if not agent:
         raise NotFoundError("agent host", host_id)
     if agent.project_id:
@@ -831,9 +700,13 @@ def delete_agent_host(
 
     # Capture connection params before the row is gone, then dispatch the
     # best-effort service teardown to Celery so a dead host never blocks delete.
-    needs_cleanup = bool(agent.provision_status == "provisioned" and agent.host_ip and agent.ssh_credential_id)
+    needs_cleanup = bool(
+        agent.provision_status == "provisioned" and agent.host_ip and agent.ssh_credential_id
+    )
     cleanup_args = (
-        (agent.ssh_credential_id, agent.host_ip, agent.ssh_port, agent.jumphost_chain) if needs_cleanup else None
+        (agent.ssh_credential_id, agent.host_ip, agent.ssh_port, agent.jumphost_chain)
+        if needs_cleanup
+        else None
     )
 
     db.delete(agent)
@@ -842,7 +715,6 @@ def delete_agent_host(
 
     if cleanup_args is not None:
         from tasks.benchmark_agent_tasks import cleanup_benchmark_agent_host
-
         cleanup_benchmark_agent_host.delay(*cleanup_args)
         logger.info("Dispatched forge-agent cleanup for removed host %d (%s)", host_id, cleanup_args[1])
 
@@ -869,23 +741,18 @@ def scan_agent_host(
 
     Poll GET /api/benchmarks/agent-hosts/{id} for results.
     """
-    agent = (
-        db.query(BenchmarkAgent)
-        .filter(
-            BenchmarkAgent.id == host_id,
-            BenchmarkAgent.managed.is_(True),
-        )
-        .first()
-    )
+    agent = db.query(BenchmarkAgent).filter(
+        BenchmarkAgent.id == host_id,
+        BenchmarkAgent.managed.is_(True),
+    ).first()
     if not agent:
         raise NotFoundError("agent host", host_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
 
-    target_ids = data.target_ids if data else None
+    target_ids = (data.target_ids if data else None)
 
     from tasks.benchmark_agent_tasks import scan_benchmark_agent_host
-
     task = scan_benchmark_agent_host.delay(host_id, target_ids)
 
     return AgentHostScanResponse(
@@ -923,21 +790,16 @@ def provision_agent_host(
 
     Poll GET /api/benchmarks/agent-hosts/{id} for provision_status / provision_message.
     """
-    agent = (
-        db.query(BenchmarkAgent)
-        .filter(
-            BenchmarkAgent.id == host_id,
-            BenchmarkAgent.managed.is_(True),
-        )
-        .first()
-    )
+    agent = db.query(BenchmarkAgent).filter(
+        BenchmarkAgent.id == host_id,
+        BenchmarkAgent.managed.is_(True),
+    ).first()
     if not agent:
         raise NotFoundError("agent host", host_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
 
     from tasks.benchmark_agent_tasks import provision_benchmark_agent_host
-
     task = provision_benchmark_agent_host.delay(host_id)
 
     return AgentHostProvisionResponse(
@@ -950,7 +812,6 @@ def provision_agent_host(
 # ============================================================================
 # Agent Host Candidates (Slice 5) — project-sourced host/jumphost picker
 # ============================================================================
-
 
 @router.get(
     "/api/benchmarks/agent-host-candidates",
@@ -970,7 +831,6 @@ def list_agent_host_candidates(
     """
     _check_project_access(project_id, user, db)
     from services.agent_host_candidates_service import AgentHostCandidatesService
-
     candidates = AgentHostCandidatesService(db).list_candidates(project_id)
     return AgentHostCandidatesResponse(candidates=candidates, project_id=project_id)
 
@@ -996,7 +856,6 @@ def import_aws_jumphost(
     """
     _check_project_access(data.project_id, user, db)
     from services.agent_host_candidates_service import AgentHostCandidatesService
-
     cred_id = AgentHostCandidatesService(db).import_aws_jumphost(data.project_id, data.module_id)
     db.commit()
     return {"ssh_credential_id": cred_id}
@@ -1005,7 +864,6 @@ def import_aws_jumphost(
 # ============================================================================
 # Comparison & Summary
 # ============================================================================
-
 
 @router.post("/api/benchmarks/compare", response_model=BenchmarkCompareResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("compare benchmark runs")
@@ -1043,10 +901,7 @@ def get_benchmark_trends(
 # Benchmark Target Endpoints (Phase 4b)
 # ============================================================================
 
-
-@router.get(
-    "/api/benchmarks/targets", response_model=BenchmarkTargetListResponse, dependencies=[Depends(require_viewer)]
-)
+@router.get("/api/benchmarks/targets", response_model=BenchmarkTargetListResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("list benchmark targets")
 def list_benchmark_targets(
     status: str | None = Query(None),
@@ -1060,11 +915,7 @@ def list_benchmark_targets(
     return {"targets": targets, "total": total}
 
 
-@router.get(
-    "/api/benchmarks/targets/{target_id}",
-    response_model=BenchmarkTargetDetailResponse,
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/targets/{target_id}", response_model=BenchmarkTargetDetailResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get benchmark target")
 def get_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     """Get a benchmark target by ID with proxy deployments."""
@@ -1072,12 +923,7 @@ def get_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     return svc.get_target(target_id, with_details=True)
 
 
-@router.post(
-    "/api/benchmarks/targets",
-    response_model=BenchmarkTargetResponse,
-    status_code=201,
-    dependencies=[Depends(require_operator)],
-)
+@router.post("/api/benchmarks/targets", response_model=BenchmarkTargetResponse, status_code=201, dependencies=[Depends(require_operator)])
 @handle_route_errors("create benchmark target")
 def create_benchmark_target(data: BenchmarkTargetCreate, db: Session = Depends(get_db)):
     """Create a new benchmark target."""
@@ -1087,11 +933,7 @@ def create_benchmark_target(data: BenchmarkTargetCreate, db: Session = Depends(g
     return result
 
 
-@router.put(
-    "/api/benchmarks/targets/{target_id}",
-    response_model=BenchmarkTargetResponse,
-    dependencies=[Depends(require_operator)],
-)
+@router.put("/api/benchmarks/targets/{target_id}", response_model=BenchmarkTargetResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("update benchmark target")
 def update_benchmark_target(target_id: int, data: BenchmarkTargetUpdate, db: Session = Depends(get_db)):
     """Update a benchmark target."""
@@ -1110,7 +952,7 @@ def delete_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-@router.post("/api/benchmarks/targets/{target_id}/validate", response_model=BenchmarkTargetResponse)
+@router.post("/api/benchmarks/targets/{target_id}/validate", response_model=BenchmarkTargetResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("validate benchmark target")
 def validate_benchmark_target(target_id: int, db: Session = Depends(get_db)):
     """Test connectivity to the target's LLM endpoint."""
@@ -1124,10 +966,10 @@ def validate_benchmark_target(target_id: int, db: Session = Depends(get_db)):
 # Target Discovery (Phase 5b) — scan cluster for LLM services + auto-create targets
 # ============================================================================
 
-
 @router.post(
     "/api/benchmarks/discover-targets",
     response_model=DiscoverTargetsResponse,
+    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("discover benchmark targets on cluster")
 def discover_targets(data: DiscoverTargetsRequest, db: Session = Depends(get_db)):
@@ -1158,10 +1000,10 @@ def discover_targets(data: DiscoverTargetsRequest, db: Session = Depends(get_db)
 # Proxy Discovery (Phase 5) — scan cluster for existing proxies
 # ============================================================================
 
-
 @router.post(
     "/api/benchmarks/targets/{target_id}/discover-proxies",
     response_model=ProxyDiscoveryResponse,
+    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("discover proxies on cluster")
 def discover_proxies(target_id: int, db: Session = Depends(get_db)):
@@ -1199,12 +1041,7 @@ def discover_proxies(target_id: int, db: Session = Depends(get_db)):
 # Proxy Deployment Endpoints (Phase 4b)
 # ============================================================================
 
-
-@router.get(
-    "/api/benchmarks/targets/{target_id}/proxies",
-    response_model=list[ProxyDeploymentResponse],
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/targets/{target_id}/proxies", response_model=list[ProxyDeploymentResponse], dependencies=[Depends(require_viewer)])
 @handle_route_errors("list proxy deployments")
 def list_proxy_deployments(target_id: int, db: Session = Depends(get_db)):
     """List all proxy deployments for a target."""
@@ -1212,11 +1049,7 @@ def list_proxy_deployments(target_id: int, db: Session = Depends(get_db)):
     return svc.list_proxy_deployments(target_id)
 
 
-@router.get(
-    "/api/benchmarks/targets/{target_id}/proxies/{proxy_id}",
-    response_model=ProxyDeploymentResponse,
-    dependencies=[Depends(require_viewer)],
-)
+@router.get("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", response_model=ProxyDeploymentResponse, dependencies=[Depends(require_viewer)])
 @handle_route_errors("get proxy deployment")
 def get_proxy_deployment(target_id: int, proxy_id: int, db: Session = Depends(get_db)):
     """Get a proxy deployment by ID."""
@@ -1224,12 +1057,7 @@ def get_proxy_deployment(target_id: int, proxy_id: int, db: Session = Depends(ge
     return svc.get_proxy_deployment(target_id, proxy_id)
 
 
-@router.post(
-    "/api/benchmarks/targets/{target_id}/proxies",
-    response_model=ProxyDeploymentResponse,
-    status_code=201,
-    dependencies=[Depends(require_operator)],
-)
+@router.post("/api/benchmarks/targets/{target_id}/proxies", response_model=ProxyDeploymentResponse, status_code=201, dependencies=[Depends(require_operator)])
 @handle_route_errors("deploy proxy to target")
 def deploy_proxy(target_id: int, data: ProxyDeployRequest, db: Session = Depends(get_db)):
     """Deploy a proxy to a target cluster.
@@ -1244,7 +1072,6 @@ def deploy_proxy(target_id: int, data: ProxyDeployRequest, db: Session = Depends
 
     # Dispatch async Helm install via Celery
     from tasks.proxy_deploy_tasks import deploy_proxy_task
-
     task = deploy_proxy_task.delay(result.id)
 
     # Store task ID so the frontend can poll Celery status
@@ -1254,7 +1081,7 @@ def deploy_proxy(target_id: int, data: ProxyDeployRequest, db: Session = Depends
     return result
 
 
-@router.put("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", response_model=ProxyDeploymentResponse)
+@router.put("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", response_model=ProxyDeploymentResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("update proxy deployment")
 def update_proxy_deployment(target_id: int, proxy_id: int, data: ProxyDeploymentUpdate, db: Session = Depends(get_db)):
     """Update a proxy deployment."""
@@ -1264,9 +1091,7 @@ def update_proxy_deployment(target_id: int, proxy_id: int, data: ProxyDeployment
     return result
 
 
-@router.delete(
-    "/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", status_code=202, dependencies=[Depends(require_operator)]
-)
+@router.delete("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}", status_code=202, dependencies=[Depends(require_operator)])
 @handle_route_errors("undeploy proxy")
 def delete_proxy_deployment(target_id: int, proxy_id: int, db: Session = Depends(get_db)):
     """Undeploy (Helm uninstall) a proxy, then delete the record.
@@ -1285,13 +1110,12 @@ def delete_proxy_deployment(target_id: int, proxy_id: int, db: Session = Depends
 
     # Dispatch async Helm uninstall
     from tasks.proxy_deploy_tasks import undeploy_proxy_task
-
     task = undeploy_proxy_task.delay(proxy_id)
     deploy.celery_task_id = task.id
     db.commit()
 
 
-@router.post("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/redeploy", response_model=ProxyDeploymentResponse)
+@router.post("/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/redeploy", response_model=ProxyDeploymentResponse, dependencies=[Depends(require_operator)])
 @handle_route_errors("redeploy proxy")
 def redeploy_proxy(target_id: int, proxy_id: int, db: Session = Depends(get_db)):
     """Redeploy a proxy after config change.
@@ -1304,7 +1128,6 @@ def redeploy_proxy(target_id: int, proxy_id: int, db: Session = Depends(get_db))
 
     # Dispatch async Helm install
     from tasks.proxy_deploy_tasks import deploy_proxy_task
-
     task = deploy_proxy_task.delay(proxy_id)
     result.celery_task_id = task.id
     db.commit()
@@ -1340,7 +1163,6 @@ def get_proxy_task_status(target_id: int, proxy_id: int, db: Session = Depends(g
     # If there's a Celery task, also fetch its state
     if deploy.celery_task_id:
         from celery_app import celery_app as _celery
-
         async_result = _celery.AsyncResult(deploy.celery_task_id)
         response["celery_state"] = async_result.state  # PENDING, STARTED, SUCCESS, FAILURE
 
@@ -1350,7 +1172,6 @@ def get_proxy_task_status(target_id: int, proxy_id: int, db: Session = Depends(g
 # ============================================================================
 # Run Orchestration (Phase 4d) — trigger benchmark against a deployed proxy
 # ============================================================================
-
 
 @router.post(
     "/api/benchmarks/targets/{target_id}/proxies/{proxy_id}/run",
@@ -1410,58 +1231,74 @@ def trigger_benchmark_run(
     #    See: https://github.com/ai-dynamo/aiperf/blob/main/docs/cli-options.md
     base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
-    config_json: dict = {
-        "url": base_url,
-        "model": target.llm_model,
+    # Load-shape defaults. Sane values so a quick "Run Test" is a meaningful
+    # benchmark, not aiperf's bare defaults (concurrency 1, ~10 requests,
+    # UNBOUNDED output) which yield ~20s/req throughput that reads as a
+    # catastrophic proxy regression. Mirrors the `baseline` scenario's single
+    # operating point.
+    defaults: dict = {
         "endpoint_type": "chat",
-        "endpoint": target.llm_endpoint or "/v1/chat/completions",
         "streaming": True,
-        "request_timeout_seconds": data.timeout or 600,
-        # Sane defaults so a quick "Run Test" is a meaningful benchmark, not
-        # aiperf's bare defaults (concurrency 1, ~10 requests, UNBOUNDED output)
-        # which yield ~20s/req throughput that reads as a catastrophic proxy
-        # regression. Mirrors the `baseline` scenario's single operating point.
+        "request_timeout_seconds": 600,
         "concurrency": 50,
         "request_count": 250,
         "synthetic_input_tokens_mean": 500,
         "output_tokens_mean": 128,
         "extra_inputs": ["ignore_eos:true"],
         "ui": "none",
+    }
+    # Explicit request fields (settings edited at launch) override a saved config;
+    # an override of null drops the saved value so the default applies again.
+    overrides = data.overrides or {}
+    cleared = {k for k, v in overrides.items() if v is None}
+    explicit: dict = {k: v for k, v in overrides.items() if v is not None}
+    if data.timeout:
+        explicit["request_timeout_seconds"] = data.timeout
+    if data.total_requests:
+        explicit["request_count"] = data.total_requests
+    if data.max_tokens:
+        explicit["output_tokens_mean"] = data.max_tokens
+    # What is being tested comes from the target/proxy, never from a saved config.
+    identity: dict = {
+        "url": base_url,
+        "model": target.llm_model,
+        "endpoint": target.llm_endpoint or "/v1/chat/completions",
         # Forge metadata (not aiperf flags)
         "_proxy_type": deploy.proxy_type,
         "_target_name": target.name,
     }
+    identity.update(proxy_request_settings(deploy))
 
-    if data.total_requests:
-        config_json["request_count"] = data.total_requests
-    if data.max_tokens:
-        config_json["output_tokens_mean"] = data.max_tokens
-
-    # Merge saved config if provided
+    # A saved config's load shape wins over the defaults (it is why the user
+    # picked it); explicit request fields and the target/proxy identity win over it.
+    saved: dict = {}
     if data.config_id:
-        config = bench_svc.get_config(data.config_id)
-        saved = config.config_json or {}
-        # Saved config provides defaults, but target/proxy info overrides
-        merged = {**saved, **config_json}
-        config_json = merged
+        saved = bench_svc.get_config(data.config_id).config_json or {}
+    saved = {k: v for k, v in saved.items() if k not in cleared}
+    config_json = {**defaults, **saved, **explicit, **identity}
+    # Open loop (a request rate or a fixed duration): the closed-loop defaults
+    # would cap in-flight requests at 50 and end a timed run at 250 requests.
+    chosen = {**saved, **explicit}
+    if chosen.get("request_rate") or chosen.get("benchmark_duration"):
+        for key in ("concurrency", "request_count"):
+            if key not in chosen:
+                config_json.pop(key, None)
 
     # 4. Create BenchmarkRun
-    run = bench_svc.create_run(
-        {
-            "config_id": data.config_id,
-            "agent_id": agent_id,
-            "target_id": target_id,
-            "proxy_deployment_id": proxy_id,
-            "tool": config_json.get("tool", "aiperf"),
-            "proxy": deploy.proxy_type,
-            "model": target.llm_model,
-            "base_url": base_url,
-            "run_label": data.run_label or f"{deploy.proxy_type}-{target.name}",
-            "tags": data.tags,
-            "config_snapshot": config_json,
-            "status": BenchmarkRunStatus.PENDING,
-        }
-    )
+    run = bench_svc.create_run({
+        "config_id": data.config_id,
+        "agent_id": agent_id,
+        "target_id": target_id,
+        "proxy_deployment_id": proxy_id,
+        "tool": config_json.get("tool", "aiperf"),
+        "proxy": deploy.proxy_type,
+        "model": target.llm_model,
+        "base_url": base_url,
+        "run_label": data.run_label or f"{deploy.proxy_type}-{target.name}",
+        "tags": {**model_server_tags(db, target), **router_tags(deploy), **(data.tags or {})},
+        "config_snapshot": config_json,
+        "status": BenchmarkRunStatus.PENDING,
+    })
     db.commit()
 
     # 5. Send command to agent via WebSocket (scheduled on the WS-owning loop)
@@ -1506,7 +1343,6 @@ def trigger_benchmark_run(
 # Scenario Orchestration (Phase 6) — scenario → run-group + child runs
 # ============================================================================
 
-
 @router.get(
     "/api/benchmarks/scenarios",
     response_model=ScenarioCatalogResponse,
@@ -1532,6 +1368,25 @@ def get_benchmark_run_group(group_id: int, db: Session = Depends(get_db)):
     svc = BenchmarkService(db)
     group = svc.get_run_group(group_id)
     return _serialize_run_group(group)
+
+
+@router.get("/api/benchmarks/run-groups", response_model=RunGroupListResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("list benchmark run-groups")
+def list_benchmark_run_groups(
+    scenario_key: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Run-groups (scenario sweeps), newest first."""
+    groups, total = BenchmarkService(db).list_run_groups(scenario_key=scenario_key, limit=limit)
+    return {"groups": groups, "total": total}
+
+
+@router.post("/api/benchmarks/run-groups/curves", response_model=RunGroupCurvesResponse, dependencies=[Depends(require_viewer)])
+@handle_route_errors("benchmark load curves")
+def benchmark_run_group_curves(data: RunGroupCurvesRequest, db: Session = Depends(get_db)):
+    """Load curves for several sweeps (latency / throughput / goodput per load point)."""
+    return BenchmarkService(db).run_group_curves(data.group_ids)
 
 
 @router.post(
@@ -1598,8 +1453,9 @@ def run_benchmark_scenario(
         proxy_type=deploy.proxy_type,
         agent_id=agent_id,
         run_label=data.run_label,
-        tags=data.tags,
+        tags={**model_server_tags(db, target), **router_tags(deploy), **(data.tags or {})},
         overrides=data.overrides,
+        steps=data.steps,
     )
     db.commit()
 
@@ -1668,7 +1524,6 @@ def _serialize_run_group(group) -> RunGroupResponse:
         run_label=group.run_label,
         status=group.status,
         target_id=group.target_id,
-        cluster_name=group.cluster_name,
         proxy=group.proxy,
         model=group.model,
         total_runs=group.total_runs,
@@ -1693,10 +1548,13 @@ def _serialize_run_group(group) -> RunGroupResponse:
                 "variant_label": r.variant_label,
                 "status": r.status,
                 "concurrency": (r.config_snapshot or {}).get("concurrency"),
+                "request_rate": (r.config_snapshot or {}).get("request_rate"),
                 "latency_p50": r.latency_p50,
                 "latency_p99": r.latency_p99,
                 "overall_rps": r.overall_rps,
                 "tokens_per_sec": r.tokens_per_sec,
+                **{k: v for k, v in run_point_metrics(r).items()
+                   if k in ("cache_hit_pct", "ttft_avg", "ttft_p50", "ttft_p99", "error_rate_pct")},
             }
             for r in group.runs
         ],
@@ -1708,12 +1566,6 @@ def _serialize_run_group(group) -> RunGroupResponse:
 # ============================================================================
 
 # Active WebSocket connections per agent_id
-#
-# ARCHITECTURAL CONSTRAINT: The WebSocket connection registry and run dispatch
-# state (_agent_ws_connections, _run_owner, _main_loop) are held strictly in
-# process memory. The backend API MUST run with replicaCount: 1 (see values.yaml).
-# Running multiple replicas without sticky sessions or distributed coordination
-# causes split-brain agent dispatch and invalid sweeps.
 _agent_ws_connections: dict[int, WebSocket] = {}
 # The event loop that owns the agent WebSockets (uvicorn's main loop). Captured
 # when an agent connects so SYNC route handlers can schedule sends ON THAT LOOP
@@ -1767,9 +1619,7 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
     if run.agent_id != agent_id:
         logger.warning(
             "Agent %d reported result for run #%d owned by agent %s — skipping (spoof guard)",
-            agent_id,
-            run_id,
-            run.agent_id,
+            agent_id, run_id, run.agent_id,
         )
         return False
     return True
@@ -1787,7 +1637,6 @@ def _optional_bearer_claims(request: Request) -> dict:
         return {}
     from core.errors import UnauthorizedError
     from services.auth_service import decode_token
-
     try:
         return decode_token(auth_header.split(" ", 1)[1])
     except UnauthorizedError:
@@ -1840,10 +1689,8 @@ def _check_bootstrap_register(db: Session, name: str) -> None:
     existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == name).first()
     if existing is None or _is_builtin_agent(existing):
         return
-    if (
-        existing.name == _LEGACY_BUILTIN_NAME
-        and not existing.managed
-        and not any(_is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False)))
+    if existing.name == _LEGACY_BUILTIN_NAME and not existing.managed and not any(
+        _is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False))
     ):
         if existing.id in _agent_ws_connections:
             # A live agent (an external one may use the legacy name) keeps its row.
@@ -1896,27 +1743,9 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
 
     Returns the WS close code to reject with, or ``None`` if authorized.
     """
-    # Header extraction (m1): accept via Sec-WebSocket-Protocol or Authorization header,
-    # falling back to query param ?token=
-    from collections.abc import Mapping
-
     from core.config import settings
 
-    token = None
-    headers = websocket.headers if isinstance(getattr(websocket, "headers", None), Mapping) else {}
-    proto = headers.get("sec-websocket-protocol")
-    if proto and isinstance(proto, str):
-        for part in proto.split(","):
-            candidate = part.strip()
-            if candidate and candidate.lower() not in ("bearer", "token", "access_token"):
-                token = candidate
-                break
-    if not token and "authorization" in headers:
-        auth_header = str(headers.get("authorization") or "")
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-    if not token and hasattr(websocket, "query_params"):
-        token = websocket.query_params.get("token")
+    token = websocket.query_params.get("token")
 
     # Layer 1 — agent-specific auth (close 4401)
     if settings.BENCHMARK_AGENT_AUTH_REQUIRED:
@@ -1950,14 +1779,18 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         try:
             claim_matches = int(token_agent_id) == agent_id
         except (TypeError, ValueError):
-            logger.warning("Agent %d WS rejected: non-numeric agent_id claim %r", agent_id, token_agent_id)
+            logger.warning(
+                "Agent %d WS rejected: non-numeric agent_id claim %r", agent_id, token_agent_id
+            )
             return 4401
         if not claim_matches:
-            logger.warning("Agent %d WS rejected: token agent_id=%s does not match path", agent_id, token_agent_id)
+            logger.warning(
+                "Agent %d WS rejected: token agent_id=%s does not match path", agent_id, token_agent_id
+            )
             return 4401
-        # Deleting the agent revokes its tokens. Check version and minter as well.
-        if not _agent_token_active(agent_id, payload):
-            logger.warning("Agent %d WS rejected: agent is not registered or token revoked", agent_id)
+        # Deleting the agent revokes its tokens.
+        if not _agent_exists(agent_id):
+            logger.warning("Agent %d WS rejected: agent is not registered", agent_id)
             return 4401
         return None
 
@@ -2003,24 +1836,19 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     # only its own agent, and only while that agent is registered.
     if payload.get("role") == "agent":
         token_agent_id = payload.get("agent_id")
-        if token_agent_id is None:
-            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
-                return None
-            logger.warning("Agent %d WS rejected: role=agent token missing agent_id claim", agent_id)
-            return 4401
-        try:
-            claim_matches = int(token_agent_id) == agent_id
-        except (TypeError, ValueError):
-            claim_matches = False
-        if not claim_matches or not _agent_token_active(agent_id, payload):
-            logger.warning(
-                "Agent %d WS rejected: token agent_id=%s is not valid/active for this agent",
-                agent_id,
-                token_agent_id,
-            )
-            # 4401, not 4001: the token itself is valid but no longer active for this
-            # agent, so the agent must re-mint rather than reconnect.
-            return 4401
+        if token_agent_id is not None:
+            try:
+                claim_matches = int(token_agent_id) == agent_id
+            except (TypeError, ValueError):
+                claim_matches = False
+            if not claim_matches or not _agent_exists(agent_id):
+                logger.warning(
+                    "Agent %d WS rejected: token agent_id=%s is not this registered agent",
+                    agent_id, token_agent_id,
+                )
+                # 4401, not 4001: the token itself is valid but no longer names this
+                # agent, so the agent must re-mint rather than reconnect.
+                return 4401
     else:
         from services.auth_service import token_user_state
 
@@ -2055,7 +1883,6 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     # nothing — so it is safe to run in a thread; the caller still does the async
     # websocket.close() below.
     from starlette.concurrency import run_in_threadpool
-
     close_code = await run_in_threadpool(_agent_ws_authorized, websocket, agent_id)
     if close_code is not None:
         await websocket.close(code=close_code)
@@ -2087,7 +1914,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
         # this one; fail it so it does not block the queue. Runs whose dispatch
         # a route is still sending, or that were already sent on this connection
         # (while the superseded one was closing), are spared.
-        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING or owner is websocket}
+        in_flight = {
+            rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING or owner is websocket
+        }
         interrupted = svc.fail_interrupted_runs_for_agent(agent_id, keep=in_flight)
         for rid in interrupted:
             _run_owner.pop(rid, None)
@@ -2125,10 +1954,19 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                     db.close()
 
             elif msg_type == "progress":
-                # Broadcast to any dashboard WebSocket watchers
+                # Broadcast to any dashboard WebSocket watchers — only for a run
+                # dispatched to this agent, so a peer cannot spoof another run's progress.
                 run_id = msg.get("run_id")
                 if run_id:
-                    await broadcast_run_update(int(run_id), msg)
+                    db = next(get_db())
+                    try:
+                        owned = _agent_owns_run(BenchmarkService(db), agent_id, int(run_id))
+                    except (TypeError, ValueError):
+                        owned = False
+                    finally:
+                        db.close()
+                    if owned:
+                        await broadcast_run_update(int(run_id), msg)
 
             elif msg_type == "run_completed":
                 # Agent finished a run — update run with result data
@@ -2150,12 +1988,10 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                         # Gated dispatch: now that this child is done, send the next pending
                         # child of its run-group (one aiperf at a time, strictly sequential).
                         done = svc.get_run(int(run_id))
-                        dispatched = False
                         if done and done.run_group_id:
-                            dispatched = await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
-                        if not dispatched:
-                            # Standalone run done, or group has no more pending children:
-                            # send the agent's next queued run.
+                            await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
+                        else:
+                            # Standalone run done: send the agent's next queued run.
                             await _drain_next_pending_run(svc, agent_id)
                     else:
                         db.commit()
@@ -2189,12 +2025,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                                 svc.maybe_finalize_run_group(run.run_group_id)
                             db.commit()
                             # Gated dispatch: continue the sweep with the next child.
-                            dispatched = False
                             if run.run_group_id:
-                                dispatched = await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
-                            if not dispatched:
-                                # Standalone run failed, or group has no more pending children:
-                                # send the agent's next queued run.
+                                await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
+                            else:
                                 await _drain_next_pending_run(svc, agent_id)
                     else:
                         db.commit()
@@ -2230,9 +2063,7 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                 svc = BenchmarkService(db)
                 if orphaned:
                     failed = svc.fail_interrupted_runs_for_agent(
-                        agent_id,
-                        only=orphaned,
-                        reason="agent connection closed; run interrupted",
+                        agent_id, only=orphaned, reason="agent connection closed; run interrupted",
                     )
                     if failed:
                         logger.warning("Agent %d disconnected: failed interrupted runs %s", agent_id, failed)
@@ -2259,9 +2090,9 @@ async def _drain_next_pending_run(svc: "BenchmarkService", agent_id: int) -> Non
         # run_completed/run_failed handler can never leave two children of
         # one group RUNNING — the loser's claim fails the NOT-EXISTS guard.
         # It claims, sends, and reverts the claim on send failure.
-        dispatched = await _dispatch_next_group_child(svc, agent_id, group_id)
+        await _dispatch_next_group_child(svc, agent_id, group_id)
         # Reflect the group as RUNNING only once a child is actually running (NIT-D atomic flip).
-        if dispatched and svc.mark_run_group_running_if_pending(group_id):
+        if svc.mark_run_group_running_if_pending(group_id):
             svc.db.commit()
     elif svc.claim_pending_run(pending_run.id):
         # Standalone (group-less) run: no siblings, single-row atomic claim.
@@ -2276,11 +2107,8 @@ async def _drain_next_pending_run(svc: "BenchmarkService", agent_id: int) -> Non
             svc.db.commit()
 
 
-async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, group_id: int) -> bool:
+async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, group_id: int) -> None:
     """Atomically claim and dispatch the next pending child of a run-group.
-
-    Returns True if a child was claimed and sent, False if no pending child remains,
-    the claim was lost, or the send failed.
 
     Closes the gated-dispatch double-dispatch race (H1): two near-simultaneous
     terminal WS messages can both pick the same lowest-id PENDING child. We claim
@@ -2292,7 +2120,7 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
     """
     nxt = svc.get_next_pending_group_run(group_id)
     if not nxt:
-        return False
+        return
     nxt_id = nxt.id
     nxt_config = nxt.config_snapshot
     # Group-guarded atomic claim (MAJOR-2 / MAJOR-A): only claim if NO sibling of this group
@@ -2303,19 +2131,19 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
     if not svc.claim_pending_run(nxt_id, group_id=group_id):
         # Lost the race — a sibling is already claimed/RUNNING, or another handler
         # already claimed and dispatched this child.
-        return False
+        return
     # MINOR-B: Persist the claim BEFORE the awaited network send, freeing the connection/row lock.
     svc.db.commit()
-    sent = await send_command_to_agent(agent_id, {"type": "run", "run_id": nxt_id, "config": nxt_config})
+    sent = await send_command_to_agent(
+        agent_id, {"type": "run", "run_id": nxt_id, "config": nxt_config}
+    )
     if sent:
         logger.info("Gated dispatch: claimed+sent next run #%d of group %d", nxt_id, group_id)
-        return True
     else:
         # Undo the claim so the child can be re-dispatched later.
         svc.release_claimed_run(nxt_id)
         svc.db.commit()
         logger.warning("Gated dispatch: send failed for run #%d, reverted to pending", nxt_id)
-        return False
 
 
 async def send_command_to_agent(agent_id: int, command: dict) -> bool:
@@ -2385,9 +2213,8 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
                     if not attempt.started:
                         attempt.abandoned = True
                         return False
-                logger.warning(
-                    "Agent %d: send of %s still in progress after timeout; keeping claim", agent_id, command.get("type")
-                )
+                logger.warning("Agent %d: send of %s still in progress after timeout; keeping claim",
+                               agent_id, command.get("type"))
                 return True
         except Exception:
             return False
@@ -2395,30 +2222,30 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
     return False
 
 
-async def _close_agent_ws(ws: WebSocket) -> None:
-    try:
-        await ws.close(code=4401)
-    except Exception:
-        pass
+async def _close_agent_ws(agent_id: int) -> None:
+    ws = _agent_ws_connections.pop(agent_id, None)
+    if ws is not None:
+        try:
+            await ws.close(code=4401)
+        except Exception:
+            pass
 
 
 def close_agent_connection(agent_id: int) -> None:
-    """Drop an agent's live WebSocket (close 4401) from a SYNC route handler.
+    """Drop a deleted agent's live WebSocket (close 4401) from a SYNC route handler.
 
-    Deleting an agent or rotating its token revokes earlier credentials; without
-    this an already-open socket would keep working until it reconnected.
-    Popping the entry denies the socket immediately, and scheduling the close
-    without awaiting the 5s timeout avoids blocking route threads if the loop is busy.
+    Deleting the agent revokes its tokens; without this an already-open socket
+    would keep working until it reconnected. Scheduled on the loop that owns the
+    socket, like dispatch_to_agent.
     """
-    ws = _agent_ws_connections.pop(agent_id, None)
-    if ws is None:
-        return
     loop = _main_loop
     if loop is not None and loop.is_running():
         try:
-            asyncio.run_coroutine_threadsafe(_close_agent_ws(ws), loop)
+            asyncio.run_coroutine_threadsafe(_close_agent_ws(agent_id), loop).result(timeout=5)
         except Exception:
-            logger.warning("Could not close WebSocket for agent %d", agent_id)
+            logger.warning("Could not close WebSocket for deleted agent %d", agent_id)
+    else:
+        _agent_ws_connections.pop(agent_id, None)
 
 
 # ============================================================================
@@ -2430,7 +2257,15 @@ _run_ws_connections: dict[int, set[WebSocket]] = {}
 
 @ws_router.websocket("/ws/benchmarks/runs/{run_id}")
 async def run_progress_ws(websocket: WebSocket, run_id: int):
-    """WebSocket for dashboard clients watching a benchmark run's progress."""
+    """WebSocket for dashboard clients watching a benchmark run's progress.
+
+    Auth: ``?token=<JWT>``. The /ws/ path is exempt from the HTTP AuthMiddleware,
+    so this endpoint validates the token itself (same gate as pod exec/logs).
+    """
+    from routes.k8s_websocket import _validate_ws_token
+
+    if not await _validate_ws_token(websocket, websocket.query_params.get("token")):
+        return
     await websocket.accept()
     if run_id not in _run_ws_connections:
         _run_ws_connections[run_id] = set()
@@ -2463,3 +2298,16 @@ async def broadcast_run_update(run_id: int, message: dict) -> None:
             disconnected.add(ws)
     for ws in disconnected:
         connections.discard(ws)
+
+
+def _parse_tags_param(raw: str | None) -> dict | None:
+    """The ``tags`` query parameter: a JSON object of string values."""
+    if not raw:
+        return None
+    try:
+        tags = json.loads(raw)
+    except ValueError as exc:
+        raise BadRequestError("tags must be a JSON object", code="INVALID_TAGS") from exc
+    if not isinstance(tags, dict):
+        raise BadRequestError("tags must be a JSON object", code="INVALID_TAGS")
+    return {str(k): str(v) for k, v in tags.items()}

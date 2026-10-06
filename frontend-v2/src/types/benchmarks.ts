@@ -18,6 +18,7 @@ export type ProxyType =
   | 'nginx'
   | 'haproxy'
   | 'f5-bnk'
+  | 'f5-bnk-epp'
   | 'nodeport'
   | 'envoy-ai-gateway'
   | 'llm-d-router';
@@ -172,13 +173,115 @@ export interface BenchmarkCompareRunMetrics {
   peak_rps: number | null;
   tokens_per_sec: number | null;
   duration_seconds: number | null;
-  // aiperf-specific metrics (avg values for comparison)
+  // aiperf tail-latency + service-level metrics (latencies in ms)
   ttft_avg: number | null;
+  ttft_p50?: number | null;
+  ttft_p90?: number | null;
+  ttft_p99?: number | null;
   itl_avg: number | null;
+  itl_p50?: number | null;
+  itl_p99?: number | null;
   tst_avg: number | null;
   osl_avg: number | null;
   isl_avg: number | null;
   per_user_throughput_avg: number | null;
+  per_user_throughput_p50?: number | null;
+  goodput?: number | null;
+  good_request_pct?: number | null;
+  error_rate_pct?: number | null;
+  requested_osl?: number | null;
+  // What the router did, from the model-server pods (result_json.model_server)
+  cache_hit_pct?: number | null;
+  load_spread?: number | null;
+  max_share_pct?: number | null;
+  preemptions?: number | null;
+  ttft_p10?: number | null;
+  ttft_p25?: number | null;
+  tags?: Record<string, unknown> | null;
+  config_snapshot?: Record<string, unknown> | null;
+  pods?: ModelServerPodStats[] | null;
+}
+
+/** Per-pod counter deltas over a run (vLLM / llm-d simulator /metrics). */
+export interface ModelServerPodStats {
+  pod: string;
+  node?: string | null;
+  requests?: number;
+  prefix_queries?: number;
+  prefix_hits?: number;
+  preemptions?: number;
+  hit_pct?: number;
+  share_pct?: number;
+  counted_from?: string;
+}
+
+export interface ModelServerStats {
+  source: string;
+  from?: string | null;
+  to?: string | null;
+  pods: ModelServerPodStats[];
+  totals: {
+    pods: number;
+    requests: number;
+    hit_pct?: number;
+    load_spread?: number | null;
+    max_share_pct?: number;
+    preemptions?: number;
+  };
+}
+
+/** One load point of a sweep. latency_p50/p99 in seconds; ttft/itl in ms. */
+export interface CurvePoint {
+  run_id: number;
+  variant_label: string | null;
+  concurrency: number | null;
+  request_rate: number | null;
+  benchmark_duration?: number | null;
+  total_requests?: number | null;
+  latency_p50: number | null;
+  latency_p99: number | null;
+  overall_rps: number | null;
+  tokens_per_sec: number | null;
+  success_rate_pct: number | null;
+  ttft_p50: number | null;
+  ttft_p99: number | null;
+  itl_p50: number | null;
+  itl_p99: number | null;
+  per_user_throughput_p50: number | null;
+  goodput: number | null;
+  good_request_pct: number | null;
+  error_rate_pct: number | null;
+  osl_avg: number | null;
+  requested_osl: number | null;
+  /** Open loop: average requests in flight. */
+  effective_concurrency?: number | null;
+}
+
+export interface RunGroupListItem {
+  id: number;
+  scenario_key: string;
+  scenario_name: string | null;
+  run_label: string | null;
+  status: string;
+  target_id: number | null;
+  proxy: string | null;
+  model: string | null;
+  total_runs: number;
+  completed_runs: number;
+  failed_runs: number;
+  created_at: string;
+}
+
+export interface CurveGroup extends RunGroupListItem {
+  points: CurvePoint[];
+  load_axis?: string;
+  /** Goodput targets the sweep ran with, in ms (e.g. time_to_first_token: 2000). */
+  goodput_targets?: Record<string, number>;
+}
+
+export interface RunGroupCurvesResponse {
+  groups: CurveGroup[];
+  mismatch_reasons: string[];
 }
 
 export interface BenchmarkCompareResponse {
@@ -186,6 +289,8 @@ export interface BenchmarkCompareResponse {
   winners: Record<string, number>;  // metric → winning run_id
   // True when the compared runs don't share the same config_id/scenario_key.
   context_mismatch?: boolean;
+  // True when the runs were served differently (simulator vs real model, replica count).
+  server_mismatch?: boolean;
 }
 
 // =============================================================================
@@ -383,6 +488,8 @@ export interface ProxyDeployment {
   helm_values: Record<string, unknown> | null;
   proxy_url: string | null;
   external_url: string | null;
+  /** What the proxy routes on (EPP, tokens, KV events), set on deploy */
+  routing_info?: Record<string, string> | null;
   status: ProxyDeploymentStatus;
   status_message: string | null;
   celery_task_id: string | null;
@@ -428,6 +535,8 @@ export interface TriggerRunRequest {
   total_requests?: number;
   max_tokens?: number;
   timeout?: number;
+  /** aiperf settings applied over the config (null unsets a config key). */
+  overrides?: Record<string, unknown>;
 }
 
 export interface TriggerRunResponse {
