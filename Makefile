@@ -1510,8 +1510,9 @@ docker-verify:
 # Requires pip-audit to be installed (CI installs it; locally: pip install pip-audit).
 #
 # PYSEC-2026-1325: ecdsa is a transitive dep of python-jose[cryptography]==3.5.0 (not bumped in this PR); no fix version available yet.
+# CVE-2026-85394: python-jose==3.5.0 has no fix version released yet.
 # (fastapi/starlette/paramiko CVEs previously deferred have been fixed by this PR's bumps.)
-PIP_AUDIT_DEFER = --ignore-vuln PYSEC-2026-1325
+PIP_AUDIT_DEFER = --ignore-vuln PYSEC-2026-1325 --ignore-vuln CVE-2026-85394
 security-audit:
 	@echo ""
 	@echo "=== Security Audit ==="

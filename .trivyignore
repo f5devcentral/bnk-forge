@@ -156,3 +156,9 @@ CVE-2026-57433 exp:2026-11-30
 # Tracked: GitHub issue #214
 # Added: 2026-09-08
 CVE-2026-56854 exp:2026-11-30
+
+# CVE-2026-85394: python-jose — algorithm confusion guard bypassed by DER-encoded public keys (CRITICAL)
+# Affects: python-jose 3.5.0 in backend images (api, worker, beat)
+# No upstream fix released yet (Trivy fixed version column is blank).
+# Added: 2026-10-06
+CVE-2026-85394 exp:2026-11-30
