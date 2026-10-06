@@ -154,5 +154,12 @@ CVE-2026-57433 exp:2026-11-30
 #          remove this entry and re-run the scan. Check:
 #          https://github.com/helm/helm/releases
 # Tracked: GitHub issue #214
-# Added: 2026-09-08
 CVE-2026-56854 exp:2026-11-30
+
+# CVE-2026-85394: python-jose — algorithm confusion guard bypassed by DER-encoded keys
+# Affects: python-jose[cryptography]==3.5.0 in backend API image
+# Not exploitable in our context: auth_service.py explicitly specifies algorithms=[JWT_ALGORITHM] ("HS256")
+# in decode_token, and creates tokens using symmetric secret key (settings.JWT_SECRET_KEY).
+# Upstream: python-jose 3.5.0 has no patched release available yet.
+# Added: 2026-10-06
+CVE-2026-85394 exp:2026-11-30

@@ -548,3 +548,18 @@ export function keepPreviousForCluster(clusterId: number) {
   return <T>(previousData: T | undefined, previousQuery?: { queryKey: readonly unknown[] }) =>
     previousQuery?.queryKey.includes(clusterId) ? previousData : undefined;
 }
+
+/**
+ * placeholderData that keeps the previous result only while all provided scope
+ * tokens (e.g. cluster, resourceType, namespace) match the previous query key.
+ * Prevents cross-scope stale data leakage during transitions.
+ */
+export function keepPreviousForScope(...scopeItems: unknown[]) {
+  return <T>(previousData: T | undefined, previousQuery?: { queryKey: readonly unknown[] }) => {
+    if (!previousQuery?.queryKey) return undefined;
+    const allMatch = scopeItems.every(
+      item => item === undefined || previousQuery.queryKey.includes(item)
+    );
+    return allMatch ? previousData : undefined;
+  };
+}

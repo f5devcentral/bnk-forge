@@ -100,20 +100,21 @@ def list_tmm_debug_pods(
 
     if tmm_pods is None:
         tenant_pods, utils_pods = discover_f5_pods(api_client)
-        cache.set(f"bnk:pods:{cluster_id}", (tenant_pods, utils_pods), ttl_seconds=_TMM_POD_LIST_CACHE_TTL)
         classified = classify_f5_pods(tenant_pods, utils_pods)
         tmm_pods = classified.get("tmm", [])
 
     results = []
     for pod in tmm_pods:
         container_names = [c["name"] for c in pod.get("containers", [])]
-        results.append({
-            "name": pod["name"],
-            "namespace": pod["namespace"],
-            "has_debug": DEBUG_CONTAINER_NAME in container_names,
-            "containers": container_names,
-            "phase": pod.get("phase", "Unknown"),
-        })
+        results.append(
+            {
+                "name": pod["name"],
+                "namespace": pod["namespace"],
+                "has_debug": DEBUG_CONTAINER_NAME in container_names,
+                "containers": container_names,
+                "phase": pod.get("phase", "Unknown"),
+            }
+        )
 
     cache.set(cache_key, results, ttl_seconds=_TMM_POD_LIST_CACHE_TTL)
     return results
@@ -179,9 +180,7 @@ def exec_debug_command(
         )
 
     # Execute the command
-    logger.info(
-        f"Exec in {pod_name}/{namespace} -c {DEBUG_CONTAINER_NAME}: {' '.join(command)}"
-    )
+    logger.info(f"Exec in {pod_name}/{namespace} -c {DEBUG_CONTAINER_NAME}: {' '.join(command)}")
 
     try:
         # Use _preload_content=False to get the WSClient object so we can
@@ -316,9 +315,7 @@ def exec_tmctl(
 
     cmd.extend(["-w", str(width)])
 
-    result = _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
-    )
+    result = _cached_exec_debug_command(cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force)
 
     # Parse tabular output if the command succeeded
     parsed = parse_tmctl_output(result["stdout"]) if result["exit_code"] == 0 else None
@@ -435,9 +432,7 @@ def exec_configview(
         raise ValueError(f"Invalid UUID format: {uuid}")
 
     cmd = ["configview", "uuid", uuid]
-    return _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
-    )
+    return _cached_exec_debug_command(cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force)
 
 
 def discover_configview_uuids(
@@ -455,9 +450,7 @@ def discover_configview_uuids(
         { uuids: [str, ...], raw: str, exit_code, duration_ms, command }
     """
     cmd = ["configview", "list"]
-    result = _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force
-    )
+    result = _cached_exec_debug_command(cluster_id or 0, api_client, pod_name, namespace, cmd, timeout, force=force)
 
     # Parse UUIDs from the output
     uuids = []
@@ -508,6 +501,4 @@ def exec_bdt_cli(
         raise ValueError(f"Invalid bdt_cli subcommand: {subcommand}")
 
     cmd = ["bdt_cli", "-u", "-s", socket] + subcommand.split()
-    return _cached_exec_debug_command(
-        cluster_id or 0, api_client, pod_name, namespace, cmd, timeout
-    )
+    return _cached_exec_debug_command(cluster_id or 0, api_client, pod_name, namespace, cmd, timeout)
