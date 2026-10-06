@@ -75,6 +75,15 @@ CLOUD_CREDENTIAL_ENV_KEYS = frozenset({
     "IBMCLOUD_REGION",
     "IBMCLOUD_RESOURCE_GROUP",
     "IC_API_KEY",
+    "ARM_CLIENT_ID",
+    "ARM_CLIENT_SECRET",
+    "ARM_SUBSCRIPTION_ID",
+    "ARM_TENANT_ID",
+    "ARM_LOCATION",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
 })
 
 
@@ -269,6 +278,28 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                         env['IBMCLOUD_RESOURCE_GROUP'] = template.ibmcloud_resource_group
                     return env
 
+                if template.provider == 'azure':
+                    # Only the service-principal method injects a credential. Entra ID
+                    # SSO templates carry a delegated ARM token for validation, not a
+                    # terraform identity, so no client id or secret is exported.
+                    if template.azure_subscription_id:
+                        env['ARM_SUBSCRIPTION_ID'] = template.azure_subscription_id
+                        env['AZURE_SUBSCRIPTION_ID'] = template.azure_subscription_id
+                    if template.azure_tenant_id:
+                        env['ARM_TENANT_ID'] = template.azure_tenant_id
+                        env['AZURE_TENANT_ID'] = template.azure_tenant_id
+                    if template.azure_auth_method != 'sso' and template.azure_client_id:
+                        env['ARM_CLIENT_ID'] = template.azure_client_id
+                        env['AZURE_CLIENT_ID'] = template.azure_client_id
+                    if template.azure_auth_method != 'sso' and template.azure_client_secret_encrypted:
+                        secret = _decrypt_credential(template.azure_client_secret_encrypted, 'Azure Client Secret')
+                        if secret:
+                            env['ARM_CLIENT_SECRET'] = secret
+                            env['AZURE_CLIENT_SECRET'] = secret
+                    if template.region:
+                        env['ARM_LOCATION'] = template.region
+                    return env
+
         except CredentialUnavailableError:
             raise  # propagate structured credential signals — don't swallow them
         except Exception as e:
@@ -319,6 +350,8 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                 default_template = db.query(CloudCredentialTemplate).filter(
                     CloudCredentialTemplate.is_default.is_(True),
                     CloudCredentialTemplate.provider == project_provider,
+                    # Entra ID SSO templates cannot provision.
+                    CloudCredentialTemplate.azure_auth_method.is_distinct_from("sso"),
                 ).first()
                 if default_template:
                     logger.info(
@@ -426,7 +459,7 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
                 CloudCredentialTemplate.is_default.is_(True),
             ).first()
 
-    if template and template.provider == "azure" and template.azure_tenant_id:
+    if template and template.provider == "azure" and template.azure_auth_method != "sso" and template.azure_tenant_id:
         # Check discrete fields first (PR 207 / modern UI)
         if getattr(template, "azure_client_id", None) and getattr(template, "azure_client_secret_encrypted", None):
             secret = _decrypt_credential(template.azure_client_secret_encrypted, "Azure client secret")

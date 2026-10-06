@@ -279,3 +279,27 @@ class TestGenerateEksTokenCredentialAbsence:
         import pytest
         with pytest.raises(CredentialUnavailableError, match="No AWS credentials resolved"):
             self._run(cluster, env, None)  # get_credentials() → None
+
+
+class TestEksTokenCacheEncrypted:
+    def test_token_is_encrypted_in_cache_and_decrypted_on_hit(self):
+        from core.encryption import decrypt_value
+
+        cluster = _cluster(region="us-east-1")
+        env = {"AWS_ACCESS_KEY_ID": "AKIA-FAKE", "AWS_SECRET_ACCESS_KEY": "fake-secret"}
+
+        session_patch, sig_patch, request_patch, _ = _patch_boto_pipeline()
+        with patch("services.kubernetes._base.cache") as mock_cache, session_patch as session_cls, \
+                sig_patch, request_patch:
+            mock_cache.get.return_value = None
+            session_cls.return_value.get_credentials.return_value.get_frozen_credentials.return_value = MagicMock()
+            token = KubernetesServiceBase._generate_eks_token(cluster, env)
+
+            stored = mock_cache.set.call_args.args[1]
+            assert token and stored != token
+            assert decrypt_value(stored) == token
+
+            session_cls.reset_mock()
+            mock_cache.get.return_value = stored
+            assert KubernetesServiceBase._generate_eks_token(cluster, env) == token
+            session_cls.assert_not_called()

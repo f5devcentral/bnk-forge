@@ -28,7 +28,6 @@ import {
   Globe,
   Users,
   BarChart3,
-  Bot,
   HardDrive,
   Activity,
 } from 'lucide-react';
@@ -72,6 +71,7 @@ const navigationSections: {
     items: [
       { name: 'Dashboard', href: '/observability/ai-gateway', icon: Activity, minRole: 'viewer' },
       { name: 'LLM Logs', href: '/observability/ai-gateway/logs', icon: ScrollText, minRole: 'viewer' },
+      { name: 'Benchmarks', href: '/benchmarks', icon: BarChart3 },
     ],
   },
   {
@@ -94,8 +94,6 @@ const navigationSections: {
       { name: 'Kubernetes', href: '/kubernetes', icon: Box, showCount: 'clusters' },
       { name: 'F5 BNK', href: '/bnk', icon: Shield },
       { name: 'CNF Resources', href: '/cnf', icon: Layers },
-      { name: 'Benchmarks', href: '/benchmarks', icon: BarChart3 },
-      { name: 'MCP Server', href: '/mcp-server', icon: Bot },
     ],
   },
   {

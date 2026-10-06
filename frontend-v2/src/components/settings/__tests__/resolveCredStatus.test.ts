@@ -117,6 +117,16 @@ describe('resolveCredStatus — warning', () => {
     const result = resolveCredStatus(t);
     expect(result.level).toBe('ok');
   });
+
+  it('is NOT warning for an auto-refreshed Azure SSO token within 1 hour', () => {
+    const t = make({
+      provider: 'azure',
+      azure_sso_token_expiry: '2026-06-05T12:30:00Z', // 30m from now
+    });
+    const result = resolveCredStatus(t);
+    expect(result.level).toBe('ok');
+    expect(result.headline).toBe('OK');
+  });
 });
 
 describe('resolveCredStatus — ok', () => {

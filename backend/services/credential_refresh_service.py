@@ -22,6 +22,19 @@ from services.azure_oauth_service import request_azure_oauth_token
 logger = logging.getLogger(__name__)
 
 
+def azure_refresh_failure_key(template_id: int) -> str:
+    return f"azure_sso_refresh_failed:{template_id}"
+
+
+def resolve_azure_refresh_failure(db: Session, template_id: int) -> None:
+    """Mark the open refresh-failure notification read once the SSO session works again."""
+    db.query(Notification).filter(
+        Notification.user == "admin",
+        Notification.dedupe_key == azure_refresh_failure_key(template_id),
+        Notification.is_read == False,  # noqa: E712
+    ).update({"is_read": True, "read_at": datetime.now(UTC)}, synchronize_session=False)
+
+
 class CredentialRefreshService:
     """Service for monitoring and refreshing cloud credentials"""
 
@@ -44,10 +57,11 @@ class CredentialRefreshService:
             refreshed_count = 0
             failed_count = 0
 
-            # Check and refresh credential templates (SSO and regular)
+            # Check and refresh credential templates (AWS SSO, AWS session, Azure SSO)
             templates = db.query(CloudCredentialTemplate).filter(
                 (CloudCredentialTemplate.aws_session_token_encrypted.isnot(None)) |
-                (CloudCredentialTemplate.aws_sso_enabled)
+                (CloudCredentialTemplate.aws_sso_enabled) |
+                (CloudCredentialTemplate.azure_sso_refresh_token_encrypted.isnot(None))
             ).all()
 
             for template in templates:
@@ -90,7 +104,11 @@ class CredentialRefreshService:
             bool: True if credentials were refreshed
         """
         try:
-            # Check if SSO template with refresh capability
+            # Check if Azure SSO template with refresh capability
+            if (template.provider == "azure" or template.azure_auth_method == "sso") and template.azure_sso_refresh_token_encrypted:
+                return self._refresh_azure_template(template, db)
+
+            # Check if AWS SSO template with refresh capability
             if template.aws_sso_enabled and template.aws_sso_refresh_token_encrypted:
                 return self._refresh_sso_template(template, db)
 
@@ -241,6 +259,81 @@ class CredentialRefreshService:
                 resource_id=template.id
             )
 
+            return False
+
+    def _refresh_azure_template(self, template: CloudCredentialTemplate, db: Session) -> bool:
+        """
+        Refresh Azure SSO credentials for a template
+
+        Entra access tokens live 60-90 minutes and are renewed from the refresh
+        token, so only refresh failures are reported. A rejected refresh token
+        (invalid_grant) ends the SSO session so the job stops retrying it.
+
+        Args:
+            template: Template with Azure SSO
+            db: Database session
+
+        Returns:
+            bool: True if refresh successful
+        """
+        from services.azure_auth_service import AzureAuthError, AzureAuthService, clear_azure_sso_session
+
+        try:
+            if not template.azure_sso_token_expiry or not template.azure_sso_refresh_token_encrypted:
+                return False
+
+            expiry = template.azure_sso_token_expiry
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+
+            time_until_expiry = expiry - datetime.now(UTC)
+            if time_until_expiry.total_seconds() >= (self.refresh_threshold_minutes * 60):
+                return False
+
+            logger.info(f"Azure SSO token for template '{template.name}' (ID {template.id}) expiring soon, refreshing...")
+            refresh_token = decrypt_value(template.azure_sso_refresh_token_encrypted)
+            if not refresh_token:
+                logger.error(f"Failed to decrypt Azure SSO refresh token for template {template.id}")
+                return False
+
+            token_data = AzureAuthService().refresh_credentials(
+                refresh_token=refresh_token,
+                tenant_id=template.azure_tenant_id or "common",
+                client_id=template.azure_client_id,
+            )
+
+            template.azure_sso_access_token_encrypted = encrypt_value(token_data['access_token'])
+            if token_data.get('refresh_token'):
+                template.azure_sso_refresh_token_encrypted = encrypt_value(token_data['refresh_token'])
+
+            expires_in = token_data.get('expires_in', 3600)
+            template.azure_sso_token_expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
+            template.last_successful_call_at = datetime.now(UTC)
+            template.last_error_at = None
+            template.last_error_code = None
+            template.last_error_message = None
+            resolve_azure_refresh_failure(db, template.id)
+
+            db.commit()
+            logger.info(f"✓ Successfully refreshed Azure SSO credentials for template '{template.name}' (ID {template.id})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to refresh Azure template {template.id}: {e}")
+            if isinstance(e, AzureAuthError) and e.details.get("oauth_error") == "invalid_grant":
+                clear_azure_sso_session(template)
+            template.last_error_at = datetime.now(UTC)
+            template.last_error_code = "AzureSSORefreshFailed"
+            template.last_error_message = str(e)[:1000]
+            # _create_notification commits the error stamp with the notification.
+            self._create_notification(
+                db,
+                title="Azure SSO Credential Refresh Failed",
+                message=f"Failed to refresh credentials for '{template.name}': {str(e)}. Manual re-authentication may be required.",
+                resource_type="credential_template",
+                resource_id=template.id,
+                dedupe_key=azure_refresh_failure_key(template.id),
+            )
             return False
 
     def check_and_refresh_project(self, project: Project, db: Session, force: bool = False) -> bool:
@@ -648,7 +741,8 @@ class CredentialRefreshService:
             db.close()
 
     def _create_notification(self, db: Session, title: str, message: str,
-                           resource_type: str = None, resource_id: int = None):
+                           resource_type: str = None, resource_id: int = None,
+                           dedupe_key: str | None = None):
         """
         Create a notification for admins
 
@@ -658,8 +752,20 @@ class CredentialRefreshService:
             message: Notification message
             resource_type: Type of resource (e.g., 'credential_template')
             resource_id: ID of the resource
+            dedupe_key: Unread notification with this key is updated instead of duplicated
         """
         try:
+            if dedupe_key:
+                existing = db.query(Notification).filter(
+                    Notification.user == "admin",
+                    Notification.dedupe_key == dedupe_key,
+                    Notification.is_read == False,  # noqa: E712
+                ).first()
+                if existing:
+                    existing.message = message
+                    existing.created_at = datetime.now(UTC)
+                    db.commit()
+                    return
             notification = Notification(
                 user="admin",  # Send to admin user
                 type="warning",
@@ -668,6 +774,7 @@ class CredentialRefreshService:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 is_read=False,
+                dedupe_key=dedupe_key,
                 created_at=datetime.now(UTC)
             )
             db.add(notification)

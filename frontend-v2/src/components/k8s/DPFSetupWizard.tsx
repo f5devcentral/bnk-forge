@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { SectionCard } from '@/components/ui/section-card';
 import { useQueryClient } from '@tanstack/react-query';
+import { refreshBnkData } from '@/hooks/k8s/useBnk';
 import { useClusterScanResult } from '@/hooks/k8s/useResources';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -959,6 +960,7 @@ export function DPFSetupWizard({ clusterId, onClose }: DPFSetupWizardProps) {
         notify.success(`DPF setup complete — ${docs.length} resources created`, undefined, { category: 'cluster' });
         queryClient.invalidateQueries({ queryKey: ['dpf'] });
         queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', clusterId] });
+        refreshBnkData(queryClient, clusterId);
         onClose?.();
       }
     } catch (err: unknown) {

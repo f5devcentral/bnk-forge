@@ -31,6 +31,7 @@ import { ClusterStatusBadge } from '@/components/ui/ClusterStatusBadge';
 import { ClusterConfigDialog } from './ClusterConfigDialog';
 import { ClusterPrerequisitesDialog } from './ClusterPrerequisitesDialog';
 import { BnkClusterMemberDialog } from './BnkClusterMemberDialog';
+import { DetectClustersConfirmDialog } from './DetectClustersConfirmDialog';
 import type { K8sCluster, ClusterConnectivityResult } from '@/types';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -126,6 +127,7 @@ export function K8sClusterList({
   const [bnkMemberDialogOpen, setBnkMemberDialogOpen] = useState(false);
   const [bnkClusterTarget, setBnkClusterTarget] = useState<K8sCluster | null>(null);
   const [isDetectingSSH, setIsDetectingSSH] = useState(false);
+  const [detectConfirmOpen, setDetectConfirmOpen] = useState(false);
   const clusterSummaryDescription = targetPlatformProfile === 'ocp'
     ? 'Monitor resources across OpenShift/OKD and other Kubernetes clusters. Runtime support semantics follow detected platform context.'
     : 'Monitor resources across EKS, AKS, GKE, ROKS, and on-premises clusters';
@@ -251,7 +253,7 @@ export function K8sClusterList({
           {isManagedCloudProject && (
             <Button
               variant="outline"
-              onClick={handleDetectManagedClusters}
+              onClick={() => setDetectConfirmOpen(true)}
               disabled={detectEKSMutation.isPending}
             >
               {detectEKSMutation.isPending ? (
@@ -572,6 +574,12 @@ export function K8sClusterList({
           currentConfig={bnkClusterTarget.bnk_config}
         />
       )}
+
+      <DetectClustersConfirmDialog
+        open={detectConfirmOpen}
+        onOpenChange={setDetectConfirmOpen}
+        onConfirm={handleDetectManagedClusters}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

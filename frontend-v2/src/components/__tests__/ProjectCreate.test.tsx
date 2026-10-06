@@ -156,7 +156,7 @@ describe('CreateProjectDialog', () => {
     await user.click(screen.getByText('IBM Cloud'));
 
     await waitFor(() => {
-      expect(screen.getByText(/select region/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Enter region')).toBeInTheDocument();
     });
   });
 });
