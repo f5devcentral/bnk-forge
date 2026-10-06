@@ -333,6 +333,47 @@ def test_ws_connect_url_carries_url_encoded_token(monkeypatch):
     assert qs["token"] == [raw_token]  # decoded back to the exact JWT
 
 
+def test_superseded_close_parks_without_reconnecting_or_exiting(monkeypatch):
+    """Close code 4409 (superseded): no reconnect, and no clean exit a supervisor
+    would restart; the agent idles until it is shut down."""
+    mod = _load_agent_module()
+    ag = mod.ForgeAgent(forge_url="https://forge.local", agent_name="t", token="tok")
+    ag.agent_id = 7
+    connects = []
+    sleeps = []
+
+    class FakeWS:
+        close_code = 4409
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    def fake_connect(url, **kwargs):
+        connects.append(url)
+        return FakeWS()
+
+    async def fake_wait(tasks, **kwargs):
+        return set(), set()
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 3:
+            ag.shutdown()
+
+    monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+    monkeypatch.setattr(mod.asyncio, "wait", fake_wait)
+    monkeypatch.setattr(mod.asyncio, "create_task", lambda coro: coro.close() or None)
+    monkeypatch.setattr(mod.asyncio, "sleep", fake_sleep)
+
+    asyncio.run(ag.run_forever())
+
+    assert len(connects) == 1
+    assert len(sleeps) == 3  # parked until shutdown, not returned on the close
+
+
 # ---------------------------------------------------------------------------
 # H2 — one insecure flag drives ALL TLS-skip behavior
 # ---------------------------------------------------------------------------

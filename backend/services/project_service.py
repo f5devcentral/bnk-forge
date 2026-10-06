@@ -238,6 +238,19 @@ class ProjectService(BaseService):
             return field_name in fields_set
         return hasattr(payload, field_name)
 
+    def _reject_sso_azure_template(self, template_id: int | None) -> None:
+        """Projects provision through the template, which an Entra ID SSO template cannot do."""
+        if not template_id:
+            return
+        template = self.db.query(CloudCredentialTemplate).filter(
+            CloudCredentialTemplate.id == template_id
+        ).first()
+        if template and template.provider == "azure" and template.azure_auth_method == "sso":
+            raise BadRequestError(
+                f"Credential template '{template.name}' uses Entra ID SSO and cannot provision. "
+                "Use a service-principal Azure template."
+            )
+
     @staticmethod
     def _apply_state_config(project, state_config: dict | None) -> None:
         """Persist project state backend settings into ProjectBackendConfig."""
@@ -423,6 +436,8 @@ class ProjectService(BaseService):
                 "A project with this name already exists. Please choose a different name.",
             )
 
+        self._reject_sso_azure_template(project_data.credential_template_id)
+
         # Resolve project_type and cloud_provider
         project_type = project_data.project_type
         cloud_provider = project_data.cloud_provider or ""
@@ -564,6 +579,8 @@ class ProjectService(BaseService):
                 .filter(
                     CloudCredentialTemplate.is_default.is_(True),
                     CloudCredentialTemplate.provider == cloud_provider,
+                    # Entra ID SSO templates cannot provision.
+                    CloudCredentialTemplate.azure_auth_method.is_distinct_from("sso"),
                 )
                 .first()
             )
@@ -677,6 +694,8 @@ class ProjectService(BaseService):
         # already used below for target_platform_profile — so this uses it rather
         # than reading model_fields_set inline a second time.
         if self._field_was_supplied(project_data, "credential_template_id"):
+            if project_data.credential_template_id != project.credential_template_id:
+                self._reject_sso_azure_template(project_data.credential_template_id)
             project.credential_template_id = project_data.credential_template_id
 
         if self._field_was_supplied(project_data, "ssh_credential_id"):

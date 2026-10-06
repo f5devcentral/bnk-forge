@@ -61,6 +61,9 @@ class TestAnalyzePolicyAssociations:
         assert a["rules_count"] == 1
         assert a["rules"][0]["action"] == "drop"
         assert a["rules"][0]["logging"] is True
+        assert "bnk_policy_status" in a
+        assert a["bnk_policy_status"]["resolved"] is False
+        assert a["bnk_policy_status"]["programmed"] is False
         # Referenced port list has no matching resource — name kept, ports empty
         assert a["rules"][0]["destination"]["ports"] == []
         assert a["rules"][0]["destination"]["portLists"] == ["ssh-ports"]
@@ -115,6 +118,27 @@ class TestAnalyzePolicyAssociations:
         assert "rules" not in a
         assert "rules_count" not in a
 
+    def test_sec_policy_status_extracted_from_conditions(self):
+        resources = _empty_resources()
+        resources["gateway"] = [_resource("gw-prod")]
+        resources["bnksecpolicy"] = [_resource("sp", spec={
+            "targetRefs": [{"name": "gw-prod", "kind": "Gateway"}],
+            "extensionRefs": [{"kind": "F5BigFwPolicy", "name": "fw-1"}],
+        }, status={
+            "conditions": [
+                {"type": "Resolved", "status": "True", "message": "resolved"},
+                {"type": "Programmed", "status": "False", "message": "pending"},
+            ],
+        })]
+        resources["f5bigfwpolicy"] = [_resource("fw-1", spec={"rule": []})]
+
+        result = analyze_policy_associations({"resources": resources})
+        status = result["associations"][0]["bnk_policy_status"]
+        assert status["resolved"] is True
+        assert status["programmed"] is False
+        assert status["messages"]["resolved"] == "resolved"
+        assert status["messages"]["programmed"] == "pending"
+
 
 class TestEgressAssociations:
     def test_egress_with_firewall_policy_produces_association(self):
@@ -154,6 +178,21 @@ class TestEgressAssociations:
 
         result = analyze_policy_associations({"resources": resources})
         assert result["count"] == 0
+
+    def test_egress_status_extracted_from_conditions(self):
+        resources = _empty_resources()
+        resources["f5bigfwpolicy"] = [_resource("egress-demo-fw", spec={"rule": []})]
+        resources["f5spkegress"] = [_resource("bnk-egress-demo", spec={
+            "snatType": "SRC_TRANS_AUTOMAP",
+            "firewallEnforcedPolicy": "egress-demo-fw",
+        }, status={
+            "conditions": [{"type": "Programmed", "status": "True", "message": "programmed"}],
+        })]
+
+        result = analyze_policy_associations({"resources": resources})
+        status = result["associations"][0]["egress_status"]
+        assert status["programmed"] is True
+        assert status["messages"]["programmed"] == "programmed"
 
     def test_egress_with_missing_firewall_policy_no_rules(self):
         resources = _empty_resources()

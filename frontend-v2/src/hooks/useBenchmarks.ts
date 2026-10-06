@@ -86,6 +86,7 @@ export const useBenchmarkRuns = (params?: {
   tool?: string;
   model?: string;
   status?: string;
+  cluster_id?: number;
   limit?: number;
   offset?: number;
   pollingEnabled?: boolean;
@@ -359,7 +360,7 @@ const PROXY_TRANSITIONAL_STATES = new Set(['pending', 'deploying', 'uninstalling
 // Target Queries / Mutations (Phase 4b)
 // ============================================================================
 
-export const useBenchmarkTargets = (params?: { status?: string; cluster_id?: number }) =>
+export const useBenchmarkTargets = (params?: { status?: string; cluster_id?: number; name?: string }) =>
   useQuery({
     queryKey: queryKeys.benchmarks.targets.list(params),
     queryFn: () => api.listTargets(params),

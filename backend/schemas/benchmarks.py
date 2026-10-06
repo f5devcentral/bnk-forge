@@ -157,6 +157,7 @@ class BenchmarkRunResponse(BaseModel):
     config_id: int | None
     agent_id: int | None
     target_id: int | None
+    cluster_name: str | None = None
     proxy_deployment_id: int | None
     scenario_key: str | None = None
     status: str
@@ -397,6 +398,7 @@ class BenchmarkTargetResponse(BaseModel):
     name: str
     description: str | None
     cluster_id: int
+    cluster_name: str | None = None
     llm_base_url: str
     llm_model: str
     llm_namespace: str
@@ -557,6 +559,7 @@ class RunGroupSummary(BaseModel):
     run_label: str | None
     status: str
     target_id: int | None
+    cluster_name: str | None = None
     proxy: str | None
     model: str | None
     total_runs: int

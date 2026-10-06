@@ -1,88 +1,25 @@
 /**
- * F5 BNK data, health, topology, policy, and upgrade hooks (IMP-011: split from useK8s.ts).
+ * F5 BNK release-registry hooks.
+ *
+ * IMP-011: data/health/topology/policy hooks live in `hooks/k8s/useBnk.ts`
+ * and are re-exported here for backward compatibility. Release-registry
+ * hooks remain here because they are the only remaining callers of this
+ * module.
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type {
-  BnkHealthResponse,
-  BnkReleaseRegistryResponse,
-  GatewayTopologyResponse,
-  F5PolicyGatewayAssociationsResponse,
-} from '@/types';
+import type { BnkReleaseRegistryResponse } from '@/types';
 import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
-// ========================================================================
-// F5 BNK Unified Data Hook
-//
-// Single fetch for all BNK insight views. Returns health, topology,
-// and policy data in one response. All BNK insight tabs share this
-// cache key, so switching tabs is instant (no re-fetch).
-// ========================================================================
-
-export function useBnkData(
-  clusterId: number,
-  params?: { namespace?: string },
-  options?: { pollingEnabled?: boolean; enabled?: boolean }
-) {
-  return useQuery({
-    queryKey: queryKeys.k8s.clusters.bnkData(clusterId, params),
-    queryFn: () => api.getBnkData(clusterId, params),
-    enabled: options?.enabled !== false && !!clusterId,
-    refetchInterval: options?.pollingEnabled !== false ? 30000 : false,
-    placeholderData: (previousData) => previousData,
-  });
-}
-
-// Convenience selectors — each returns a slice of the unified data
-export function useF5BNKHealth(
-  clusterId: number,
-  params?: { namespace?: string },
-  options?: { pollingEnabled?: boolean; enabled?: boolean }
-) {
-  const query = useBnkData(clusterId, params, options);
-  return {
-    ...query,
-    data: query.data?.health as BnkHealthResponse | undefined,
-  };
-}
-
-export function useF5GatewayTopology(
-  clusterId: number,
-  params?: { namespace?: string },
-  options?: { pollingEnabled?: boolean; enabled?: boolean }
-) {
-  const query = useBnkData(clusterId, params, options);
-  return {
-    ...query,
-    data: query.data ? {
-      topology: query.data.topology,
-      dataPlane: query.data.dataPlane,
-      referenceGrants: query.data.referenceGrants ?? [],
-      counts: query.data.topologyCounts,
-      cluster_id: clusterId,
-      namespace: params?.namespace ?? null,
-    } satisfies GatewayTopologyResponse : undefined,
-  };
-}
-
-export function useF5PolicyGatewayAssociations(
-  clusterId: number,
-  params?: { namespace?: string },
-  options?: { pollingEnabled?: boolean; enabled?: boolean }
-) {
-  const query = useBnkData(clusterId, params, options);
-  return {
-    ...query,
-    data: query.data ? {
-      associations: query.data.policyAssociations,
-      count: query.data.policyCount,
-      cluster_id: clusterId,
-      namespace: params?.namespace,
-    } as F5PolicyGatewayAssociationsResponse : undefined,
-  };
-}
+// Re-export canonical BNK insight hooks from the k8s domain folder.
+export {
+  useBnkData,
+  useF5BNKHealth,
+  useF5GatewayTopology,
+  useF5PolicyGatewayAssociations,
+} from './k8s/useBnk';
 
 // ========================================================================
 // BNK Upgrade Workflow

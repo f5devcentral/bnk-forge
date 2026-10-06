@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from core.cache import cache
 from core.errors import handle_route_errors
 from database import get_db
 from routes.auth import require_operator
@@ -331,6 +332,7 @@ def _find_and_restart_pods(
 @handle_route_errors("check recovery status")
 def get_recovery_status(
     cluster_id: int,
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
     """
@@ -340,6 +342,12 @@ def get_recovery_status(
     - CWC cert staleness (cwc-license-certs vs cert-manager)
     - VLAN programming failures (Programmed: False)
     """
+    cache_key = f"recovery:status:{cluster_id}"
+    if not force:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     k8s_service = KubernetesService(db)
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -347,7 +355,7 @@ def get_recovery_status(
     cert_stale, cert_detail, cert_status = _check_cwc_cert_stale(api_client)
     vlans_failed, vlans_detail = _check_vlans_failed(api_client)
 
-    return RecoveryStatusResponse(
+    res = RecoveryStatusResponse(
         cwc_cert_stale=cert_stale,
         cwc_cert_status=cert_status,
         vlans_failed=vlans_failed,
@@ -355,6 +363,16 @@ def get_recovery_status(
         vlans_detail=vlans_detail,
         platform_healthy=not cert_stale and not vlans_failed,
     )
+    cache.set(cache_key, res.model_dump(), ttl_seconds=60)
+    return res
+
+
+def _invalidate_cwc_caches(cluster_id: int) -> None:
+    """Drop cached CWC-derived status once the certs have been changed."""
+    cache.delete(f"recovery:status:{cluster_id}")
+    cache.delete(f"cwc:setup_status:{cluster_id}")
+    cache.delete(f"cwc:available:{cluster_id}")
+    cache.delete(f"license:status:{cluster_id}")
 
 
 @router.post(
@@ -410,53 +428,57 @@ def resync_cwc_certs(
             steps=[{"step": "read_cert_manager_cert", "status": "failed", "error": str(e)}],
         )
 
-    # Step 2: Copy to cwc-license-certs
+    # From here on the secret may have changed: clear the caches on every exit path.
     try:
-        _copy_cert_to_cwc_license_secret(api_client, cert_data, cwc_ns)
-        steps.append({"step": "update_cwc_license_certs", "status": "ok"})
-    except QKViewError as e:
+        # Step 2: Copy to cwc-license-certs
+        try:
+            _copy_cert_to_cwc_license_secret(api_client, cert_data, cwc_ns)
+            steps.append({"step": "update_cwc_license_certs", "status": "ok"})
+        except QKViewError as e:
+            return CWCCertResyncResponse(
+                success=False,
+                message=f"Failed to update cwc-license-certs: {e}",
+                steps=steps + [{"step": "update_cwc_license_certs", "status": "failed", "error": str(e)}],
+            )
+
+        # Step 3: Restart CWC pod
+        try:
+            deleted_pod = _restart_cwc_pod(api_client, cwc_ns)
+            steps.append({
+                "step": "restart_cwc_pod",
+                "status": "ok",
+                "detail": f"Deleted pod: {deleted_pod}",
+            })
+        except QKViewError as e:
+            steps.append({
+                "step": "restart_cwc_pod",
+                "status": "failed",
+                "error": str(e),
+            })
+            # Continue — cert update was successful
+
+        # Step 4: Clean up stale agent pods
+        try:
+            _cleanup_all_client_pods(api_client, cwc_ns)
+            steps.append({"step": "cleanup_agent_pods", "status": "ok"})
+        except Exception as e:
+            steps.append({
+                "step": "cleanup_agent_pods",
+                "status": "warning",
+                "error": str(e),
+            })
+            # Non-fatal — agent pod will be recreated on next request
+
         return CWCCertResyncResponse(
-            success=False,
-            message=f"Failed to update cwc-license-certs: {e}",
-            steps=steps + [{"step": "update_cwc_license_certs", "status": "failed", "error": str(e)}],
+            success=True,
+            message=(
+                "CWC certs re-synced from cert-manager. "
+                "Licensing and QKView should work after CWC pod restarts (~30s)."
+            ),
+            steps=steps,
         )
-
-    # Step 3: Restart CWC pod
-    try:
-        deleted_pod = _restart_cwc_pod(api_client, cwc_ns)
-        steps.append({
-            "step": "restart_cwc_pod",
-            "status": "ok",
-            "detail": f"Deleted pod: {deleted_pod}",
-        })
-    except QKViewError as e:
-        steps.append({
-            "step": "restart_cwc_pod",
-            "status": "failed",
-            "error": str(e),
-        })
-        # Continue — cert update was successful
-
-    # Step 4: Clean up stale agent pods
-    try:
-        _cleanup_all_client_pods(api_client, cwc_ns)
-        steps.append({"step": "cleanup_agent_pods", "status": "ok"})
-    except Exception as e:
-        steps.append({
-            "step": "cleanup_agent_pods",
-            "status": "warning",
-            "error": str(e),
-        })
-        # Non-fatal — agent pod will be recreated on next request
-
-    return CWCCertResyncResponse(
-        success=True,
-        message=(
-            "CWC certs re-synced from cert-manager. "
-            "Licensing and QKView should work after CWC pod restarts (~30s)."
-        ),
-        steps=steps,
-    )
+    finally:
+        _invalidate_cwc_caches(cluster_id)
 
 
 @router.post(
@@ -598,6 +620,11 @@ def platform_restart(
                 "status": "not_found",
                 "message": f"No TMM pods found in {bnk_ns} namespace",
             })
+
+    cache.delete(f"recovery:status:{cluster_id}")
+    cache.delete(f"bnk:pods:{cluster_id}")
+    cache.delete_pattern(f"bnk:data:{cluster_id}:*")
+    cache.delete(f"tmm:debug:pods:{cluster_id}")
 
     component_list = ", ".join(r["component"] for r in restarted if r["status"] == "restarted")
     return PlatformRestartResponse(

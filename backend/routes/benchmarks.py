@@ -15,6 +15,7 @@ Provides:
 import asyncio
 import json
 import logging
+import threading
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from core.auth_context import effective_role
 from core.config import settings
-from core.errors import BadRequestError, ForbiddenError, NotFoundError, handle_route_errors
+from core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError, handle_route_errors
 from database import get_db
 from models.benchmark import BenchmarkAgent
 from models.enums import BenchmarkAgentStatus, BenchmarkRunStatus, ProxyDeploymentStatus
@@ -244,9 +245,11 @@ def ingest_benchmark_result(request: Request, data: BenchmarkResultPush, db: Ses
     BenchmarkResult JSON after a run completes. We extract key fields for
     denormalization and store the full result as-is.
     """
-    bound = _token_agent(_require_agent_bearer(request), db)
+    claims = _require_agent_bearer(request)
+    bound = _token_agent(claims, db)
     result_data = data.model_dump()
-    result_data["agent_name"] = _bind_agent_name(bound, result_data.get("agent_name"))
+    name = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
+    result_data["agent_name"] = _bind_agent_name(bound, name)
     svc = BenchmarkService(db)
     run = svc.ingest_result(result_data)
     db.commit()
@@ -301,7 +304,9 @@ def ingest_aiperf_result(
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
     """
-    bound = _token_agent(_require_agent_bearer(request), db)
+    claims = _require_agent_bearer(request)
+    bound = _token_agent(claims, db)
+    agent_name = _bootstrap_agent_name(claims, db, agent_name)
     agent_name = _bind_agent_name(bound, agent_name)
     svc = BenchmarkService(db)
     run = svc.ingest_aiperf_result(
@@ -404,13 +409,22 @@ def list_benchmark_runs(
     tool: str | None = Query(None),
     model: str | None = Query(None),
     status: str | None = Query(None),
+    cluster_id: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     """List benchmark runs with optional filters."""
     svc = BenchmarkService(db)
-    runs, total = svc.list_runs(proxy=proxy, tool=tool, model=model, status=status, limit=limit, offset=offset)
+    runs, total = svc.list_runs(
+        proxy=proxy,
+        tool=tool,
+        model=model,
+        status=status,
+        cluster_id=cluster_id,
+        limit=limit,
+        offset=offset,
+    )
     return {"runs": runs, "total": total, "limit": limit, "offset": offset}
 
 
@@ -535,10 +549,25 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     Called via curl or script. If an agent with the same name
     already exists, it updates its info and marks it as connected.
     """
-    # An agent-bound token may only re-register (upsert by name) its own agent.
-    _bind_agent_name(_token_agent(_require_agent_bearer(request), db), data.name)
+    claims = _require_agent_bearer(request) or _optional_bearer_claims(request)
+    bootstrap = _is_bootstrap_token(claims)
+    existing_agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
+    builtin_row = _is_builtin_agent(existing_agent)
+    if bootstrap:
+        _check_bootstrap_register(db, data.name)
+    elif builtin_row and settings.BENCHMARK_AGENT_AUTH_REQUIRED:
+        # Only the bootstrap token may re-register the built-in agent. With agent
+        # auth off every caller (the built-in agent included) is anonymous, so the
+        # row is kept marked instead.
+        raise ConflictError("benchmark_agent", f"Agent '{data.name}' is the built-in agent")
+    elif existing_agent and claims.get("role") == "agent" and claims.get("agent_id") is not None:
+        # An agent-bound token may only re-register (upsert by name) its own agent.
+        bound = _token_agent(claims, db)
+        _bind_agent_name(bound, data.name)
+    payload = data.model_dump()
+    payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap or builtin_row)
     svc = BenchmarkService(db)
-    result = svc.register_agent(data.model_dump())
+    result = svc.register_agent(payload)
     db.commit()
     return result
 
@@ -1024,11 +1053,12 @@ def get_benchmark_trends(
 def list_benchmark_targets(
     status: str | None = Query(None),
     cluster_id: int | None = Query(None),
+    name: str | None = Query(None, description="Exact match filter by target name"),
     db: Session = Depends(get_db),
 ):
     """List all benchmark targets."""
     svc = BenchmarkTargetService(db)
-    targets, total = svc.list_targets(status=status, cluster_id=cluster_id)
+    targets, total = svc.list_targets(status=status, cluster_id=cluster_id, name=name)
     return {"targets": targets, "total": total}
 
 
@@ -1380,7 +1410,7 @@ def trigger_benchmark_run(
 
     # 3. Build RunConfig — keys map directly to aiperf CLI flags
     #    See: https://github.com/ai-dynamo/aiperf/blob/main/docs/cli-options.md
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     config_json: dict = {
         "url": base_url,
@@ -1443,14 +1473,23 @@ def trigger_benchmark_run(
         "config": config_json,
     }
 
-    # If the agent isn't connected via WS, the run stays pending and the agent
-    # can pick it up when it reconnects.
-    sent = dispatch_to_agent(agent_id, command)
+    # Claim (PENDING→RUNNING) and persist BEFORE the blocking dispatch, as
+    # run_benchmark_scenario does: a WS (re)connect drain during the send would
+    # otherwise find the run PENDING and dispatch it a second time. If the send
+    # fails the claim is released and the agent picks the run up on reconnect.
+    _run_owner[run.id] = _DISPATCHING
+    try:
+        if bench_svc.claim_pending_run(run.id):
+            db.commit()
+            if not dispatch_to_agent(agent_id, command):
+                bench_svc.release_claimed_run(run.id)
+                db.commit()
+    finally:
+        if _run_owner.get(run.id) is _DISPATCHING:
+            _run_owner.pop(run.id, None)
+    db.refresh(run)
 
-    if sent:
-        run.status = BenchmarkRunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
-        db.commit()
+    if run.status == BenchmarkRunStatus.RUNNING:
         msg = f"Run #{run.id} dispatched to agent '{agent.name}'"
     else:
         msg = f"Run #{run.id} created but agent '{agent.name}' not connected via WS — run is pending"
@@ -1548,7 +1587,7 @@ def run_benchmark_scenario(
             code="AGENT_NOT_CONNECTED",
         )
 
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     # 3. Expand scenario into a run-group + child runs
     group, runs = bench_svc.create_run_group_from_scenario(
@@ -1574,11 +1613,31 @@ def run_benchmark_scenario(
     dispatched = 0
     if runs:
         first = runs[0]
-        command = {"type": "run", "run_id": first.id, "config": first.config_snapshot}
-        if dispatch_to_agent(agent_id, command):
-            first.status = BenchmarkRunStatus.RUNNING
-            first.started_at = datetime.now(UTC)
-            dispatched = 1
+        first_id = first.id
+        first_config = first.config_snapshot
+        # Claim the first child ATOMICALLY (PENDING→RUNNING) and PERSIST the claim
+        # BEFORE the blocking dispatch_to_agent round-trip (MAJOR-1). The group +
+        # children were already committed PENDING above, so a WS (re)connect firing
+        # during this dispatch window would otherwise find the child still PENDING,
+        # win claim_pending_run, and send a SECOND {"type":"run"} for the same run.
+        # Going through the same atomic claim (group-guarded) makes initial-dispatch
+        # and connect-drain mutually exclusive on this row — the loser skips — and
+        # leaves no window where the row is PENDING while a dispatch is in flight.
+        _run_owner[first_id] = _DISPATCHING
+        try:
+            if bench_svc.claim_pending_run(first_id, group_id=group.id):
+                db.commit()
+                command = {"type": "run", "run_id": first_id, "config": first_config}
+                if dispatch_to_agent(agent_id, command):
+                    dispatched = 1
+                else:
+                    # Send failed after a winning claim — revert RUNNING→PENDING so a
+                    # later reconnect-drain can re-dispatch it (mirrors the drain path).
+                    bench_svc.release_claimed_run(first_id)
+                    db.commit()
+        finally:
+            if _run_owner.get(first_id) is _DISPATCHING:
+                _run_owner.pop(first_id, None)
 
     if dispatched:
         group.status = BenchmarkRunStatus.RUNNING
@@ -1611,6 +1670,7 @@ def _serialize_run_group(group) -> RunGroupResponse:
         run_label=group.run_label,
         status=group.status,
         target_id=group.target_id,
+        cluster_name=group.cluster_name,
         proxy=group.proxy,
         model=group.model,
         total_runs=group.total_runs,
@@ -1650,12 +1710,26 @@ def _serialize_run_group(group) -> RunGroupResponse:
 # ============================================================================
 
 # Active WebSocket connections per agent_id
+#
+# ARCHITECTURAL CONSTRAINT: The WebSocket connection registry and run dispatch
+# state (_agent_ws_connections, _run_owner, _main_loop) are held strictly in
+# process memory. The backend API MUST run with replicaCount: 1 (see values.yaml).
+# Running multiple replicas without sticky sessions or distributed coordination
+# causes split-brain agent dispatch and invalid sweeps.
 _agent_ws_connections: dict[int, WebSocket] = {}
 # The event loop that owns the agent WebSockets (uvicorn's main loop). Captured
 # when an agent connects so SYNC route handlers can schedule sends ON THAT LOOP
 # via run_coroutine_threadsafe — sending on a WS from a freshly-created loop is
 # undefined and silently drops commands (the cause of stuck-pending runs).
 _main_loop: asyncio.AbstractEventLoop | None = None
+# run_id -> the WebSocket its "run" command was sent on, or _DISPATCHING while a
+# sync route holds the claim and its send is still queued. A run reports back
+# only on its own connection, so a RUNNING run whose connection is gone is failed
+# (connection teardown, or the agent's next connect).
+_DISPATCHING = object()
+_run_owner: dict[int, object] = {}
+# Close code sent to an agent connection replaced by a newer one for the same agent.
+_WS_CLOSE_SUPERSEDED = 4409
 
 
 def _status_for_heartbeat(reported_status: str | None) -> str:
@@ -1701,6 +1775,106 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
         )
         return False
     return True
+
+
+_BOOTSTRAP_TOKEN_SUB = "forge-builtin-agent"
+
+
+def _optional_bearer_claims(request: Request) -> dict:
+    """Claims of a valid bearer token, or {}. With agent auth off the built-in agent
+    still sends its bootstrap token; recognising it keeps its row marked, which the
+    WS layer binds that token to."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {}
+    from core.errors import UnauthorizedError
+    from services.auth_service import decode_token
+
+    try:
+        return decode_token(auth_header.split(" ", 1)[1])
+    except UnauthorizedError:
+        return {}
+
+
+def _is_bootstrap_token(payload: dict) -> bool:
+    """True for the built-in agent's claimless bootstrap token (startup_steps).
+
+    A user login token carries sub=<username> and the user's role (never
+    "agent"), so a user named like the bootstrap subject does not pass.
+    """
+    return (
+        payload.get("sub") == _BOOTSTRAP_TOKEN_SUB
+        and payload.get("role") == "agent"
+        and payload.get("agent_id") is None
+    )
+
+
+# Server-owned tag marking the agent row the bootstrap token registered. Clients
+# cannot set it (forge_agent.py sends tags.builtin=true for EVERY agent it runs).
+_BUILTIN_TAG = "_forge_builtin"
+# The compose default AGENT_NAME of the built-in agent, for adopting its row
+# registered before the marker existed.
+_LEGACY_BUILTIN_NAME = "forge-local"
+
+
+def _is_builtin_agent(agent: BenchmarkAgent | None) -> bool:
+    """True for the unmanaged agent row the bootstrap token registered."""
+    return bool(agent and not agent.managed and (agent.tags or {}).get(_BUILTIN_TAG) is True)
+
+
+def _server_owned_builtin_tags(tags: dict | None, *, builtin: bool) -> dict | None:
+    """Drop client-supplied built-in markers; set them only for the bootstrap token."""
+    if tags is None and not builtin:
+        return None
+    owned = {k: v for k, v in (tags or {}).items() if k not in ("builtin", _BUILTIN_TAG)}
+    if builtin:
+        owned.update({"builtin": True, _BUILTIN_TAG: True})
+    return owned
+
+
+def _check_bootstrap_register(db: Session, name: str) -> None:
+    """The bootstrap token may create a new agent or re-register the built-in one.
+
+    Upserting another agent's row would let it connect and report as that agent.
+    A pre-marker built-in row (legacy name, unmanaged) is adopted once, while no
+    marked row exists.
+    """
+    existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == name).first()
+    if existing is None or _is_builtin_agent(existing):
+        return
+    if (
+        existing.name == _LEGACY_BUILTIN_NAME
+        and not existing.managed
+        and not any(_is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False)))
+    ):
+        if existing.id in _agent_ws_connections:
+            # A live agent (an external one may use the legacy name) keeps its row.
+            raise ConflictError("benchmark_agent", f"Agent '{name}' is connected; not adopting it")
+        return
+    raise BadRequestError(
+        f"Bootstrap token may not re-register agent '{name}'",
+        code="AGENT_AUTH_FORBIDDEN",
+    )
+
+
+def _bootstrap_agent_name(claims: dict, db: Session, agent_name: str | None) -> str | None:
+    """The bootstrap token writes results only as the built-in agent (or no agent)."""
+    if not _is_bootstrap_token(claims) or agent_name is None:
+        return agent_name
+    agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == agent_name).first()
+    if not _is_builtin_agent(agent):
+        raise BadRequestError(
+            f"Bootstrap token may not write results as agent '{agent_name}'",
+            code="AGENT_AUTH_FORBIDDEN",
+        )
+    return agent_name
+
+
+def _is_builtin_agent_id(agent_id: int) -> bool:
+    from database import get_db_context
+
+    with get_db_context() as db:
+        return _is_builtin_agent(db.get(BenchmarkAgent, agent_id))
 
 
 def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
@@ -1766,6 +1940,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
+            # The built-in agent container connects with the claimless bootstrap
+            # token (startup_steps). It may connect only as a built-in agent row.
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
+                return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
                 agent_id,
@@ -1805,6 +1983,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         payload = decode_token(token)
     except Exception:
         return 4001
+    # The claimless bootstrap token sits in a shared file; it connects only as the
+    # built-in agent (as in layer 1), so it cannot supersede another agent.
+    if _is_bootstrap_token(payload) and not _is_builtin_agent_id(agent_id):
+        return 4001
     # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
     # only, so this path waved a must-change human admin straight through.
     # (bonnyr-f5 #193 minor: the earlier claim that this was "the one
@@ -1824,6 +2006,8 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     if payload.get("role") == "agent":
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
+                return None
             logger.warning("Agent %d WS rejected: role=agent token missing agent_id claim", agent_id)
             return 4401
         try:
@@ -1883,17 +2067,39 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     await websocket.accept()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    previous = _agent_ws_connections.get(agent_id)
     _agent_ws_connections[agent_id] = websocket
     logger.info("Agent %d connected via WebSocket", agent_id)
+    if previous is not None and previous is not websocket:
+        # One live connection per agent: a second process on the same agent row
+        # (or a half-open socket from before a restart) is closed.
+        logger.warning("Agent %d: closing the connection this one supersedes", agent_id)
+        try:
+            await previous.close(code=_WS_CLOSE_SUPERSEDED)
+        except Exception:
+            pass
 
-    # Mark agent as connected
+    # Mark agent as connected and check for pending runs to dispatch
     db = next(get_db())
     try:
         svc = BenchmarkService(db)
         svc.update_agent_status(agent_id, "connected")
+        # A run still RUNNING for this agent was dispatched on a previous
+        # connection (or before a backend restart) and can never report back on
+        # this one; fail it so it does not block the queue. Runs whose dispatch
+        # a route is still sending, or that were already sent on this connection
+        # (while the superseded one was closing), are spared.
+        in_flight = {rid for rid, owner in list(_run_owner.items()) if owner is _DISPATCHING or owner is websocket}
+        interrupted = svc.fail_interrupted_runs_for_agent(agent_id, keep=in_flight)
+        for rid in interrupted:
+            _run_owner.pop(rid, None)
+        if interrupted:
+            logger.warning("Agent %d reconnected: failed interrupted runs %s", agent_id, interrupted)
         db.commit()
-    except Exception:
-        pass
+
+        await _drain_next_pending_run(svc, agent_id)
+    except Exception as e:
+        logger.warning("Error checking pending runs on agent connect: %s", e)
     finally:
         db.close()
 
@@ -1934,15 +2140,27 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                 try:
                     svc = BenchmarkService(db)
                     svc.update_agent_status(agent_id, "connected")
-                    if run_id and result_data and _agent_owns_run(svc, agent_id, int(run_id)):
+                    owned = bool(run_id) and _agent_owns_run(svc, agent_id, int(run_id))
+                    if owned:
+                        _run_owner.pop(int(run_id), None)
+                    # Only a RUNNING run takes a result: a late one must not overwrite
+                    # a run already failed (connection gone) or cancelled.
+                    if owned and result_data and svc.get_run(int(run_id)).status == BenchmarkRunStatus.RUNNING:
                         svc.complete_run_with_aiperf_result(int(run_id), result_data)
                         logger.info("Run #%d completed by agent %d — result ingested", run_id, agent_id)
+                        db.commit()
                         # Gated dispatch: now that this child is done, send the next pending
                         # child of its run-group (one aiperf at a time, strictly sequential).
                         done = svc.get_run(int(run_id))
-                        if done.run_group_id:
-                            await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
-                    db.commit()
+                        dispatched = False
+                        if done and done.run_group_id:
+                            dispatched = await _dispatch_next_group_child(svc, agent_id, done.run_group_id)
+                        if not dispatched:
+                            # Standalone run done, or group has no more pending children:
+                            # send the agent's next queued run.
+                            await _drain_next_pending_run(svc, agent_id)
+                    else:
+                        db.commit()
                 except Exception as e:
                     logger.error("Error ingesting run_completed for run #%s: %s", run_id, e)
                     db.rollback()
@@ -1961,8 +2179,9 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                     svc = BenchmarkService(db)
                     svc.update_agent_status(agent_id, "connected")
                     if run_id and _agent_owns_run(svc, agent_id, int(run_id)):
+                        _run_owner.pop(int(run_id), None)
                         run = svc.get_run(int(run_id))
-                        if run and run.status in ("pending", "running"):
+                        if run and run.status == BenchmarkRunStatus.RUNNING:
                             run.status = BenchmarkRunStatus.FAILED
                             run.error_message = str(error_msg)[:1000]
                             run.completed_at = datetime.now(UTC)
@@ -1970,9 +2189,17 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
                             # Roll up the parent run-group when a child fails.
                             if run.run_group_id:
                                 svc.maybe_finalize_run_group(run.run_group_id)
-                                # Gated dispatch: continue the sweep with the next child.
-                                await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
-                    db.commit()
+                            db.commit()
+                            # Gated dispatch: continue the sweep with the next child.
+                            dispatched = False
+                            if run.run_group_id:
+                                dispatched = await _dispatch_next_group_child(svc, agent_id, run.run_group_id)
+                            if not dispatched:
+                                # Standalone run failed, or group has no more pending children:
+                                # send the agent's next queued run.
+                                await _drain_next_pending_run(svc, agent_id)
+                    else:
+                        db.commit()
                 except Exception as e:
                     logger.error("Error handling run_failed for run #%s: %s", run_id, e)
                     db.rollback()
@@ -1987,16 +2214,32 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
     except Exception as e:
         logger.error("Agent WebSocket error for agent %d: %s", agent_id, e)
     finally:
-        # Only tear down if THIS connection is still the registered one (see
-        # _owns_agent_connection): an agent pod restart replaces the registry entry
-        # before this old handler's finally runs, and clobbering would pop the new
-        # ws from the dispatch registry / flip a live agent to "disconnected".
-        if _owns_agent_connection(agent_id, websocket):
+        # Runs dispatched on THIS connection can no longer report back.
+        orphaned = {rid for rid, owner in list(_run_owner.items()) if owner is websocket}
+        for rid in orphaned:
+            _run_owner.pop(rid, None)
+        # Only mark the agent disconnected if THIS connection is still the
+        # registered one (see _owns_agent_connection): an agent pod restart
+        # replaces the registry entry before this old handler's finally runs, and
+        # clobbering would pop the new ws from the dispatch registry / flip a live
+        # agent to "disconnected".
+        registered = _owns_agent_connection(agent_id, websocket)
+        if registered:
             _agent_ws_connections.pop(agent_id, None)
+        if registered or orphaned:
             db = next(get_db())
             try:
                 svc = BenchmarkService(db)
-                svc.update_agent_status(agent_id, "disconnected")
+                if orphaned:
+                    failed = svc.fail_interrupted_runs_for_agent(
+                        agent_id,
+                        only=orphaned,
+                        reason="agent connection closed; run interrupted",
+                    )
+                    if failed:
+                        logger.warning("Agent %d disconnected: failed interrupted runs %s", agent_id, failed)
+                if registered:
+                    svc.update_agent_status(agent_id, "disconnected")
                 db.commit()
             except Exception:
                 pass
@@ -2005,8 +2248,41 @@ async def agent_websocket(websocket: WebSocket, agent_id: int):
         logger.info("Agent %d disconnected from WebSocket", agent_id)
 
 
-async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, group_id: int) -> None:
+async def _drain_next_pending_run(svc: "BenchmarkService", agent_id: int) -> None:
+    """Claim and dispatch the agent's earliest pending run, if it has none running."""
+    pending_run = svc.get_first_pending_run_for_agent(agent_id)
+    if not pending_run:
+        return
+    group_id = pending_run.run_group_id
+    if group_id:
+        # Route grouped runs through the SAME gated dispatcher the terminal
+        # WS handlers use (MAJOR-2). Its group-guarded atomic claim is the
+        # single serialization point, so a connect-drain racing a
+        # run_completed/run_failed handler can never leave two children of
+        # one group RUNNING — the loser's claim fails the NOT-EXISTS guard.
+        # It claims, sends, and reverts the claim on send failure.
+        dispatched = await _dispatch_next_group_child(svc, agent_id, group_id)
+        # Reflect the group as RUNNING only once a child is actually running (NIT-D atomic flip).
+        if dispatched and svc.mark_run_group_running_if_pending(group_id):
+            svc.db.commit()
+    elif svc.claim_pending_run(pending_run.id):
+        # Standalone (group-less) run: no siblings, single-row atomic claim.
+        svc.db.commit()
+        sent = await send_command_to_agent(
+            agent_id, {"type": "run", "run_id": pending_run.id, "config": pending_run.config_snapshot}
+        )
+        if sent:
+            logger.info("Agent %d: dispatched pending run #%d", agent_id, pending_run.id)
+        else:
+            svc.release_claimed_run(pending_run.id)
+            svc.db.commit()
+
+
+async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, group_id: int) -> bool:
     """Atomically claim and dispatch the next pending child of a run-group.
+
+    Returns True if a child was claimed and sent, False if no pending child remains,
+    the claim was lost, or the send failed.
 
     Closes the gated-dispatch double-dispatch race (H1): two near-simultaneous
     terminal WS messages can both pick the same lowest-id PENDING child. We claim
@@ -2018,31 +2294,71 @@ async def _dispatch_next_group_child(svc: "BenchmarkService", agent_id: int, gro
     """
     nxt = svc.get_next_pending_group_run(group_id)
     if not nxt:
-        return
+        return False
     nxt_id = nxt.id
     nxt_config = nxt.config_snapshot
-    if not svc.claim_pending_run(nxt_id):
-        # Lost the race — another handler already claimed and dispatched this child.
-        return
+    # Group-guarded atomic claim (MAJOR-2 / MAJOR-A): only claim if NO sibling of this group
+    # is already RUNNING. This is the single serialization point shared with the
+    # connect-drain (which routes through here for grouped runs), so two children
+    # of one group can never both be RUNNING — even if the two paths pick different
+    # sibling rows, the second claim fails the NOT-EXISTS guard and skips.
+    if not svc.claim_pending_run(nxt_id, group_id=group_id):
+        # Lost the race — a sibling is already claimed/RUNNING, or another handler
+        # already claimed and dispatched this child.
+        return False
+    # MINOR-B: Persist the claim BEFORE the awaited network send, freeing the connection/row lock.
+    svc.db.commit()
     sent = await send_command_to_agent(agent_id, {"type": "run", "run_id": nxt_id, "config": nxt_config})
     if sent:
         logger.info("Gated dispatch: claimed+sent next run #%d of group %d", nxt_id, group_id)
+        return True
     else:
         # Undo the claim so the child can be re-dispatched later.
         svc.release_claimed_run(nxt_id)
+        svc.db.commit()
         logger.warning("Gated dispatch: send failed for run #%d, reverted to pending", nxt_id)
+        return False
 
 
 async def send_command_to_agent(agent_id: int, command: dict) -> bool:
-    """Send a command to a connected agent. Returns True if sent successfully."""
+    """Send a command to a connected agent. Returns True if sent successfully.
+
+    A "run" command records its connection in _run_owner (before the await, so
+    no other handler observes the run without an owner).
+    """
     ws = _agent_ws_connections.get(agent_id)
     if not ws:
         return False
+    run_id = command.get("run_id") if command.get("type") == "run" else None
+    if run_id is not None:
+        _run_owner[run_id] = ws
     try:
         await ws.send_text(json.dumps(command))
         return True
     except Exception:
+        if run_id is not None and _run_owner.get(run_id) is ws:
+            _run_owner.pop(run_id, None)
         return False
+
+
+_DISPATCH_TIMEOUT_S = 15
+
+
+class _DispatchAttempt:
+    """Hand-off between dispatch_to_agent (worker thread) and its queued send."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.started = False
+        self.abandoned = False
+
+
+async def _send_unless_abandoned(agent_id: int, command: dict, attempt: _DispatchAttempt) -> bool:
+    with attempt.lock:
+        if attempt.abandoned:
+            return False
+        attempt.started = True
+    return await send_command_to_agent(agent_id, command)
 
 
 def dispatch_to_agent(agent_id: int, command: dict) -> bool:
@@ -2053,12 +2369,28 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
     undefined — it worked intermittently and otherwise dropped the command,
     leaving runs stuck in 'pending'. Schedule the send on the loop that owns the
     socket and wait for the result.
+
+    On timeout: a send that has not started is abandoned (it will never write)
+    and False lets the caller release its claim. A send already writing may
+    still land, so True keeps the claim; the run's completion/failure or its
+    connection's teardown settles it.
     """
     loop = _main_loop
     if loop is not None and loop.is_running():
+        attempt = _DispatchAttempt()
         try:
-            fut = asyncio.run_coroutine_threadsafe(send_command_to_agent(agent_id, command), loop)
-            return bool(fut.result(timeout=15))
+            fut = asyncio.run_coroutine_threadsafe(_send_unless_abandoned(agent_id, command, attempt), loop)
+            try:
+                return bool(fut.result(timeout=_DISPATCH_TIMEOUT_S))
+            except TimeoutError:
+                with attempt.lock:
+                    if not attempt.started:
+                        attempt.abandoned = True
+                        return False
+                logger.warning(
+                    "Agent %d: send of %s still in progress after timeout; keeping claim", agent_id, command.get("type")
+                )
+                return True
         except Exception:
             return False
     # No agent has connected yet (no loop captured) → nothing to send to.

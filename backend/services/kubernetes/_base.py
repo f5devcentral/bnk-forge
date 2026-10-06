@@ -3,7 +3,6 @@ Core KubernetesService: cluster loading, kubeconfig, connection testing.
 """
 
 import logging
-import os
 import time
 from datetime import datetime
 from typing import Any
@@ -13,12 +12,18 @@ from kubernetes import config as k8s_config
 from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
-from core.encryption import decrypt_value
+from core.cache import cache
+from core.encryption import decrypt_value, decrypt_value_or_none, encrypt_value
 from models import KubernetesCluster
 from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
 from services.reachability import with_breaker
+
+# EKS/GCP bearer tokens are valid for ~15 minutes. Generating them on every
+# kubeconfig load is expensive (boto3/google-auth crypto + STS calls) and shows
+# up prominently under concurrent BNK page loads. Cache per cluster for 10 min.
+_TOKEN_TTL_SECONDS = 600
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +72,7 @@ class KubernetesServiceBase:
         # Defense-in-depth: assert portability before consuming.
         # KubeconfigUnportableError here means a legacy row survived pre-fix;
         # the error propagates to the caller with an actionable re-upload message.
-        kubeconfig_yaml = normalize_kubeconfig(
-            kubeconfig_yaml, source=NormalizationSource.INTERNAL_REREAD
-        )
+        kubeconfig_yaml = normalize_kubeconfig(kubeconfig_yaml, source=NormalizationSource.INTERNAL_REREAD)
 
         import yaml as yaml_lib
 
@@ -81,14 +84,14 @@ class KubernetesServiceBase:
         tunnel_port = self._maybe_open_ssh_tunnel(cluster)
         if tunnel_port:
             # Rewrite kubeconfig to route through SSH tunnel
-            for c in kubeconfig_dict.get('clusters', []):
+            for c in kubeconfig_dict.get("clusters", []):
                 # 127.0.0.1 not "localhost" — see cluster_utils. Tunnel
                 # listener is IPv4-only and "localhost" resolves to ::1
                 # first on most installs, causing connection-refused.
-                c['cluster']['server'] = f'https://127.0.0.1:{tunnel_port}'
-                c['cluster']['insecure-skip-tls-verify'] = True
-                c['cluster'].pop('certificate-authority-data', None)
-                c['cluster'].pop('certificate-authority', None)
+                c["cluster"]["server"] = f"https://127.0.0.1:{tunnel_port}"
+                c["cluster"]["insecure-skip-tls-verify"] = True
+                c["cluster"].pop("certificate-authority-data", None)
+                c["cluster"].pop("certificate-authority", None)
 
         # For EKS/AWS clusters, generate a bearer token using boto3 (Python-native)
         # so the API container does not need the AWS CLI binary. The worker
@@ -99,6 +102,7 @@ class KubernetesServiceBase:
                 CredentialUnavailableError,
                 get_cloud_credentials_env,
             )
+
             project = cluster.project
             # strict=True: CredentialUnavailableError propagates when SSO
             # keys are absent or expired — intentionally NOT caught below
@@ -107,12 +111,7 @@ class KubernetesServiceBase:
             # All other callers (tasks, tofu, drift, etc.) call with the
             # default strict=False and retain graceful-degradation behaviour.
             aws_env = get_cloud_credentials_env(project, self.db, strict=True)
-
-            for key, value in aws_env.items():
-                if key.startswith('AWS_'):
-                    os.environ[key] = value
-
-            logger.info(f"Set AWS credentials for EKS cluster {cluster.name}")
+            logger.info(f"Loaded AWS credentials for EKS cluster {cluster.name}")
 
             # Generate a bearer token via boto3 STS presigned URL (same mechanism
             # as `aws eks get-token`) and rewrite the kubeconfig to use it as a
@@ -134,13 +133,16 @@ class KubernetesServiceBase:
                     from botocore.exceptions import ClientError as BotoCoreClientError
 
                     from core.errors import classify_aws_credential_error
+
                     if isinstance(e, BotoCoreClientError):
                         classified = classify_aws_credential_error(e)
                         if classified is not None:
                             raise classified from e
                 except (ImportError, CredentialUnavailableError):
                     pass
-                logger.warning("Failed to generate boto3 EKS token for %s, falling back to exec plugin: %s", cluster.name, e)
+                logger.warning(
+                    "Failed to generate boto3 EKS token for %s, falling back to exec plugin: %s", cluster.name, e
+                )
 
         # For GKE/GCP clusters, mint an OAuth access token from a service-account
         # key via google-auth (Python-native) and rewrite the kubeconfig user to
@@ -148,6 +150,7 @@ class KubernetesServiceBase:
         # gke-gcloud-auth-plugin or gcloud inside the container.
         elif cluster.cloud_provider in ["gke", "gcp"]:
             from services.credentials_service import get_gcp_service_account_info
+
             project = cluster.project
             sa_info = get_gcp_service_account_info(project, self.db)
 
@@ -156,7 +159,8 @@ class KubernetesServiceBase:
                     "No GCP service-account credentials configured for cluster %s "
                     "(project '%s'); kubeconfig exec plugin will be invoked and "
                     "is expected to fail in slim API container",
-                    cluster.name, project.name if project else "<none>",
+                    cluster.name,
+                    project.name if project else "<none>",
                 )
             else:
                 try:
@@ -166,7 +170,11 @@ class KubernetesServiceBase:
                             user_entry["user"] = {"token": token}
                         logger.info("Injected google-auth-generated bearer token for GKE cluster %s", cluster.name)
                 except Exception as e:
-                    logger.warning("Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s", cluster.name, e)
+                    logger.warning(
+                        "Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s",
+                        cluster.name,
+                        e,
+                    )
 
         # For Azure / AKS clusters, mint an OAuth access token scoped to AKS AAD Server
         # via pure Python OAuth2 token exchange and rewrite the kubeconfig user to
@@ -174,6 +182,7 @@ class KubernetesServiceBase:
         # `az` CLI or `kubelogin` inside the container and prevents token expiration.
         elif cluster.cloud_provider in ["azure", "aks"]:
             from services.credentials_service import get_azure_service_principal_info
+
             project = cluster.project
             azure_info = get_azure_service_principal_info(project, self.db)
 
@@ -182,7 +191,8 @@ class KubernetesServiceBase:
                     "No Azure service-principal credentials configured for cluster %s "
                     "(project '%s'); static token in kubeconfig will be used and "
                     "may expire",
-                    cluster.name, project.name if project else "<none>",
+                    cluster.name,
+                    project.name if project else "<none>",
                 )
             else:
                 try:
@@ -220,14 +230,6 @@ class KubernetesServiceBase:
         """
         import base64
 
-        try:
-            import boto3
-            from botocore.auth import SigV4QueryAuth
-            from botocore.awsrequest import AWSRequest
-        except ImportError:
-            logger.warning("boto3/botocore not available — cannot generate EKS token natively")
-            return None
-
         # Extract cluster name — must be the BARE EKS cluster name (not an ARN).
         # Priority: meta_data.cluster_arn > context/name (with ARN-parse for both).
         cluster_name = cluster.context or cluster.name
@@ -239,6 +241,25 @@ class KubernetesServiceBase:
         elif ":cluster/" in cluster_name:
             # context or name is itself an ARN — extract bare name after ":cluster/"
             cluster_name = cluster_name.split(":cluster/", 1)[-1]
+
+        region = cluster.region or aws_env.get("AWS_REGION") or aws_env.get("AWS_DEFAULT_REGION") or "us-east-1"
+        access_key = aws_env.get("AWS_ACCESS_KEY_ID") or "default"
+        cluster_id = getattr(cluster, "id", getattr(cluster, "name", "default"))
+        cache_key = f"eks_token:{cluster_id}:{cluster_name}:{region}:{access_key}"
+        # The token is a bearer credential; it is stored encrypted in Redis.
+        cached = cache.get(cache_key)
+        cached_token = decrypt_value_or_none(cached) if isinstance(cached, str) else None
+        if cached_token:
+            logger.debug("Using cached EKS token for cluster %s", getattr(cluster, "name", "unknown"))
+            return cached_token
+
+        try:
+            import boto3
+            from botocore.auth import SigV4QueryAuth
+            from botocore.awsrequest import AWSRequest
+        except ImportError:
+            logger.warning("boto3/botocore not available — cannot generate EKS token natively")
+            return None
 
         # Build STS credentials from the env we already set.
         #
@@ -266,6 +287,7 @@ class KubernetesServiceBase:
         # a None-session 401 with no diagnostic context.
         if session.get_credentials() is None:
             from services.credentials_service import CredentialUnavailableError
+
             raise CredentialUnavailableError(
                 f"No AWS credentials resolved for cluster '{cluster.name}' — "
                 "bind a credential template or configure a default template."
@@ -298,6 +320,7 @@ class KubernetesServiceBase:
         # Encode as k8s-aws-v1 token
         token = "k8s-aws-v1." + base64.urlsafe_b64encode(signed_url.encode("utf-8")).rstrip(b"=").decode("utf-8")
 
+        cache.set(cache_key, encrypt_value(token), ttl_seconds=_TOKEN_TTL_SECONDS)
         logger.info("Generated EKS bearer token for cluster %s (region=%s)", cluster_name, region)
         return token
 
@@ -331,6 +354,7 @@ class KubernetesServiceBase:
 
         try:
             import requests
+
             credentials = service_account.Credentials.from_service_account_info(
                 sa_info,
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
@@ -427,21 +451,14 @@ class KubernetesServiceBase:
                 "version": f"{version_info.major}.{version_info.minor}",
                 "api_server": cluster.api_server,
                 "cloud_provider": cluster.cloud_provider,
-                "region": cluster.region
+                "region": cluster.region,
             }
         except ApiException as e:
             logger.error(f"Kubernetes API error during connection test: {e}")
-            return {
-                "success": False,
-                "message": f"Kubernetes API error: {e.reason}",
-                "status_code": e.status
-            }
+            return {"success": False, "message": f"Kubernetes API error: {e.reason}", "status_code": e.status}
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
-            return {
-                "success": False,
-                "message": str(e)
-            }
+            return {"success": False, "message": str(e)}
 
     def list_namespaces(self, cluster_id: int) -> list[str]:
         """List all namespaces in a cluster."""

@@ -28,6 +28,7 @@ import {
   mockSystemVersion,
   mockBackupStatus,
   mockMaintenanceStatus,
+  mockBnkConsumption,
   mockModules,
   mockModuleLibrary,
   mockModuleSources,
@@ -77,6 +78,7 @@ export {
   mockMaintenanceStatus,
   mockBackupStatusInProgress,
   mockMaintenanceActive,
+  mockBnkConsumption,
 } from '../test-fixtures';
 
 // ============================================================================
@@ -1453,6 +1455,10 @@ export const handlers = [
 
   http.get('*/api/system/version', () => {
     return HttpResponse.json(mockSystemVersion);
+  }),
+
+  http.get('*/api/system/bnk-consumption', () => {
+    return HttpResponse.json(mockBnkConsumption);
   }),
 
   http.post('*/api/system/upgrade', () => {
