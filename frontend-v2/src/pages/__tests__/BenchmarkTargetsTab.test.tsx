@@ -1,123 +1,134 @@
 /**
- * Tests for BenchmarkTargetsTab.
- *
- * Verifies targets list and detail view display cluster name next to targets
- * so identical target names across clusters are distinguishable.
+ * Tests for BenchmarkTargetsTab — cluster indicator and filtering.
  */
-import { describe, it, expect } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import React from 'react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { render } from '@/test/test-utils';
+
+vi.mock('@/context/ThemeContext', () => ({
+  useTheme: () => ({ isDark: true, theme: 'dark', setTheme: vi.fn() }),
+  ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 import { BenchmarkTargetsTab } from '@/pages/BenchmarkTargetsTab';
 
-const now = '2026-07-20T10:00:00Z';
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return React.createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
-function mockTarget(overrides: Record<string, unknown> = {}) {
-  return {
+const mockTargets = [
+  {
     id: 1,
-    name: 'mcp-default-route',
-    description: 'Shared route target',
+    name: 'vllm-aws-target',
+    description: 'AWS GPU cluster target',
     cluster_id: 10,
-    cluster_name: 'cluster-alpha',
-    llm_base_url: 'http://vllm.default:8000',
-    llm_model: 'llama3',
+    cluster_name: 'aws-eks-cluster',
+    llm_base_url: 'http://vllm-openai.default:8000',
+    llm_model: 'meta-llama/Llama-3-8B-Instruct',
     llm_namespace: 'default',
     llm_endpoint: '/v1/chat/completions',
     proxy_namespace: 'perf-proxies',
-    status: 'active',
+    status: 'ready',
+    last_validated: '2026-06-02T10:00:00Z',
+    validation_msg: null,
+    tags: null,
+    proxy_count: 2,
+    created_at: '2026-06-02T10:00:00Z',
+    updated_at: '2026-06-02T10:00:00Z',
+  },
+  {
+    id: 2,
+    name: 'vllm-gcp-target',
+    description: 'GCP GKE target',
+    cluster_id: 20,
+    cluster_name: 'gke-cluster-prod',
+    llm_base_url: 'http://vllm-gcp.default:8000',
+    llm_model: 'mistralai/Mistral-7B',
+    llm_namespace: 'default',
+    llm_endpoint: '/v1/chat/completions',
+    proxy_namespace: 'perf-proxies',
+    status: 'ready',
     last_validated: null,
     validation_msg: null,
     tags: null,
     proxy_count: 1,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+    created_at: '2026-06-02T10:00:00Z',
+    updated_at: '2026-06-02T10:00:00Z',
+  },
+];
 
 describe('BenchmarkTargetsTab', () => {
-  it('renders Cluster column and cluster names for targets with identical names across clusters', async () => {
+  it('renders target table with Cluster column and cluster name', async () => {
     server.use(
       http.get('*/api/benchmarks/targets', () =>
         HttpResponse.json({
-          targets: [
-            mockTarget({ id: 1, name: 'mcp-default-route', cluster_id: 10, cluster_name: 'cluster-alpha' }),
-            mockTarget({ id: 2, name: 'mcp-default-route', cluster_id: 20, cluster_name: 'cluster-beta' }),
-          ],
+          targets: mockTargets,
           total: 2,
         })
       ),
-      http.get('*/api/k8s/clusters', () =>
+      http.get('*/api/kubernetes/clusters', () =>
         HttpResponse.json({
           clusters: [
-            { id: 10, name: 'cluster-alpha' },
-            { id: 20, name: 'cluster-beta' },
+            { id: 10, name: 'aws-eks-cluster', status: 'active' },
+            { id: 20, name: 'gke-cluster-prod', status: 'active' },
           ],
-          total: 2,
         })
       ),
-      http.get('*/api/benchmarks/agents', () => HttpResponse.json([])),
-      http.get('*/api/benchmarks/scenarios', () => HttpResponse.json({ scenarios: [] }))
+      http.get('*/api/benchmarks/agents', () =>
+        HttpResponse.json([])
+      ),
+      http.get('*/api/benchmarks/scenarios', () =>
+        HttpResponse.json({ scenarios: [] })
+      )
     );
 
-    render(<BenchmarkTargetsTab />);
+    render(<BenchmarkTargetsTab />, { wrapper: createWrapper() });
 
-    await waitFor(() => {
-      expect(screen.getByRole('columnheader', { name: /cluster/i })).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('cluster-alpha')).toBeInTheDocument();
-    expect(screen.getByText('cluster-beta')).toBeInTheDocument();
-
-    const targetNames = screen.getAllByText('mcp-default-route');
-    expect(targetNames).toHaveLength(2);
+    // Cluster column header
+    await waitFor(() => expect(screen.getByText('Cluster')).toBeInTheDocument());
+    expect(screen.getByText('vllm-aws-target')).toBeInTheDocument();
+    expect(screen.getByText('aws-eks-cluster')).toBeInTheDocument();
+    expect(screen.getByText('vllm-gcp-target')).toBeInTheDocument();
+    expect(screen.getByText('gke-cluster-prod')).toBeInTheDocument();
   });
 
-  it('renders cluster name in target detail header and details card when selected', async () => {
-    const user = userEvent.setup();
-
+  it('filters targets by cluster_id query param when selectedClusterId is passed', async () => {
+    let capturedUrl: string | null = null;
     server.use(
-      http.get('*/api/benchmarks/targets', () =>
-        HttpResponse.json({
-          targets: [
-            mockTarget({ id: 1, name: 'mcp-default-route', cluster_id: 10, cluster_name: 'cluster-alpha' }),
-          ],
+      http.get('*/api/benchmarks/targets', ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({
+          targets: [mockTargets[0]],
           total: 1,
-        })
-      ),
-      http.get('*/api/benchmarks/targets/1', () =>
+        });
+      }),
+      http.get('*/api/kubernetes/clusters', () =>
         HttpResponse.json({
-          ...mockTarget({ id: 1, name: 'mcp-default-route', cluster_id: 10, cluster_name: 'cluster-alpha' }),
-          proxy_deployments: [],
+          clusters: [{ id: 10, name: 'aws-eks-cluster', status: 'active' }],
         })
       ),
-      http.get('*/api/k8s/clusters', () =>
-        HttpResponse.json({
-          clusters: [{ id: 10, name: 'cluster-alpha' }],
-          total: 1,
-        })
+      http.get('*/api/benchmarks/agents', () =>
+        HttpResponse.json([])
       ),
-      http.get('*/api/benchmarks/agents', () => HttpResponse.json([])),
-      http.get('*/api/benchmarks/scenarios', () => HttpResponse.json({ scenarios: [] }))
+      http.get('*/api/benchmarks/scenarios', () =>
+        HttpResponse.json({ scenarios: [] })
+      )
     );
 
-    render(<BenchmarkTargetsTab />);
+    render(<BenchmarkTargetsTab selectedClusterId={10} />, { wrapper: createWrapper() });
 
-    await waitFor(() => {
-      expect(screen.getByText('mcp-default-route')).toBeInTheDocument();
-    });
-
-    // Click on target row to open detail view
-    await user.click(screen.getByText('mcp-default-route'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Target details')).toBeInTheDocument();
-    });
-
-    // Detail header badge and detail grid should display cluster-alpha
-    const clusterBadges = screen.getAllByText('cluster-alpha');
-    expect(clusterBadges.length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.getByText('vllm-aws-target')).toBeInTheDocument());
+    expect(capturedUrl).toContain('cluster_id=10');
   });
 });

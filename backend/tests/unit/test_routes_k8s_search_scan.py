@@ -31,6 +31,7 @@ from routes.k8s.search import _scan_cluster_for_query, global_search
 # for the CustomObjects API — mirroring what the real client returns).
 # ---------------------------------------------------------------------------
 
+
 def _ingress(name, ns, hosts=None, tls_hosts=None, svc_name=None, svc_port=None):
     rules = []
     for h in hosts or []:
@@ -41,7 +42,9 @@ def _ingress(name, ns, hosts=None, tls_hosts=None, svc_name=None, svc_port=None)
         http = SimpleNamespace(paths=paths) if paths is not None else None
         rules.append(SimpleNamespace(host=h, http=http))
     tls = [SimpleNamespace(hosts=tls_hosts)] if tls_hosts else None
-    return SimpleNamespace(metadata=SimpleNamespace(name=name, namespace=ns), spec=SimpleNamespace(rules=rules or None, tls=tls))
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, namespace=ns), spec=SimpleNamespace(rules=rules or None, tls=tls)
+    )
 
 
 def _service(name, ns, type_="LoadBalancer", cluster_ip=None, external_ips=None, lb=None):
@@ -107,7 +110,7 @@ def _wire(clients_by_id):
     threads) resolves to the ``_FakeApiClient`` registered for its cluster id.
     """
     ks = MagicMock()
-    ks.return_value.get_cluster.side_effect = lambda cid: (SimpleNamespace(id=cid) if cid in clients_by_id else None)
+    ks.return_value.get_cluster.side_effect = lambda cid: SimpleNamespace(id=cid) if cid in clients_by_id else None
     ks.return_value.load_kubeconfig.side_effect = lambda c: clients_by_id[c.id]
 
     with (
@@ -124,36 +127,48 @@ def _wire(clients_by_id):
 # _scan_cluster_for_query — resource parsing
 # ---------------------------------------------------------------------------
 
+
 class TestScanClusterParsing:
     def test_parses_every_resource_kind(self):
         client = _FakeApiClient(
             ingresses=[
                 _ingress(
-                    "web-ing", "shop", hosts=["shop.example.com"],
-                    tls_hosts=["shop.example.com"], svc_name="web", svc_port=8080,
+                    "web-ing",
+                    "shop",
+                    hosts=["shop.example.com"],
+                    tls_hosts=["shop.example.com"],
+                    svc_name="web",
+                    svc_port=8080,
                 ),
             ],
             custom={
-                "httproutes": [{
-                    "metadata": {"name": "api-route", "namespace": "api"},
-                    "spec": {"hostnames": ["api.example.com"]},
-                }],
-                "virtualservers": [{
-                    "metadata": {"name": "vs-app", "namespace": "bnk"},
-                    "spec": {"host": "app.example.com", "virtualServerAddress": "10.0.0.5"},
-                }],
-                "f5-spk-egresses": [{
-                    "metadata": {"name": "egress-example", "namespace": "egress"},
-                    "spec": {"dnsNat46Ipv4Subnet": "192.0.2.0/24"},
-                }],
-                "f5-bnkgateways": [{
-                    "metadata": {"name": "example-gw", "namespace": "gw"},
-                }],
+                "httproutes": [
+                    {
+                        "metadata": {"name": "api-route", "namespace": "api"},
+                        "spec": {"hostnames": ["api.example.com"]},
+                    }
+                ],
+                "virtualservers": [
+                    {
+                        "metadata": {"name": "vs-app", "namespace": "bnk"},
+                        "spec": {"host": "app.example.com", "virtualServerAddress": "10.0.0.5"},
+                    }
+                ],
+                "f5-spk-egresses": [
+                    {
+                        "metadata": {"name": "egress-example", "namespace": "egress"},
+                        "spec": {"dnsNat46Ipv4Subnet": "192.0.2.0/24"},
+                    }
+                ],
+                "f5-bnkgateways": [
+                    {
+                        "metadata": {"name": "example-gw", "namespace": "gw"},
+                    }
+                ],
                 # gateways / l4routes not installed -> ApiException (default RAISE)
             },
             services=[
-                _service("lb-example", "svc", type_="LoadBalancer",
-                         cluster_ip="10.96.0.1", lb=[("203.0.113.9", None)]),
+                _service("lb-example", "svc", type_="LoadBalancer", cluster_ip="10.96.0.1", lb=[("203.0.113.9", None)]),
             ],
         )
         with _wire({1: client}):
@@ -239,10 +254,12 @@ class TestScanClusterParsing:
         client = _FakeApiClient(
             custom={
                 "httproutes": urllib3.exceptions.ReadTimeoutError(None, "/", "timed out"),
-                "virtualservers": [{
-                    "metadata": {"name": "vs-app", "namespace": "bnk"},
-                    "spec": {"host": "app.example.com"},
-                }],
+                "virtualservers": [
+                    {
+                        "metadata": {"name": "vs-app", "namespace": "bnk"},
+                        "spec": {"host": "app.example.com"},
+                    }
+                ],
                 "f5-bnkgateways": urllib3.exceptions.ReadTimeoutError(None, "/", "timed out"),
                 "gateways": [{"metadata": {"name": "example-gw", "namespace": "gw"}}],
             },
@@ -255,8 +272,7 @@ class TestScanClusterParsing:
         # A query that hits only the LB ingress IP still returns the Service,
         # regardless of its name (exercises the `matched_ip` branch).
         client = _FakeApiClient(
-            services=[_service("unrelated-name", "ns", type_="LoadBalancer",
-                               lb=[("198.51.100.7", None)])],
+            services=[_service("unrelated-name", "ns", type_="LoadBalancer", lb=[("198.51.100.7", None)])],
         )
         with _wire({1: client}):
             results = _scan_cluster_for_query(1, "c", None, None, "198.51.100.7")
@@ -279,6 +295,7 @@ class TestScanClusterParsing:
 # global_search — ThreadPoolExecutor harvest / timeout + dedup
 # ---------------------------------------------------------------------------
 
+
 class _Query:
     def __init__(self, result):
         self._result = result
@@ -296,13 +313,19 @@ class _DB:
 
     def query(self, model):
         from models.kubernetes import KubernetesCluster
+
         return _Query(self._clusters if model is KubernetesCluster else [])
 
 
 def _db_cluster(cid, name, project_id=None):
     return SimpleNamespace(
-        id=cid, name=name, cloud_provider="aws", region="us-east-1",
-        detected_platform_profile=None, meta_data={}, status="active",
+        id=cid,
+        name=name,
+        cloud_provider="aws",
+        region="us-east-1",
+        detected_platform_profile=None,
+        meta_data={},
+        status="active",
         project_id=project_id,
     )
 
@@ -359,7 +382,6 @@ class TestGlobalSearchScanOrchestration:
                 resp = global_search(q="hit.example.com", limit=25, db=db)
         assert [i.name for i in resp.ingresses] == ["up-ing"]
 
-
     def test_dedup_key_spans_kind_cluster_namespace_name(self):
         """Two DISTINCT clusters returning the same-named resource are kept
         (dedup key includes cluster_id), while an exact duplicate is dropped."""
@@ -381,3 +403,14 @@ class TestGlobalSearchScanOrchestration:
         with _wire({1: client}):
             resp = global_search(q="example.com", limit=3, db=db)
         assert len(resp.ingresses) == 3
+
+    def test_short_query_returns_empty_results(self):
+        client = _FakeApiClient(
+            ingresses=[_ingress("ing-1", "ns", hosts=["host-1.example.com"])],
+        )
+        db = _DB([_db_cluster(1, "c1")])
+        with _wire({1: client}):
+            resp = global_search(q="  a  ", limit=25, db=db)
+        assert resp.ingresses == []
+        assert resp.clusters == []
+        assert resp.projects == []

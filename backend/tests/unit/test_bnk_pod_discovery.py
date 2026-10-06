@@ -338,7 +338,9 @@ class TestDiscoverF5Pods:
     but a non-standard name.  The function must return it in tenant_pods.
     """
 
-    def _make_api_client(self, sweep_pods: list, ns_pods: dict | None = None) -> Generator[tuple[MagicMock, MagicMock], None, None]:
+    def _make_api_client(
+        self, sweep_pods: list, ns_pods: dict | None = None
+    ) -> Generator[tuple[MagicMock, MagicMock], None, None]:
         """
         Build a mock api_client whose CoreV1Api behaviour is:
           - list_pod_for_all_namespaces → sweep_pods
@@ -450,9 +452,74 @@ class TestCachedDiscoverForce:
     def test_force_bypasses_pod_cache(self):
         from services.bnk.fetch import _cached_discover_f5_pods
 
-        with patch("core.cache.cache") as mock_cache, \
-                patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])) as mock_discover:
+        with (
+            patch("core.cache.cache") as mock_cache,
+            patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])) as mock_discover,
+        ):
             mock_cache.get.return_value = [[{"name": "stale"}], []]
             assert _cached_discover_f5_pods(1, MagicMock(), [])[0] == [{"name": "stale"}]
             assert _cached_discover_f5_pods(1, MagicMock(), [], force=True) == ([], [])
         mock_discover.assert_called_once()
+
+    def test_namespace_scoped_cache_key(self):
+        from services.bnk.fetch import _cached_discover_f5_pods
+
+        with (
+            patch("core.cache.cache") as mock_cache,
+            patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])),
+        ):
+            mock_cache.get.return_value = None
+            _cached_discover_f5_pods(1, MagicMock(), ["ns1", "ns2"])
+            # Cache key must include sorted namespaces
+            mock_cache.set.assert_called_once()
+            cache_key = mock_cache.set.call_args[0][0]
+            assert "bnk:pods:1:ns1,ns2" == cache_key
+
+
+class TestFetchAllBnkDataCaching:
+    def test_fetch_all_bnk_data_does_not_cache_partial_failure(self):
+        from services.bnk.fetch import fetch_all_bnk_data
+
+        k8s_service = MagicMock()
+        cluster = MagicMock()
+        cluster.discovered_namespaces = []
+        k8s_service.get_cluster.return_value = cluster
+        k8s_service.load_kubeconfig.return_value = MagicMock()
+
+        with (
+            patch("services.bnk.fetch.cache") as mock_cache,
+            patch("services.bnk.fetch.resolve_resource_type", side_effect=RuntimeError("DB error")),
+            patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])),
+            patch("services.bnk.fetch.classify_f5_pods", return_value={}),
+        ):
+            mock_cache.get.return_value = None
+            result = fetch_all_bnk_data(k8s_service, 1)
+
+            # Even though result is returned (graceful degradation), bnk:data must NOT be cached
+            bnk_data_calls = [c for c in mock_cache.set.call_args_list if c[0][0].startswith("bnk:data:")]
+            assert len(bnk_data_calls) == 0
+
+    def test_fetch_all_bnk_data_caches_when_all_succeed(self):
+        from services.bnk.fetch import fetch_all_bnk_data
+
+        k8s_service = MagicMock()
+        cluster = MagicMock()
+        cluster.discovered_namespaces = []
+        k8s_service.get_cluster.return_value = cluster
+        k8s_service.load_kubeconfig.return_value = MagicMock()
+        k8s_service._fetch_from_k8s.return_value = []
+
+        with (
+            patch("services.bnk.fetch.cache") as mock_cache,
+            patch("services.bnk.fetch.resolve_resource_type", return_value=MagicMock()),
+            patch("services.bnk.fetch.discover_f5_pods", return_value=([], [])),
+            patch("services.bnk.fetch.classify_f5_pods", return_value={}),
+            patch("services.bnk.fetch.k8s_client.BatchV1Api") as mock_batch,
+        ):
+            mock_batch.return_value.list_namespaced_job.return_value.items = []
+            mock_cache.get.return_value = None
+            result = fetch_all_bnk_data(k8s_service, 1)
+
+            # Succeeded fetch must be cached under bnk:data:
+            bnk_data_calls = [c for c in mock_cache.set.call_args_list if c[0][0].startswith("bnk:data:")]
+            assert len(bnk_data_calls) == 1

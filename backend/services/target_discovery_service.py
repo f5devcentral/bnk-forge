@@ -595,7 +595,7 @@ class TargetDiscoveryService:
                 if config_name in existing_names:
                     continue
 
-                base_url = proxy.proxy_url or target.llm_base_url
+                base_url = proxy.external_url or proxy.proxy_url or target.llm_base_url
 
                 # Config keys map 1:1 to aiperf CLI flags:
                 #   url             → --url

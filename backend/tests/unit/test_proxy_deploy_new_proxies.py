@@ -659,6 +659,8 @@ class TestHaproxyBackendOverride:
             tags={"upstream_service": "vllm", "upstream_port": 80},
         )
         vals = svc._values_haproxy(MagicMock(), t)
+        assert vals["service"]["ports"]["http"] == PROXY_LISTEN_PORT
+        assert vals["containerPorts"]["http"] == PROXY_LISTEN_PORT
         config = vals["config"]
         assert "vllm.awsbnkctl-scn-aiinference.svc.cluster.local:80" in config
 

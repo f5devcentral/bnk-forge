@@ -38,36 +38,48 @@ def _service(name: str, namespace: str = "default", ports=None) -> dict:
 
 def _topology_http(backend_name: str, backend_ns: str = "default", gw_name: str = "gw-prod") -> list[dict]:
     """Topology with a single HTTPRoute pointing to a backend."""
-    return [{
-        "name": gw_name,
-        "namespace": "default",
-        "listeners": [{
-            "name": "http",
-            "routes": [{
-                "name": "agent-route",
-                "namespace": "default",
-                "kind": "HTTPRoute",
-                "backends": [{"name": backend_name, "namespace": backend_ns, "port": 8080, "weight": None}],
-            }],
-        }],
-    }]
+    return [
+        {
+            "name": gw_name,
+            "namespace": "default",
+            "listeners": [
+                {
+                    "name": "http",
+                    "routes": [
+                        {
+                            "name": "agent-route",
+                            "namespace": "default",
+                            "kind": "HTTPRoute",
+                            "backends": [{"name": backend_name, "namespace": backend_ns, "port": 8080, "weight": None}],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
 
 
 def _topology_tcp(backend_name: str, backend_ns: str = "default") -> list[dict]:
     """Topology with only a TCPRoute (no HTTP)."""
-    return [{
-        "name": "gw-tcp",
-        "namespace": "default",
-        "listeners": [{
-            "name": "tcp",
-            "routes": [{
-                "name": "tcp-route",
-                "namespace": "default",
-                "kind": "TCPRoute",
-                "backends": [{"name": backend_name, "namespace": backend_ns, "port": 9090}],
-            }],
-        }],
-    }]
+    return [
+        {
+            "name": "gw-tcp",
+            "namespace": "default",
+            "listeners": [
+                {
+                    "name": "tcp",
+                    "routes": [
+                        {
+                            "name": "tcp-route",
+                            "namespace": "default",
+                            "kind": "TCPRoute",
+                            "backends": [{"name": backend_name, "namespace": backend_ns, "port": 9090}],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
 
 
 def _data_with_services(*services) -> dict:
@@ -142,19 +154,31 @@ class TestDiscoverA2AAgents:
 class TestFindHttpBackendServices:
     def test_mixed_http_and_tcp(self):
         """Only HTTPRoute backends are included, not TCP."""
-        topology = [{
-            "name": "gw",
-            "namespace": "ns",
-            "listeners": [{
-                "name": "mixed",
-                "routes": [
-                    {"name": "http-r", "namespace": "ns", "kind": "HTTPRoute",
-                     "backends": [{"name": "http-svc", "namespace": "ns", "port": 80}]},
-                    {"name": "tcp-r", "namespace": "ns", "kind": "TCPRoute",
-                     "backends": [{"name": "tcp-svc", "namespace": "ns", "port": 9090}]},
+        topology = [
+            {
+                "name": "gw",
+                "namespace": "ns",
+                "listeners": [
+                    {
+                        "name": "mixed",
+                        "routes": [
+                            {
+                                "name": "http-r",
+                                "namespace": "ns",
+                                "kind": "HTTPRoute",
+                                "backends": [{"name": "http-svc", "namespace": "ns", "port": 80}],
+                            },
+                            {
+                                "name": "tcp-r",
+                                "namespace": "ns",
+                                "kind": "TCPRoute",
+                                "backends": [{"name": "tcp-svc", "namespace": "ns", "port": 9090}],
+                            },
+                        ],
+                    }
                 ],
-            }],
-        }]
+            }
+        ]
         services = [_service("http-svc", "ns"), _service("tcp-svc", "ns")]
         route_ref_map = build_route_ref_map(topology)
         candidates = _find_http_backend_services(services, route_ref_map)
@@ -173,11 +197,16 @@ class TestFindHttpBackendServices:
         assert refs[0]["gatewayName"] == "gw-prod"
 
     def test_target_port_carried_and_defaults_to_port(self):
-        services = [_service("my-svc", ports=[
-            {"port": 80, "targetPort": 8080, "name": "http"},
-            {"port": 81, "target_port": "web", "name": "alt"},
-            {"port": 82, "name": "plain"},
-        ])]
+        services = [
+            _service(
+                "my-svc",
+                ports=[
+                    {"port": 80, "targetPort": 8080, "name": "http"},
+                    {"port": 81, "target_port": "web", "name": "alt"},
+                    {"port": 82, "name": "plain"},
+                ],
+            )
+        ]
         candidates = _find_http_backend_services(services, build_route_ref_map(_topology_http("my-svc")))
         assert [p["targetPort"] for p in candidates[0]["ports"]] == [8080, "web", 82]
 
@@ -216,6 +245,19 @@ class TestCandidateProbePorts:
     def test_empty_ports_returns_empty_list(self):
         candidate = {"routeRefs": [], "ports": []}
         assert _candidate_probe_ports(candidate) == []
+
+    def test_ignores_non_http_unnamed_ports(self):
+        candidate = {
+            "routeRefs": [],
+            "ports": [
+                {"port": 5432, "name": "postgresql", "protocol": "TCP"},
+                {"port": 6379, "name": "redis", "protocol": "TCP"},
+                {"port": 9999, "name": "custom", "protocol": "TCP"},
+                {"port": 8080, "name": "custom", "protocol": "TCP"},
+            ],
+        }
+        ports = _candidate_probe_ports(candidate)
+        assert ports == [8080]
 
 
 # ---------------------------------------------------------------------------
@@ -295,23 +337,27 @@ class TestNormalizeAgentCard:
 class TestParseJsonOrPythonDict:
     def test_valid_json_string(self):
         from services.bnk.a2a_discovery import _parse_json_or_python_dict
+
         raw = '{"name": "agent-1", "skills": ["a", "b"]}'
         result = _parse_json_or_python_dict(raw)
         assert result == {"name": "agent-1", "skills": ["a", "b"]}
 
     def test_single_quoted_python_dict_string(self):
         from services.bnk.a2a_discovery import _parse_json_or_python_dict
+
         raw = "{'name': 'gke-vertex-finance-tool', 'version': '1.0.0'}"
         result = _parse_json_or_python_dict(raw)
         assert result == {"name": "gke-vertex-finance-tool", "version": "1.0.0"}
 
     def test_already_dict(self):
         from services.bnk.a2a_discovery import _parse_json_or_python_dict
+
         raw = {"name": "agent-dict"}
         assert _parse_json_or_python_dict(raw) == raw
 
     def test_invalid_input(self):
         from services.bnk.a2a_discovery import _parse_json_or_python_dict
+
         assert _parse_json_or_python_dict("invalid not json") is None
         assert _parse_json_or_python_dict("") is None
         assert _parse_json_or_python_dict(None) is None
@@ -321,19 +367,37 @@ class TestParseJsonOrPythonDict:
 class TestRouteDeduplication:
     def test_deduplicates_repeated_route_refs(self):
         from services.bnk.a2a_discovery import _find_http_backend_services
+
         services = [_service("vertex-finance-mcp")]
         # Same route referenced across multiple listeners
         route_ref_map = {
             ("default", "vertex-finance-mcp"): [
-                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
-                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
-                {"kind": "HTTPRoute", "name": "mcp-tool-route", "namespace": "default", "port": 8000, "gatewayName": "gw-1"},
+                {
+                    "kind": "HTTPRoute",
+                    "name": "mcp-tool-route",
+                    "namespace": "default",
+                    "port": 8000,
+                    "gatewayName": "gw-1",
+                },
+                {
+                    "kind": "HTTPRoute",
+                    "name": "mcp-tool-route",
+                    "namespace": "default",
+                    "port": 8000,
+                    "gatewayName": "gw-1",
+                },
+                {
+                    "kind": "HTTPRoute",
+                    "name": "mcp-tool-route",
+                    "namespace": "default",
+                    "port": 8000,
+                    "gatewayName": "gw-1",
+                },
             ]
         }
         candidates = _find_http_backend_services(services, route_ref_map)
         assert len(candidates) == 1
         assert len(candidates[0]["routeRefs"]) == 1
-
 
 
 class TestGovernanceSanitised:
