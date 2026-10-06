@@ -19,6 +19,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: null,
       compareRunIds: [],
       selectedGroupId: null,
+      curveGroupIds: [],
     });
   });
 
@@ -28,6 +29,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: 42,
       compareRunIds: [],
       selectedGroupId: null,
+      curveGroupIds: [],
     });
   });
 
@@ -37,6 +39,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: null,
       compareRunIds: [],
       selectedGroupId: null,
+      curveGroupIds: [],
     });
   });
 
@@ -51,6 +54,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: null,
       compareRunIds: [1, 2, 3],
       selectedGroupId: null,
+      curveGroupIds: [],
     });
   });
 
@@ -70,6 +74,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: null,
       compareRunIds: [],
       selectedGroupId: null,
+      curveGroupIds: [],
     });
   });
 
@@ -79,6 +84,7 @@ describe('deriveRunsViewState', () => {
       selectedRunId: null,
       compareRunIds: [],
       selectedGroupId: 9,
+      curveGroupIds: [],
     });
   });
 

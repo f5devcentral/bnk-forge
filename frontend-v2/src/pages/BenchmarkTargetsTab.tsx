@@ -100,6 +100,14 @@ const PROXY_DEPLOY_BADGE: Record<ProxyDeployStatus, { label: string; variant: Ba
   uninstalled: { label: 'Uninstalled', variant: 'muted' },
 };
 
+// ProxyDeployment.routing_info keys shown on the proxy card, in order.
+const ROUTING_INFO_LABELS: [string, string][] = [
+  ['epp', 'EPP'],
+  ['model_server', 'Model server'],
+  ['tokens', 'Tokens'],
+  ['kv_events', 'KV events'],
+];
+
 function targetBadge(status: string) {
   return TARGET_STATUS_BADGE[(status as TargetStatus)] ?? TARGET_STATUS_BADGE.active;
 }
@@ -488,6 +496,11 @@ export function BenchmarkTargetsTab({ selectedClusterId }: BenchmarkTargetsTabPr
                           External: <span className="font-mono text-foreground/80">{proxy.external_url}</span>
                         </p>
                       )}
+                      {proxy.routing_info && ROUTING_INFO_LABELS.filter(([key]) => proxy.routing_info?.[key]).map(([key, label]) => (
+                        <p key={key} className="text-muted-foreground">
+                          {label}: <span className="text-foreground/80">{proxy.routing_info?.[key]}</span>
+                        </p>
+                      ))}
                       {proxy.deployed_at && (
                         <p className="text-muted-foreground">
                           Deployed: <TimeAgo dateStr={proxy.deployed_at} />

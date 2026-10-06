@@ -395,7 +395,7 @@ export const queryKeys = {
     },
     runs: {
       all: ['benchmarks', 'runs'] as const,
-      list: (params?: { proxy?: string; tool?: string; model?: string; status?: string; limit?: number; offset?: number }) =>
+      list: (params?: { proxy?: string; tool?: string; model?: string; status?: string; cluster_id?: number; q?: string; sort?: string; order?: 'asc' | 'desc'; limit?: number; offset?: number }) =>
         ['benchmarks', 'runs', 'list', params] as const,
       detail: (runId: number) => ['benchmarks', 'runs', 'detail', runId] as const,
     },
@@ -423,6 +423,8 @@ export const queryKeys = {
     runGroups: {
       all: ['benchmarks', 'run-groups'] as const,
       detail: (groupId: number) => ['benchmarks', 'run-groups', 'detail', groupId] as const,
+      list: (params?: { scenario_key?: string; limit?: number }) => ['benchmarks', 'run-groups', 'list', params] as const,
+      curves: (groupIds: number[]) => ['benchmarks', 'run-groups', 'curves', groupIds] as const,
     },
     trends: (params?: { target_id?: number; proxy?: string; scenario_key?: string; config_id?: number; limit?: number }) =>
       ['benchmarks', 'trends', params] as const,
