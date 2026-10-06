@@ -2,6 +2,7 @@
 Authentication service for BNK-Forge.
 Handles user management, password hashing, and JWT token generation.
 """
+
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -70,7 +71,10 @@ AGENT_TOKEN_LIFETIME = timedelta(days=365)
 
 
 def mint_agent_token(
-    agent_id: int, expires_delta: timedelta | None = None
+    agent_id: int,
+    expires_delta: timedelta | None = None,
+    created_by: int | None = None,
+    token_version: int | None = None,
 ) -> tuple[str, datetime]:
     """Mint the bearer token a benchmark agent presents on its WebSocket and ingest calls.
 
@@ -84,10 +88,19 @@ def mint_agent_token(
     token and its expiry.
     """
     lifetime = expires_delta or AGENT_TOKEN_LIFETIME
-    expires_at = datetime.now(UTC) + lifetime
-    token = create_access_token(
-        {"agent_id": agent_id, "role": "agent", "sub": f"agent:{agent_id}"}, expires_delta=lifetime
-    )
+    claims: dict[str, Any] = {
+        "agent_id": agent_id,
+        "role": "agent",
+        "sub": f"agent:{agent_id}",
+    }
+    if created_by is not None:
+        claims["created_by"] = created_by
+    if token_version is not None:
+        claims["token_version"] = token_version
+
+    token = create_access_token(claims, expires_delta=lifetime)
+    payload = decode_token(token)
+    expires_at = datetime.fromtimestamp(payload["exp"], tz=UTC)
     return token, expires_at
 
 
@@ -145,6 +158,7 @@ def token_user_state(token: str) -> User | None:
     disable expire_on_commit, if that changes.
     """
     from database import get_db_context
+
     try:
         with get_db_context() as db:
             return get_user_from_token(db, token)
@@ -156,10 +170,12 @@ def token_user_state(token: str) -> User | None:
 # password, and read their own state so the UI can show the change screen.
 # Exact full paths, not suffixes: this is a security gate, so it must not accept
 # an unrelated route that merely ends in "/auth/me".
-PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
-    "/api/auth/change-password",
-    "/api/auth/me",
-})
+PASSWORD_CHANGE_EXEMPT_PATHS = frozenset(
+    {
+        "/api/auth/change-password",
+        "/api/auth/me",
+    }
+)
 
 
 def enforce_password_change(path: str, user: User) -> None:
@@ -177,6 +193,7 @@ def enforce_password_change(path: str, user: User) -> None:
     if path.rstrip("/") in PASSWORD_CHANGE_EXEMPT_PATHS:
         return
     from core.errors import ForbiddenError
+
     raise ForbiddenError(
         "Password change required before using the API. "
         "POST /api/auth/change-password with your current and new password."
@@ -201,8 +218,9 @@ def get_user_from_token(db: Session, token: str) -> User:
     return user
 
 
-def create_user(db: Session, username: str, email: str, password: str,
-                role: str = "operator", must_change_password: bool = False) -> User:
+def create_user(
+    db: Session, username: str, email: str, password: str, role: str = "operator", must_change_password: bool = False
+) -> User:
     """Create a new user. Raises ConflictError if username/email already exists."""
     # Check for existing username
     if db.query(User).filter(User.username == username).first():
@@ -362,6 +380,7 @@ def _persist_generated_password(password: str, filename: str = "initial_admin_pa
     parameter to preserve the seam should a second generated credential return.
     """
     import os
+
     keys_dir = os.environ.get("KEYS_DIR", "/app/keys")
     pw_path = os.path.join(keys_dir, filename)
     try:
@@ -376,9 +395,7 @@ def _persist_generated_password(password: str, filename: str = "initial_admin_pa
     except OSError as exc:  # PermissionError/NotADirectoryError are OSError subclasses
         # Fail closed. NEVER put `password` in this message: it propagates into
         # logs, which is exactly the leak we are closing (#186).
-        raise GeneratedCredentialPersistError(
-            f"could not persist generated credential to {pw_path}: {exc}"
-        ) from exc
+        raise GeneratedCredentialPersistError(f"could not persist generated credential to {pw_path}: {exc}") from exc
     return pw_path
 
 
@@ -519,9 +536,7 @@ def seed_admin_user(db: Session) -> User | None:
         # committed row and the matching keys file; we must NOT write our different
         # generated password. Roll our aborted transaction back and defer.
         db.rollback()
-        logger.info(
-            "Another replica seeded the admin user first — skipping (concurrent boot)"
-        )
+        logger.info("Another replica seeded the admin user first — skipping (concurrent boot)")
         return None
 
     pw_path = None
@@ -567,10 +582,7 @@ def seed_admin_user(db: Session) -> User | None:
             )
     else:
         if must_change:
-            logger.info(
-                "Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change "
-                "required on first login"
-            )
+            logger.info("Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD — change required on first login")
         else:
             logger.warning(
                 "Seeded admin user 'admin' from DEFAULT_ADMIN_PASSWORD with "
@@ -583,9 +595,7 @@ def seed_admin_user(db: Session) -> User | None:
 # NOTE: _RESERVED_HUMAN_USERNAMES is defined once, above (near the config
 # constants), and shared by ensure_service_user below — the #188 and #186 guards
 # use the identical frozenset, so the integration keeps a single definition.
-def ensure_service_user(
-    db: Session, username: str, password: str | None, role: str = "admin"
-) -> None:
+def ensure_service_user(db: Session, username: str, password: str | None, role: str = "admin") -> None:
     """Idempotent create-or-reconcile a non-human service account.
 
     Called by ``startup_steps.seed_auth_step`` ONLY when a usable
@@ -708,12 +718,9 @@ def ensure_service_user(
     # normally unreachable; keeping it costs nothing and closes the ordering gap.
     is_adoption = False
     if not user.is_service_account:
-        fingerprint_match = (
-            user.username == "mcp" and str(user.email) == "mcp@bnk-forge.local"
-        )
+        fingerprint_match = user.username == "mcp" and str(user.email) == "mcp@bnk-forge.local"
         holds_published_default = fingerprint_match and any(
-            verify_password(p, str(user.hashed_password))
-            for p in MCP_KNOWN_DEFAULT_PASSWORDS
+            verify_password(p, str(user.hashed_password)) for p in MCP_KNOWN_DEFAULT_PASSWORDS
         )
         if not holds_published_default:
             raise ValueError(

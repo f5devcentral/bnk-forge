@@ -22,6 +22,7 @@ import pytest
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _register_payload():
     return {
         "name": "test-agent-auth-unit",
@@ -136,6 +137,7 @@ class TestAgentAuthFlagOn:
 
     def _headers_for(self, **claims) -> dict:
         from services.auth_service import create_access_token
+
         return {"Authorization": f"Bearer {create_access_token(claims)}"}
 
     def test_register_rejects_viewer_token(self, client):
@@ -174,8 +176,8 @@ class TestAgentAuthFlagOn:
         disabled. A real curl operator always has a row (that is how they got the
         token), so create one, unlike a forged token for a phantom user."""
         from services.auth_service import create_user
-        create_user(db, "op", "op@t.com", "pw-op-123",
-                    role="operator", must_change_password=False)
+
+        create_user(db, "op", "op@t.com", "pw-op-123", role="operator", must_change_password=False)
         db.commit()
         with patch("routes.benchmarks.settings") as mock_settings:
             mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
@@ -193,8 +195,8 @@ class TestAgentAuthFlagOn:
         create an agent (201) because this path never gated must_change. A token
         that resolves to a real user owing a password change must be refused."""
         from services.auth_service import create_access_token, create_user
-        create_user(db, "mc-admin", "mc-admin@t.com", "pw",
-                    role="admin", must_change_password=True)
+
+        create_user(db, "mc-admin", "mc-admin@t.com", "pw", role="admin", must_change_password=True)
         db.commit()
         token = create_access_token({"sub": "mc-admin", "role": "admin"})
         with patch("routes.benchmarks.settings") as mock_settings:
@@ -244,6 +246,7 @@ class TestAgentAuthFlagOn:
     def test_default_is_secure(self):
         """#148: a default deployment must not accept unauthenticated writes."""
         from core.config import Settings
+
         assert Settings().BENCHMARK_AGENT_AUTH_REQUIRED is True
 
     def test_ingest_rejects_missing_bearer(self, client):
@@ -388,9 +391,7 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(
-            data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"}
-        )
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"})
         ws = MagicMock()
         ws.query_params = {"token": token}
 
@@ -457,6 +458,7 @@ class TestAgentWSLayer2MustChangeGate:
 
     def _ws(self, token):
         from unittest.mock import MagicMock
+
         ws = MagicMock()
         ws.query_params = {"token": token}
         return ws
@@ -517,7 +519,7 @@ class TestAgentWSLayer2MustChangeGate:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "forge-agent", "role": "agent"})
+        token = create_access_token(data={"sub": "forge-agent", "role": "agent", "agent_id": 5})
 
         def _boom(*_a, **_k):  # token_user_state must not be consulted for agents
             raise AssertionError("token_user_state should not be called for an agent token")
@@ -525,6 +527,7 @@ class TestAgentWSLayer2MustChangeGate:
         with (
             patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
             patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("routes.benchmarks._agent_exists", return_value=True),
             patch("services.auth_service.token_user_state", _boom),
         ):
             assert _agent_ws_authorized(self._ws(token), 5) is None

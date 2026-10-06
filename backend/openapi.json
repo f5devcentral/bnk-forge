@@ -27384,7 +27384,7 @@
       },
       "delete": {
         "summary": "Delete Benchmark Agent",
-        "description": "Deregister a test client agent.\n\nMutation route: requires operator role and, for project-scoped (managed)\nagents, project ownership \u2014 same pattern as delete_agent_host. Global /\nself-registered agents (project_id NULL) have no owner, so operator alone\ngates them.",
+        "description": "Deregister a test client agent.\n\nMutation route: requires operator role and, for project-scoped (managed)\nagents, project ownership \u2014 same pattern as delete_agent_host. Global /\nself-registered agents (project_id NULL) have no owner, so admin role\nis required (matching the mint gate).",
         "operationId": "delete_benchmark_agent_api_benchmarks_agents__agent_id__delete",
         "parameters": [
           {
@@ -27417,7 +27417,7 @@
     "/api/benchmarks/agents/{agent_id}/token": {
       "post": {
         "summary": "Mint Benchmark Agent Token",
-        "description": "Mint an agent-bound bearer token for a registered benchmark agent.\n\nExternal agents (awsbnkctl, customer hosts) register with an operator token,\nthen need a token that carries the ``agent_id`` claim the agent WebSocket\nrequires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the\nsame token written to /etc/forge/agent.env; this route hands it to agents\nForge does not provision. Project-scoped agents need operator role plus\nproject ownership; unscoped agents (project_id NULL, every self-registered\nagent) need admin. Each call mints a new token; earlier tokens stay valid\nuntil they expire or the agent is deleted, which revokes them all.",
+        "description": "Mint an agent-bound bearer token for a registered benchmark agent.\n\nExternal agents (awsbnkctl, customer hosts) register with an operator token,\nthen need a token that carries the ``agent_id`` claim the agent WebSocket\nrequires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the\nsame token written to /etc/forge/agent.env; this route hands it to agents\nForge does not provision. Project-scoped agents need operator role plus\nproject ownership; unscoped agents (project_id NULL, every self-registered\nagent) need admin. Each token records the minting user and agent token_version;\ncalling rotate bumps the token_version and immediately revokes all prior tokens.",
         "operationId": "mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post",
         "parameters": [
           {
@@ -27428,6 +27428,105 @@
               "type": "integer",
               "title": "Agent Id"
             }
+          },
+          {
+            "name": "expires_in_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3650,
+              "minimum": 1,
+              "description": "Token lifetime in days (1-3650, default 365)",
+              "default": 365,
+              "title": "Expires In Days"
+            },
+            "description": "Token lifetime in days (1-3650, default 365)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkAgentTokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Revoke Benchmark Agent Token",
+        "description": "Revoke all tokens for an agent without deleting the agent: bumps token_version and drops live WS.",
+        "operationId": "revoke_benchmark_agent_token_api_benchmarks_agents__agent_id__token_delete",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmarks/agents/{agent_id}/token/rotate": {
+      "post": {
+        "summary": "Rotate Benchmark Agent Token",
+        "description": "Rotate an agent's token: bumps token_version, revokes earlier tokens, and force-closes live WS.",
+        "operationId": "rotate_benchmark_agent_token_api_benchmarks_agents__agent_id__token_rotate_post",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "expires_in_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3650,
+              "minimum": 1,
+              "description": "Token lifetime in days (1-3650, default 365)",
+              "default": 365,
+              "title": "Expires In Days"
+            },
+            "description": "Token lifetime in days (1-3650, default 365)"
           }
         ],
         "responses": {

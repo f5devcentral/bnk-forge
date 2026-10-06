@@ -142,7 +142,7 @@ def _mint_agent_token(agent: BenchmarkAgent) -> str:
     """Mint the agent-bound JWT written to the host (see auth_service.mint_agent_token)."""
     from services.auth_service import mint_agent_token
 
-    token, _expires_at = mint_agent_token(agent.id)
+    token, _expires_at = mint_agent_token(agent.id, token_version=agent.token_version)
     return token
 
 
