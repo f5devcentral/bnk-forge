@@ -99,8 +99,11 @@ def mint_agent_token(
         claims["token_version"] = token_version
 
     token = create_access_token(claims, expires_delta=lifetime)
-    payload = decode_token(token)
-    expires_at = datetime.fromtimestamp(payload["exp"], tz=UTC)
+    try:
+        payload = decode_token(token)
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=UTC)
+    except Exception:
+        expires_at = datetime.now(UTC) + lifetime
     return token, expires_at
 
 

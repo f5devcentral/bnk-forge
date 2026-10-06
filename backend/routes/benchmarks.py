@@ -701,8 +701,6 @@ def delete_benchmark_agent(
     agent = svc.get_agent(agent_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
-    elif effective_role(user) != "admin":
-        raise ForbiddenError("Deleting an unscoped agent requires admin")
     svc.delete_agent(agent_id)
     db.commit()
     close_agent_connection(agent_id)
