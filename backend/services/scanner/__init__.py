@@ -179,7 +179,7 @@ class ClusterScanner:
         try:
             from services.proxy_discovery_service import ProxyDiscoveryService
             proxy_svc = ProxyDiscoveryService(self.db)
-            proxy_items = proxy_svc.discover_inventory(api_client)
+            proxy_items = proxy_svc.discover_inventory(api_client, cluster_id=cluster.id)
             existing_proxies = {
                 "status": "detected" if proxy_items else "none",
                 "proxies": proxy_items,

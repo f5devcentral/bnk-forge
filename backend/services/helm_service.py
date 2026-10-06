@@ -113,7 +113,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         ``--timeout`` (list/status/get) have no helm-side wait.
         """
         try:
-            idx = command.index('--timeout')
+            idx = command.index("--timeout")
         except ValueError:
             return None
         if idx + 1 < len(command):
@@ -128,11 +128,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         return prepare_kubeconfig(cluster, self.db)
 
     def _run_helm_command(
-        self,
-        cluster: KubernetesCluster,
-        command: list[str],
-        namespace: str | None = None,
-        context: str | None = None
+        self, cluster: KubernetesCluster, command: list[str], namespace: str | None = None, context: str | None = None
     ) -> dict[str, Any]:
         """
         Run a Helm command with proper kubeconfig setup.
@@ -160,14 +156,14 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         try:
             # Build Helm command
-            helm_cmd = ['helm'] + command
-            helm_cmd.extend(['--kubeconfig', kubeconfig_path])
+            helm_cmd = ["helm"] + command
+            helm_cmd.extend(["--kubeconfig", kubeconfig_path])
 
             if context:
-                helm_cmd.extend(['--kube-context', context])
+                helm_cmd.extend(["--kube-context", context])
 
             if namespace:
-                helm_cmd.extend(['--namespace', namespace])
+                helm_cmd.extend(["--namespace", namespace])
 
             logger.info(f"Running Helm command: {' '.join(helm_cmd)}")
 
@@ -178,33 +174,16 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
             subprocess_timeout = _subprocess_timeout_for(helm_timeout)
 
             # Run command
-            result = subprocess.run(
-                helm_cmd,
-                capture_output=True,
-                text=True,
-                timeout=subprocess_timeout
-            )
+            result = subprocess.run(helm_cmd, capture_output=True, text=True, timeout=subprocess_timeout)
 
-            return {
-                'exit_code': result.returncode,
-                'stdout': result.stdout,
-                'stderr': result.stderr
-            }
+            return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
 
         except subprocess.TimeoutExpired as e:
             logger.error(f"Helm command timed out after {e.timeout}s")
-            return {
-                'exit_code': 124,
-                'stdout': '',
-                'stderr': f'Command timed out after {e.timeout}s'
-            }
+            return {"exit_code": 124, "stdout": "", "stderr": f"Command timed out after {e.timeout}s"}
         except Exception as e:
             logger.error(f"Error running Helm command: {e}")
-            return {
-                'exit_code': 1,
-                'stdout': '',
-                'stderr': str(e)
-            }
+            return {"exit_code": 1, "stdout": "", "stderr": str(e)}
         finally:
             # Clean up temporary kubeconfig
             try:
@@ -215,11 +194,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
     @with_breaker("cluster", target_id_arg="cluster_id")
     def list_releases(
-        self,
-        cluster_id: int,
-        namespace: str | None = None,
-        all_namespaces: bool = False,
-        show_all_status: bool = True
+        self, cluster_id: int, namespace: str | None = None, all_namespaces: bool = False, show_all_status: bool = True
     ) -> list[dict[str, Any]]:
         """
         List Helm releases in a cluster.
@@ -237,23 +212,23 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['list', '--output', 'json']
+        command = ["list", "--output", "json"]
 
         if all_namespaces:
-            command.append('--all-namespaces')
+            command.append("--all-namespaces")
 
         # CRITICAL: Show ALL releases including failed/pending-install/pending-upgrade
         # This is essential for a Helm management portal to show stuck releases
         if show_all_status:
-            command.append('--all')
+            command.append("--all")
 
         result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to list releases: {result['stderr']}")
 
         try:
-            releases = json.loads(result['stdout']) if result['stdout'].strip() else []
+            releases = json.loads(result["stdout"]) if result["stdout"].strip() else []
             return releases
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Helm output: {e}")
@@ -283,26 +258,23 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['status', release_name, '--output', 'json']
+        command = ["status", release_name, "--output", "json"]
 
         result = self._run_helm_command(cluster, command, namespace, context)
 
-        if result['exit_code'] != 0:
-            stderr = result['stderr'] or ''
+        if result["exit_code"] != 0:
+            stderr = result["stderr"] or ""
             # Distinguish a genuine "release does not exist" from a transient
             # backend failure (API-server unreachable, auth expiry, helm timeout
             # exit_code=124). Callers probing existence must NOT treat the latter
             # as "absent" — doing so triggers a spurious reinstall of a shared
             # control plane. Only helm's not-found marker maps to absence.
-            if (
-                result['exit_code'] != 124
-                and any(marker in stderr.lower() for marker in _HELM_NOT_FOUND_MARKERS)
-            ):
+            if result["exit_code"] != 124 and any(marker in stderr.lower() for marker in _HELM_NOT_FOUND_MARKERS):
                 raise ReleaseNotFoundError(release_name)
             raise RuntimeError(f"Failed to get release: {stderr}")
 
         try:
-            return json.loads(result['stdout'])
+            return json.loads(result["stdout"])
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Failed to parse release info: {e}")
 
@@ -317,7 +289,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         create_namespace: bool = True,
         wait: bool = True,
         timeout: str = DEFAULT_HELM_TIMEOUT,
-        context: str | None = None
+        context: str | None = None,
+        disable_openapi_validation: bool = False,
     ) -> dict[str, Any]:
         """
         Install a Helm chart.
@@ -334,6 +307,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
             timeout: Timeout for wait (e.g., '5m', '10m')
             context: Optional kubectl context to target (default: kubeconfig's
                 current-context).
+            disable_openapi_validation: Skip Helm's OpenAPI schema fetch and
+                validation (slow over a WAN link to the API server).
 
         Returns:
             Installation result
@@ -349,54 +324,52 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         # `upgrade --install` is idempotent: installs if missing, upgrades if
         # present.  Avoids "release name already in use" failures on Forge's
         # Redeploy flow when a prior partial install left a release behind.
-        command = ['upgrade', '--install', release_name, chart, '--output', 'json']
+        command = ["upgrade", "--install", release_name, chart, "--output", "json"]
+        if disable_openapi_validation:
+            command.append("--disable-openapi-validation")
 
         if version:
-            command.extend(['--version', version])
+            command.extend(["--version", version])
 
         if create_namespace:
-            command.append('--create-namespace')
+            command.append("--create-namespace")
 
         if wait:
-            command.extend(['--wait', '--timeout', timeout])
+            command.extend(["--wait", "--timeout", timeout])
 
         # Handle custom values
         if values:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
                 import yaml
+
                 yaml.dump(values, f)
                 values_file = f.name
 
             try:
-                command.extend(['--values', values_file])
+                command.extend(["--values", values_file])
                 result = self._run_helm_command(cluster, command, namespace, context)
             finally:
                 os.unlink(values_file)
         else:
             result = self._run_helm_command(cluster, command, namespace, context)
 
-        if result['exit_code'] != 0:
-            error_msg = result['stderr'] or result['stdout'] or 'Unknown error'
+        if result["exit_code"] != 0:
+            error_msg = result["stderr"] or result["stdout"] or "Unknown error"
             logger.error(f"Helm install failed with exit code {result['exit_code']}: {error_msg}")
 
             # Check for user errors (400-level) vs system errors (500-level)
-            if 'cannot re-use a name that is still in use' in error_msg:
+            if "cannot re-use a name that is still in use" in error_msg:
                 raise ValueError(f"Release name already in use: {error_msg}")
-            elif 'not found' in error_msg.lower():
+            elif "not found" in error_msg.lower():
                 raise ValueError(f"Chart not found: {error_msg}")
             else:
                 raise RuntimeError(f"Failed to install chart: {error_msg}")
 
         try:
-            return json.loads(result['stdout'])
+            return json.loads(result["stdout"])
         except json.JSONDecodeError:
             # Some Helm versions don't output JSON on install
-            return {
-                'success': True,
-                'message': result['stdout'],
-                'release': release_name,
-                'namespace': namespace
-            }
+            return {"success": True, "message": result["stdout"], "release": release_name, "namespace": namespace}
 
     def upgrade_release(
         self,
@@ -408,7 +381,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         version: str | None = None,
         install: bool = True,
         wait: bool = True,
-        timeout: str = "5m"
+        timeout: str = "5m",
+        disable_openapi_validation: bool = False,
     ) -> dict[str, Any]:
         """
         Upgrade a Helm release.
@@ -423,6 +397,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
             install: Install if release doesn't exist
             wait: Wait for resources to be ready
             timeout: Timeout for wait
+            disable_openapi_validation: If True, pass --disable-openapi-validation
 
         Returns:
             Upgrade result
@@ -435,49 +410,48 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['upgrade', release_name]
+        command = ["upgrade", release_name]
 
         if chart:
             command.append(chart)
 
-        command.extend(['--output', 'json'])
+        if disable_openapi_validation:
+            command.append("--disable-openapi-validation")
+
+        command.extend(["--output", "json"])
 
         if version:
-            command.extend(['--version', version])
+            command.extend(["--version", version])
 
         if install:
-            command.append('--install')
+            command.append("--install")
 
         if wait:
-            command.extend(['--wait', '--timeout', timeout])
+            command.extend(["--wait", "--timeout", timeout])
 
         # Handle custom values
         if values:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
                 import yaml
+
                 yaml.dump(values, f)
                 values_file = f.name
 
             try:
-                command.extend(['--values', values_file])
+                command.extend(["--values", values_file])
                 result = self._run_helm_command(cluster, command, namespace)
             finally:
                 os.unlink(values_file)
         else:
             result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to upgrade release: {result['stderr']}")
 
         try:
-            return json.loads(result['stdout'])
+            return json.loads(result["stdout"])
         except json.JSONDecodeError:
-            return {
-                'success': True,
-                'message': result['stdout'],
-                'release': release_name,
-                'namespace': namespace
-            }
+            return {"success": True, "message": result["stdout"], "release": release_name, "namespace": namespace}
 
     def rollback_release(
         self,
@@ -486,7 +460,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         revision: int | None = None,
         namespace: str | None = None,
         wait: bool = True,
-        timeout: str = "5m"
+        timeout: str = "5m",
     ) -> dict[str, Any]:
         """
         Rollback a Helm release to a previous revision.
@@ -508,25 +482,25 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['rollback', release_name]
+        command = ["rollback", release_name]
 
         if revision:
             command.append(str(revision))
 
         if wait:
-            command.extend(['--wait', '--timeout', timeout])
+            command.extend(["--wait", "--timeout", timeout])
 
         result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to rollback release: {result['stderr']}")
 
         return {
-            'success': True,
-            'message': result['stdout'],
-            'release': release_name,
-            'namespace': namespace,
-            'revision': revision
+            "success": True,
+            "message": result["stdout"],
+            "release": release_name,
+            "namespace": namespace,
+            "revision": revision,
         }
 
     def uninstall_release(
@@ -537,7 +511,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         keep_history: bool = False,
         wait: bool = True,
         timeout: str = "5m",
-        context: str | None = None
+        context: str | None = None,
     ) -> dict[str, Any]:
         """
         Uninstall a Helm release.
@@ -561,32 +535,23 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['uninstall', release_name]
+        command = ["uninstall", release_name]
 
         if keep_history:
-            command.append('--keep-history')
+            command.append("--keep-history")
 
         if wait:
-            command.extend(['--wait', '--timeout', timeout])
+            command.extend(["--wait", "--timeout", timeout])
 
         result = self._run_helm_command(cluster, command, namespace, context)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to uninstall release: {result['stderr']}")
 
-        return {
-            'success': True,
-            'message': result['stdout'],
-            'release': release_name,
-            'namespace': namespace
-        }
+        return {"success": True, "message": result["stdout"], "release": release_name, "namespace": namespace}
 
     def get_history(
-        self,
-        cluster_id: int,
-        release_name: str,
-        namespace: str | None = None,
-        max_revisions: int = 256
+        self, cluster_id: int, release_name: str, namespace: str | None = None, max_revisions: int = 256
     ) -> list[dict[str, Any]]:
         """
         Get revision history for a release.
@@ -605,25 +570,21 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['history', release_name, '--output', 'json', '--max', str(max_revisions)]
+        command = ["history", release_name, "--output", "json", "--max", str(max_revisions)]
 
         result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to get release history: {result['stderr']}")
 
         try:
-            return json.loads(result['stdout']) if result['stdout'].strip() else []
+            return json.loads(result["stdout"]) if result["stdout"].strip() else []
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Helm history: {e}")
             return []
 
     def get_values(
-        self,
-        cluster_id: int,
-        release_name: str,
-        namespace: str | None = None,
-        all_values: bool = False
+        self, cluster_id: int, release_name: str, namespace: str | None = None, all_values: bool = False
     ) -> dict[str, Any]:
         """
         Get values for a release.
@@ -642,28 +603,24 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['get', 'values', release_name, '--output', 'json']
+        command = ["get", "values", release_name, "--output", "json"]
 
         if all_values:
-            command.append('--all')
+            command.append("--all")
 
         result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to get release values: {result['stderr']}")
 
         try:
-            return json.loads(result['stdout']) if result['stdout'].strip() else {}
+            return json.loads(result["stdout"]) if result["stdout"].strip() else {}
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse release values: {e}")
             return {}
 
     def get_manifest(
-        self,
-        cluster_id: int,
-        release_name: str,
-        namespace: str | None = None,
-        revision: int | None = None
+        self, cluster_id: int, release_name: str, namespace: str | None = None, revision: int | None = None
     ) -> str:
         """
         Get the Kubernetes manifest for a release.
@@ -682,24 +639,20 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['get', 'manifest', release_name]
+        command = ["get", "manifest", release_name]
 
         if revision:
-            command.extend(['--revision', str(revision)])
+            command.extend(["--revision", str(revision)])
 
         result = self._run_helm_command(cluster, command, namespace)
 
-        if result['exit_code'] != 0:
+        if result["exit_code"] != 0:
             raise RuntimeError(f"Failed to get release manifest: {result['stderr']}")
 
-        return result['stdout']
+        return result["stdout"]
 
     def test_release(
-        self,
-        cluster_id: int,
-        release_name: str,
-        namespace: str | None = None,
-        timeout: str = "5m"
+        self, cluster_id: int, release_name: str, namespace: str | None = None, timeout: str = "5m"
     ) -> dict[str, Any]:
         """
         Run tests for a release.
@@ -719,15 +672,15 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         cluster = self.get_cluster(cluster_id)
 
-        command = ['test', release_name, '--timeout', timeout]
+        command = ["test", release_name, "--timeout", timeout]
 
         result = self._run_helm_command(cluster, command, namespace)
 
         return {
-            'success': result['exit_code'] == 0,
-            'exit_code': result['exit_code'],
-            'output': result['stdout'],
-            'error': result['stderr']
+            "success": result["exit_code"] == 0,
+            "exit_code": result["exit_code"],
+            "output": result["stdout"],
+            "error": result["stderr"],
         }
 
     # ============================================================
@@ -735,12 +688,7 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
     # ============================================================
 
     def compare_revisions(
-        self,
-        cluster_id: int,
-        release_name: str,
-        revision1: int,
-        revision2: int,
-        namespace: str = "default"
+        self, cluster_id: int, release_name: str, revision1: int, revision2: int, namespace: str = "default"
     ) -> dict[str, Any]:
         """
         Compare two revisions of a release.
@@ -762,54 +710,41 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
 
         with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
             # Get values for both revisions
-            values1 = self._get_revision_values(
-                release_name, revision1, namespace, kubeconfig_path
-            )
-            values2 = self._get_revision_values(
-                release_name, revision2, namespace, kubeconfig_path
-            )
+            values1 = self._get_revision_values(release_name, revision1, namespace, kubeconfig_path)
+            values2 = self._get_revision_values(release_name, revision2, namespace, kubeconfig_path)
 
             # Get manifests for both revisions
-            manifest1 = self._get_revision_manifest(
-                release_name, revision1, namespace, kubeconfig_path
-            )
-            manifest2 = self._get_revision_manifest(
-                release_name, revision2, namespace, kubeconfig_path
-            )
+            manifest1 = self._get_revision_manifest(release_name, revision1, namespace, kubeconfig_path)
+            manifest2 = self._get_revision_manifest(release_name, revision2, namespace, kubeconfig_path)
 
             return {
                 "success": True,
-                "revision1": {
-                    "number": revision1,
-                    "values": values1,
-                    "manifest": manifest1
-                },
-                "revision2": {
-                    "number": revision2,
-                    "values": values2,
-                    "manifest": manifest2
-                }
+                "revision1": {"number": revision1, "values": values1, "manifest": manifest1},
+                "revision2": {"number": revision2, "values": values2, "manifest": manifest2},
             }
 
     def _get_revision_values(
-        self,
-        release_name: str,
-        revision: int,
-        namespace: str,
-        kubeconfig_path: str
+        self, release_name: str, revision: int, namespace: str, kubeconfig_path: str
     ) -> dict[str, Any]:
         """Get values for a specific revision."""
         result = subprocess.run(
             [
-                'helm', 'get', 'values', release_name,
-                '--revision', str(revision),
-                '--namespace', namespace,
-                '--output', 'json',
-                '--kubeconfig', kubeconfig_path
+                "helm",
+                "get",
+                "values",
+                release_name,
+                "--revision",
+                str(revision),
+                "--namespace",
+                namespace,
+                "--output",
+                "json",
+                "--kubeconfig",
+                kubeconfig_path,
             ],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
 
         if result.returncode != 0:
@@ -821,24 +756,24 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         except json.JSONDecodeError:
             return {}
 
-    def _get_revision_manifest(
-        self,
-        release_name: str,
-        revision: int,
-        namespace: str,
-        kubeconfig_path: str
-    ) -> str:
+    def _get_revision_manifest(self, release_name: str, revision: int, namespace: str, kubeconfig_path: str) -> str:
         """Get manifest for a specific revision."""
         result = subprocess.run(
             [
-                'helm', 'get', 'manifest', release_name,
-                '--revision', str(revision),
-                '--namespace', namespace,
-                '--kubeconfig', kubeconfig_path
+                "helm",
+                "get",
+                "manifest",
+                release_name,
+                "--revision",
+                str(revision),
+                "--namespace",
+                namespace,
+                "--kubeconfig",
+                kubeconfig_path,
             ],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
 
         if result.returncode != 0:

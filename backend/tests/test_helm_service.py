@@ -24,9 +24,11 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_helm_service(db):
     """Create a HelmService with a test DB session."""
     from services.helm_service import HelmService
+
     return HelmService(db)
 
 
@@ -84,15 +86,19 @@ class TestInstallChart:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        install_json = json.dumps({
-            "name": "nginx",
-            "info": {"status": "deployed"},
-            "namespace": "default",
-            "version": 1,
-        })
+        install_json = json.dumps(
+            {
+                "name": "nginx",
+                "info": {"status": "deployed"},
+                "namespace": "default",
+                "version": 1,
+            }
+        )
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=install_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=install_json)),
+        ):
             result = svc.install_chart(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -103,15 +109,35 @@ class TestInstallChart:
         assert result["name"] == "nginx"
         assert result["info"]["status"] == "deployed"
 
+    def test_openapi_validation_skipped_only_on_request(self, db, make_k8s_cluster):
+        svc = _make_helm_service(db)
+        cluster = make_k8s_cluster()
+        ok = _mock_run_helm_success(stdout=json.dumps({"name": "nginx"}))
+
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=ok) as run,
+        ):
+            svc.install_chart(cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx")
+            assert "--disable-openapi-validation" not in run.call_args.args[1]
+            svc.install_chart(
+                cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx", disable_openapi_validation=True
+            )
+            assert "--disable-openapi-validation" in run.call_args.args[1]
+
     def test_install_duplicate_release_raises_value_error(self, db, make_k8s_cluster):
         """install_chart raises ValueError when release name is already in use."""
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="cannot re-use a name that is still in use"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value=_mock_run_helm_failure(stderr="cannot re-use a name that is still in use"),
+            ),
+        ):
             with pytest.raises(ValueError, match="re-use"):
                 svc.install_chart(
                     cluster_id=cluster.id,
@@ -124,10 +150,14 @@ class TestInstallChart:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="Error: chart not found: fake/chart"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value=_mock_run_helm_failure(stderr="Error: chart not found: fake/chart"),
+            ),
+        ):
             with pytest.raises(ValueError, match="not found"):
                 svc.install_chart(
                     cluster_id=cluster.id,
@@ -140,10 +170,14 @@ class TestInstallChart:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="Error: completely unexpected failure"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value=_mock_run_helm_failure(stderr="Error: completely unexpected failure"),
+            ),
+        ):
             with pytest.raises(RuntimeError):
                 svc.install_chart(
                     cluster_id=cluster.id,
@@ -158,8 +192,10 @@ class TestInstallChart:
 
         install_json = json.dumps({"name": "nginx", "namespace": "default"})
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=install_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=install_json)),
+        ):
             result = svc.install_chart(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -178,31 +214,51 @@ class TestUpgradeRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        upgrade_json = json.dumps({
-            "name": "nginx",
-            "info": {"status": "deployed"},
-            "version": 2,
-        })
+        upgrade_json = json.dumps(
+            {
+                "name": "nginx",
+                "info": {"status": "deployed"},
+                "version": 2,
+            }
+        )
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=upgrade_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=upgrade_json)),
+        ):
             result = svc.upgrade_release(
                 cluster_id=cluster.id,
                 release_name="nginx",
                 chart="bitnami/nginx",
             )
-
         assert result is not None
+
+    def test_upgrade_disable_openapi_validation(self, db, make_k8s_cluster):
+        """upgrade_release appends --disable-openapi-validation when requested."""
+        svc = _make_helm_service(db)
+        cluster = make_k8s_cluster()
+        ok = _mock_run_helm_success(stdout=json.dumps({"name": "nginx"}))
+
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=ok) as run,
+        ):
+            svc.upgrade_release(cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx")
+            assert "--disable-openapi-validation" not in run.call_args.args[1]
+            svc.upgrade_release(
+                cluster_id=cluster.id, release_name="nginx", chart="bitnami/nginx", disable_openapi_validation=True
+            )
+            assert "--disable-openapi-validation" in run.call_args.args[1]
 
     def test_upgrade_failure_raises(self, db, make_k8s_cluster):
         """upgrade_release raises RuntimeError on failure."""
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="Error: upgrade failed"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(stderr="Error: upgrade failed")),
+        ):
             with pytest.raises(RuntimeError):
                 svc.upgrade_release(
                     cluster_id=cluster.id,
@@ -219,10 +275,12 @@ class TestRollbackRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(
-                 stdout="Rollback was a success"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout="Rollback was a success")
+            ),
+        ):
             result = svc.rollback_release(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -236,10 +294,12 @@ class TestRollbackRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="Error: rollback failed"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc, "_run_helm_command", return_value=_mock_run_helm_failure(stderr="Error: rollback failed")
+            ),
+        ):
             with pytest.raises(RuntimeError):
                 svc.rollback_release(
                     cluster_id=cluster.id,
@@ -256,10 +316,12 @@ class TestUninstallRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(
-                 stdout="release \"nginx\" uninstalled"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout='release "nginx" uninstalled')
+            ),
+        ):
             result = svc.uninstall_release(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -272,10 +334,12 @@ class TestUninstallRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_failure(
-                 stderr="Error: uninstall failed"
-             )):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc, "_run_helm_command", return_value=_mock_run_helm_failure(stderr="Error: uninstall failed")
+            ),
+        ):
             with pytest.raises(RuntimeError):
                 svc.uninstall_release(
                     cluster_id=cluster.id,
@@ -291,13 +355,17 @@ class TestListReleases:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        releases_json = json.dumps([
-            {"name": "nginx", "namespace": "default", "revision": "1", "status": "deployed"},
-            {"name": "redis", "namespace": "cache", "revision": "3", "status": "deployed"},
-        ])
+        releases_json = json.dumps(
+            [
+                {"name": "nginx", "namespace": "default", "revision": "1", "status": "deployed"},
+                {"name": "redis", "namespace": "cache", "revision": "3", "status": "deployed"},
+            ]
+        )
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=releases_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=releases_json)),
+        ):
             result = svc.list_releases(cluster_id=cluster.id)
 
         assert len(result) == 2
@@ -309,8 +377,10 @@ class TestListReleases:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout="[]")):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout="[]")),
+        ):
             result = svc.list_releases(cluster_id=cluster.id)
 
         assert result == []
@@ -320,8 +390,10 @@ class TestListReleases:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout="not json")):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout="not json")),
+        ):
             result = svc.list_releases(cluster_id=cluster.id)
 
         assert result == []
@@ -335,14 +407,18 @@ class TestGetRelease:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        release_json = json.dumps({
-            "name": "nginx",
-            "info": {"status": "deployed", "first_deployed": "2026-01-01"},
-            "namespace": "default",
-        })
+        release_json = json.dumps(
+            {
+                "name": "nginx",
+                "info": {"status": "deployed", "first_deployed": "2026-01-01"},
+                "namespace": "default",
+            }
+        )
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=release_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=release_json)),
+        ):
             result = svc.get_release(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -361,25 +437,42 @@ class TestGetReleaseErrorClassification:
 
     def test_not_found_raises_release_not_found_error(self, db, make_k8s_cluster):
         from core.errors import ReleaseNotFoundError
+
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value={
-                 "exit_code": 1, "stdout": "", "stderr": "Error: release: not found",
-             }):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value={
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "Error: release: not found",
+                },
+            ),
+        ):
             with pytest.raises(ReleaseNotFoundError):
                 svc.get_release(cluster_id=cluster.id, release_name="missing")
 
     def test_transient_error_does_not_report_absent(self, db, make_k8s_cluster):
         """API-server-unreachable style error → RuntimeError, NOT ReleaseNotFoundError."""
         from core.errors import ReleaseNotFoundError
+
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value={
-                 "exit_code": 1, "stdout": "",
-                 "stderr": "Error: Kubernetes cluster unreachable: connection refused",
-             }):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value={
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "Error: Kubernetes cluster unreachable: connection refused",
+                },
+            ),
+        ):
             with pytest.raises(RuntimeError) as exc:
                 svc.get_release(cluster_id=cluster.id, release_name="eg")
             assert not isinstance(exc.value, ReleaseNotFoundError)
@@ -387,13 +480,21 @@ class TestGetReleaseErrorClassification:
     def test_helm_timeout_exit_124_is_not_not_found(self, db, make_k8s_cluster):
         """exit_code=124 (subprocess timeout) must never map to not-found."""
         from core.errors import ReleaseNotFoundError
+
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value={
-                 "exit_code": 124, "stdout": "",
-                 "stderr": "Command timed out after 360s",
-             }):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(
+                svc,
+                "_run_helm_command",
+                return_value={
+                    "exit_code": 124,
+                    "stdout": "",
+                    "stderr": "Command timed out after 360s",
+                },
+            ),
+        ):
             with pytest.raises(RuntimeError) as exc:
                 svc.get_release(cluster_id=cluster.id, release_name="eg")
             assert not isinstance(exc.value, ReleaseNotFoundError)
@@ -411,9 +512,11 @@ class TestContextThreading:
             captured["cmd"] = args[0]
             return subprocess.CompletedProcess(args[0], 0, stdout="{}", stderr="")
 
-        with patch.object(svc, "_prepare_kubeconfig") as mock_kc, \
-             patch("subprocess.run", side_effect=_capture), \
-             patch("os.unlink"):
+        with (
+            patch.object(svc, "_prepare_kubeconfig") as mock_kc,
+            patch("subprocess.run", side_effect=_capture),
+            patch("os.unlink"),
+        ):
             mock_kc.return_value.name = "/tmp/kubeconfig-test"
             svc._run_helm_command(cluster, ["status", "eg"], context="prod-ctx")
 
@@ -437,9 +540,11 @@ class TestContextThreading:
             captured["cmd"] = args[0]
             return subprocess.CompletedProcess(args[0], 0, stdout="{}", stderr="")
 
-        with patch.object(svc, "_prepare_kubeconfig") as mock_kc, \
-             patch("subprocess.run", side_effect=_capture), \
-             patch("os.unlink"):
+        with (
+            patch.object(svc, "_prepare_kubeconfig") as mock_kc,
+            patch("subprocess.run", side_effect=_capture),
+            patch("os.unlink"),
+        ):
             mock_kc.return_value.name = "/tmp/kubeconfig-test"
             svc._run_helm_command(cluster, ["status", "eg"], context=None)
 
@@ -451,17 +556,20 @@ class TestSubprocessTimeoutDerivation:
 
     def test_subprocess_timeout_greater_than_helm_timeout(self):
         from services.helm_service import _parse_helm_timeout_seconds, _subprocess_timeout_for
+
         helm_seconds = _parse_helm_timeout_seconds("5m")
         assert _subprocess_timeout_for("5m") > helm_seconds
 
     def test_timeout_parser_handles_compound_units(self):
         from services.helm_service import _parse_helm_timeout_seconds
+
         assert _parse_helm_timeout_seconds("5m") == 300
         assert _parse_helm_timeout_seconds("300s") == 300
         assert _parse_helm_timeout_seconds("1h30m") == 5400
 
     def test_no_helm_timeout_uses_default_ceiling(self):
         from services.helm_service import DEFAULT_SUBPROCESS_TIMEOUT_SEC, _subprocess_timeout_for
+
         assert _subprocess_timeout_for(None) == DEFAULT_SUBPROCESS_TIMEOUT_SEC
 
     def test_run_helm_command_uses_derived_timeout_for_wait(self, db, make_k8s_cluster):
@@ -474,9 +582,11 @@ class TestSubprocessTimeoutDerivation:
             captured["timeout"] = kwargs.get("timeout")
             return subprocess.CompletedProcess(args[0], 0, stdout="{}", stderr="")
 
-        with patch.object(svc, "_prepare_kubeconfig") as mock_kc, \
-             patch("subprocess.run", side_effect=_capture), \
-             patch("os.unlink"):
+        with (
+            patch.object(svc, "_prepare_kubeconfig") as mock_kc,
+            patch("subprocess.run", side_effect=_capture),
+            patch("os.unlink"),
+        ):
             mock_kc.return_value.name = "/tmp/kubeconfig-test"
             svc._run_helm_command(
                 cluster,
@@ -494,13 +604,17 @@ class TestGetHistory:
         svc = _make_helm_service(db)
         cluster = make_k8s_cluster()
 
-        history_json = json.dumps([
-            {"revision": 1, "status": "superseded"},
-            {"revision": 2, "status": "deployed"},
-        ])
+        history_json = json.dumps(
+            [
+                {"revision": 1, "status": "superseded"},
+                {"revision": 2, "status": "deployed"},
+            ]
+        )
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=history_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=history_json)),
+        ):
             result = svc.get_history(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -520,8 +634,10 @@ class TestGetValues:
 
         values_json = json.dumps({"replicaCount": 3, "image": {"tag": "latest"}})
 
-        with patch.object(svc, "get_cluster", return_value=cluster), \
-             patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=values_json)):
+        with (
+            patch.object(svc, "get_cluster", return_value=cluster),
+            patch.object(svc, "_run_helm_command", return_value=_mock_run_helm_success(stdout=values_json)),
+        ):
             result = svc.get_values(
                 cluster_id=cluster.id,
                 release_name="nginx",
@@ -540,9 +656,11 @@ class TestRunHelmCommand:
 
         timeout_err = subprocess.TimeoutExpired(cmd=["helm"], timeout=300)
 
-        with patch.object(svc, "_prepare_kubeconfig") as mock_kc, \
-             patch("subprocess.run", side_effect=timeout_err), \
-             patch("os.unlink"):  # Don't actually delete files
+        with (
+            patch.object(svc, "_prepare_kubeconfig") as mock_kc,
+            patch("subprocess.run", side_effect=timeout_err),
+            patch("os.unlink"),
+        ):  # Don't actually delete files
             mock_kc.return_value = MagicMock(name="/tmp/kubeconfig-test")
             mock_kc.return_value.name = "/tmp/kubeconfig-test"
 

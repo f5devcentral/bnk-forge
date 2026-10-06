@@ -4,6 +4,7 @@ Shared Kubernetes Cluster Utilities
 DRY utilities for cluster operations used by multiple services
 (kubernetes_service.py, helm_service.py, etc.)
 """
+
 import logging
 import os
 import tempfile
@@ -24,9 +25,7 @@ from services.kubeconfig_normalizer import (
 logger = logging.getLogger(__name__)
 
 
-def _try_backfill_kubeconfig_from_source_module(
-    cluster: KubernetesCluster, db: Session
-) -> bool:
+def _try_backfill_kubeconfig_from_source_module(cluster: KubernetesCluster, db: Session) -> bool:
     """If an auto-registered cluster has no kubeconfig, try to read one from
     its source module's terraform outputs. Returns True if the cluster was
     updated (caller should commit).
@@ -58,9 +57,10 @@ def _try_backfill_kubeconfig_from_source_module(
         yaml_text = normalize_kubeconfig(yaml_text, source=NormalizationSource.MODULE_OUTPUT)
     except Exception as norm_exc:
         logger.error(
-            "kubeconfig_invariant_violation: module %s outputs contain non-portable kubeconfig "
-            "for cluster %s: %s",
-            source_module_id, cluster.name, norm_exc,
+            "kubeconfig_invariant_violation: module %s outputs contain non-portable kubeconfig for cluster %s: %s",
+            source_module_id,
+            cluster.name,
+            norm_exc,
         )
         raise
 
@@ -70,7 +70,9 @@ def _try_backfill_kubeconfig_from_source_module(
         cluster.context = new_context
     logger.info(
         "Backfilled kubeconfig for cluster %s (id=%s) from module %s outputs",
-        cluster.name, cluster.id, source_module_id,
+        cluster.name,
+        cluster.id,
+        source_module_id,
     )
     return True
 
@@ -89,18 +91,14 @@ def get_cluster(db: Session, cluster_id: int) -> KubernetesCluster:
     Raises:
         ValueError: If cluster not found
     """
-    cluster = db.query(KubernetesCluster).filter(
-        KubernetesCluster.id == cluster_id
-    ).first()
+    cluster = db.query(KubernetesCluster).filter(KubernetesCluster.id == cluster_id).first()
     if not cluster:
         raise ValueError(f"Cluster {cluster_id} not found")
     return cluster
 
 
 @contextmanager
-def kubeconfig_for_cluster(
-    cluster: KubernetesCluster, db: Session
-) -> Generator[str, None, None]:
+def kubeconfig_for_cluster(cluster: KubernetesCluster, db: Session) -> Generator[str, None, None]:
     """
     Context manager that creates a temporary kubeconfig file and guarantees cleanup.
 
@@ -152,8 +150,10 @@ def prepare_kubeconfig(cluster: KubernetesCluster, db: Session) -> Any:
     class _KubeconfigFile:
         def __init__(self, path: str):
             self.name = path
+
         def close(self):
             pass  # already closed
+
     return _KubeconfigFile(kubeconfig_path)
 
 
@@ -180,9 +180,7 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
     # Defense-in-depth: assert portability before writing to disk.
     # A KubeconfigUnportableError here means a legacy DB row survived pre-fix;
     # the error message instructs the user to re-upload.
-    kubeconfig_content = normalize_kubeconfig(
-        kubeconfig_content, source=NormalizationSource.INTERNAL_REREAD
-    )
+    kubeconfig_content = normalize_kubeconfig(kubeconfig_content, source=NormalizationSource.INTERNAL_REREAD)
 
     # Check if project uses SSH credential template — open tunnel if so
     tunnel_port = _maybe_open_ssh_tunnel(cluster)
@@ -196,12 +194,13 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
     # The kubeconfig's 'aws eks get-token' command will use these
     if cluster.cloud_provider in ["eks", "aws"]:
         from services.credentials_service import get_cloud_credentials_env
+
         project = cluster.project
         aws_env = get_cloud_credentials_env(project, db)
 
         # Set AWS credentials in current process environment
         for key, value in aws_env.items():
-            if key.startswith('AWS_'):
+            if key.startswith("AWS_"):
                 os.environ[key] = value
 
         logger.info(f"Set AWS credentials for EKS cluster {cluster.name}")
@@ -214,6 +213,7 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
     # backend container.  Mirrors the EKS token-rewrite path on KubernetesService.
     if cluster.cloud_provider in ["gke", "gcp"]:
         from services.credentials_service import get_gcp_service_account_info
+
         project = cluster.project
         sa_info = get_gcp_service_account_info(project, db)
         if not sa_info:
@@ -221,33 +221,34 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
                 "No GCP service-account credentials configured for cluster %s "
                 "(project '%s'); shell-out clients will fail without "
                 "gke-gcloud-auth-plugin in the container",
-                cluster.name, project.name if project else "<none>",
+                cluster.name,
+                project.name if project else "<none>",
             )
         else:
             try:
                 token = _generate_gcp_token(sa_info)
                 if token:
                     import yaml as yaml_lib
+
                     kubeconfig_dict = yaml_lib.safe_load(kubeconfig_content)
                     for user_entry in kubeconfig_dict.get("users", []):
                         user_entry["user"] = {"token": token}
-                    kubeconfig_content = yaml_lib.dump(
-                        kubeconfig_dict, default_flow_style=False
-                    )
+                    kubeconfig_content = yaml_lib.dump(kubeconfig_dict, default_flow_style=False)
                     logger.info(
-                        "Injected google-auth-generated bearer token into "
-                        "kubeconfig for GKE cluster %s", cluster.name,
+                        "Injected google-auth-generated bearer token into kubeconfig for GKE cluster %s",
+                        cluster.name,
                     )
             except Exception as e:
                 logger.warning(
-                    "Failed to generate google-auth GCP token for %s, "
-                    "falling back to exec plugin: %s", cluster.name, e,
+                    "Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s",
+                    cluster.name,
+                    e,
                 )
 
     # Create temporary kubeconfig file
-    fd, kubeconfig_path = tempfile.mkstemp(suffix='.yaml', prefix='kubeconfig-')
+    fd, kubeconfig_path = tempfile.mkstemp(suffix=".yaml", prefix="kubeconfig-")
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(kubeconfig_content)
     except Exception:
         # If write fails, clean up the file descriptor
@@ -369,10 +370,14 @@ def _maybe_open_ssh_tunnel(cluster: KubernetesCluster) -> int | None:
             }
             logger.info(
                 "Cluster %s tunnel will hop via project jumphost %s@%s:%d",
-                cluster.name, jh.username, jh.host, jh.port or 22,
+                cluster.name,
+                jh.username,
+                jh.host,
+                jh.port or 22,
             )
 
         from services.ssh_tunnel_manager import get_tunnel_manager
+
         tunnel_mgr = get_tunnel_manager()
 
         local_port = tunnel_mgr.get_or_open_tunnel(

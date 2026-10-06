@@ -319,6 +319,7 @@ class ProxyDeployService:
                 wait=True,
                 timeout="5m",
                 context=cluster.context,
+                disable_openapi_validation=True,
             )
 
             # Per-proxy post-install: apply data-plane resources Helm doesn't
@@ -736,6 +737,7 @@ class ProxyDeployService:
             wait=True,
             timeout="5m",
             context=context,
+            disable_openapi_validation=True,
         )
 
     def _deploy_envoy_ai_gateway(
@@ -965,6 +967,7 @@ class ProxyDeployService:
             wait=True,
             timeout="5m",
             context=context,
+            disable_openapi_validation=True,
         )
 
         with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:

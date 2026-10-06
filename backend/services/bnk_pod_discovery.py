@@ -37,7 +37,15 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 # Includes "default" so manual/test deployments are discovered too.
 
-BNK_NAMESPACES = ("f5-bnk", "f5-operator", "f5-utils", "default")
+BNK_NAMESPACES = (
+    "f5-bnk",
+    "f5-cne-core",
+    "f5-cne-system",
+    "f5-bnk-instance",
+    "f5-operator",
+    "f5-utils",
+    "default",
+)
 
 # All F5 pod name prefixes — used for cluster-wide sweep (fallback)
 ALL_F5_PREFIXES = (
@@ -207,6 +215,7 @@ def _is_bnk_pod(pod) -> bool:
 # Pod → dict conversion
 # -----------------------------------------------------------------------
 
+
 def pod_to_dict(pod) -> dict[str, Any]:
     """
     Convert a kubernetes.client.V1Pod to a plain dict.
@@ -221,7 +230,9 @@ def pod_to_dict(pod) -> dict[str, Any]:
     # Extract pod start time for uptime calculation
     start_time = None
     if status and status.start_time:
-        start_time = status.start_time.isoformat() if hasattr(status.start_time, "isoformat") else str(status.start_time)
+        start_time = (
+            status.start_time.isoformat() if hasattr(status.start_time, "isoformat") else str(status.start_time)
+        )
 
     return {
         "name": meta.name if meta else "",
@@ -230,10 +241,9 @@ def pod_to_dict(pod) -> dict[str, Any]:
         "hostIP": status.host_ip if status and status.host_ip else None,
         "phase": status.phase if status else "Unknown",
         "startTime": start_time,
-        "conditions": [
-            {"type": c.type, "status": c.status}
-            for c in (status.conditions or [])
-        ] if status and status.conditions else [],
+        "conditions": [{"type": c.type, "status": c.status} for c in (status.conditions or [])]
+        if status and status.conditions
+        else [],
         "containers": [
             {
                 "name": cs.name,
@@ -242,14 +252,19 @@ def pod_to_dict(pod) -> dict[str, Any]:
                 "restartCount": cs.restart_count or 0,  # alias for health dashboard
                 "image": cs.image,
                 "state": (
-                    "running" if cs.state and cs.state.running else
-                    "waiting" if cs.state and cs.state.waiting else
-                    "terminated" if cs.state and cs.state.terminated else
-                    "unknown"
+                    "running"
+                    if cs.state and cs.state.running
+                    else "waiting"
+                    if cs.state and cs.state.waiting
+                    else "terminated"
+                    if cs.state and cs.state.terminated
+                    else "unknown"
                 ),
             }
             for cs in (status.container_statuses or [])
-        ] if status and status.container_statuses else [],
+        ]
+        if status and status.container_statuses
+        else [],
         "labels": dict(meta.labels or {}) if meta and meta.labels else {},
     }
 
@@ -258,11 +273,12 @@ def pod_to_dict(pod) -> dict[str, Any]:
 # Discovery
 # -----------------------------------------------------------------------
 
+
 def _fetch_pods_in_namespace(api_client, namespace: str) -> list:
     """Fetch raw V1Pod objects from a single namespace. Returns [] if namespace doesn't exist."""
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        resp = v1.list_namespaced_pod(namespace=namespace, _request_timeout=10)
+        resp = v1.list_namespaced_pod(namespace=namespace, _request_timeout=(5, 25))
         return resp.items
     except Exception as e:
         logger.debug(f"Could not fetch pods in {namespace} (may not exist): {e}")
@@ -278,7 +294,7 @@ def _sweep_all_namespaces(api_client) -> list:
     """
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        resp = v1.list_pod_for_all_namespaces(_request_timeout=15)
+        resp = v1.list_pod_for_all_namespaces(_request_timeout=(5, 25))
         return [pod for pod in resp.items if pod.metadata and _is_bnk_pod(pod)]
     except Exception as e:
         logger.debug(f"Cluster-wide pod sweep failed (non-fatal): {e}")
@@ -321,24 +337,15 @@ def discover_f5_pods(
     """
     # Union static seed with any caller-supplied persisted namespaces.
     # Preserve ordering: static seed first, extra namespaces appended.
-    fast_path_ns: tuple[str, ...] = BNK_NAMESPACES + tuple(
-        ns for ns in extra_namespaces if ns not in BNK_NAMESPACES
-    )
+    fast_path_ns: tuple[str, ...] = BNK_NAMESPACES + tuple(ns for ns in extra_namespaces if ns not in BNK_NAMESPACES)
 
     try:
         # Phase 1 (known namespaces) always runs; Phase 2 (cluster-wide
         # sweep) is conditional on include_sweep.
         worker_count = len(fast_path_ns) + (1 if include_sweep else 0)
         with ThreadPoolExecutor(max_workers=max(worker_count, 1)) as executor:
-            ns_futures = {
-                ns: executor.submit(_fetch_pods_in_namespace, api_client, ns)
-                for ns in fast_path_ns
-            }
-            sweep_future = (
-                executor.submit(_sweep_all_namespaces, api_client)
-                if include_sweep
-                else None
-            )
+            ns_futures = {ns: executor.submit(_fetch_pods_in_namespace, api_client, ns) for ns in fast_path_ns}
+            sweep_future = executor.submit(_sweep_all_namespaces, api_client) if include_sweep else None
 
             # Collect phase 1 pods
             phase1_pods: list = []
@@ -381,8 +388,7 @@ def discover_f5_pods(
                 and (pod.metadata.namespace or "", pod.metadata.name or "") in seen
             }
             logger.info(
-                f"Cluster-wide sweep found {extra_count} F5 pods in "
-                f"non-standard namespaces: {sorted(extra_ns_found)}"
+                f"Cluster-wide sweep found {extra_count} F5 pods in non-standard namespaces: {sorted(extra_ns_found)}"
             )
 
         # Classify into tenant vs utils buckets using layered resolution.
@@ -463,6 +469,7 @@ def discover_f5_pods_with_ns_tracking(
 # Classification helpers
 # -----------------------------------------------------------------------
 
+
 def classify_f5_pods(tenant_pods: list[dict], utils_pods: list[dict]) -> dict[str, list[dict]]:
     """
     Classify discovered pods into named groups.
@@ -484,7 +491,11 @@ def classify_f5_pods(tenant_pods: list[dict], utils_pods: list[dict]) -> dict[st
         tmm, flo, controller, analyzer, crd_installer
     """
     result: dict[str, list[dict]] = {
-        "tmm": [], "flo": [], "controller": [], "analyzer": [], "crd_installer": [],
+        "tmm": [],
+        "flo": [],
+        "controller": [],
+        "analyzer": [],
+        "crd_installer": [],
     }
 
     # Role-to-prefix mapping for Layer-3 — mirrors TENANT_PREFIXES / UTILS_PREFIXES
@@ -501,10 +512,7 @@ def classify_f5_pods(tenant_pods: list[dict], utils_pods: list[dict]) -> dict[st
 
     def _classify_pod(p: dict) -> str | None:
         labels = p.get("labels") or {}
-        containers = [
-            {"name": c.get("name", ""), "image": c.get("image", "")}
-            for c in (p.get("containers") or [])
-        ]
+        containers = [{"name": c.get("name", ""), "image": c.get("image", "")} for c in (p.get("containers") or [])]
         name = p.get("name", "")
 
         # Layer 1: label hints

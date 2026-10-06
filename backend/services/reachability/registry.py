@@ -184,6 +184,10 @@ class ReachabilityRegistry:
     def allow_call(self, target_type: str, target_id: int) -> bool:
         return self._breaker_for(target_type, target_id).can_attempt()
 
+    def is_open(self, target_type: str, target_id: int) -> bool:
+        """Peek: True while the breaker is open (does not take a half-open trial)."""
+        return self._breaker_for(target_type, target_id).is_open()
+
     def record_real_call(
         self,
         target_type: str,

@@ -28,9 +28,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from services.reachability.probe import ErrorCategory
+
+if TYPE_CHECKING:
+    from core.errors import BreakerOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,13 @@ class _Breaker:
             return True
         return False
 
+    def is_open(self) -> bool:
+        """OPEN and still inside the sleep window. Unlike can_attempt, no transition."""
+        return (
+            self.state is BreakerState.OPEN
+            and time.monotonic() - self.opened_at < self.sleep_window_seconds
+        )
+
     def record_success(self) -> None:
         self.consecutive_failures = 0
         self.last_success_at = time.monotonic()
@@ -92,7 +102,13 @@ class _Breaker:
 
     def record_failure(self, category: ErrorCategory | None) -> None:
         # Auth failures must NOT count — otherwise breaker stays open on bad token.
+        # They prove the endpoint answered, so a half-open trial closes the breaker.
         if category in (ErrorCategory.AUTH, ErrorCategory.AUTHZ):
+            self.half_open_inflight = False
+            if self.state is BreakerState.HALF_OPEN:
+                logger.info("Breaker closed (target_name=%s) after auth failure", self.target_name)
+                self.consecutive_failures = 0
+                self.state = BreakerState.CLOSED
             return
         self.consecutive_failures += 1
         self.half_open_inflight = False
@@ -163,6 +179,24 @@ def categorize_exception(exc: BaseException) -> ErrorCategory:
     return ErrorCategory.TARGET
 
 
+def breaker_open_error(target_type: str, target_id: int) -> BreakerOpenError:
+    """The BreakerOpenError raised for an open ``(target_type, target_id)`` breaker."""
+    from core.errors import BreakerOpenError
+    from services.reachability.registry import registry as _registry
+
+    target_name = _registry.get_target_name(target_type, target_id) or f"{target_type}:{target_id}"
+    return BreakerOpenError(
+        target_type=target_type,
+        target_id=target_id,
+        target_name=target_name,
+        suggested_action=(
+            f"{target_type.title()} '{target_name}' was unreachable on recent "
+            f"attempts; not retrying yet. Use the retry button to force a probe."
+        ),
+        last_success_at=_registry.get_last_success_iso(target_type, target_id),
+    )
+
+
 def with_breaker(target_type: str, *, target_id_arg: str = "cluster_id") -> Callable[[F], F]:
     """Gate a function on the breaker for ``(target_type, target_id)``.
 
@@ -177,7 +211,6 @@ def with_breaker(target_type: str, *, target_id_arg: str = "cluster_id") -> Call
     both keyword and positional invocation.
     """
     # Local import to avoid circular: registry imports breaker too.
-    from core.errors import BreakerOpenError
     from services.reachability.registry import registry as _registry
 
     def decorator(fn: F) -> F:
@@ -199,19 +232,7 @@ def with_breaker(target_type: str, *, target_id_arg: str = "cluster_id") -> Call
                 return None
 
         def _build_open_error(target_id: int) -> BreakerOpenError:
-            reg = _registry
-            target_name = reg.get_target_name(target_type, target_id) or f"{target_type}:{target_id}"
-            last = reg.get_last_success_iso(target_type, target_id)
-            return BreakerOpenError(
-                target_type=target_type,
-                target_id=target_id,
-                target_name=target_name,
-                suggested_action=(
-                    f"{target_type.title()} '{target_name}' was unreachable on recent "
-                    f"attempts; not retrying yet. Use the retry button to force a probe."
-                ),
-                last_success_at=last,
-            )
+            return breaker_open_error(target_type, target_id)
 
         if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
