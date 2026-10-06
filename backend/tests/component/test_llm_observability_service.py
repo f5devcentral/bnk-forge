@@ -46,9 +46,7 @@ def _streams(*lines: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         "status": "success",
         "data": {
             "resultType": "streams",
-            "result": [
-                {"stream": {"job": "llm-gateway"}, "values": [[str(ns), json.dumps(rec)] for ns, rec in lines]}
-            ],
+            "result": [{"stream": {"job": "llm-gateway"}, "values": [[str(ns), json.dumps(rec)] for ns, rec in lines]}],
         },
     }
 
@@ -275,12 +273,36 @@ class TestRankings:
 class TestLogs:
     def test_parses_lines_and_sets_cursor(self):
         lines = (
-            (1700000002000000000, {"model": "gpt-4o", "userq": "hi", "status": "200",
-                                   "latency_ms": 120, "prompt_tk": 10, "comp_tk": 20,
-                                   "total_tk": 30, "cost": 0.01, "req_body": "{}", "resp_body": "{}"}),
-            (1700000001000000000, {"model": "claude-3", "userq": "yo", "status": "500",
-                                   "latency_ms": 90, "prompt_tk": 5, "comp_tk": 0,
-                                   "total_tk": 5, "cost": 0.0, "req_body": "{}", "resp_body": "{}"}),
+            (
+                1700000002000000000,
+                {
+                    "model": "gpt-4o",
+                    "userq": "hi",
+                    "status": "200",
+                    "latency_ms": 120,
+                    "prompt_tk": 10,
+                    "comp_tk": 20,
+                    "total_tk": 30,
+                    "cost": 0.01,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
+            (
+                1700000001000000000,
+                {
+                    "model": "claude-3",
+                    "userq": "yo",
+                    "status": "500",
+                    "latency_ms": 90,
+                    "prompt_tk": 5,
+                    "comp_tk": 0,
+                    "total_tk": 5,
+                    "cost": 0.0,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
         )
 
         def _router(sub, query, params):
@@ -376,3 +398,349 @@ class TestFilterData:
         out = svc.filterdata(cluster_id=1, range_="1h")
         assert out["available"] is False
         assert "502" in out["reason"]
+
+
+# ---------------------------------------------------------------------------
+# multi-cluster aggregation & latency breakdown
+# ---------------------------------------------------------------------------
+
+
+class TestMultiClusterObservability:
+    def test_multi_cluster_histogram_latency_returns_per_cluster_series(self):
+        def _router(sub, query, params):
+            # Canned latency response with avg series
+            return _matrix(_series({"__name__": "avg"}, (1700000000, 120.0), (1700000060, 140.0)))
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east-cluster"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west-cluster"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.histogram(cluster_id=None, range_="1h", metric="latency")
+        assert out["available"] is True
+        assert out["metric"] == "latency"
+        assert len(out["series"]) == 2
+        names = [s["name"] for s in out["series"]]
+        assert "us-east-cluster" in names
+        assert "eu-west-cluster" in names
+        east = next(s for s in out["series"] if s["name"] == "us-east-cluster")
+        assert len(east["points"]) == 2
+        assert east["points"][0]["value"] == 120.0
+
+    def test_multi_cluster_histogram_requests_sums_clusters(self):
+        def _router(sub, query, params):
+            if 'status=~"2.."' in query:
+                return _matrix(_series({}, (1700000000, 10.0)))
+            return _matrix(_series({}, (1700000000, 2.0)))
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.histogram(cluster_id=None, range_="1h", metric="requests")
+        assert out["available"] is True
+        success = next(s for s in out["series"] if s["name"] == "success")
+        error = next(s for s in out["series"] if s["name"] == "error")
+        # 10 + 10 = 20
+        assert success["points"][0]["value"] == 20.0
+        # 2 + 2 = 4
+        assert error["points"][0]["value"] == 4.0
+
+    def test_multi_cluster_provider_usage_latency_calculates_exact_mean(self):
+        call_count = 0
+
+        def _router(sub, query, params):
+            nonlocal call_count
+            call_count += 1
+            # cluster 1 returns 100ms, cluster 2 returns 300ms for openai
+            val = 100.0 if call_count % 2 == 1 else 300.0
+            return _matrix(_series({"model": "gpt-4o"}, (1700000000, val)))
+
+        svc, _ = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+
+        out = svc.provider_usage(cluster_id=None, range_="1h", metric="latency")
+        assert out["available"] is True
+        openai = next(s for s in out["series"] if s["name"] == "openai")
+        # (100 + 300) / 2 = 200
+        assert openai["points"][0]["value"] == pytest.approx(200.0)
+
+    def test_multi_cluster_stats_sums_requests_and_models_across_fleet(self):
+        """Fleet stats sums per-cluster totals; `models` is an upper bound.
+
+        Per-cluster `models` is a COUNT of distinct models on that cluster, so
+        the fleet value is the SUM of those counts (an upper bound of models in
+        use across the fleet), NOT max() — which understated the fleet whenever
+        clusters ran disjoint model sets. c1 has 3 models / 100 reqs, c2 has 4
+        models / 50 reqs, so the fleet reports 7 models (3+4), not 4 (max).
+        """
+
+        def _router_for(models_count: int, requests: int, tokens: int, cost: float):
+            def _router(sub, query, params):
+                if "count by (model)" in query:
+                    return _instant(_vector(models_count))
+                if "unwrap latency_ms" in query:
+                    return _instant(_vector(200.0))
+                if "unwrap total_tk" in query:
+                    return _instant(_vector(tokens))
+                if "unwrap cost" in query:
+                    return _instant(_vector(cost))
+                if 'status=~"2.."' in query:
+                    return _instant(_vector(requests))  # all successful
+                return _instant(_vector(requests))  # total_requests
+
+            return _router
+
+        svc, _ = _make_service(_router_for(3, 100, 5000, 1.0))
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+        svc._k8s.get_cluster = lambda cid: c1 if cid == 1 else c2
+        fake1 = _FakeApiClient(_router_for(3, 100, 5000, 1.0))
+        fake2 = _FakeApiClient(_router_for(4, 50, 2000, 0.5))
+        svc._client = lambda c: fake1 if c.id == 1 else fake2
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        # SUM across the fleet — proves it is not max() (which would be 4) and
+        # not a single cluster (3).
+        assert out["models"] == 7
+        assert out["total_requests"] == 150
+        assert out["total_tokens"] == 7000
+        assert out["total_cost"] == pytest.approx(1.5)
+
+    def test_multi_cluster_stats_all_unavailable_degrades(self):
+        """When every cluster's Loki is unreachable, the fleet stat degrades."""
+
+        def _boom(sub, query, params):
+            raise ApiException(status=503, reason="Service Unavailable")
+
+        svc, _ = _make_service(_boom)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        svc._active_clusters = MagicMock(return_value=[c1])
+        svc._k8s.get_cluster = lambda cid: c1
+        svc._client = lambda c: _FakeApiClient(_boom)
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is False
+        assert "503" in out["reason"]
+
+    def test_multi_cluster_logs_merges_sorts_and_annotates_clusters(self):
+        lines_c1 = (
+            (
+                1700000002000000000,
+                {
+                    "model": "gpt-4o",
+                    "userq": "q from c1",
+                    "status": "200",
+                    "latency_ms": 100,
+                    "prompt_tk": 5,
+                    "comp_tk": 10,
+                    "total_tk": 15,
+                    "cost": 0.01,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
+        )
+        lines_c2 = (
+            (
+                1700000003000000000,
+                {
+                    "model": "claude-3",
+                    "userq": "q from c2",
+                    "status": "200",
+                    "latency_ms": 150,
+                    "prompt_tk": 8,
+                    "comp_tk": 12,
+                    "total_tk": 20,
+                    "cost": 0.02,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
+        )
+
+        def _router(sub, query, params):
+            # sub path proxy contains cluster id via the api_client proxy call
+            # Or we inspect which client is calling
+            return _streams(*(lines_c1 if "c1" not in query else lines_c2))
+
+        svc, fake = _make_service(_router)
+        c1 = MagicMock()
+        c1.id = 1
+        c1.name = "us-east"
+        c2 = MagicMock()
+        c2.id = 2
+        c2.name = "eu-west"
+        svc._active_clusters = MagicMock(return_value=[c1, c2])
+        svc._k8s.get_cluster = lambda cid: c1 if cid == 1 else c2
+        # Mock client per cluster
+        fake1 = _FakeApiClient(lambda s, q, p: _streams(*lines_c1))
+        fake2 = _FakeApiClient(lambda s, q, p: _streams(*lines_c2))
+        svc._client = lambda c: fake1 if c.id == 1 else fake2
+
+        out = svc.logs(cluster_id=None, range_="1h", limit=10)
+        assert out["available"] is True
+        assert len(out["rows"]) == 2
+        # newest first (c2 timestamp is 1700000003... > c1 timestamp 1700000002...)
+        assert out["rows"][0]["message"] == "q from c2"
+        assert out["rows"][0]["cluster_name"] == "eu-west"
+        assert out["rows"][0]["cluster_id"] == 2
+        assert out["rows"][1]["message"] == "q from c1"
+        assert out["rows"][1]["cluster_name"] == "us-east"
+        assert out["rows"][1]["cluster_id"] == 1
+
+
+class TestFleetFanOut:
+    """Fleet requests: one bounded pool, an overall deadline, per-cluster errors."""
+
+    @staticmethod
+    def _fleet_service(routers: dict[int, Any]):
+        svc, _ = _make_service(lambda s, q, p: _instant(_vector(1)))
+        clusters = []
+        for cid in routers:
+            c = MagicMock()
+            c.id = cid
+            c.name = f"cluster-{cid}"
+            clusters.append(c)
+        svc._active_clusters = MagicMock(return_value=clusters)
+        fakes = {cid: _FakeApiClient(r) for cid, r in routers.items()}
+        svc._client = lambda c: fakes[c.id]
+        return svc
+
+    def test_unavailable_cluster_is_reported_in_errors(self):
+        def _boom(sub, query, params):
+            raise ApiException(status=503, reason="Service Unavailable")
+
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: _boom})
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        assert set(out["errors"]) == {"cluster-2"}
+        assert "503" in out["errors"]["cluster-2"]
+
+    def test_deadline_drops_slow_cluster(self):
+        def _slow(sub, query, params):
+            time.sleep(1.0)
+            return _instant(_vector(5))
+
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: _slow})
+        with patch("services.llm_observability_service._FLEET_DEADLINE_SECONDS", 0.2):
+            start = time.monotonic()
+            out = svc.stats(cluster_id=None, range_="1h")
+            elapsed = time.monotonic() - start
+        assert elapsed < 0.9
+        assert out["available"] is True
+        assert "timed out" in out["errors"]["cluster-2"]
+
+    def test_each_cluster_runs_its_queries_in_one_worker_thread(self):
+        import threading
+
+        seen: dict[int, set[int]] = {1: set(), 2: set()}
+
+        def _router_for(cid):
+            def _r(sub, query, params):
+                seen[cid].add(threading.get_ident())
+                return _instant(_vector(1, {"model": "gpt-4o"}))
+
+            return _r
+
+        svc = self._fleet_service({1: _router_for(1), 2: _router_for(2)})
+        out = svc.rankings(cluster_id=None, range_="1h")
+        assert out["available"] is True
+        assert all(len(threads) == 1 for threads in seen.values())
+
+    def test_unreachable_cluster_is_skipped_and_reported(self):
+        from services.reachability import ReachabilityState
+
+        loaded: list[int] = []
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(5)), 2: lambda s, q, p: _instant(_vector(7))})
+        client_for = svc._client
+        svc._client = lambda c: (loaded.append(c.id), client_for(c))[1]
+
+        def _state(_target_type, target_id):
+            return {"state": ReachabilityState.UNREACHABLE.value} if target_id == 2 else None
+
+        with patch("services.llm_observability_service.reachability_registry.get_state", side_effect=_state):
+            out = svc.stats(cluster_id=None, range_="1h")
+        assert loaded == [1]
+        assert out["total_requests"] == 5
+        assert out["errors"] == {"cluster-2": "unreachable"}
+
+    def test_all_clusters_failing_carries_the_error_map(self):
+        def _boom(sub, query, params):
+            raise ApiException(status=502, reason="Bad Gateway")
+
+        svc = self._fleet_service({1: _boom})
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["available"] is False
+        assert "502" in out["reason"]
+        assert set(out["errors"]) == {"cluster-1"}
+
+    def test_unscoped_fleet_logs_redact_req_and_resp_body(self):
+        log_entry = {
+            "model": "gpt-4o",
+            "latency_ms": 100.0,
+            "prompt_tk": 10,
+            "comp_tk": 20,
+            "total_tk": 30,
+            "cost": 0.05,
+            "status": "200",
+            "userq": "secret prompt",
+            "req_body": '{"sensitive": "data"}',
+            "resp_body": '{"sensitive": "answer"}',
+        }
+        svc = self._fleet_service(
+            {
+                1: lambda s, q, p: _streams((1700000000_000000000, log_entry)),
+            }
+        )
+        # Unscoped fleet logs (cluster_id=None, project_id=None) -> redacted
+        out_unscoped = svc.logs(cluster_id=None, range_="1h", project_id=None)
+        assert out_unscoped["available"] is True
+        assert len(out_unscoped["rows"]) == 1
+        assert out_unscoped["rows"][0]["req_body"] == "[REDACTED - project scope required]"
+        assert out_unscoped["rows"][0]["resp_body"] == "[REDACTED - project scope required]"
+
+        # Scoped fleet logs (project_id=10) -> kept
+        out_scoped = svc.logs(cluster_id=None, range_="1h", project_id=10)
+        assert out_scoped["available"] is True
+        assert len(out_scoped["rows"]) == 1
+        assert out_scoped["rows"][0]["req_body"] == '{"sensitive": "data"}'
+        assert out_scoped["rows"][0]["resp_body"] == '{"sensitive": "answer"}'
+
+    def test_kubeconfig_and_worker_error_sanitization(self):
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(1)), 2: lambda s, q, p: _instant(_vector(1))})
+        # Mock client loading failure for cluster-1
+        original_client = svc._client
+
+        def _failing_client(c):
+            if c.id == 1:
+                raise ValueError("private/internal/path/kubeconfig.yaml: access denied token=secret123")
+            return original_client(c)
+
+        svc._client = _failing_client
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["errors"]["cluster-1"] == "kubeconfig"

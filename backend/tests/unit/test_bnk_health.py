@@ -37,26 +37,47 @@ def _pod(
         "name": name,
         "namespace": namespace,
         "phase": phase,
-        "containers": [{
-            "name": name.rsplit("-", 1)[0],
-            "ready": ready,
-            "restartCount": restarts,
-            "state": state,
-        }],
+        "containers": [
+            {
+                "name": name.rsplit("-", 1)[0],
+                "ready": ready,
+                "restartCount": restarts,
+                "state": state,
+            }
+        ],
     }
 
 
 def _empty_resources() -> dict:
     """Return a resources dict with all keys empty."""
-    return {k: [] for k in [
-        "gateway", "httproute", "grpcroute", "tcproute", "udproute", "tlsroute",
-        "l4route", "referencegrant", "bnksecpolicy", "bnknetpolicy",
-        "f5bigfwpolicy", "f5bigcneirule", "f5biganalyzer",
-        "f5bigcneaddresslist", "f5bigcneportlist",
-        "f5spkvlan", "cneinstance", "f5spkstaticroute",
-        "f5spksnatpool", "f5spkegress", "f5bigloghslpub", "f5biglogprofile",
-        "service",
-    ]}
+    return {
+        k: []
+        for k in [
+            "gateway",
+            "httproute",
+            "grpcroute",
+            "tcproute",
+            "udproute",
+            "tlsroute",
+            "l4route",
+            "referencegrant",
+            "bnksecpolicy",
+            "bnknetpolicy",
+            "f5bigfwpolicy",
+            "f5bigcneirule",
+            "f5biganalyzer",
+            "f5bigcneaddresslist",
+            "f5bigcneportlist",
+            "f5spkvlan",
+            "cneinstance",
+            "f5spkstaticroute",
+            "f5spksnatpool",
+            "f5spkegress",
+            "f5bigloghslpub",
+            "f5biglogprofile",
+            "service",
+        ]
+    }
 
 
 def _empty_classified() -> dict:
@@ -154,12 +175,14 @@ class TestPodDetails:
 
     def test_multi_container_pod(self):
         p = _pod()
-        p["containers"].append({
-            "name": "sidecar",
-            "ready": True,
-            "restartCount": 2,
-            "state": "running",
-        })
+        p["containers"].append(
+            {
+                "name": "sidecar",
+                "ready": True,
+                "restartCount": 2,
+                "state": "running",
+            }
+        )
         d = _pod_details(p)
         assert d["containersReady"] == "2/2"
         assert d["restartCount"] == 2
@@ -251,15 +274,18 @@ class TestBuildComponentHealth:
 
 class TestExtractCneFeatures:
     def test_extracts_features(self):
-        cne = {"metadata": {"name": "cne-1", "namespace": "f5-bnk"}, "spec": {
-            "firewallACL": {"enabled": True},
-            "intelligentLB": {"enabled": False},
-            "pseudoCNI": {"enabled": True},
-            "metricSubsystem": {"enabled": True},
-            "loggingSubsystem": {"enabled": False},
-            "coreCollection": {"enabled": True},
-            "envDiscovery": {"enabled": False},
-        }}
+        cne = {
+            "metadata": {"name": "cne-1", "namespace": "f5-bnk"},
+            "spec": {
+                "firewallACL": {"enabled": True},
+                "intelligentLB": {"enabled": False},
+                "pseudoCNI": {"enabled": True},
+                "metricSubsystem": {"enabled": True},
+                "loggingSubsystem": {"enabled": False},
+                "coreCollection": {"enabled": True},
+                "envDiscovery": {"enabled": False},
+            },
+        }
         f = _extract_cne_features([cne])
         assert f["name"] == "cne-1"
         assert f["firewallACL"] is True
@@ -288,12 +314,19 @@ class TestAnalyzeHealth:
         """Empty cluster returns valid structure with 'unknown' overall."""
         result = analyze_health(_make_data())
         assert result["overall"] == "unknown"
+        assert result["partial"] is False
         assert "platform" in result
         assert "dataPlane" in result
         assert "networking" in result
         assert "security" in result
         assert "ai" in result
         assert "counts" in result
+
+    def test_partial_flag_propagated(self):
+        data = _make_data()
+        data["partial"] = True
+        result = analyze_health(data)
+        assert result["partial"] is True
 
     def test_healthy_cluster(self):
         """Cluster with all healthy pods and security resources returns 'healthy'."""
@@ -305,24 +338,30 @@ class TestAnalyzeHealth:
         classified["crd_installer"] = [_pod(name="crd-1", phase="Succeeded", ready=False)]
 
         resources = _empty_resources()
-        resources["gateway"] = [{
-            "metadata": {"name": "gw-1", "namespace": "f5-bnk"},
-            "spec": {"listeners": [{"name": "http", "port": 80}]},
-            "status": {
-                "addresses": [{"value": "10.0.0.1"}],
-                "conditions": [{"type": "Programmed", "status": "True"}],
-            },
-        }]
-        resources["f5spkvlan"] = [{
-            "metadata": {"name": "vlan-1", "namespace": "f5-bnk"},
-            "spec": {},
-            "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
-        }]
+        resources["gateway"] = [
+            {
+                "metadata": {"name": "gw-1", "namespace": "f5-bnk"},
+                "spec": {"listeners": [{"name": "http", "port": 80}]},
+                "status": {
+                    "addresses": [{"value": "10.0.0.1"}],
+                    "conditions": [{"type": "Programmed", "status": "True"}],
+                },
+            }
+        ]
+        resources["f5spkvlan"] = [
+            {
+                "metadata": {"name": "vlan-1", "namespace": "f5-bnk"},
+                "spec": {},
+                "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+            }
+        ]
         # Need at least one security resource so security severity != "unknown"
-        resources["f5bigfwpolicy"] = [{
-            "metadata": {"name": "fw-1", "namespace": "f5-bnk"},
-            "spec": {"rule": []},
-        }]
+        resources["f5bigfwpolicy"] = [
+            {
+                "metadata": {"name": "fw-1", "namespace": "f5-bnk"},
+                "spec": {"rule": []},
+            }
+        ]
 
         result = analyze_health(_make_data(resources, classified))
         assert result["overall"] == "healthy"
@@ -359,14 +398,14 @@ class TestAnalyzeHealth:
         """Counts reflect the number of resources in the data."""
         resources = _empty_resources()
         resources["gateway"] = [
-            {"metadata": {"name": f"gw-{i}", "namespace": "ns"},
-             "spec": {"listeners": [{"name": "http"}]},
-             "status": {}}
+            {
+                "metadata": {"name": f"gw-{i}", "namespace": "ns"},
+                "spec": {"listeners": [{"name": "http"}]},
+                "status": {},
+            }
             for i in range(3)
         ]
-        resources["httproute"] = [
-            {"metadata": {"name": "r-1", "namespace": "ns"}, "spec": {}, "status": {}}
-        ]
+        resources["httproute"] = [{"metadata": {"name": "r-1", "namespace": "ns"}, "spec": {}, "status": {}}]
 
         result = analyze_health(_make_data(resources))
         assert result["counts"]["gateways"] == 3
@@ -377,12 +416,18 @@ class TestAnalyzeHealth:
         """iRules with mixed accepted status produce correct severity."""
         resources = _empty_resources()
         resources["f5bigcneirule"] = [
-            {"metadata": {"name": "ir-ok"}, "status": {
-                "conditions": [{"type": "Accepted", "status": "True"}],
-            }},
-            {"metadata": {"name": "ir-bad"}, "status": {
-                "conditions": [{"type": "Accepted", "status": "False", "message": "syntax error"}],
-            }},
+            {
+                "metadata": {"name": "ir-ok"},
+                "status": {
+                    "conditions": [{"type": "Accepted", "status": "True"}],
+                },
+            },
+            {
+                "metadata": {"name": "ir-bad"},
+                "status": {
+                    "conditions": [{"type": "Accepted", "status": "False", "message": "syntax error"}],
+                },
+            },
         ]
 
         result = analyze_health(_make_data(resources))
@@ -396,10 +441,12 @@ class TestAnalyzeHealth:
 
     def test_ai_health_with_analyzers(self):
         resources = _empty_resources()
-        resources["f5biganalyzer"] = [{
-            "metadata": {"name": "analyzer-1", "namespace": "f5-bnk"},
-            "spec": {"schedule": {"every": "5m"}, "applications": []},
-        }]
+        resources["f5biganalyzer"] = [
+            {
+                "metadata": {"name": "analyzer-1", "namespace": "f5-bnk"},
+                "spec": {"schedule": {"every": "5m"}, "applications": []},
+            }
+        ]
         result = analyze_health(_make_data(resources))
         # AI section is informational-only and should not emit severity.
         assert result["ai"]["severity"] == "unknown"
@@ -407,10 +454,12 @@ class TestAnalyzeHealth:
 
     def test_ai_does_not_warn_when_ilb_enabled_but_no_analyzers(self):
         resources = _empty_resources()
-        resources["cneinstance"] = [{
-            "metadata": {"name": "cne-1"},
-            "spec": {"intelligentLB": {"enabled": True}},
-        }]
+        resources["cneinstance"] = [
+            {
+                "metadata": {"name": "cne-1"},
+                "spec": {"intelligentLB": {"enabled": True}},
+            }
+        ]
         result = analyze_health(_make_data(resources))
         assert result["ai"]["severity"] == "unknown"
 
@@ -517,14 +566,16 @@ class TestAnalyzeHealth:
         # flo intentionally absent — genuinely no FLO pod on a direct-helm install
 
         resources = _empty_resources()
-        resources["gateway"] = [{
-            "metadata": {"name": "gw-1", "namespace": "bnk-app1"},
-            "spec": {"listeners": [{"name": "http", "port": 80}]},
-            "status": {
-                "addresses": [{"value": "10.0.0.1"}],
-                "conditions": [{"type": "Programmed", "status": "True"}],
-            },
-        }]
+        resources["gateway"] = [
+            {
+                "metadata": {"name": "gw-1", "namespace": "bnk-app1"},
+                "spec": {"listeners": [{"name": "http", "port": 80}]},
+                "status": {
+                    "addresses": [{"value": "10.0.0.1"}],
+                    "conditions": [{"type": "Programmed", "status": "True"}],
+                },
+            }
+        ]
         resources["f5spkvlan"] = [
             {
                 "metadata": {"name": f"vlan-{i}", "namespace": "bnk-app1"},
@@ -640,9 +691,11 @@ class TestConnectivityStatus:
         assert result["checkedAt"]
 
     def test_injected_status_is_used(self):
-        result = _build_connectivity_status({
-            "connectivity": {"status": "partial", "message": "ICMP only", "checkedAt": "2026-01-01T00:00:00Z"},
-        })
+        result = _build_connectivity_status(
+            {
+                "connectivity": {"status": "partial", "message": "ICMP only", "checkedAt": "2026-01-01T00:00:00Z"},
+            }
+        )
         assert result["status"] == "partial"
         assert result["message"] == "ICMP only"
         assert result["checkedAt"] == "2026-01-01T00:00:00Z"
@@ -657,16 +710,18 @@ class TestIntegrationStatus:
         assert "kubeconfig" in result["message"].lower()
 
     def test_injected_operator_status_is_used(self):
-        result = _build_integration_status({
-            "integration": {
-                "status": "warning",
-                "operatorConnected": False,
-                "operatorMode": "direct_ws",
-                "operatorVersion": "1.2.3",
-                "lastSeen": "2026-01-01T00:00:00Z",
-                "message": "Operator op-1 is disconnected",
-            },
-        })
+        result = _build_integration_status(
+            {
+                "integration": {
+                    "status": "warning",
+                    "operatorConnected": False,
+                    "operatorMode": "direct_ws",
+                    "operatorVersion": "1.2.3",
+                    "lastSeen": "2026-01-01T00:00:00Z",
+                    "message": "Operator op-1 is disconnected",
+                },
+            }
+        )
         assert result["status"] == "warning"
         assert result["operatorMode"] == "direct_ws"
         assert result["operatorVersion"] == "1.2.3"
@@ -684,7 +739,132 @@ class TestAnalyzeHealthConnectivityIntegration:
     def test_analyze_health_uses_injected_context(self):
         data = _make_data()
         data["connectivity"] = {"status": "unreachable", "message": "API down", "checkedAt": "2026-01-01T00:00:00Z"}
-        data["integration"] = {"status": "critical", "operatorConnected": False, "operatorMode": "polling", "message": "Lost"}
+        data["integration"] = {
+            "status": "critical",
+            "operatorConnected": False,
+            "operatorMode": "polling",
+            "message": "Lost",
+        }
         result = analyze_health(data)
         assert result["connectivity"]["status"] == "unreachable"
         assert result["integration"]["status"] == "critical"
+
+
+class TestBNK24Health:
+    def test_infra_health_evaluated_when_vlans_absent(self):
+        data = _make_data()
+        data["resources"]["f5spkvlan"] = []
+        data["resources"]["infra"] = [
+            {
+                "metadata": {"name": "infra-main", "namespace": "f5-bnk"},
+                "spec": {"networks": [{"name": "ext"}], "ipams": []},
+                "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+            }
+        ]
+        data["resources"]["gatewaysettings"] = [
+            {
+                "metadata": {"name": "gw-settings", "namespace": "f5-bnk"},
+                "spec": {},
+            }
+        ]
+        result = analyze_health(data)
+        net_h = result["networking"]
+        assert "infra" in net_h
+        assert net_h["infra"]["total"] == 1
+        assert net_h["infra"]["severity"] == "healthy"
+        assert net_h["gatewaySettings"] == 1
+        assert net_h["severity"] == "healthy"
+
+    def test_24_security_and_ai_health(self):
+        data = _make_data()
+        data["resources"]["secpolicy"] = [
+            {
+                "metadata": {"name": "sp-24", "namespace": "f5-bnk"},
+                "spec": {},
+                "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+            }
+        ]
+        data["resources"]["f5epp"] = [
+            {
+                "metadata": {"name": "epp-1", "namespace": "f5-bnk"},
+                "spec": {},
+            }
+        ]
+        data["resources"]["inferencepool"] = [
+            {
+                "metadata": {"name": "pool-llama", "namespace": "f5-bnk"},
+                "spec": {
+                    "targetPorts": [{"number": 8000}],
+                    "selector": {"matchLabels": {"app": "vllm-llama"}},
+                    "endpointPickerRef": {"name": "pool-llama-epp", "port": {"number": 9002}},
+                },
+            }
+        ]
+        result = analyze_health(data)
+        sec_h = result["security"]
+        assert sec_h["securityPolicies"] == 1
+        assert sec_h["severity"] == "healthy"
+
+        ai_h = result["ai"]
+        assert ai_h["f5epps"] == 1
+        assert ai_h["inferencePools"] == 1
+        assert len(ai_h["inferencePoolDetails"]) == 1
+        assert ai_h["inferencePoolDetails"][0]["targetPorts"] == [8000]
+        assert ai_h["inferencePoolDetails"][0]["endpointPicker"] == "pool-llama-epp"
+
+    def test_24_null_spec_and_status(self):
+        data = _make_data()
+        for key in ("infra", "inferencepool"):
+            data["resources"][key] = [{"metadata": {"name": "x", "namespace": "ns"}, "spec": None, "status": None}]
+        result = analyze_health(data)
+        assert result["networking"]["infra"]["details"][0]["networks"] == 0
+        assert result["ai"]["inferencePoolDetails"][0] == {
+            "name": "x",
+            "namespace": "ns",
+            "targetPorts": [],
+            "endpointPicker": "",
+        }
+
+    def test_24_fields_survive_response_schema(self):
+        from schemas.bnk import BnkHealthAISection, BnkHealthNetworkingSection
+
+        data = _make_data()
+        data["resources"]["infra"] = [
+            {
+                "metadata": {"name": "infra", "namespace": "f5-cne-system"},
+                "spec": {
+                    "networks": [{"name": "ext-vlan"}],
+                    "staticRoutes": [
+                        {"name": "vpc", "destinations": ["10.0.0.0/16"], "nextHop": "10.0.20.1"},
+                        {"name": "default", "destinations": ["0.0.0.0/0"], "nextHop": "10.0.10.1"},
+                    ],
+                },
+                "status": {"conditions": [{"type": "Programmed", "status": "True"}]},
+            }
+        ]
+        data["resources"]["gatewaysettings"] = [{"metadata": {"name": "gs", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["egressgateway"] = [{"metadata": {"name": "eg", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["f5epp"] = [{"metadata": {"name": "epp", "namespace": "ns"}, "spec": {}}]
+        data["resources"]["inferencepool"] = [
+            {
+                "metadata": {"name": "pool", "namespace": "ns"},
+                "spec": {"targetPorts": [{"number": 8000}], "endpointPickerRef": {"name": "pool-epp"}},
+            }
+        ]
+        result = analyze_health(data)
+
+        net = BnkHealthNetworkingSection.model_validate(result["networking"]).model_dump()
+        assert net["infra"]["details"] == [{"name": "infra", "programmed": True, "networks": 1, "ipams": 0}]
+        assert net["gatewaySettings"] == 1
+        assert net["egressGateways"] == 1
+        # Legacy F5SPKStaticRoutes are absent, so the Infra routes count
+        assert net["staticRoutes"] == 2
+        # Same rule for the VLAN count
+        assert result["counts"]["vlans"] == 1
+
+        ai = BnkHealthAISection.model_validate(result["ai"]).model_dump()
+        assert ai["f5epps"] == 1
+        assert ai["inferencePools"] == 1
+        assert ai["inferencePoolDetails"] == [
+            {"name": "pool", "namespace": "ns", "targetPorts": [8000], "endpointPicker": "pool-epp"},
+        ]

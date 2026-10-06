@@ -62,6 +62,7 @@ interface TopologyRoute {
   name: string;
   namespace: string;
   kind: string;
+  resourceType?: string;
   hostnames: string[];
   backends: TopologyBackend[];
   analyzers: TopologyAnalyzer[];
@@ -80,6 +81,7 @@ interface TopologyExtension {
 
 interface TopologyNetPolicy {
   name: string;
+  kind?: string;
   namespace: string;
   extensions: TopologyExtension[];
   resolvedCount: number;
@@ -115,6 +117,7 @@ interface TopologyFwPolicy {
 
 interface TopologySecPolicy {
   name: string;
+  kind?: string;
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFwPolicy[];
@@ -175,6 +178,8 @@ interface TopologyCounts {
 interface DataPlaneVlan {
   name: string;
   namespace: string;
+  kind?: string;
+  infraName?: string;
   interfaces: string[];
   selfipV4s: string[];
   prefixLen: number | null;
@@ -210,6 +215,7 @@ interface DataPlaneSnatPool {
 interface DataPlaneEgress {
   name: string;
   namespace: string;
+  kind?: string;
   snatType: string;
   egressSnatpool: string | null;
   firewallEnforcedPolicy: string | null;
@@ -286,6 +292,7 @@ export interface TopologyResourceSelection {
   kind: string;       // "HTTPRoute", "L4Route", "Gateway", "TCPRoute", etc.
   name: string;
   namespace: string;
+  resourceType?: string;  // registry key when kind alone is ambiguous (L4Route)
 }
 
 // ─── Props ─────────────────────────────────────────────────────────────
@@ -743,7 +750,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     badge={routeBadges}
                     indent={1}
                     defaultOpen={route.analyzers.length > 0}
-                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: route.kind, name: route.name, namespace: route.namespace }) : undefined}
+                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: route.kind, name: route.name, namespace: route.namespace, resourceType: route.resourceType }) : undefined}
                   >
                     {/* Route namespace (shown when different from gateway) */}
                     {route.namespace && (
@@ -851,7 +858,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     badge={netPolicyBadges}
                     indent={1}
                     defaultOpen={true}
-                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'BNKNetPolicy', name: np.name, namespace: np.namespace }) : undefined}
+                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: np.kind || 'BNKNetPolicy', name: np.name, namespace: np.namespace }) : undefined}
                   >
                     {np.extensions.map((ext, i) => {
                       if (ext.kind === 'F5BigCneIrule') {
@@ -926,7 +933,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                         <StatusDot ready={sp.programmed} label={sp.programmed ? 'Programmed' : 'Pending'} />
                       </>
                     )}
-                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'BNKSecPolicy', name: sp.name, namespace: sp.namespace }) : undefined}
+                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: sp.kind || 'BNKSecPolicy', name: sp.name, namespace: sp.namespace }) : undefined}
                   >
                     {sp.firewallPolicies.map((fw) => (
                       <CollapsibleSection
@@ -1176,7 +1183,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     title={`${vlan.name}${vlan.namespace ? ` (${vlan.namespace})` : ''}`}
                     icon={Wifi}
                     badge={vlan.internal ? 'Internal' : 'External'}
-                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: 'F5SPKVlan', name: vlan.name, namespace: vlan.namespace }) : undefined}
+                    onClickTitle={onSelectResource ? () => onSelectResource({ kind: vlan.kind || 'F5SPKVlan', name: vlan.infraName || vlan.name, namespace: vlan.namespace }) : undefined}
                   >
                     {/* Self-IPs */}
                     {vlan.selfipV4s.map((ip, i) => (
@@ -1295,7 +1302,7 @@ export function F5BNKTopologyViewer({ clusterId, namespace, onSelectResource }: 
                     ) : undefined;
                     return (
                       <CollapsibleSection
-                        key={egressKey}
+                        key={`${eg.kind || 'F5SPKEgress'}/${egressKey}`}
                         title={`${eg.name}${eg.namespace ? ` (${eg.namespace})` : ''}`}
                         icon={ArrowRightLeft}
                         badge={egressBadges}

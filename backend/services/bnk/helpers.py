@@ -255,6 +255,25 @@ def resolve_list_refs(
     return resolved
 
 
+def resolve_egress_config(egress_gateway: dict, gs_map: dict[str, dict]) -> dict | None:
+    """Return the GatewaySettings egressConfigs entry a BNK 2.4 EgressGateway selects.
+
+    The EgressGateway names a GatewaySettings in its own namespace via
+    spec.infrastructure.parametersRef, and the entry via sectionName. Returns
+    None when the GatewaySettings or the entry is not found.
+    """
+    spec = egress_gateway.get("spec") or {}
+    ref = (spec.get("infrastructure") or {}).get("parametersRef") or {}
+    gs = gs_map.get(f"{resource_ns(egress_gateway)}/{ref.get('name', '')}")
+    if not gs:
+        return None
+    configs = [c for c in (gs.get("spec") or {}).get("egressConfigs") or [] if isinstance(c, dict)]
+    section = ref.get("sectionName")
+    if section:
+        return next((c for c in configs if c.get("name") == section), None)
+    return configs[0] if len(configs) == 1 else None
+
+
 # ---------------------------------------------------------------------------
 # Topology traversal
 # ---------------------------------------------------------------------------
@@ -293,15 +312,19 @@ def build_route_ref_map(topology: list[dict]) -> dict[tuple[str, str], list[dict
 
 # CRD types fetched for all BNK insight views.
 BNK_RESOURCE_TYPES: list[str] = [
-    # Gateway API
+    # Gateway API core + extensions
     "gatewayclass", "gateway", "httproute", "grpcroute",
-    "tcproute", "udproute", "tlsroute", "l4route", "referencegrant",
-    # BNK policies
-    "bnksecpolicy", "bnknetpolicy",
-    # F5 CRDs
+    "tcproute", "udproute", "tlsroute", "l4route", "l4route_24", "referencegrant",
+    # BNK 2.4+ Gateway & Tenant CRDs
+    "gatewaysettings", "egressgateway", "infra",
+    # Policies (2.4 + legacy)
+    "secpolicy", "netpolicy", "bnksecpolicy", "bnknetpolicy",
+    # F5 CRDs & AI Gateway
     "f5bigfwpolicy", "f5bigcneirule", "f5biganalyzer",
     "f5bigcneaddresslist", "f5bigcneportlist",
-    # Data plane
+    "f5epp", "inferencepool", "inferencemodelrewrite",
+    "f5bigpersistenceprofile", "observer",
+    # Data plane (legacy 2.3 + shared)
     "f5spkvlan", "cneinstance", "f5spkstaticroute",
     "f5spksnatpool", "f5spkegress",
     # Logging

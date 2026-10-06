@@ -202,3 +202,22 @@ class TestUnknownGroupFallsToCustomObjects:
                     "create", mock_api_client, rt, "default",
                     body={}, dry_run=None
                 )
+
+
+# ---------------------------------------------------------------------------
+# _fetch_from_k8s — 404 (CRD not installed) is not an error
+# ---------------------------------------------------------------------------
+
+
+class TestFetchFromK8sNotFoundLogging:
+    @pytest.mark.parametrize("status,level", [(404, "DEBUG"), (403, "ERROR")])
+    def test_log_level(self, caplog, status, level):
+        from kubernetes.client.rest import ApiException
+
+        rt = _make_rt("gateway.k8s.f5.com", "Infra", "infras")
+        with patch("services.kubernetes._resources.client.CustomObjectsApi") as custom_api:
+            custom_api.return_value.list_cluster_custom_object.side_effect = ApiException(status=status)
+            with caplog.at_level("DEBUG", logger="services.kubernetes._resources"):
+                with pytest.raises(ApiException):
+                    SUBJECT._fetch_from_k8s(MagicMock(), rt, None, None)
+        assert [r.levelname for r in caplog.records if "Failed to fetch Infra" in r.message] == [level]

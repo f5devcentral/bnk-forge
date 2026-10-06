@@ -5,9 +5,9 @@
 
 import {
   Shield, Globe, Route, Network, Lock, Server, Activity, Settings,
-  LayoutDashboard, Map, Code, ShieldAlert, List, FileText, GitBranch,
-  ArrowUpCircle, Stethoscope, Wand2, Hammer, Workflow,
-  Bot, Radar, BookOpen,
+  Map, Code, ShieldAlert, List, FileText, GitBranch,
+  ArrowUpCircle, Stethoscope, Wand2, Workflow,
+  Bot, Radar, BookOpen, Layers, Cpu, Database,
 } from 'lucide-react';
 
 // Special view identifiers (not actual K8s resource types)
@@ -33,96 +33,94 @@ export const SPECIAL_VIEWS = [VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, V
 
 export const isSpecialView = (type: string) => SPECIAL_VIEWS.includes(type);
 
-// BNK Resource Categories - Organized by logical workflow
-// Order: Insights (see) → Build (create) → Manage (traffic/security/networking)
+// BNK Resource Categories - Organized into 6 core functional domains
+// Order: Topology & Insights → Health & Diagnostics → Gateways & Traffic → Policies & Security → System & Configuration → AI Gateway & A2A
 export const bnkResourceCategories = [
   {
-    category: 'Insights',
-    icon: LayoutDashboard,
+    category: 'Topology & Insights',
+    icon: GitBranch,
     items: [
-      { key: VIEW_TRAFFIC_FLOW, label: 'Traffic Flow', icon: Workflow },
+      { key: VIEW_TOPOLOGY, label: 'Object Topology Graph', icon: GitBranch },
+      { key: VIEW_TRAFFIC_FLOW, label: 'Traffic Flow Pipeline', icon: Workflow },
+      { key: VIEW_POLICY_MAP, label: 'Policy & Security Matrix', icon: Map },
+    ],
+  },
+  {
+    category: 'Health & Diagnostics',
+    icon: Activity,
+    items: [
       { key: VIEW_HEALTH, label: 'Health Dashboard', icon: Activity },
-      { key: VIEW_TOPOLOGY, label: 'Gateway Topology', icon: GitBranch },
-      { key: VIEW_POLICY_MAP, label: 'Policy Gateway Map', icon: Map },
-      { key: VIEW_AI_ANALYZERS, label: 'AI Analyzers', icon: Activity },
-      { key: VIEW_UPGRADE, label: 'Upgrade', icon: ArrowUpCircle },
-      { key: VIEW_DIAGNOSTICS, label: 'Diagnostics', icon: Stethoscope },
+      { key: VIEW_DIAGNOSTICS, label: 'Diagnostics & QKView', icon: Stethoscope },
+      { key: VIEW_UPGRADE, label: 'Release & Upgrade', icon: ArrowUpCircle },
     ],
   },
   {
-    category: 'Build',
-    icon: Hammer,
-    items: [
-      { key: VIEW_CONFIG_BUILDER, label: 'Configuration Builder', icon: Wand2 },
-      { key: VIEW_POLICY_BUILDER, label: 'Policy Builder', icon: Wand2 },
-    ],
-  },
-  {
-    category: 'A2A Protocol',
-    icon: Bot,
-    items: [
-      { key: VIEW_A2A_DISCOVERY, label: 'Agent Discovery', icon: Radar },
-      { key: VIEW_A2A_TEMPLATES, label: 'A2A Templates', icon: Wand2 },
-      { key: VIEW_A2A_IRULE_LIBRARY, label: 'iRule Library', icon: Code },
-      { key: VIEW_A2A_REFERENCE, label: 'Protocol Reference', icon: BookOpen },
-    ],
-  },
-  {
-    category: 'Traffic Management',
+    category: 'Gateways & Traffic',
     icon: Globe,
     items: [
-      { key: VIEW_BACKENDS, label: 'Backends', icon: Server },
-      { key: 'gatewayclass', label: 'Gateway Classes', icon: Shield },
       { key: 'gateway', label: 'Gateways', icon: Globe },
+      { key: 'gatewaysettings', label: 'Gateway Settings (2.4)', icon: Settings },
+      { key: 'gatewayclass', label: 'Gateway Classes', icon: Shield },
       { key: 'httproute', label: 'HTTP Routes', icon: Route },
       { key: 'grpcroute', label: 'GRPC Routes', icon: Network },
       { key: 'tcproute', label: 'TCP Routes', icon: Network },
       { key: 'udproute', label: 'UDP Routes', icon: Network },
       { key: 'tlsroute', label: 'TLS Routes', icon: Lock },
+      { key: 'l4route', label: 'L4 Routes', icon: Route },
+      { key: 'l4route_24', label: 'L4 Routes (2.4)', icon: Route },
+      { key: VIEW_BACKENDS, label: 'Backends', icon: Server },
+      { key: 'referencegrant', label: 'Reference Grants', icon: Shield },
     ],
   },
   {
-    category: 'Security',
+    category: 'Policies & Security',
     icon: Shield,
     items: [
+      { key: VIEW_POLICY_BUILDER, label: 'Policy Builder', icon: Wand2 },
+      { key: 'secpolicy', label: 'Security Policies (2.4)', icon: Shield },
+      { key: 'netpolicy', label: 'Network Policies (2.4)', icon: Network },
+      { key: 'egressgateway', label: 'Egress Gateways (2.4)', icon: Network },
+      { key: 'bnksecpolicy', label: 'Security Policies (Legacy)', icon: Shield },
+      { key: 'bnknetpolicy', label: 'Network Policies (Legacy)', icon: Network },
+      { key: 'f5spkegress', label: 'Egress Config (Legacy)', icon: Network },
       { key: 'f5bigfwpolicy', label: 'Firewall Policies', icon: Shield },
       { key: 'f5bigfwrulelist', label: 'Firewall Rule Lists', icon: List },
-      { key: 'bnksecpolicy', label: 'Security Policies', icon: Shield },
-      { key: 'bnknetpolicy', label: 'Network Policies', icon: Network },
       { key: 'f5bigddosglobal', label: 'DDoS Protection', icon: ShieldAlert },
+      { key: 'f5spksnatpool', label: 'SNAT Pools', icon: Server },
+      { key: 'f5bigcneirule', label: 'iRules', icon: Code },
+    ],
+  },
+  {
+    category: 'System & Configuration',
+    icon: Settings,
+    items: [
+      { key: VIEW_CONFIG_BUILDER, label: 'Configuration Builder', icon: Wand2 },
+      { key: 'infra', label: 'Infra Underlay (2.4)', icon: Layers },
+      { key: 'cneinstance', label: 'CNE Instances', icon: Server },
+      { key: 'f5spkglobaloptions', label: 'Global Options', icon: Settings },
+      { key: 'f5spkvlan', label: 'VLANs (Legacy)', icon: Network },
+      { key: 'f5spkstaticroute', label: 'Static Routes', icon: Route },
+      { key: 'ipamrange', label: 'IPAM Ranges', icon: Network },
+      { key: 'f5bnkgateway', label: 'BNK Gateway (IPAM)', icon: Globe },
+      { key: 'f5bigpersistenceprofile', label: 'Persistence Profiles', icon: Database },
+      { key: 'f5bigloghslpub', label: 'HSL Publishers', icon: Activity },
+      { key: 'f5biglogprofile', label: 'Log Profiles', icon: FileText },
       { key: 'f5bigcneaddresslist', label: 'Address Lists', icon: Network },
       { key: 'f5bigcneportlist', label: 'Port Lists', icon: Network },
     ],
   },
   {
-    category: 'Networking',
-    icon: Network,
+    category: 'AI Gateway & A2A',
+    icon: Bot,
     items: [
-      { key: 'f5spkvlan', label: 'VLANs', icon: Network },
-      { key: 'f5spkstaticroute', label: 'Static Routes', icon: Route },
-      { key: 'f5spksnatpool', label: 'SNAT Pools', icon: Server },
-      { key: 'f5spkegress', label: 'Egress Config', icon: Network },
-      { key: 'f5bigcneirule', label: 'iRules', icon: Code },
-    ],
-  },
-  {
-    category: 'Logging & Telemetry',
-    icon: Activity,
-    items: [
-      { key: 'f5bigloghslpub', label: 'HSL Publishers', icon: Activity },
-      { key: 'f5biglogprofile', label: 'Log Profiles', icon: FileText },
-    ],
-  },
-  {
-    category: 'System',
-    icon: Settings,
-    items: [
-      { key: 'cneinstance', label: 'CNE Instances', icon: Server },
-      { key: 'f5bnkgateway', label: 'BNK Gateway (IPAM)', icon: Globe },
-      { key: 'ipamrange', label: 'IPAM Ranges', icon: Network },
-      { key: 'f5spkglobaloptions', label: 'Global Options', icon: Settings },
-      { key: 'l4route', label: 'L4 Routes', icon: Route },
-      { key: 'referencegrant', label: 'Reference Grants', icon: Shield },
+      { key: VIEW_A2A_DISCOVERY, label: 'Agent Discovery', icon: Radar },
+      { key: VIEW_AI_ANALYZERS, label: 'AI Analyzers', icon: Activity },
+      { key: 'inferencepool', label: 'Inference Pools (GAIE)', icon: Cpu },
+      { key: 'inferencemodelrewrite', label: 'Model Rewrites (GAIE)', icon: Route },
+      { key: 'f5epp', label: 'F5 EPP Analyzers', icon: Activity },
+      { key: VIEW_A2A_TEMPLATES, label: 'A2A Templates', icon: Wand2 },
+      { key: VIEW_A2A_IRULE_LIBRARY, label: 'iRule Library', icon: Code },
+      { key: VIEW_A2A_REFERENCE, label: 'Protocol Reference', icon: BookOpen },
     ],
   },
 ];

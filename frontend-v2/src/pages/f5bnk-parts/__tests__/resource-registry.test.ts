@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getRegistryEntry, getDetailComponent, getContextActions, getResourceIcon } from '../resource-registry';
+import { getRegistryEntry, getDetailComponent, getContextActions, getResourceIcon, getResourceTypeKey } from '../resource-registry';
 import { ServiceDetail } from '@/components/k8s/f5bnk-details';
 
 describe('resource registry', () => {
@@ -27,5 +27,11 @@ describe('resource registry', () => {
     const entry = getRegistryEntry('UnknownKind');
     expect(entry.detailComponent).toBeNull();
     expect(entry.contextActions).toEqual([]);
+  });
+
+  it('getResourceTypeKey maps a BNK 2.4 L4Route to its own registry key', () => {
+    expect(getResourceTypeKey({ kind: 'L4Route', apiVersion: 'gateway.k8s.f5.com/v1' })).toBe('l4route_24');
+    expect(getResourceTypeKey({ kind: 'L4Route', apiVersion: 'gateway.k8s.f5net.com/v1' })).toBe('l4route');
+    expect(getResourceTypeKey({ kind: 'SecPolicy', apiVersion: 'gateway.k8s.f5.com/v1alpha1' })).toBe('secpolicy');
   });
 });

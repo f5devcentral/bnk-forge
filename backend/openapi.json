@@ -1383,6 +1383,58 @@
         }
       }
     },
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+      "delete": {
+        "tags": [
+          "k8s-clusters"
+        ],
+        "summary": "Delete Project Cluster",
+        "description": "Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.",
+        "operationId": "delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/refresh-kubeconfig": {
       "post": {
         "tags": [
@@ -3815,6 +3867,64 @@
         }
       }
     },
+    "/api/k8s/search": {
+      "get": {
+        "tags": [
+          "k8s-search"
+        ],
+        "summary": "Global Search",
+        "description": "Unified global multi-cluster and infrastructure search.\n\nSearches across:\n- Ingresses, HTTPRoutes, VirtualServers, and Services in all reachable clusters\n- Clusters (by name, cloud provider, region)\n- Projects (by name, description, cloud provider, region)",
+        "operationId": "global_search_api_k8s_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "description": "Search query string (FQDN, hostname, IP, cluster, project)",
+              "title": "Q"
+            },
+            "description": "Search query string (FQDN, hostname, IP, cluster, project)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSearchResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/f5bnk/data": {
       "get": {
         "tags": [
@@ -4714,7 +4824,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4759,6 +4876,134 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/stats": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Stats",
+        "description": "Summary tiles: total requests, success rate, avg latency, tokens, cost, models.",
+        "operationId": "get_llm_stats_api_k8s_llm_observability_stats_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -4799,7 +5044,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4854,6 +5106,144 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmHistogramResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/histogram": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Histogram",
+        "description": "Time-series for one metric (requests|tokens|cost|models|latency).",
+        "operationId": "get_llm_histogram_api_k8s_llm_observability_histogram_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "requests",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -4894,7 +5284,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -4939,6 +5336,134 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmRankingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/rankings": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Rankings",
+        "description": "Per-model rows with window-over-window trend deltas.",
+        "operationId": "get_llm_rankings_api_k8s_llm_observability_rankings_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -4979,7 +5504,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5034,6 +5566,144 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmProviderUsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/provider-usage": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Provider Usage",
+        "description": "Time-series folded to inferred provider (cost|tokens|latency).",
+        "operationId": "get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "cost",
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5074,7 +5744,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5165,6 +5842,180 @@
               "title": "End"
             },
             "description": "nanosecond cursor for load-older"
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmLogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/logs": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Logs",
+        "description": "Per-request log rows, newest first; ``next_end`` is the load-older cursor.",
+        "operationId": "get_llm_logs_api_k8s_llm_observability_logs_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "content_search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content Search"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "nanosecond cursor for load-older",
+              "title": "End"
+            },
+            "description": "nanosecond cursor for load-older"
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5205,7 +6056,14 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Cluster Id"
             }
           },
@@ -5218,6 +6076,102 @@
               "default": "1h",
               "title": "Range"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmFilterDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/llm-observability/filterdata": {
+      "get": {
+        "tags": [
+          "k8s-llm-observability"
+        ],
+        "summary": "Get Llm Filterdata",
+        "description": "Distinct model + status label values for filter dropdowns.",
+        "operationId": "get_llm_filterdata_api_k8s_llm_observability_filterdata_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "title": "Range"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -37445,6 +38399,28 @@
             "type": "string",
             "title": "Cluster Name"
           },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
           "reachable": {
             "type": "boolean",
             "title": "Reachable"
@@ -37957,6 +38933,23 @@
             },
             "type": "array",
             "title": "Analyzerdetails"
+          },
+          "f5epps": {
+            "type": "integer",
+            "title": "F5Epps",
+            "default": 0
+          },
+          "inferencePools": {
+            "type": "integer",
+            "title": "Inferencepools",
+            "default": 0
+          },
+          "inferencePoolDetails": {
+            "items": {
+              "$ref": "#/components/schemas/HealthInferencePoolDetail"
+            },
+            "type": "array",
+            "title": "Inferencepooldetails"
           }
         },
         "type": "object",
@@ -38087,6 +39080,26 @@
           },
           "vlans": {
             "$ref": "#/components/schemas/HealthVlanComponent"
+          },
+          "infra": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthInfraComponent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gatewaySettings": {
+            "type": "integer",
+            "title": "Gatewaysettings",
+            "default": 0
+          },
+          "egressGateways": {
+            "type": "integer",
+            "title": "Egressgateways",
+            "default": 0
           },
           "listeners": {
             "type": "integer",
@@ -40549,6 +41562,84 @@
         "title": "ClusterScanEnvelope",
         "description": "Typed envelope for POST /api/k8s/clusters/{id}/scan."
       },
+      "ClusterSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Count"
+          },
+          "detected_platform_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected Platform Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "title": "ClusterSearchResult"
+      },
       "ClusterSummary": {
         "properties": {
           "id": {
@@ -42084,6 +43175,13 @@
           },
           "provider": {
             "type": "string",
+            "enum": [
+              "aws",
+              "azure",
+              "gcp",
+              "ibm",
+              "ssh"
+            ],
             "title": "Provider"
           },
           "aws_auth_method": {
@@ -42976,7 +44074,14 @@
           "provider": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "aws",
+                  "azure",
+                  "gcp",
+                  "ibm",
+                  "ssh"
+                ]
               },
               {
                 "type": "null"
@@ -48506,6 +49611,47 @@
         "title": "GitSourceValidation",
         "description": "Schema for git source validation"
       },
+      "GlobalSearchResultResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "ingresses": {
+            "items": {
+              "$ref": "#/components/schemas/IngressSearchResult"
+            },
+            "type": "array",
+            "title": "Ingresses"
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterSearchResult"
+            },
+            "type": "array",
+            "title": "Clusters"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSearchResult"
+            },
+            "type": "array",
+            "title": "Projects"
+          },
+          "timed_out_clusters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Timed Out Clusters"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "GlobalSearchResultResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -48776,6 +49922,107 @@
           "details"
         ],
         "title": "HealthIRulesComponent"
+      },
+      "HealthInferencePoolDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "targetPorts": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Targetports"
+          },
+          "endpointPicker": {
+            "type": "string",
+            "title": "Endpointpicker"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "targetPorts",
+          "endpointPicker"
+        ],
+        "title": "HealthInferencePoolDetail"
+      },
+      "HealthInfraComponent": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "programmed": {
+            "type": "integer",
+            "title": "Programmed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Severity"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/HealthInfraDetail"
+            },
+            "type": "array",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "programmed",
+          "severity",
+          "explanation",
+          "details"
+        ],
+        "title": "HealthInfraComponent"
+      },
+      "HealthInfraDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "programmed": {
+            "type": "boolean",
+            "title": "Programmed"
+          },
+          "networks": {
+            "type": "integer",
+            "title": "Networks"
+          },
+          "ipams": {
+            "type": "integer",
+            "title": "Ipams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "programmed",
+          "networks",
+          "ipams"
+        ],
+        "title": "HealthInfraDetail"
       },
       "HealthIntegrationStatus": {
         "properties": {
@@ -50036,6 +51283,111 @@
         ],
         "title": "ImportedBlueprintProjectCreateResponse"
       },
+      "IngressSearchResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "matched_host": {
+            "type": "string",
+            "title": "Matched Host"
+          },
+          "all_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "All Hosts"
+          },
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "type": "string",
+            "title": "Cluster Name"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "target_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Service"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "namespace",
+          "matched_host",
+          "cluster_id",
+          "cluster_name"
+        ],
+        "title": "IngressSearchResult"
+      },
       "InstallChartRequest": {
         "properties": {
           "release_name": {
@@ -50899,6 +52251,28 @@
           "resp_body": {
             "type": "string",
             "title": "Resp Body"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cluster_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Name"
           }
         },
         "type": "object",
@@ -55531,6 +56905,72 @@
         ],
         "title": "ProjectMutationResponse",
         "description": "Response for project create/update/delete."
+      },
+      "ProjectSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "cloud_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Provider"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "module_count": {
+            "type": "integer",
+            "title": "Module Count",
+            "default": 0
+          },
+          "deployed_count": {
+            "type": "integer",
+            "title": "Deployed Count",
+            "default": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "ProjectSearchResult"
       },
       "ProjectUpdate": {
         "properties": {
@@ -62847,6 +64287,31 @@
           "logProfiles": {
             "type": "integer",
             "title": "Logprofiles"
+          },
+          "infra": {
+            "type": "integer",
+            "title": "Infra",
+            "default": 0
+          },
+          "gatewaySettings": {
+            "type": "integer",
+            "title": "Gatewaysettings",
+            "default": 0
+          },
+          "egressGateways": {
+            "type": "integer",
+            "title": "Egressgateways",
+            "default": 0
+          },
+          "inferencePools": {
+            "type": "integer",
+            "title": "Inferencepools",
+            "default": 0
+          },
+          "f5epps": {
+            "type": "integer",
+            "title": "F5Epps",
+            "default": 0
           }
         },
         "type": "object",
@@ -62915,6 +64380,27 @@
           },
           "logging": {
             "$ref": "#/components/schemas/TopologyLogging"
+          },
+          "infra": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyInfra"
+            },
+            "type": "array",
+            "title": "Infra"
+          },
+          "gatewaySettings": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyGatewaySettings"
+            },
+            "type": "array",
+            "title": "Gatewaysettings"
+          },
+          "egressGateways": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyEgress"
+            },
+            "type": "array",
+            "title": "Egressgateways"
           }
         },
         "type": "object",
@@ -62966,6 +64452,11 @@
           "namespace": {
             "type": "string",
             "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
           },
           "snatType": {
             "type": "string",
@@ -63028,6 +64519,41 @@
           "ready": {
             "type": "boolean",
             "title": "Ready"
+          },
+          "gatewayClassName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gatewayclassname"
+          },
+          "parametersRef": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parametersref"
+          },
+          "sourceSelector": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceselector"
           }
         },
         "type": "object",
@@ -63156,6 +64682,16 @@
             },
             "type": "array",
             "title": "Securitypolicies"
+          },
+          "gatewaySettings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TopologyGatewaySettingsRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -63168,6 +64704,97 @@
           "securityPolicies"
         ],
         "title": "TopologyGateway"
+      },
+      "TopologyGatewaySettings": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ingressConfig": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Ingressconfig"
+          },
+          "sourceNATPools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sourcenatpools"
+          },
+          "egressConfigs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Egressconfigs"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "ready"
+        ],
+        "title": "TopologyGatewaySettings"
+      },
+      "TopologyGatewaySettingsRef": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "ingressConfig": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Ingressconfig"
+          },
+          "sourceNATPools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sourcenatpools"
+          },
+          "egressConfigs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Egressconfigs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace"
+        ],
+        "title": "TopologyGatewaySettingsRef",
+        "description": "GatewaySettings resolved from a Gateway's spec.infrastructure.parametersRef (BNK 2.4)."
       },
       "TopologyGraphResponse": {
         "properties": {
@@ -63214,6 +64841,78 @@
         ],
         "title": "TopologyGraphResponse",
         "description": "Response for GET /api/k8s/clusters/{cluster_id}/topology."
+      },
+      "TopologyInfra": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "networks": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Networks"
+          },
+          "ipams": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Ipams"
+          },
+          "networkAttachments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Networkattachments"
+          },
+          "staticRoutes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Staticroutes"
+          },
+          "vrfs": {
+            "items": {},
+            "type": "array",
+            "title": "Vrfs"
+          },
+          "egressDefaults": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Egressdefaults"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyCondition"
+            },
+            "type": "array",
+            "title": "Conditions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "namespace",
+          "ready"
+        ],
+        "title": "TopologyInfra"
       },
       "TopologyListener": {
         "properties": {
@@ -63298,11 +64997,37 @@
         ],
         "title": "TopologyLogging"
       },
+      "TopologyMcpInfo": {
+        "properties": {
+          "auth": {
+            "type": "string",
+            "title": "Auth"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "auth",
+          "tools"
+        ],
+        "title": "TopologyMcpInfo"
+      },
       "TopologyNetworkPolicy": {
         "properties": {
           "name": {
             "type": "string",
             "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
           },
           "namespace": {
             "type": "string",
@@ -63557,6 +65282,17 @@
             "type": "string",
             "title": "Kind"
           },
+          "resourceType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resourcetype"
+          },
           "hostnames": {
             "items": {
               "type": "string"
@@ -63600,6 +65336,21 @@
               }
             ],
             "title": "Conditionmessage"
+          },
+          "isMcp": {
+            "type": "boolean",
+            "title": "Ismcp",
+            "default": false
+          },
+          "mcpInfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TopologyMcpInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "serviceSettings": {
             "anyOf": [
@@ -63692,6 +65443,11 @@
             "type": "string",
             "title": "Name"
           },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
           "namespace": {
             "type": "string",
             "title": "Namespace"
@@ -63782,6 +65538,22 @@
           "gateway": {
             "type": "string",
             "title": "Gateway"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "infraName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infraname"
           }
         },
         "type": "object",
@@ -63802,6 +65574,22 @@
           "namespace": {
             "type": "string",
             "title": "Namespace"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "infraName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infraname"
           },
           "interfaces": {
             "items": {},
@@ -63851,6 +65639,28 @@
           "ready": {
             "type": "boolean",
             "title": "Ready"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
           }
         },
         "type": "object",

@@ -344,7 +344,7 @@ export default function Benchmarks() {
   const clusterParam = searchParams.get('cluster');
   const selectedClusterId = clusterParam ? Number(clusterParam) : undefined;
 
-  const handleClusterChange = useCallback((id: number | undefined) => {
+  const handleClusterChange = useCallback((id: number | null | undefined) => {
     const next = new URLSearchParams(searchParams);
     if (id != null) {
       next.set('cluster', String(id));

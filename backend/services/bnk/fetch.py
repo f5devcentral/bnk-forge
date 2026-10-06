@@ -7,8 +7,7 @@ modules (health, topology, etc.) consume the dict returned by
 """
 
 import logging
-import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 from kubernetes import client as k8s_client
@@ -32,13 +31,16 @@ from services.scanner.nodes import parse_node
 # when the user navigates/polls, while keeping staleness acceptable for views.
 _BNK_DATA_CACHE_TTL = 60
 _BNK_POD_DISCOVERY_CACHE_TTL = 60
+# Overall budget for one fetch burst (queue time on the shared pool included).
+# Covers the slowest wrapped call: pod discovery with the sweep, ~25s.
+_BNK_FETCH_DEADLINE_SECONDS = 30
 
 # Shared executor for BNK CRD/pod fetches. A per-request executor with
 # max_workers=20 explodes the process thread count when multiple BNK pages
 # are open (100+ threads observed on a laptop). Because this pool is shared
-# across all requests, we can keep more workers available without thread
-# explosion; the limit is network/batch parallelism to the K8s API.
-_BNK_FETCH_WORKERS = min(16, (os.cpu_count() or 4) + 4)
+# across all requests, it can hold more workers without that thread explosion;
+# the limit is network/batch parallelism to the K8s API.
+_BNK_FETCH_WORKERS = 64
 _bnk_fetch_executor: ThreadPoolExecutor | None = None
 
 
@@ -86,7 +88,7 @@ def _fetch_nodes(api_client) -> tuple[dict[str, dict[str, Any]], bool]:
     """Fetch cluster nodes and return a name-indexed enrichment map and success flag."""
     try:
         v1 = k8s_client.CoreV1Api(api_client)
-        nodes = v1.list_node(_request_timeout=10).items or []
+        nodes = v1.list_node(_request_timeout=(5, 15)).items or []
         result: dict[str, dict[str, Any]] = {}
         for node in nodes:
             enriched = _node_enrichment(node)
@@ -123,7 +125,9 @@ def _cached_discover_f5_pods(
         if cached is not None:
             return cached
 
-    result = discover_f5_pods(api_client, extra_namespaces=extra_namespaces)
+    # Without persisted namespaces (never scanned) the sweep is the only way to
+    # find BNK installed outside the standard namespaces.
+    result = discover_f5_pods(api_client, include_sweep=not extra_namespaces, extra_namespaces=extra_namespaces)
     cache.set(cache_key, result, ttl_seconds=_BNK_POD_DISCOVERY_CACHE_TTL)
     return result
 
@@ -209,7 +213,7 @@ def fetch_all_bnk_data(
                 jobs = batch_api.list_namespaced_job(
                     namespace=ns,
                     label_selector=_CRD_INSTALLER_LABEL,
-                    _request_timeout=10,
+                    _request_timeout=(5, 15),
                 ).items
                 if jobs:
                     job = jobs[0]
@@ -233,8 +237,21 @@ def fetch_all_bnk_data(
     job_future = executor.submit(fetch_crd_installer_job)
     nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 
+    all_futures = [*crd_futures.values(), pods_future, job_future]
+    if nodes_future is not None:
+        all_futures.append(nodes_future)
+    _, not_done = wait(all_futures, timeout=_BNK_FETCH_DEADLINE_SECONDS)
+    for fut in not_done:
+        fut.cancel()
+
+    had_error = bool(not_done)
+
     resources = {}
     for rt, fut in crd_futures.items():
+        if fut in not_done:
+            resources[rt] = []
+            had_error = True
+            continue
         try:
             items, failed = fut.result()
             resources[rt] = items
@@ -245,30 +262,39 @@ def fetch_all_bnk_data(
             resources[rt] = []
             had_error = True
 
-    try:
-        tenant_pods, utils_pods = pods_future.result()
-    except Exception as e:
-        logger.warning("Unexpected exception during pod discovery: %s", e)
-        tenant_pods, utils_pods = [], []
+    tenant_pods, utils_pods = [], []
+    if pods_future not in not_done:
+        try:
+            tenant_pods, utils_pods = pods_future.result()
+        except Exception as e:
+            logger.warning("Unexpected exception during pod discovery: %s", e)
+            had_error = True
+    else:
         had_error = True
 
-    try:
-        crd_installer_job, job_failed = job_future.result()
-        if job_failed:
+    crd_installer_job = None
+    if job_future not in not_done:
+        try:
+            crd_installer_job, job_failed = job_future.result()
+            if job_failed:
+                had_error = True
+        except Exception as e:
+            logger.warning("Unexpected exception fetching crd installer job: %s", e)
             had_error = True
-    except Exception as e:
-        logger.warning("Unexpected exception fetching crd installer job: %s", e)
-        crd_installer_job = None
+    else:
         had_error = True
 
     nodes: dict[str, dict[str, Any]] = {}
     if nodes_future is not None:
-        try:
-            nodes, nodes_failed = nodes_future.result()
-            if nodes_failed:
+        if nodes_future not in not_done:
+            try:
+                nodes, nodes_failed = nodes_future.result()
+                if nodes_failed:
+                    had_error = True
+            except Exception as e:
+                logger.warning("Unexpected exception fetching nodes: %s", e)
                 had_error = True
-        except Exception as e:
-            logger.warning("Unexpected exception fetching nodes: %s", e)
+        else:
             had_error = True
 
     classified = classify_f5_pods(tenant_pods, utils_pods)
@@ -282,6 +308,8 @@ def fetch_all_bnk_data(
         "cluster_id": cluster_id,
         "namespace": namespace,
     }
+    if had_error:
+        result["partial"] = True
     if not had_error:
         cache.set(cache_key, result, ttl_seconds=_BNK_DATA_CACHE_TTL)
     else:

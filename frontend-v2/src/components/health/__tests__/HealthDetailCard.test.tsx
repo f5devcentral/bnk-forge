@@ -212,4 +212,39 @@ describe('HealthDetailCard', () => {
 
     expect(onViewLogs).toHaveBeenCalledWith('f5-tmm-abc12', 'f5-bnk');
   });
+  it('renders Azure non-zonal zone 0 as Regional (Non-Zonal) in table and chips', async () => {
+    const user = _userEvent.setup();
+    const azurePods: HealthPodDetail[] = [
+      {
+        podName: 'f5-tmm-azr01',
+        nodeName: 'aks-nodepool1-vmss000000',
+        nodeZone: '0',
+        nodeInstanceType: 'Standard_D4s_v5',
+        phase: 'Running',
+        restartCount: 0,
+        containersReady: '1/1',
+      },
+    ];
+
+    render(
+      <HealthDetailCard
+        name="TMM (Data Plane)"
+        severity="healthy"
+        summary="1/1 pods running"
+        explanation="Azure non-zonal test"
+        podDetails={azurePods}
+        remediationActions={[]}
+        namespaces={['f5-bnk']}
+        zones={['0']}
+        nodes={['aks-nodepool1-vmss000000']}
+        clusterId={1}
+      />,
+    );
+
+    const header = screen.getByText('TMM (Data Plane)');
+    await user.click(header);
+
+    const matches = screen.getAllByText('Regional (Non-Zonal)');
+    expect(matches.length).toBeGreaterThanOrEqual(2); // In pod table and AZ chip
+  });
 });

@@ -94,6 +94,13 @@ def analyze_bnk_install(
             "has_data_plane": "k8s.f5net.com" in f5_crd_groups,
             "has_flo": "k8s.f5.com" in f5_crd_groups,
             "has_gateway_ext": "gateway.k8s.f5net.com" in f5_crd_groups,
+            "has_gateway_24": "gateway.k8s.f5.com" in f5_crd_groups,
+            "api_generation": (
+                "mixed" if ("gateway.k8s.f5.com" in f5_crd_groups and "gateway.k8s.f5net.com" in f5_crd_groups)
+                else "2.4" if "gateway.k8s.f5.com" in f5_crd_groups
+                else "2.3" if "gateway.k8s.f5net.com" in f5_crd_groups
+                else "none"
+            ),
         },
         "flo": {
             "version": flo_version,

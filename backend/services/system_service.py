@@ -117,7 +117,7 @@ class SystemService:
 
     _BNK_CONSUMPTION_CACHE_KEY = "system:bnk_consumption"
     _BNK_CONSUMPTION_TTL_SECONDS = 60
-    _BNK_CONSUMPTION_DEADLINE_SECONDS = 30
+    _BNK_CONSUMPTION_DEADLINE_SECONDS = 60
 
     def get_bnk_consumption(self) -> dict[str, Any]:
         """
@@ -140,11 +140,13 @@ class SystemService:
                 c.name,
                 getattr(c, "node_count", None),
                 c.status or "unknown",
+                getattr(c, "cloud_provider", None),
+                getattr(c, "region", None),
             )
             for c in clusters
         ]
 
-        def _collect_cluster(cluster_id: int, cluster_name: str, node_count: int | None, cluster_status: str) -> dict[str, Any]:
+        def _collect_cluster(cluster_id: int, cluster_name: str, node_count: int | None, cluster_status: str, cloud_provider: str | None, region: str | None) -> dict[str, Any]:
             from database import SessionLocal
 
             with SessionLocal() as thread_db:
@@ -189,6 +191,8 @@ class SystemService:
                     pod_metrics_response=pod_metrics_response,
                     dpf_summary=dpf_summary,
                     reachable=reachable,
+                    cloud_provider=cloud_provider,
+                    region=region,
                 )
 
         # Collect per-cluster data in parallel under one overall deadline.
@@ -200,11 +204,11 @@ class SystemService:
         executor = ThreadPoolExecutor(max_workers=min(len(cluster_payloads) or 1, 8))
         try:
             futures = {
-                executor.submit(_collect_cluster, c_id, c_name, c_nodes, c_status): (c_id, c_name, c_nodes, c_status)
-                for (c_id, c_name, c_nodes, c_status) in cluster_payloads
+                executor.submit(_collect_cluster, c_id, c_name, c_nodes, c_status, c_provider, c_region): (c_id, c_name, c_nodes, c_status, c_provider, c_region)
+                for (c_id, c_name, c_nodes, c_status, c_provider, c_region) in cluster_payloads
             }
             done, _ = wait(futures, timeout=deadline)
-            for future, (c_id, c_name, c_nodes, c_status) in futures.items():
+            for future, (c_id, c_name, c_nodes, c_status, c_provider, c_region) in futures.items():
                 if future not in done:
                     logger.warning(f"BNK consumption: cluster {c_name} (id={c_id}) timed out after {deadline}s")
                     error = "Timed out collecting cluster consumption"
@@ -224,6 +228,8 @@ class SystemService:
                     pod_metrics_response={"available": False, "error": error},
                     dpf_summary={"detected": False, "dpu_count": 0},
                     reachable=False,
+                    cloud_provider=c_provider,
+                    region=c_region,
                 ))
         finally:
             executor.shutdown(wait=False, cancel_futures=True)

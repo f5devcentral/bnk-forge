@@ -496,6 +496,32 @@ describe('TrafficFlowOverview', () => {
       });
     });
 
+    it('passes the registry key when clicking a BNK 2.4 L4Route', async () => {
+      const [gw] = populatedBnkData.topology;
+      const [listener] = gw.listeners;
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => HttpResponse.json({
+          ...populatedBnkData,
+          topology: [{
+            ...gw,
+            listeners: [{
+              ...listener,
+              routes: [{ ...listener.routes[0], name: 'l4-route', kind: 'L4Route', resourceType: 'l4route_24' }],
+            }],
+          }],
+        }))
+      );
+
+      const onSelect = vi.fn();
+      render(<TrafficFlowOverview clusterId={1} onSelectResource={onSelect} />);
+      const user = userEvent.setup();
+
+      await user.click(await screen.findByText('l4-route'));
+      expect(onSelect).toHaveBeenCalledWith({
+        kind: 'L4Route', name: 'l4-route', namespace: 'bnk-demo', resourceType: 'l4route_24',
+      });
+    });
+
     it('calls onSelectResource when clicking a SNAT pool in infrastructure', async () => {
       server.use(
         http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
@@ -574,6 +600,39 @@ describe('TrafficFlowOverview', () => {
         name: 'backend-route',
         namespace: 'bnk-demo',
       });
+    });
+
+    it('opens the parent Infra for Infra-projected VLANs and static routes', async () => {
+      server.use(
+        http.get('*/api/k8s/clusters/:id/f5bnk/data', () => {
+          return HttpResponse.json({
+            ...populatedBnkData,
+            dataPlane: {
+              ...populatedBnkData.dataPlane,
+              vlans: [{
+                name: 'infra-ext-net', namespace: 'f5-cne-system', kind: 'Infra', infraName: 'infra',
+                interfaces: ['ext-vlan-attach'], selfipV4s: [], prefixLen: null, mtu: 1500,
+                internal: false, autoLasthop: '', ready: true,
+              }],
+              staticRoutes: [{
+                name: 'egress-vpc', namespace: 'f5-cne-system', kind: 'Infra', infraName: 'infra',
+                destination: '10.0.0.0/16', gateway: '10.0.20.1',
+              }],
+            },
+          });
+        })
+      );
+
+      const onSelect = vi.fn();
+      render(<TrafficFlowOverview clusterId={1} onSelectResource={onSelect} />);
+      const user = userEvent.setup();
+
+      await user.click(await screen.findByText('Infrastructure & Data Plane'));
+      expect(await screen.findByText(/self-IPs from IPAM/)).toBeInTheDocument();
+      await user.click(screen.getByText('infra-ext-net'));
+      expect(onSelect).toHaveBeenLastCalledWith({ kind: 'Infra', name: 'infra', namespace: 'f5-cne-system' });
+      await user.click(screen.getByText('egress-vpc'));
+      expect(onSelect).toHaveBeenLastCalledWith({ kind: 'Infra', name: 'infra', namespace: 'f5-cne-system' });
     });
 
     it('calls onSelectResource when clicking an unmapped service name', async () => {

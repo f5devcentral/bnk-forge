@@ -53,16 +53,24 @@ class TopologyAnalyzer(BaseModel):
     parameters: dict[str, str]
 
 
+class TopologyMcpInfo(BaseModel):
+    auth: str
+    tools: list[str]
+
+
 class TopologyRoute(BaseModel):
     name: str
     namespace: str
     kind: str
+    resourceType: str | None = None  # registry key; L4Route has two (l4route, l4route_24)
     hostnames: list[str]
     backends: list[TopologyRouteBackend]
     analyzers: list[TopologyAnalyzer]
     accepted: bool = False
     conditions: list[TopologyCondition] = Field(default_factory=list)
     conditionMessage: str | None = None
+    isMcp: bool = False
+    mcpInfo: TopologyMcpInfo | None = None
     # L4Route per-backend service settings, keyed by backend then setting.
     serviceSettings: dict[str, dict[str, float]] | None = None
 
@@ -77,6 +85,7 @@ class TopologyNetworkPolicyExtension(BaseModel):
 
 class TopologyNetworkPolicy(BaseModel):
     name: str
+    kind: str = ""
     namespace: str
     extensions: list[TopologyNetworkPolicyExtension]
     resolvedCount: int
@@ -112,6 +121,7 @@ class TopologyFirewallPolicy(BaseModel):
 
 class TopologySecurityPolicy(BaseModel):
     name: str
+    kind: str = ""
     namespace: str
     targetListener: str
     firewallPolicies: list[TopologyFirewallPolicy]
@@ -130,6 +140,15 @@ class TopologyListener(BaseModel):
     networkPolicies: list[TopologyNetworkPolicy]
 
 
+class TopologyGatewaySettingsRef(BaseModel):
+    """GatewaySettings resolved from a Gateway's spec.infrastructure.parametersRef (BNK 2.4)."""
+    name: str
+    namespace: str
+    ingressConfig: dict[str, Any] = Field(default_factory=dict)
+    sourceNATPools: list[dict[str, Any]] = Field(default_factory=list)
+    egressConfigs: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class TopologyGateway(BaseModel):
     name: str
     namespace: str
@@ -140,6 +159,7 @@ class TopologyGateway(BaseModel):
     conditions: list[TopologyCondition] = Field(default_factory=list)
     listeners: list[TopologyListener]
     securityPolicies: list[TopologySecurityPolicy]
+    gatewaySettings: TopologyGatewaySettingsRef | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +170,8 @@ class TopologyGateway(BaseModel):
 class TopologyVlan(BaseModel):
     name: str
     namespace: str
+    kind: str = ""
+    infraName: str | None = None  # parent Infra when projected from a BNK 2.4 Infra network
     interfaces: list[Any]
     selfipV4s: list[str]
     prefixLen: int | str | None = None
@@ -157,6 +179,8 @@ class TopologyVlan(BaseModel):
     internal: bool
     autoLasthop: str
     ready: bool
+    type: str | None = None
+    tag: int | None = None
 
 
 class TopologyCneInstance(BaseModel):
@@ -174,6 +198,8 @@ class TopologyStaticRoute(BaseModel):
     namespace: str
     destination: str
     gateway: str
+    kind: str = ""
+    infraName: str | None = None
 
 
 class TopologySnatPool(BaseModel):
@@ -185,6 +211,7 @@ class TopologySnatPool(BaseModel):
 class TopologyEgress(BaseModel):
     name: str
     namespace: str
+    kind: str = ""
     snatType: str
     egressSnatpool: str | None = None
     firewallEnforcedPolicy: str | None = None
@@ -192,6 +219,27 @@ class TopologyEgress(BaseModel):
     capturedNamespaces: list[str]
     vxlan: dict[str, str] | None = None
     ready: bool
+    gatewayClassName: str | None = None
+    parametersRef: dict[str, Any] | None = None
+    sourceSelector: dict[str, Any] | None = None
+
+
+class TopologyInfra(BaseModel):
+    name: str
+    namespace: str
+    networks: list[dict[str, Any]] = Field(default_factory=list)
+    ipams: list[dict[str, Any]] = Field(default_factory=list)
+    networkAttachments: list[dict[str, Any]] = Field(default_factory=list)
+    staticRoutes: list[dict[str, Any]] = Field(default_factory=list)
+    vrfs: list[Any] = Field(default_factory=list)
+    egressDefaults: dict[str, Any] = Field(default_factory=dict)
+    ready: bool
+    conditions: list[TopologyCondition] = Field(default_factory=list)
+
+
+class TopologyGatewaySettings(TopologyGatewaySettingsRef):
+    ready: bool
+    conditions: list[TopologyCondition] = Field(default_factory=list)
 
 
 class TopologyLogging(BaseModel):
@@ -206,6 +254,9 @@ class TopologyDataPlane(BaseModel):
     snatPools: list[TopologySnatPool]
     egresses: list[TopologyEgress]
     logging: TopologyLogging
+    infra: list[TopologyInfra] = Field(default_factory=list)
+    gatewaySettings: list[TopologyGatewaySettings] = Field(default_factory=list)
+    egressGateways: list[TopologyEgress] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +305,11 @@ class TopologyCounts(BaseModel):
     egresses: int
     hslPublishers: int
     logProfiles: int
+    infra: int = 0
+    gatewaySettings: int = 0
+    egressGateways: int = 0
+    inferencePools: int = 0
+    f5epps: int = 0
 
 
 class GatewayTopologyResponse(BaseModel):

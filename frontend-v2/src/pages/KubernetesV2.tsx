@@ -39,7 +39,6 @@ import {
   Library,
   RefreshCw,
   LayoutDashboard,
-  Wrench,
   ScanSearch,
   Download,
   SlidersHorizontal,
@@ -65,6 +64,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
+import { useLinkedClusterProject } from '@/hooks/useLinkedClusterProject';
 import { STORAGE_KEYS } from '@/lib/storage-keys';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { DEBOUNCE_MS } from '@/lib/constants';
@@ -78,6 +78,7 @@ import {
   K8sClusterScanView,
   K8sHelmReleasesTable,
   K8sHelmChartBrowser,
+  K8sCrdExplorerPanel,
   isHelmResourceType,
   isResourceUnhealthy,
   useK8sDialogs,
@@ -137,23 +138,78 @@ export default function KubernetesV2() {
     return stored ? parseInt(stored) : null;
   });
 
-  // Strip ?project= once it's been consumed so refresh/back doesn't keep
-  // re-asserting the param after the user picks a different project.
+  // Consume and sync deep link searchParams
   useEffect(() => {
-    if (searchParams.get('project')) {
+    const clusterParam = searchParams.get('cluster');
+    const projectParam = searchParams.get('project');
+    const resourceParam = searchParams.get('resource');
+    const namespaceParam = searchParams.get('namespace');
+    const nameParam = searchParams.get('name');
+    const viewParam = searchParams.get('view');
+
+    if (clusterParam) {
+      const parsed = parseInt(clusterParam);
+      if (!Number.isNaN(parsed)) {
+        setSelectedCluster(parsed);
+        setLinkedCluster(parsed);
+      }
+    }
+    if (projectParam) {
+      const parsed = parseInt(projectParam);
+      if (!Number.isNaN(parsed)) setSelectedProject(parsed);
+    }
+    if (resourceParam) {
+      const lower = resourceParam.toLowerCase();
+      if (lower === 'ingresses') setSelectedResourceType('ingress');
+      else if (lower === 'services') setSelectedResourceType('service');
+      else if (lower === 'httproutes') setSelectedResourceType('httproute');
+      else if (lower === 'virtualservers' || lower === 'virtualserver') setSelectedResourceType('cis_virtualserver');
+      else setSelectedResourceType(lower);
+    }
+    if (namespaceParam) {
+      setSelectedNamespace(namespaceParam);
+    }
+    if (nameParam !== null && nameParam !== undefined) {
+      setSearchQuery(nameParam);
+    }
+    if (viewParam && ['advanced', 'migration', 'dashboard', 'crds'].includes(viewParam)) {
+      setViewMode(viewParam as 'dashboard' | 'advanced' | 'crds' | 'migration');
+    }
+
+    const paramsToClean = ['project', 'cluster', 'namespace', 'resource', 'name', 'view'];
+    const hasAny = paramsToClean.some((p) => searchParams.has(p));
+    if (hasAny) {
       const next = new URLSearchParams(searchParams);
-      next.delete('project');
+      paramsToClean.forEach((p) => next.delete(p));
       setSearchParams(next, { replace: true });
     }
+    // setLinkedCluster is a state setter from useLinkedClusterProject below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams, setSearchParams]);
+
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
+    const fromUrl = searchParams.get('cluster');
+    if (fromUrl) {
+      const parsed = parseInt(fromUrl);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER);
     return stored ? parseInt(stored) : null;
   });
+
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
+    const fromUrl = searchParams.get('resource');
+    if (fromUrl) {
+      const lower = fromUrl.toLowerCase();
+      if (lower === 'ingresses') return 'ingress';
+      if (lower === 'services') return 'service';
+      if (lower === 'httproutes') return 'httproute';
+      if (lower === 'virtualservers' || lower === 'virtualserver') return 'cis_virtualserver';
+      return lower;
+    }
     return localStorage.getItem(STORAGE_KEYS.K8S_RESOURCE_TYPE) || 'pod';
   });
+
   // Default to a real namespace rather than 'all'. Cluster-wide mode is
   // expensive on real clusters (thousands of pods, MB of data per kind) and
   // it doesn't serve the deployment-focused goal of this tool — users should
@@ -161,12 +217,17 @@ export default function KubernetesV2() {
   // Namespace selection is persisted per-cluster so switching clusters
   // doesn't carry a namespace that doesn't exist on the new cluster.
   const [selectedNamespace, setSelectedNamespace] = useState<string>(() => {
-    const clusterId = localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER);
+    const fromUrl = searchParams.get('namespace');
+    if (fromUrl) return fromUrl;
+    const clusterId = searchParams.get('cluster') || localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER);
     if (!clusterId) return 'default';
     const stored = localStorage.getItem(`${STORAGE_KEYS.K8S_NAMESPACE}:${clusterId}`);
     return stored || 'default';
   });
-  const [searchQuery, setSearchQuery] = useState('');
+
+  const [searchQuery, setSearchQuery] = useState(() => {
+    return searchParams.get('name') || '';
+  });
   const debouncedSearchQuery = useDebounce(searchQuery, DEBOUNCE_MS.SEARCH);
   const [selectedResource, setSelectedResource] = useState<K8sResource | null>(null);
 
@@ -178,10 +239,12 @@ export default function KubernetesV2() {
 
   // View mode — "dashboard" shows the BNK-deployment-focused scan view as the
   // default landing. "advanced" shows the generic resource browser (sidebar
-  // tree + table). "migration" shows the proxy/CIS migration surface.
-  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'migration'>(() => {
+  // tree + table). "crds" shows the dedicated CRD explorer. "migration" shows the proxy/CIS migration surface.
+  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'crds' | 'migration'>(() => {
+    const fromUrl = searchParams.get('view');
+    if (fromUrl === 'advanced' || fromUrl === 'migration' || fromUrl === 'dashboard' || fromUrl === 'crds') return fromUrl;
     const stored = localStorage.getItem(STORAGE_KEYS.K8S_VIEW_MODE);
-    if (stored === 'advanced' || stored === 'migration') return stored;
+    if (stored === 'advanced' || stored === 'migration' || stored === 'crds') return stored;
     return 'dashboard';
   });
 
@@ -280,6 +343,14 @@ export default function KubernetesV2() {
     }
   }, [selectedCluster, selectedProject, allClusters]);
 
+  const { linkPending, setLinkedCluster } = useLinkedClusterProject(null, {
+    allClusters,
+    allClustersLoaded: allClustersResponse !== undefined,
+    visibleClusters: clusters ?? [],
+    selectedProject,
+    setSelectedProject,
+  });
+
   // Auto-select a cluster when a project is in scope and either no cluster
   // is selected yet, or the previously stored selection isn't in this
   // project's cluster list. If the project has exactly one cluster, pick
@@ -287,7 +358,7 @@ export default function KubernetesV2() {
   // dropdown — this just removes the dead state where a project page
   // lands with a cluster dropdown that needs manual selection.
   useEffect(() => {
-    if (!selectedProject) return;
+    if (!selectedProject || linkPending) return;
     const projectClusters = clusters ?? [];
     if (projectClusters.length === 0) return;
     const stillValid = selectedCluster
@@ -296,7 +367,7 @@ export default function KubernetesV2() {
     if (!stillValid) {
       setSelectedCluster(projectClusters[0].id);
     }
-  }, [selectedProject, clusters, selectedCluster]);
+  }, [selectedProject, clusters, selectedCluster, linkPending]);
   const visibleClusters = useMemo(() => {
     if (!selectedProject) return clusters ?? [];
     if ((clusters ?? []).length > 0) return clusters ?? [];
@@ -728,16 +799,16 @@ export default function KubernetesV2() {
       </ResourcePageHeader>
 
       {/* View-mode tab strip — Dashboard (BNK readiness) | Advanced (raw
-          browser) | Migration (proxy/CIS migration). Shared ResourceViewTabs
-          idiom, identical to F5 BNK/CNF. */}
+          browser) | CRDs (Custom Resource Definitions) | Migration (proxy/CIS migration). */}
       {selectedCluster && (
         <ResourceViewTabs
           aria-label="Kubernetes view mode"
           active={viewMode}
-          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'migration')}
+          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'crds' | 'migration')}
           tabs={[
             { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, title: 'BNK-focused deployment dashboard' },
-            { key: 'advanced', label: 'Advanced', icon: Wrench, title: 'Generic Kubernetes resource browser for troubleshooting' },
+            { key: 'advanced', label: 'Workloads & Core', icon: Container, title: 'Kubernetes workloads, networking, config and nodes' },
+            { key: 'crds', label: 'Custom Resources (CRDs)', icon: Database, title: 'Browse installed Custom Resource Definitions and live instances' },
             { key: 'migration', label: 'Migration', icon: ArrowRightLeft, title: 'Migrate existing proxies / classic BIG-IP (CIS) to BNK' },
           ]}
         />
@@ -745,8 +816,8 @@ export default function KubernetesV2() {
 
       {/* Main Content Area */}
       <ResourceExplorerLayout.Body>
-        {/* Left Sidebar — Advanced mode only. In Dashboard mode the BNK
-            readiness view spans full width (no category tree needed). */}
+        {/* Left Sidebar — Advanced mode only. In Dashboard/CRDs/Migration mode
+            the view spans full width (no category tree needed). */}
         {viewMode === 'advanced' && (
           <K8sSidebar
             clusterId={selectedCluster}
@@ -762,7 +833,7 @@ export default function KubernetesV2() {
           />
         )}
 
-        {/* Middle: Resource Table / Helm Releases / Chart Browser / Empty/Scan View */}
+        {/* Middle: Resource Table / Helm Releases / Chart Browser / CRD Explorer / Empty / Scan View */}
         <ResourceExplorerLayout.Content
           className="flex flex-col bg-muted/30"
         >
@@ -778,6 +849,10 @@ export default function KubernetesV2() {
                 onClick: () => setShowDetectConfirm(true),
               }}
             />
+          ) : viewMode === 'crds' ? (
+            <div className="p-6 space-y-6">
+              <K8sCrdExplorerPanel clusterId={selectedCluster} />
+            </div>
           ) : viewMode === 'migration' ? (
             /* Migration mode: proxy/CIS migration surface (D-022 P6 Slice A).
                Canonical single location for migration — removed from Fleet page

@@ -145,6 +145,20 @@ export interface HealthVlanComponent {
   }>;
 }
 
+/** BNK 2.4 Infra CRs (networks and IPAM pools that replace F5SPKVlan). */
+export interface HealthInfraComponent {
+  total: number;
+  programmed: number;
+  severity: HealthSeverity;
+  explanation: string;
+  details: Array<{
+    name: string;
+    programmed: boolean;
+    networks: number;
+    ipams: number;
+  }>;
+}
+
 export interface HealthIRulesComponent {
   total: number;
   accepted: number;
@@ -188,6 +202,9 @@ export interface BnkHealthResponse {
     severity: HealthSeverity;
     gateways: HealthGatewayComponent;
     vlans: HealthVlanComponent;
+    infra?: HealthInfraComponent | null;
+    gatewaySettings?: number;
+    egressGateways?: number;
     listeners: number;
     httpRoutes: number;
     staticRoutes: number;
@@ -209,6 +226,14 @@ export interface BnkHealthResponse {
       name: string;
       namespace: string;
       schedule: string;
+    }>;
+    f5epps?: number;
+    inferencePools?: number;
+    inferencePoolDetails?: Array<{
+      name: string;
+      namespace: string;
+      targetPorts: number[];
+      endpointPicker: string;
     }>;
   };
   counts: {
@@ -427,6 +452,7 @@ export interface TopologyRoute {
   name: string;
   namespace: string;
   kind: string;   // "HTTPRoute", "TCPRoute", "UDPRoute", "TLSRoute", "GRPCRoute", "L4Route"
+  resourceType?: string;  // registry key to fetch it by; L4Route has two (l4route, l4route_24)
   hostnames: string[];
   backends: TopologyRouteBackend[];
   analyzers: TopologyAnalyzer[];
@@ -445,6 +471,7 @@ export interface TopologyNetworkPolicyExtension {
 
 export interface TopologyNetworkPolicy {
   name: string;
+  kind?: string;  // "NetPolicy" (2.4) or "BNKNetPolicy"
   namespace: string;
   extensions: TopologyNetworkPolicyExtension[];
   resolvedCount: number;
@@ -474,6 +501,7 @@ export interface TopologyFirewallPolicy {
 
 export interface TopologySecurityPolicy {
   name: string;
+  kind?: string;  // "SecPolicy" (2.4) or "BNKSecPolicy"
   namespace: string;
   targetListener: string;
   firewallPolicies: TopologyFirewallPolicy[];
@@ -507,6 +535,8 @@ export interface TopologyGateway {
 export interface TopologyVlan {
   name: string;
   namespace: string;
+  kind?: string;
+  infraName?: string;  // parent Infra when projected from a 2.4 Infra network
   interfaces: unknown[];
   selfipV4s: string[];
   prefixLen: number | null;
@@ -531,6 +561,8 @@ export interface TopologyStaticRoute {
   namespace: string;
   destination: string;
   gateway: string;
+  kind?: string;
+  infraName?: string;
 }
 
 export interface TopologySnatPool {
@@ -542,6 +574,7 @@ export interface TopologySnatPool {
 export interface TopologyEgress {
   name: string;
   namespace: string;
+  kind?: string;
   snatType: string;
   egressSnatpool: string | null;
   firewallEnforcedPolicy: string | null;
@@ -865,6 +898,7 @@ export interface A2AAgentCard {
   defaultOutputModes: string[];
   provider: Record<string, string>;
   securitySchemes: Record<string, unknown>;
+  governance?: Record<string, string | number | boolean>;
   iconUrl?: string | null;
 }
 

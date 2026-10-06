@@ -495,3 +495,4 @@ def get_azure_service_principal_info(project: Project | None, db=None) -> tuple[
         return (env_tenant, env_client_id, env_client_secret)
 
     return None
+

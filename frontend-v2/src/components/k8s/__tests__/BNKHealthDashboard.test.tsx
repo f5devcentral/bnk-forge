@@ -428,6 +428,32 @@ describe('BNKHealthDashboard', () => {
       });
     });
 
+    it('renders an Infra card for a BNK 2.4 cluster with no F5SPKVlans', async () => {
+      server.use(
+        mockHealthHandler({
+          ...mockBnkData.health,
+          networking: {
+            ...mockBnkData.health.networking,
+            severity: 'critical' as const,
+            vlans: { total: 0, programmed: 0, severity: 'unknown' as const, explanation: '', details: [] },
+            infra: {
+              total: 1,
+              programmed: 0,
+              severity: 'critical' as const,
+              explanation: 'Underlay network & IPAM infrastructure (2.4).',
+              details: [{ name: 'infra', programmed: false, networks: 2, ipams: 3 }],
+            },
+          },
+        }),
+      );
+
+      render(<BNKHealthDashboard clusterId={1} />);
+
+      expect(await screen.findByText('Infra')).toBeInTheDocument();
+      expect(screen.getByText('0/1 programmed')).toBeInTheDocument();
+      expect(screen.queryByText('VLANs')).not.toBeInTheDocument();
+    });
+
     it('renders iRules card', async () => {
       render(<BNKHealthDashboard clusterId={1} />);
 
