@@ -7,7 +7,6 @@ modules (health, topology, etc.) consume the dict returned by
 """
 
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
@@ -32,9 +31,6 @@ from services.scanner.nodes import parse_node
 # when the user navigates/polls, while keeping staleness acceptable for views.
 _BNK_DATA_CACHE_TTL = 60
 _BNK_POD_DISCOVERY_CACHE_TTL = 60
-# A fetch that hit the deadline is cached only briefly so a slow cluster
-# doesn't show "BNK not installed" for the full TTL.
-_BNK_PARTIAL_CACHE_TTL = 10
 # Overall budget for one fetch burst (queue time on the shared pool included).
 # Covers the slowest wrapped call: pod discovery with the sweep, ~25s.
 _BNK_FETCH_DEADLINE_SECONDS = 30
@@ -314,8 +310,8 @@ def fetch_all_bnk_data(
     }
     if had_error:
         result["partial"] = True
-        cache.set(cache_key, result, ttl_seconds=_BNK_PARTIAL_CACHE_TTL)
-        logger.warning("Cached BNK data with partial=True for cluster %s (short TTL)", cluster_id)
-    else:
+    if not had_error:
         cache.set(cache_key, result, ttl_seconds=_BNK_DATA_CACHE_TTL)
+    else:
+        logger.warning("Skipped caching BNK data for cluster %s due to partial fetch failures", cluster_id)
     return result
