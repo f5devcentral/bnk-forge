@@ -96,6 +96,8 @@ redis:
 # ─── Backend (API) ─────────────────────────────────────────────────────────
 api:
   enabled: true
+  # Note: replicaCount MUST remain 1 because agent WebSocket registry and run dispatch
+  # state are maintained in API process memory.
   replicaCount: 1
   image:
     repository: bnk-forge-api

@@ -19,6 +19,7 @@ from services.benchmark_service import BenchmarkService
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _agent(db, name="test-agent"):
     agent = BenchmarkAgent(
         name=name,
@@ -76,6 +77,7 @@ def _child(db, group_id, status, **overrides):
 # ---------------------------------------------------------------------------
 # C1 — cancel-the-whole-group
 # ---------------------------------------------------------------------------
+
 
 class TestCancelRunGroupSemantics:
     def test_cancel_groupChild_cancelsAllSiblingsAndFinalizesGroup(self, db):
@@ -138,8 +140,12 @@ class TestCancelRunGroupSemantics:
         group = _group(db, status="running", total_runs=2)
         grouped = _child(db, group.id, "pending", variant_label="grouped")
         standalone = BenchmarkRun(
-            tool="aiperf", proxy="nodeport", model="m", base_url="http://x",
-            status="running", run_group_id=None,
+            tool="aiperf",
+            proxy="nodeport",
+            model="m",
+            base_url="http://x",
+            status="running",
+            run_group_id=None,
         )
         db.add(standalone)
         db.commit()
@@ -161,6 +167,7 @@ class TestCancelRunGroupSemantics:
 # ---------------------------------------------------------------------------
 # C2 — finalize labelling + count reconciliation
 # ---------------------------------------------------------------------------
+
 
 class TestFinalizeRunGroupLabelling:
     def test_allCancelled_finalizesCancelled(self, db):
@@ -236,6 +243,7 @@ class TestFinalizeRunGroupLabelling:
 # ---------------------------------------------------------------------------
 # H1 — atomic claim
 # ---------------------------------------------------------------------------
+
 
 class TestClaimPendingRun:
     def test_claim_pendingRun_succeedsAndTransitionsToRunning(self, db):
@@ -321,6 +329,7 @@ class TestGetFirstPendingRunForAgent:
 # pick different sibling rows.
 # ---------------------------------------------------------------------------
 
+
 class TestGroupGuardedClaim:
     def test_claim_withGroupGuard_failsWhenSiblingRunning(self, db):
         group = _group(db, status="running", total_runs=2)
@@ -384,6 +393,7 @@ class TestGroupGuardedClaim:
 # connect-drain cannot win a second claim of the same row and double-dispatch.
 # ---------------------------------------------------------------------------
 
+
 class TestInitialDispatchVsDrainRace:
     def test_initialClaim_blocksConcurrentDrainClaim_sameRow(self, db):
         group = _group(db, status="pending", total_runs=1)
@@ -426,6 +436,7 @@ class TestInitialDispatchVsDrainRace:
 # monkeypatched (no real WebSocket).
 # ---------------------------------------------------------------------------
 
+
 class TestDispatchNextGroupChildDrainPath:
     async def test_dispatch_claimsAndSends_thenGroupFlipsRunning(self, db, monkeypatch):
         import routes.benchmarks as bench_routes
@@ -440,7 +451,10 @@ class TestDispatchNextGroupChildDrainPath:
 
         group = _group(db, status="pending", total_runs=1)
         child = _child(
-            db, group.id, "pending", variant_label="only",
+            db,
+            group.id,
+            "pending",
+            variant_label="only",
             config_snapshot={"concurrency": 7},
         )
         svc = BenchmarkService(db)
@@ -481,6 +495,31 @@ class TestDispatchNextGroupChildDrainPath:
         # No running child → the drain leaves the group PENDING.
         assert svc.find_running_group_child(group.id) is None
 
+    async def test_dispatch_returns_false_when_no_pending_children(self, db):
+        import routes.benchmarks as bench_routes
+
+        group = _group(db, status="running", total_runs=1)
+        _child(db, group.id, "completed", variant_label="done")
+        svc = BenchmarkService(db)
+
+        dispatched = await bench_routes._dispatch_next_group_child(svc, agent_id=1, group_id=group.id)
+        assert dispatched is False
+
+    async def test_dispatch_returns_true_when_child_claimed_and_sent(self, db, monkeypatch):
+        import routes.benchmarks as bench_routes
+
+        async def fake_send(agent_id, command):
+            return True
+
+        monkeypatch.setattr(bench_routes, "send_command_to_agent", fake_send)
+
+        group = _group(db, status="pending", total_runs=1)
+        _child(db, group.id, "pending", variant_label="c1")
+        svc = BenchmarkService(db)
+
+        dispatched = await bench_routes._dispatch_next_group_child(svc, agent_id=1, group_id=group.id)
+        assert dispatched is True
+
     async def test_dispatch_skipsWhenSiblingAlreadyRunning(self, db, monkeypatch):
         # MAJOR-2 deterministic: the drain races a run just having been dispatched
         # to a sibling. get_next_pending_group_run picks the pending child, but the
@@ -508,10 +547,7 @@ class TestDispatchNextGroupChildDrainPath:
         db.refresh(s1)
         assert s1.status == BenchmarkRunStatus.PENDING
         # Still exactly one running child in the group.
-        running = [
-            c for c in svc.get_run_group(group.id).runs
-            if c.status == BenchmarkRunStatus.RUNNING
-        ]
+        running = [c for c in svc.get_run_group(group.id).runs if c.status == BenchmarkRunStatus.RUNNING]
         assert len(running) == 1
 
     async def test_dispatch_noPendingChild_isNoop(self, db, monkeypatch):
@@ -536,6 +572,7 @@ class TestDispatchNextGroupChildDrainPath:
 # ---------------------------------------------------------------------------
 # NIT-D — Atomic run-group PENDING→RUNNING transition on connect-drain
 # ---------------------------------------------------------------------------
+
 
 class TestMarkRunGroupRunningIfPending:
     def test_transitions_pendingGroup_to_running_when_child_running(self, db):
@@ -574,7 +611,6 @@ class TestMarkRunGroupRunningIfPending:
 
         # Already RUNNING, rowcount == 0 so returns False
         assert transitioned is False
-
 
 
 class TestFailInterruptedRunsForAgent:
