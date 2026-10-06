@@ -550,6 +550,8 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     already exists, it updates its info and marks it as connected.
     """
     claims = _require_agent_bearer(request) or _optional_bearer_claims(request)
+    # An agent-bound token may only re-register (upsert by name) its own agent.
+    _bind_agent_name(_token_agent(claims, db), data.name)
     bootstrap = _is_bootstrap_token(claims)
     existing_agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
     builtin_row = _is_builtin_agent(existing_agent)
@@ -560,10 +562,6 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
         # auth off every caller (the built-in agent included) is anonymous, so the
         # row is kept marked instead.
         raise ConflictError("benchmark_agent", f"Agent '{data.name}' is the built-in agent")
-    elif existing_agent and claims.get("role") == "agent" and claims.get("agent_id") is not None:
-        # An agent-bound token may only re-register (upsert by name) its own agent.
-        bound = _token_agent(claims, db)
-        _bind_agent_name(bound, data.name)
     payload = data.model_dump()
     payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap or builtin_row)
     svc = BenchmarkService(db)
@@ -701,6 +699,8 @@ def delete_benchmark_agent(
     agent = svc.get_agent(agent_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
+    elif effective_role(user) != "admin":
+        raise ForbiddenError("Deleting an unscoped agent requires admin")
     svc.delete_agent(agent_id)
     db.commit()
     close_agent_connection(agent_id)
