@@ -86,8 +86,13 @@ def _raw_stats(
         "podName": "f5-tmm-abc123",
         "namespace": "f5-bnk",
         "virtualServerStat": {
-            "columns": ["name", "clientside.bytes_in", "clientside.bytes_out",
-                        "clientside.cur_conns", "clientside.tot_conns"],
+            "columns": [
+                "name",
+                "clientside.bytes_in",
+                "clientside.bytes_out",
+                "clientside.cur_conns",
+                "clientside.tot_conns",
+            ],
             "rows": vs_rows or [],
             "exit_code": 0,
         },
@@ -123,9 +128,11 @@ class TestAnalyzeTrafficStats:
         assert result["error"] == "debug sidecar unreachable"
 
     def test_maps_virtual_server_stat_to_listener(self):
-        raw = _raw_stats(vs_rows=[
-            ["gw-prod_http", "1024", "2048", "5", "100"],
-        ])
+        raw = _raw_stats(
+            vs_rows=[
+                ["gw-prod_http", "1024", "2048", "5", "100"],
+            ]
+        )
         result = analyze_traffic_stats(_data(), raw)
 
         assert result["available"] is True
@@ -137,19 +144,23 @@ class TestAnalyzeTrafficStats:
         assert listener["clientsideCurConns"] == 5
 
     def test_sums_virtual_server_stat_for_same_listener(self):
-        raw = _raw_stats(vs_rows=[
-            ["gw-prod_http", "1024", "2048", "1", "10"],
-            ["gw-prod_http", "100", "200", "2", "20"],
-        ])
+        raw = _raw_stats(
+            vs_rows=[
+                ["gw-prod_http", "1024", "2048", "1", "10"],
+                ["gw-prod_http", "100", "200", "2", "20"],
+            ]
+        )
         result = analyze_traffic_stats(_data(), raw)
 
         assert len(result["listeners"]) == 1
         assert result["listeners"][0]["clientsideTotConns"] == 30
 
     def test_maps_virtual_server_stat_to_egress(self):
-        raw = _raw_stats(vs_rows=[
-            ["egress-demo", "512", "256", "1", "42"],
-        ])
+        raw = _raw_stats(
+            vs_rows=[
+                ["egress-demo", "512", "256", "1", "42"],
+            ]
+        )
         result = analyze_traffic_stats(_data(), raw)
 
         assert len(result["egresses"]) == 1
@@ -158,9 +169,11 @@ class TestAnalyzeTrafficStats:
         assert egress["clientsideTotConns"] == 42
 
     def test_maps_firewall_rule_hits(self):
-        raw = _raw_stats(fw_rows=[
-            ["fw-deny_deny-ssh", "7", "drop"],
-        ])
+        raw = _raw_stats(
+            fw_rows=[
+                ["fw-deny_deny-ssh", "7", "drop"],
+            ]
+        )
         result = analyze_traffic_stats(_data(), raw)
 
         assert len(result["firewallRules"]) == 1
@@ -170,9 +183,11 @@ class TestAnalyzeTrafficStats:
         assert rule["hitCount"] == 7
 
     def test_keeps_unmatched_firewall_rule_for_observability(self):
-        raw = _raw_stats(fw_rows=[
-            ["some-unknown-rule", "3", "accept"],
-        ])
+        raw = _raw_stats(
+            fw_rows=[
+                ["some-unknown-rule", "3", "accept"],
+            ]
+        )
         result = analyze_traffic_stats(_data(), raw)
 
         assert len(result["firewallRules"]) == 1
@@ -184,13 +199,15 @@ class TestAnalyzeTrafficStats:
             vs_rows=[
                 ["vs-custom-name", "100", "200", "1", "10"],
             ],
-            configview_mappings=[{
-                "uuid": "uuid-1",
-                "virtual_server_name": "vs-custom-name",
-                "gateway_name": "gw-prod",
-                "listener_name": "https",
-                "namespace": "f5-bnk",
-            }],
+            configview_mappings=[
+                {
+                    "uuid": "uuid-1",
+                    "virtual_server_name": "vs-custom-name",
+                    "gateway_name": "gw-prod",
+                    "listener_name": "https",
+                    "namespace": "f5-bnk",
+                }
+            ],
         )
         result = analyze_traffic_stats(_data(), raw)
 
@@ -260,20 +277,30 @@ class TestMatchVirtualServerRow:
     def test_matches_listener_by_name(self):
         listener_index = _build_listener_index(_topology())
         kind, matched = _match_virtual_server_row(
-            {"name": "gw-prod_http"}, listener_index, {}, {},
+            {"name": "gw-prod_http"},
+            listener_index,
+            {},
+            {},
         )
         assert kind == "listener"
         assert matched["listenerName"] == "http"
 
     def test_prefers_configview_hint(self):
         listener_index = _build_listener_index(_topology())
-        configview_index = _build_configview_index([{
-            "virtual_server_name": "gw-prod_http",
-            "egress_name": "egress-demo",
-            "namespace": "f5-bnk",
-        }])
+        configview_index = _build_configview_index(
+            [
+                {
+                    "virtual_server_name": "gw-prod_http",
+                    "egress_name": "egress-demo",
+                    "namespace": "f5-bnk",
+                }
+            ]
+        )
         kind, matched = _match_virtual_server_row(
-            {"name": "gw-prod_http"}, listener_index, {}, configview_index,
+            {"name": "gw-prod_http"},
+            listener_index,
+            {},
+            configview_index,
         )
         assert kind == "egress"
         assert matched["egressName"] == "egress-demo"
@@ -287,17 +314,24 @@ class TestMatchVirtualServerRow:
 class TestPickTmmPod:
     def test_picks_running_pod_with_debug_container(self):
         pods = [
-            {"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running",
-             "containers": [{"name": "tmm"}, {"name": "debug"}]},
-            {"name": "f5-tmm-b", "namespace": "f5-bnk", "phase": "Pending",
-             "containers": [{"name": "tmm"}, {"name": "debug"}]},
+            {
+                "name": "f5-tmm-a",
+                "namespace": "f5-bnk",
+                "phase": "Running",
+                "containers": [{"name": "tmm"}, {"name": "debug"}],
+            },
+            {
+                "name": "f5-tmm-b",
+                "namespace": "f5-bnk",
+                "phase": "Pending",
+                "containers": [{"name": "tmm"}, {"name": "debug"}],
+            },
         ]
         assert _pick_tmm_pod(pods) == pods[0]
 
     def test_skips_pod_without_debug_container(self):
         pods = [
-            {"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running",
-             "containers": [{"name": "tmm"}]},
+            {"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running", "containers": [{"name": "tmm"}]},
         ]
         assert _pick_tmm_pod(pods) is None
 
@@ -322,6 +356,7 @@ class TestFetchTmmTrafficStats:
 def _normalize_key(name: str) -> str:
     """Use the module's normalization logic directly."""
     from services.bnk.traffic_stats import _normalize_name
+
     return _normalize_name(name)
 
 
@@ -329,16 +364,53 @@ class TestFetchForce:
     def test_force_propagates_to_exec_and_mapping_caches(self):
         from unittest.mock import patch
 
-        pods = {"tmm": [{"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running",
-                         "containers": [{"name": "debug"}]}]}
+        pods = {
+            "tmm": [{"name": "f5-tmm-a", "namespace": "f5-bnk", "phase": "Running", "containers": [{"name": "debug"}]}]
+        }
         vs = {"columns": ["name"], "rows": [["gw-prod_http"]], "exit_code": 0}
-        with patch("services.bnk.traffic_stats.cache") as mock_cache, \
-                patch("services.bnk.traffic_stats.exec_tmctl", return_value=vs) as mock_tmctl, \
-                patch("services.bnk.traffic_stats.discover_configview_uuids",
-                      return_value={"exit_code": 0, "uuids": []}) as mock_uuids:
+        with (
+            patch("services.bnk.traffic_stats.cache") as mock_cache,
+            patch("services.bnk.traffic_stats.exec_tmctl", return_value=vs) as mock_tmctl,
+            patch(
+                "services.bnk.traffic_stats.discover_configview_uuids", return_value={"exit_code": 0, "uuids": []}
+            ) as mock_uuids,
+        ):
             mock_cache.get.return_value = [{"uuid": "stale"}]
             fetch_tmm_traffic_stats(None, pods, cluster_id=1, force=True)  # type: ignore[arg-type]
 
         mock_cache.get.assert_not_called()
         assert all(c.kwargs["force"] is True for c in mock_tmctl.call_args_list)
         assert mock_uuids.call_args.kwargs["force"] is True
+
+
+class TestMultiGatewayDisambiguation:
+    def test_same_listener_name_across_multiple_gateways_does_not_collide(self):
+        topology = [
+            {
+                "name": "gw-prod",
+                "namespace": "f5-bnk",
+                "listeners": [{"name": "http", "protocol": "HTTP", "port": 80}],
+            },
+            {
+                "name": "gw-stage",
+                "namespace": "f5-bnk",
+                "listeners": [{"name": "http", "protocol": "HTTP", "port": 8080}],
+            },
+        ]
+        index = _build_listener_index(topology)
+        # Bare "http" MUST NOT be in index to avoid cross-gateway attribution
+        assert "http" not in index
+
+        # Row for gw-stage must match gw-stage, not gw-prod
+        row = {"name": "gw-stage_http"}
+        match_type, match_target = _match_virtual_server_row(row, index, {}, {})
+        assert match_type == "listener"
+        assert match_target["gatewayName"] == "gw-stage"
+        assert match_target["listenerName"] == "http"
+
+        # Row for gw-prod must match gw-prod
+        row = {"name": "gw-prod_http"}
+        match_type, match_target = _match_virtual_server_row(row, index, {}, {})
+        assert match_type == "listener"
+        assert match_target["gatewayName"] == "gw-prod"
+        assert match_target["listenerName"] == "http"

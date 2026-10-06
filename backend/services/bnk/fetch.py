@@ -6,11 +6,14 @@ modules (health, topology, etc.) consume the dict returned by
 ``fetch_all_bnk_data`` and are pure data transformations.
 """
 
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from kubernetes import client as k8s_client
+
+logger = logging.getLogger(__name__)
 
 from core.cache import cache
 from services.bnk.helpers import BNK_RESOURCE_TYPES
@@ -48,6 +51,7 @@ def _get_bnk_fetch_executor() -> ThreadPoolExecutor:
         )
     return _bnk_fetch_executor
 
+
 _CRD_INSTALLER_NAMESPACE = "f5-utils"
 _CRD_INSTALLER_LABEL = "app=crd-installer"
 
@@ -78,8 +82,8 @@ def _node_enrichment(node) -> dict[str, Any] | None:
     }
 
 
-def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
-    """Fetch cluster nodes and return a name-indexed enrichment map."""
+def _fetch_nodes(api_client) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Fetch cluster nodes and return a name-indexed enrichment map and success flag."""
     try:
         v1 = k8s_client.CoreV1Api(api_client)
         nodes = v1.list_node(_request_timeout=10).items or []
@@ -88,9 +92,10 @@ def _fetch_nodes(api_client) -> dict[str, dict[str, Any]]:
             enriched = _node_enrichment(node)
             if enriched:
                 result[enriched["name"]] = enriched
-        return result
-    except Exception:
-        return {}
+        return result, False
+    except Exception as e:
+        logger.warning("Failed to fetch nodes: %s", e)
+        return {}, True
 
 
 def _bnk_data_cache_key(cluster_id: int, namespace: str | None, include_nodes: bool) -> str:
@@ -111,7 +116,8 @@ def _cached_discover_f5_pods(
     """
     from core.cache import cache
 
-    cache_key = f"bnk:pods:{cluster_id}"
+    ns_suffix = f":{','.join(sorted(extra_namespaces))}" if extra_namespaces else ""
+    cache_key = f"bnk:pods:{cluster_id}{ns_suffix}"
     if not force:
         cached = cache.get(cache_key)
         if cached is not None:
@@ -157,19 +163,33 @@ def fetch_all_bnk_data(
     # observed F5 components in. This lets the fast-path phase find pods
     # in non-standard namespaces without relying on the expensive cluster-
     # wide sweep on every BNK page load.
-    persisted_namespaces: list[str] = list(
-        getattr(cluster, "discovered_namespaces", None) or []
-    )
+    persisted_namespaces: list[str] = list(getattr(cluster, "discovered_namespaces", None) or [])
 
-    def safe_fetch(resource_type_key: str) -> list[dict]:
+    had_error = False
+
+    # Pre-resolve resource types on the calling thread to prevent concurrent
+    # multi-threaded access to k8s_service.db (SQLAlchemy Session is not thread-safe).
+    resolved_types: dict[str, Any] = {}
+    for rt_key in BNK_RESOURCE_TYPES:
         try:
-            rt = resolve_resource_type(k8s_service.db, cluster_id, resource_type_key)
-            items = k8s_service._fetch_from_k8s(api_client, rt, namespace, None)
-            return [i for i in items if isinstance(i, dict)]
-        except Exception:
-            return []
+            resolved_types[rt_key] = resolve_resource_type(k8s_service.db, cluster_id, rt_key)
+        except Exception as e:
+            logger.warning("Failed to resolve resource type %s for cluster %s: %s", rt_key, cluster_id, e)
+            resolved_types[rt_key] = None
+            had_error = True
 
-    def fetch_crd_installer_job() -> dict | None:
+    def safe_fetch(resource_type_key: str) -> tuple[list[dict], bool]:
+        rt = resolved_types.get(resource_type_key)
+        if rt is None:
+            return [], True
+        try:
+            items = k8s_service._fetch_from_k8s(api_client, rt, namespace, None)
+            return [i for i in items if isinstance(i, dict)], False
+        except Exception as e:
+            logger.warning("Failed to fetch %s for cluster %s: %s", resource_type_key, cluster_id, e)
+            return [], True
+
+    def fetch_crd_installer_job() -> tuple[dict | None, bool]:
         """
         Fetch the crd-installer batch/v1 Job status.
 
@@ -198,26 +218,58 @@ def fetch_all_bnk_data(
                         "succeeded": status.succeeded or 0,
                         "failed": status.failed or 0,
                         "active": status.active or 0,
-                    }
-            return None
-        except Exception:
-            return None
+                    }, False
+            return None, False
+        except Exception as e:
+            logger.warning("Failed to fetch crd-installer job for cluster %s: %s", cluster_id, e)
+            return None, True
 
     # Fire all CRD fetches + pod discovery + job status + nodes in parallel.
     # Use the module-level shared executor so concurrent BNK page loads do not
     # each spawn 20 threads and overwhelm the backend process.
     executor = _get_bnk_fetch_executor()
     crd_futures = {rt: executor.submit(safe_fetch, rt) for rt in BNK_RESOURCE_TYPES}
-    pods_future = executor.submit(
-        _cached_discover_f5_pods, cluster_id, api_client, persisted_namespaces, force
-    )
+    pods_future = executor.submit(_cached_discover_f5_pods, cluster_id, api_client, persisted_namespaces, force)
     job_future = executor.submit(fetch_crd_installer_job)
     nodes_future = executor.submit(_fetch_nodes, api_client) if include_nodes else None
 
-    resources = {rt: fut.result() for rt, fut in crd_futures.items()}
-    tenant_pods, utils_pods = pods_future.result()
-    crd_installer_job = job_future.result()
-    nodes = nodes_future.result() if nodes_future is not None else {}
+    resources = {}
+    for rt, fut in crd_futures.items():
+        try:
+            items, failed = fut.result()
+            resources[rt] = items
+            if failed:
+                had_error = True
+        except Exception as e:
+            logger.warning("Unexpected exception fetching %s: %s", rt, e)
+            resources[rt] = []
+            had_error = True
+
+    try:
+        tenant_pods, utils_pods = pods_future.result()
+    except Exception as e:
+        logger.warning("Unexpected exception during pod discovery: %s", e)
+        tenant_pods, utils_pods = [], []
+        had_error = True
+
+    try:
+        crd_installer_job, job_failed = job_future.result()
+        if job_failed:
+            had_error = True
+    except Exception as e:
+        logger.warning("Unexpected exception fetching crd installer job: %s", e)
+        crd_installer_job = None
+        had_error = True
+
+    nodes: dict[str, dict[str, Any]] = {}
+    if nodes_future is not None:
+        try:
+            nodes, nodes_failed = nodes_future.result()
+            if nodes_failed:
+                had_error = True
+        except Exception as e:
+            logger.warning("Unexpected exception fetching nodes: %s", e)
+            had_error = True
 
     classified = classify_f5_pods(tenant_pods, utils_pods)
 
@@ -230,5 +282,8 @@ def fetch_all_bnk_data(
         "cluster_id": cluster_id,
         "namespace": namespace,
     }
-    cache.set(cache_key, result, ttl_seconds=_BNK_DATA_CACHE_TTL)
+    if not had_error:
+        cache.set(cache_key, result, ttl_seconds=_BNK_DATA_CACHE_TTL)
+    else:
+        logger.warning("Skipped caching BNK data for cluster %s due to partial fetch failures", cluster_id)
     return result

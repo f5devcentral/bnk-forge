@@ -30,7 +30,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
-import { keepPreviousForCluster } from '@/lib/queryKeys';
+import { keepPreviousForScope } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
@@ -486,7 +486,7 @@ export default function F5BNK() {
     }),
     enabled: !!selectedCluster && !!selectedResourceType && !isSpecialView(selectedResourceType) && clusterReachable,
     staleTime: 30000,
-    placeholderData: keepPreviousForCluster(selectedCluster ?? 0),
+    placeholderData: keepPreviousForScope(selectedCluster, selectedResourceType, selectedNamespace),
   });
 
   const { data: namespacesResponse } = useClusterNamespaces(selectedCluster || 0, {
