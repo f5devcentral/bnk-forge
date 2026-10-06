@@ -442,6 +442,9 @@ def global_search(
             )
         if (c.status or "active").lower() != "active":
             continue
+        # Skip clusters whose connectivity status is explicitly unreachable
+        if getattr(c, "connectivity_status", None) == "unreachable":
+            continue
         # Skip clusters the reachability probe already marks down.
         state = registry.get_state("cluster", c.id)
         if state and state.get("state") == ReachabilityState.UNREACHABLE:

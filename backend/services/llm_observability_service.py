@@ -221,6 +221,9 @@ class LlmObservabilityService:
     ) -> list[tuple[KubernetesCluster, Any]]:
         clients: list[tuple[KubernetesCluster, Any]] = []
         for c in self._active_clusters(project_id=project_id):
+            if getattr(c, "connectivity_status", None) == "unreachable":
+                errors[str(c.name)] = "unreachable"
+                continue
             # Skip clusters the reachability probe already marks down.
             state = reachability_registry.get_state("cluster", c.id)
             if state and state.get("state") == ReachabilityState.UNREACHABLE:
@@ -299,6 +302,7 @@ class LlmObservabilityService:
                 response_type="object",
                 auth_settings=["BearerToken"],
                 _return_http_data_only=True,
+                _request_timeout=(5, 15),
             )
         except ApiException as e:
             return None, f"{e.status} {e.reason}"

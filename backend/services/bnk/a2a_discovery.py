@@ -11,7 +11,6 @@ services behind HTTPRoutes that could be A2A agents. The optional
 probe phase (with I/O) attempts to fetch actual agent cards.
 """
 
-import ast
 import json
 import logging
 import time
@@ -149,13 +148,13 @@ def _find_http_backend_services(
 
 
 def _parse_json_or_python_dict(resp: Any) -> dict | None:
-    """Safely parse a response payload that may be valid JSON, a Python dict, or str(dict)."""
+    """Safely parse a response payload that may be valid JSON or YAML/dict."""
     if isinstance(resp, dict):
         return resp
     if not isinstance(resp, str):
         return None
     resp_str = resp.strip()
-    if not resp_str:
+    if not resp_str or len(resp_str) > 1_000_000:
         return None
     try:
         data = json.loads(resp_str)
@@ -164,7 +163,9 @@ def _parse_json_or_python_dict(resp: Any) -> dict | None:
     except Exception:
         pass
     try:
-        data = ast.literal_eval(resp_str)
+        import yaml
+
+        data = yaml.safe_load(resp_str)
         if isinstance(data, dict):
             return data
     except Exception:
@@ -225,24 +226,32 @@ def _probe_agent_cards(
 
     core_v1 = k8s_client.CoreV1Api(api_client)
 
-    # Cache pods per namespace to avoid repeated list_namespaced_pod calls
-    pods_cache: dict[str, list[Any]] = {}
-
-    def get_namespace_pods(ns: str) -> list[Any]:
-        if ns not in pods_cache:
-            try:
-                pods_cache[ns] = core_v1.list_namespaced_pod(namespace=ns, _request_timeout=5).items or []
-            except Exception as e:
-                logger.debug("Failed to list pods in %s for A2A probe fallback: %s", ns, e)
-                pods_cache[ns] = []
-        return pods_cache[ns]
+    # Cache pods per (namespace, label_selector) to avoid repeated list_namespaced_pod calls
+    pods_cache: dict[tuple[str, str], list[Any]] = {}
 
     def backing_pod(candidate: dict) -> Any | None:
         """A Running pod behind the Service, matched by its label selector."""
         selector = candidate.get("selector") or {}
         if not selector:
             return None
-        for p in get_namespace_pods(candidate["namespace"]):
+        ns = candidate["namespace"]
+        label_selector = ",".join(f"{k}={v}" for k, v in sorted(selector.items()))
+        cache_key = (ns, label_selector)
+        if cache_key not in pods_cache:
+            try:
+                pods_cache[cache_key] = (
+                    core_v1.list_namespaced_pod(
+                        namespace=ns,
+                        label_selector=label_selector,
+                        limit=5,
+                        _request_timeout=5,
+                    ).items
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Failed to list pods in %s for A2A probe fallback: %s", ns, e)
+                pods_cache[cache_key] = []
+        for p in pods_cache[cache_key]:
             labels = getattr(p.metadata, "labels", None) or {}
             if getattr(p.status, "phase", "") == "Running" and all(labels.get(k) == v for k, v in selector.items()):
                 return p

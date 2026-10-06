@@ -143,12 +143,7 @@ def _build_component_health(
     namespaces = sorted({p.get("namespace") for p in pods if p.get("namespace")})
     nodes = sorted({p.get("nodeName") for p in pods if p.get("nodeName")})
     zones = sorted(
-        {
-            (nodes_by_name or {}).get(p.get("nodeName"), {}).get("zone")
-            for p in pods
-            if p.get("nodeName")
-        }
-        - {None}
+        {(nodes_by_name or {}).get(p.get("nodeName"), {}).get("zone") for p in pods if p.get("nodeName")} - {None}
     )
 
     return {
@@ -169,11 +164,7 @@ def _derive_spec_feature_flags(spec: dict) -> dict[str, bool]:
     any feature present in the live spec, including coreCollection and
     envDiscovery which were previously dropped by hardcoded key lists.
     """
-    return {
-        key: bool(val.get("enabled"))
-        for key, val in spec.items()
-        if isinstance(val, dict) and "enabled" in val
-    }
+    return {key: bool(val.get("enabled")) for key, val in spec.items() if isinstance(val, dict) and "enabled" in val}
 
 
 def _extract_cne_features(cneinstances: list[dict]) -> dict[str, Any]:
@@ -304,14 +295,8 @@ def _build_data_plane_health(
     tmm_pods = classified["tmm"]
     tmm_running = [p for p in tmm_pods if pod_is_healthy(p)]
     tmm_containers_total = sum(len(p.get("containers", [])) for p in tmm_pods)
-    tmm_containers_ready = sum(
-        sum(1 for c in p.get("containers", []) if c.get("ready"))
-        for p in tmm_pods
-    )
-    tmm_restarts = sum(
-        sum(c.get("restartCount", 0) for c in p.get("containers", []))
-        for p in tmm_pods
-    )
+    tmm_containers_ready = sum(sum(1 for c in p.get("containers", []) if c.get("ready")) for p in tmm_pods)
+    tmm_restarts = sum(sum(c.get("restartCount", 0) for c in p.get("containers", [])) for p in tmm_pods)
 
     tmm_sev = calc_severity(len(tmm_running), len(tmm_pods))
     return {
@@ -342,10 +327,7 @@ def _build_networking_health(resources: dict[str, list]) -> dict[str, Any]:
     vlans_programmed = [v for v in vlans if has_condition(v, "Programmed")]
     infras_programmed = [i for i in infras if has_condition(i, "Programmed") or has_condition(i, "Ready")]
 
-    total_listeners = sum(
-        len(safe_get(g, "spec", "listeners", default=[]) or [])
-        for g in gateways
-    )
+    total_listeners = sum(len(safe_get(g, "spec", "listeners", default=[]) or []) for g in gateways)
 
     gw_sev = calc_severity(len(gw_programmed), len(gateways))
     vlan_sev = calc_severity(len(vlans_programmed), len(vlans))
@@ -401,9 +383,8 @@ def _build_networking_health(resources: dict[str, list]) -> dict[str, Any]:
         "listeners": total_listeners,
         "httpRoutes": len(resources.get("httproute", [])),
         # Legacy F5SPKStaticRoutes, else the routes BNK 2.4 Infra CRs carry (same rule as topology)
-        "staticRoutes": len(resources.get("f5spkstaticroute", [])) or sum(
-            len(safe_get(i, "spec", "staticRoutes", default=[]) or []) for i in infras
-        ),
+        "staticRoutes": len(resources.get("f5spkstaticroute", []))
+        or sum(len(safe_get(i, "spec", "staticRoutes", default=[]) or []) for i in infras),
         "snatPools": len(resources.get("f5spksnatpool", [])),
     }
     # Only include sub-components that have resources — a component with
@@ -493,7 +474,8 @@ def _build_ai_health(
                 "name": safe_get(ip, "metadata", "name", default=""),
                 "namespace": safe_get(ip, "metadata", "namespace", default=""),
                 "targetPorts": [
-                    p["number"] for p in safe_get(ip, "spec", "targetPorts", default=[]) or []
+                    p["number"]
+                    for p in safe_get(ip, "spec", "targetPorts", default=[]) or []
                     if isinstance(p, dict) and isinstance(p.get("number"), int)
                 ],
                 "endpointPicker": safe_get(ip, "spec", "endpointPickerRef", "name", default=""),
@@ -594,8 +576,14 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
     has_networking_resources = any(
         len(resources.get(key, [])) > 0
         for key in (
-            "gateway", "f5spkvlan", "infra", "gatewaysettings",
-            "egressgateway", "httproute", "f5spkstaticroute", "f5spksnatpool",
+            "gateway",
+            "f5spkvlan",
+            "infra",
+            "gatewaysettings",
+            "egressgateway",
+            "httproute",
+            "f5spkstaticroute",
+            "f5spksnatpool",
         )
     )
     if has_networking_resources:
@@ -604,8 +592,12 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
     has_security_resources = any(
         len(resources.get(key, [])) > 0
         for key in (
-            "f5bigcneirule", "f5bigfwpolicy", "secpolicy", "netpolicy",
-            "bnksecpolicy", "bnknetpolicy",
+            "f5bigcneirule",
+            "f5bigfwpolicy",
+            "secpolicy",
+            "netpolicy",
+            "bnksecpolicy",
+            "bnknetpolicy",
         )
     )
     if has_security_resources:
@@ -618,20 +610,15 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
     tmm_pods = classified["tmm"]
     tmm_running = [p for p in tmm_pods if pod_is_healthy(p)]
     tmm_containers_total = sum(len(p.get("containers", [])) for p in tmm_pods)
-    tmm_containers_ready = sum(
-        sum(1 for c in p.get("containers", []) if c.get("ready"))
-        for p in tmm_pods
-    )
-    total_listeners = sum(
-        len(safe_get(g, "spec", "listeners", default=[]) or [])
-        for g in gateways
-    )
+    tmm_containers_ready = sum(sum(1 for c in p.get("containers", []) if c.get("ready")) for p in tmm_pods)
+    total_listeners = sum(len(safe_get(g, "spec", "listeners", default=[]) or []) for g in gateways)
 
     connectivity = _build_connectivity_status(data)
     integration = _build_integration_status(data)
 
     return {
         "overall": overall,
+        "partial": bool(data.get("partial", False)),
         "installShape": install_shape,
         "installMethod": {
             "flo": "FLO deploy flow",
@@ -650,9 +637,8 @@ def analyze_health(data: dict[str, Any]) -> dict[str, Any]:
             "listeners": total_listeners,
             "httpRoutes": len(resources.get("httproute", [])),
             # Legacy F5SPKVlans, else the networks BNK 2.4 Infra CRs carry (same rule as topology)
-            "vlans": len(resources.get("f5spkvlan", [])) or sum(
-                len(safe_get(i, "spec", "networks", default=[]) or []) for i in resources.get("infra", [])
-            ),
+            "vlans": len(resources.get("f5spkvlan", []))
+            or sum(len(safe_get(i, "spec", "networks", default=[]) or []) for i in resources.get("infra", [])),
             "firewallPolicies": len(resources.get("f5bigfwpolicy", [])),
             "irules": len(resources.get("f5bigcneirule", [])),
             "analyzers": len(resources.get("f5biganalyzer", [])),

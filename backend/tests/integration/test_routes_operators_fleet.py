@@ -33,8 +33,12 @@ class TestFleetHealth:
 
     @patch("routes.operators.fleet._query_cluster_health")
     def test_fleet_health(
-        self, mock_query_health,
-        client, viewer_headers, all_test_users, db,
+        self,
+        mock_query_health,
+        client,
+        viewer_headers,
+        all_test_users,
+        db,
     ):
         """Viewer can retrieve fleet health summary."""
         cluster = _make_cluster(db, name="prod-cluster", version="v1.28.0")
@@ -66,7 +70,12 @@ class TestFleetHealth:
         assert data["operators"][0]["bnk_severity"] == "healthy"
         assert data["unknown"] == 0
         assert data["operators"][0]["detected_platform_profile"] in {
-            "generic_onprem", "eks", "aks", "gke", "ocp", "unknown",
+            "generic_onprem",
+            "eks",
+            "aks",
+            "gke",
+            "ocp",
+            "unknown",
         }
         assert "platform_context" in data
         assert "mixed_platform_profiles" in data["platform_context"]
@@ -159,7 +168,10 @@ class TestFleetCompare:
 
     def test_fleet_compare_via_clusters_returns_cluster_config_shape(
         self,
-        client, operator_headers, all_test_users, db,
+        client,
+        operator_headers,
+        all_test_users,
+        db,
     ):
         """Operator can compare two clusters directly and get cluster-config response shape."""
         from models.kubernetes import KubernetesCluster
@@ -169,7 +181,10 @@ class TestFleetCompare:
         db.add_all([cluster_a, cluster_b])
         db.commit()
 
-        with patch("services.config_export_service.export_cluster_config") as mock_export, patch("services.config_export_service.diff_configs") as mock_diff:
+        with (
+            patch("services.config_export_service.export_cluster_config") as mock_export,
+            patch("services.config_export_service.diff_configs") as mock_diff,
+        ):
             mock_export.side_effect = [
                 {"bnk_forge_export": {"cluster": {"name": "mgx1"}}, "resources": {}, "module_config": {}},
                 {"bnk_forge_export": {"cluster": {"name": "mgx3"}}, "resources": {}, "module_config": {}},
@@ -210,7 +225,10 @@ class TestFleetCompare:
 
     def test_fleet_compare_via_operators(
         self,
-        client, operator_headers, all_test_users, db,
+        client,
+        operator_headers,
+        all_test_users,
+        db,
     ):
         """Operator can compare two operators' configurations (health-report fallback)."""
         from models import ConnectedOperator
@@ -283,3 +301,19 @@ def test_bnk_24_gateway_group_counts_as_bnk():
 
     with patch.object(fleet, "_cluster_api_groups", return_value=frozenset({"gateway.k8s.f5.com"})):
         assert fleet._cluster_has_bnk_api_groups(MagicMock(), MagicMock()) is True
+
+
+def test_derive_status_from_health_partial_returns_warning():
+    from routes.operators import fleet
+
+    health = {"overall": "unknown", "partial": True}
+    assert fleet._derive_status_from_health(health) == "warning"
+
+
+def test_extract_health_metrics_partial_surfaces_informative_message():
+    from routes.operators import fleet
+
+    health = {"overall": "unknown", "partial": True, "counts": {}}
+    data = {"partial": True}
+    res = fleet._extract_health_metrics(health, data)
+    assert any("timed out or was incomplete" in issue["message"] for issue in res["health_issues"])
