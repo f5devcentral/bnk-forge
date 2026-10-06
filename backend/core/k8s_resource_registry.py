@@ -495,10 +495,10 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         "AI-powered load balancing analyzer for LLM inference workloads (EA feature)",
         api_version="v1alpha1"),
     "f5epp": K8sResourceType(
-        api_group=ApiGroups.F5_K8S,
-        api_version="v1",
+        api_group="inference.k8s.f5.com",
+        api_version="v1alpha1",
         kind="F5EPP",
-        plural="f5epps",
+        plural="f5-epps",
         namespaced=True,
         display_name="F5 Endpoint Picker",
         description="AI inference routing analyzer server with KV-cache awareness, prompt prefix affinity, and prefill-decode disaggregation",

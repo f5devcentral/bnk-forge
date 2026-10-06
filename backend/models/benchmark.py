@@ -380,6 +380,7 @@ class ProxyDeployment(Base):
     # Deployed endpoint (populated after successful deploy)
     proxy_url = Column(String(500), nullable=True)  # e.g. http://envoy-proxy.perf-proxies:10080
     external_url = Column(String(500), nullable=True)  # NodePort/LB URL for external agents
+    routing_info = Column(JSON, nullable=True)  # What the proxy routes on (EPP, tokens, KV events), for display
 
     # Status
     status = Column(String(50), default=ProxyDeploymentStatus.PENDING, nullable=False, index=True)

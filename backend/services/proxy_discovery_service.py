@@ -835,6 +835,8 @@ class ProxyDiscoveryService:
         # Find the best gateway: prefer one whose HTTPRoute backends match the target LLM
         target_svc_name = _extract_svc_name(target.llm_base_url)
         target_svc_ns = target.llm_namespace or "default"
+        # BNK 2.4 routes through an InferencePool fronted by the F5 Endpoint Picker.
+        target_pools = _pools_selecting_service(api_client, custom, target_svc_name, target_svc_ns)
         # Full target host (before port strip, after scheme strip) — used for VIP-match below.
         # _extract_svc_name truncates at the first "." which destroys IP addresses; preserve
         # the full host so "10.0.10.101" is not silently truncated to "10".
@@ -872,8 +874,25 @@ class ProxyDiscoveryService:
 
             # Check if any HTTPRoute on this gateway has a backendRef to our target LLM
             routes_to_target = _find_routes_to_backend(
-                httproutes, gw_name, gw_ns, target_svc_name, target_svc_ns,
+                httproutes, gw_name, gw_ns, target_svc_name, target_svc_ns, frozenset(target_pools),
             )
+            route_pools = sorted({
+                br.get("name", "")
+                for r in routes_to_target for rule in r.get("spec", {}).get("rules", [])
+                for br in rule.get("backendRefs", []) if br.get("kind") == "InferencePool"
+            })
+            route_paths = [
+                {
+                    "hostnames": r.get("spec", {}).get("hostnames") or [],
+                    "pool": next((
+                        br.get("name") for rule in r.get("spec", {}).get("rules", [])
+                        for br in rule.get("backendRefs", []) if br.get("kind") == "InferencePool"
+                    ), None),
+                }
+                for r in routes_to_target
+                # Routes Forge deployed belong to their own proxy rows (e.g. f5-bnk-epp).
+                if (r.get("metadata", {}).get("labels") or {}).get("app.kubernetes.io/managed-by") != "bnk-forge"
+            ]
 
             gateway_details.append({
                 "name": gw_name,
@@ -882,6 +901,8 @@ class ProxyDiscoveryService:
                 "listeners": listener_details,
                 "routes_to_target": len(routes_to_target),
                 "route_names": [r.get("metadata", {}).get("name", "") for r in routes_to_target],
+                "pools": route_pools,
+                "route_paths": route_paths,
             })
 
             # Build the proxy URL from VIP + first HTTP listener port
@@ -989,6 +1010,7 @@ class ProxyDiscoveryService:
                 "gateways": gateway_details,
                 "pod_count": len(bnk_pods),
                 "matched_gateway": best_gw_name,
+                "routing_info": _f5_bnk_routing_info(gateway_details, best_gw_name, best_gw_ns, target_pools),
             },
         )
 
@@ -1229,6 +1251,7 @@ class ProxyDiscoveryService:
                         proxy_type=result.proxy_type,
                         proxy_url=result.proxy_url,
                         external_url=result.external_url,
+                        routing_info=(result.details or {}).get("routing_info"),
                         status=ProxyDeploymentStatus.DISCOVERED,
                         status_message=f"Discovered on cluster in namespace '{result.namespace}'",
                     )
@@ -1245,6 +1268,7 @@ class ProxyDiscoveryService:
                     # Update existing record with fresh discovery data
                     deploy.proxy_url = result.proxy_url or deploy.proxy_url
                     deploy.external_url = result.external_url or deploy.external_url
+                    deploy.routing_info = (result.details or {}).get("routing_info") or deploy.routing_info
                     deploy.status = ProxyDeploymentStatus.DISCOVERED
                     deploy.status_message = f"Re-discovered on cluster in namespace '{result.namespace}'"
                     deploy.updated_at = now
@@ -1526,11 +1550,14 @@ def _find_routes_to_backend(
     gw_ns: str,
     target_svc_name: str,
     target_svc_ns: str,
+    target_pools: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Find HTTPRoutes that reference a gateway AND have a backendRef to the target service.
 
     Same matching logic as topology.py _match_routes_to_listener, but also
-    checks backendRefs to find routes that actually route to our LLM service.
+    checks backendRefs to find routes that actually route to our LLM service:
+    the Service itself, or an InferencePool in ``target_pools`` (pools in the
+    Service's namespace that select its pods, see ``_pools_selecting_service``).
     """
     matched = []
     for route in httproutes:
@@ -1553,7 +1580,8 @@ def _find_routes_to_backend(
             for br in rule.get("backendRefs", []):
                 br_name = br.get("name", "")
                 br_ns = br.get("namespace", route_ns)
-                if br_name == target_svc_name and br_ns == target_svc_ns:
+                wanted = target_pools if br.get("kind") == "InferencePool" else {target_svc_name}
+                if br_name in wanted and br_ns == target_svc_ns:
                     matched.append(route)
                     break
             else:
@@ -1925,3 +1953,55 @@ def _has_target_deployment_match(
         if d.metadata.name in releases or labels.get("app.kubernetes.io/instance") in releases:
             return True
     return False
+
+
+def _pools_selecting_service(
+    api_client: k8s_client.ApiClient,
+    custom: k8s_client.CustomObjectsApi,
+    svc_name: str,
+    namespace: str,
+) -> dict[str, str | None]:
+    """InferencePools in ``namespace`` that select the pods of Service ``svc_name``.
+
+    Maps each pool name to the F5EPP serving it (BNK 2.4's F5 Endpoint Picker),
+    or None. A pool selects the Service's pods when its matchLabels are a subset
+    of the Service selector.
+    """
+    try:
+        svc = k8s_client.CoreV1Api(api_client).read_namespaced_service(svc_name, namespace, _request_timeout=10)
+    except Exception:
+        return {}
+    selector = (svc.spec.selector or {}) if svc.spec else {}
+    pools = {}
+    for pool in _safe_list_all_custom(custom, group="inference.networking.k8s.io", version="v1", plural="inferencepools"):
+        meta = pool.get("metadata", {})
+        labels = ((pool.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+        if meta.get("namespace") == namespace and labels and labels.items() <= selector.items():
+            pools[meta.get("name", "")] = None
+    for epp in _safe_list_all_custom(custom, group="inference.k8s.f5.com", version="v1alpha1", plural="f5-epps"):
+        pool = ((epp.get("spec") or {}).get("poolRef") or {}).get("name")
+        if epp.get("metadata", {}).get("namespace") == namespace and pool in pools:
+            pools[pool] = epp["metadata"].get("name")
+    return pools
+
+
+def _f5_bnk_routing_info(
+    gateway_details: list[dict], gw_name: str | None, gw_ns: str | None, target_pools: dict[str, str | None],
+) -> dict[str, str]:
+    """What the f5-bnk proxy routes through, for the proxy card (ProxyDeployment.routing_info).
+
+    Prefers a route to an InferencePool (the F5 EPP path), else the first route.
+    ``host_header`` is the chosen route's hostname, sent on every benchmark request.
+    """
+    gw = next((g for g in gateway_details if g["name"] == gw_name and g["namespace"] == gw_ns), None)
+    paths = (gw or {}).get("route_paths") or []
+    path = next((p for p in paths if p["pool"]), None) or (paths or [None])[0]
+    if path is None or not path["pool"]:
+        info = {"epp": "none (TMM load-balances the Service)"}
+    elif target_pools.get(path["pool"]):
+        info = {"epp": f"F5 Endpoint Picker (F5EPP {target_pools[path['pool']]}, InferencePool {path['pool']})"}
+    else:
+        info = {"epp": f"InferencePool {path['pool']} without an F5EPP"}
+    if path and path["hostnames"]:
+        info["host_header"] = path["hostnames"][0]
+    return info

@@ -33,20 +33,23 @@ from services.proxy_deploy_service import (
     GIE_EPP_IMAGE,
     LLM_D_ROUTER_CHART,
     LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT,
-    LLM_D_ROUTER_EPP_IMAGE_NAME,
     LLM_D_ROUTER_VERSION,
     PROXY_LISTEN_PORT,
     ProxyDeployService,
+    TargetRouting,
     _build_agentgateway_manifest,
     _build_gaie_gateway_manifest,
     _build_inference_epp_manifest,
     _build_llm_d_router_values,
     _context_args,
     _envoy_gateway_base_values,
+    _f5_epp_kv_events,
     _hf_model_from_pods,
+    _is_llm_d_simulator,
     _kv_events_port_from_pods,
     _model_from_container,
     _parse_kv_events_port,
+    _pod_port_from_service,
     _port_from_kv_events_config,
     _precise_prefix_cache_config,
     _served_model_from_container,
@@ -105,7 +108,7 @@ def _patch_dataplane(monkeypatch) -> None:
     monkeypatch.setattr(pds, "_kubectl_apply", lambda *a, **k: None)
     monkeypatch.setattr(pds, "_kubectl_apply_url", lambda *a, **k: None)
     monkeypatch.setattr(pds, "_wait_for_gateway_address", lambda *a, **k: "10.0.0.5")
-    monkeypatch.setattr(pds, "_ensure_hf_token_secret", lambda *a, **k: True)
+    monkeypatch.setattr(pds, "_render_endpoint_available", lambda *a, **k: True)
     monkeypatch.setattr(pds, "_gie_crds_present", lambda *a, **k: True)
 
 
@@ -174,8 +177,8 @@ class TestInferenceEppManifest:
     Gateway. ``prefix-cache-scorer`` in the config is what makes routing approximate
     prefix-cache aware."""
 
-    def _docs(self, release="rel", ns="default", label="vllm-qwen", port=8000):
-        return _parse_docs(_build_inference_epp_manifest(release, ns, label, port))
+    def _docs(self, release="rel", ns="default", labels=None, port=8000):
+        return _parse_docs(_build_inference_epp_manifest(release, ns, labels or {"app": "vllm-qwen"}, port))
 
     def _by_kind(self, docs, kind):
         return next(d for d in docs if d["kind"] == kind)
@@ -240,11 +243,13 @@ class TestGatewayClusterIPAddressing:
     bare-metal clusters with no LoadBalancer provider (otherwise the Gateway stays
     Programmed=False / AddressNotAssigned)."""
 
-    def test_gaie_gateway_binds_clusterip_envoyproxy(self):
+    def test_gaie_gateway_binds_nodeport_envoyproxy(self):
         docs = _parse_docs(_build_gaie_gateway_manifest("rel", "perf-proxies", "default"))
         ep = next(d for d in docs if d["kind"] == "EnvoyProxy")
         assert ep["metadata"]["name"] == "rel"
-        assert ep["spec"]["provider"]["kubernetes"]["envoyService"]["type"] == "ClusterIP"
+        envoy_svc = ep["spec"]["provider"]["kubernetes"]["envoyService"]
+        assert envoy_svc["type"] == "NodePort"
+        assert envoy_svc["patch"]["value"]["spec"]["ports"] == [{"port": 10080, "nodePort": 30893}]
         gw = next(d for d in docs if d["kind"] == "Gateway")
         ref = gw["spec"]["infrastructure"]["parametersRef"]
         assert ref == {"group": "gateway.envoyproxy.io", "kind": "EnvoyProxy", "name": "rel"}
@@ -297,7 +302,7 @@ class TestGaieGatewayManifest:
         assert btp["spec"]["timeout"]["http"]["requestTimeout"] == "0s"
         assert btp["spec"]["timeout"]["http"]["maxStreamDuration"] == "0s"
 
-    def test_gatewayclass_shared_with_envoy_flow(self):
+    def test_gatewayclass_is_the_shared_eg_class(self):
         docs = _parse_docs(_build_gaie_gateway_manifest("rel", "perf-proxies", "default"))
         gc = self._kind(docs, "GatewayClass")
         assert gc["metadata"]["name"] == ENVOY_GATEWAY_CLASS_NAME
@@ -616,6 +621,8 @@ class TestNginxBackendOverride:
         vals = svc._values_nginx(MagicMock(), t)
         upstream = vals["tcp"][str(PROXY_LISTEN_PORT)]
         assert upstream == "default/vllm:9000"
+        # Fixed NodePort on the TCP proxy port: the cluster firewall opens exactly this.
+        assert vals["controller"]["service"]["nodePorts"]["tcp"] == {str(PROXY_LISTEN_PORT): 30891}
 
     def test_upstream_namespace_tag_overrides_llm_namespace(self):
         """Bug fix: nginx must route to tags["upstream_namespace"], not the
@@ -660,6 +667,8 @@ class TestHaproxyBackendOverride:
         )
         vals = svc._values_haproxy(MagicMock(), t)
         assert vals["service"]["ports"]["http"] == PROXY_LISTEN_PORT
+        # Fixed NodePort: the cluster firewall (awsbnkctl) opens exactly this port.
+        assert vals["service"]["nodePorts"]["http"] == 30890
         assert vals["containerPorts"]["http"] == PROXY_LISTEN_PORT
         config = vals["config"]
         assert "vllm.awsbnkctl-scn-aiinference.svc.cluster.local:80" in config
@@ -772,78 +781,29 @@ class TestKvEventsPortParsing:
 
 
 class TestPrecisePrefixCacheConfig:
-    """The EndpointPickerConfig that turns on precise (KV-event) prefix scoring."""
+    """The llm-d v0.11 EndpointPickerConfig: token-producer -> precise producer -> scorer."""
 
-    def _cfg(self, model="Qwen/Qwen3-32B", port=5557):
-        return yaml.safe_load(_precise_prefix_cache_config(model, port))
+    def _plugin(self, cfg, ptype):
+        return next(p for p in cfg["plugins"] if p["type"] == ptype)
 
-    def test_uses_precise_scorer_with_pod_discovery_and_socket_port(self):
-        cfg = self._cfg(port=6123)
-        scorer = next(p for p in cfg["plugins"] if p["type"] == "precise-prefix-cache-scorer")
-        kv = scorer["parameters"]["kvEventsConfig"]
-        assert kv["discoverPods"] is True
-        assert kv["podDiscoveryConfig"]["socketPort"] == 6123
+    def test_vllm_per_pod_kv_events_and_render_tokens(self):
+        cfg = yaml.safe_load(_precise_prefix_cache_config("llama3", "http://vllm.ns:80", 6123))
+        assert cfg["apiVersion"] == "llm-d.ai/v1alpha1"
+        tok = self._plugin(cfg, "token-producer")["parameters"]
+        assert tok == {"modelName": "llama3", "vllm": {"url": "http://vllm.ns:80"}}
+        kv = self._plugin(cfg, "precise-prefix-cache-producer")["parameters"]["kvEventsConfig"]
+        assert kv["discoverPods"] is True and kv["podDiscoveryConfig"]["socketPort"] == 6123
+        # Per-pod subscriptions are driven by endpoint notifications.
+        refs = [s["pluginRef"] for s in cfg["dataLayer"]["sources"]]
+        assert "endpoint-notification-source" in refs
 
-    def test_tokenizer_bound_to_target_model(self):
-        cfg = self._cfg(model="meta-llama/Llama-3.1-70B")
-        tok = next(p for p in cfg["plugins"] if p["type"] == "tokenizer")
-        assert tok["parameters"]["modelName"] == "meta-llama/Llama-3.1-70B"
-
-    def test_default_profile_weights_precise_highest(self):
-        cfg = self._cfg()
-        plugins = cfg["schedulingProfiles"][0]["plugins"]
-        weights = {p["pluginRef"]: p.get("weight") for p in plugins}
-        assert weights["precise-prefix-cache-scorer"] == 3.0
-        assert "max-score-picker" in weights
-
-
-class TestLlmDRouterValues:
-    """InferencePool chart values for the precise llm-d scheduler."""
-
-    def _vals(self, **kw):
-        defaults = dict(
-            model_name="Qwen/Qwen3-32B",
-            target_port=8000,
-            match_labels={"app": "vllm-qwen"},
-            kv_events_port=5557,
-        )
-        defaults.update(kw)
-        return _build_llm_d_router_values(**defaults)
-
-    def test_epp_uses_llm_d_inference_scheduler_image(self):
-        img = self._vals()["inferenceExtension"]["image"]
-        assert img["name"] == LLM_D_ROUTER_EPP_IMAGE_NAME
-        assert img["hub"] == "ghcr.io/llm-d"
-
-    def test_tokenizer_sidecar_enabled(self):
-        sidecar = self._vals()["inferenceExtension"]["sidecar"]
-        assert sidecar["enabled"] is True
-        assert sidecar["name"] == "tokenizer-uds"
-
-    def test_hf_token_env_from_secret(self):
-        env = self._vals()["inferenceExtension"]["env"]
-        hf = next(e for e in env if e["name"] == "HF_TOKEN")
-        assert hf["valueFrom"]["secretKeyRef"]["key"] == "HF_TOKEN"
-
-    def test_inferencepool_selector_and_target_port(self):
-        pool = self._vals(match_labels={"app": "vllm-qwen"}, target_port=8000)["inferencePool"]
-        assert pool["modelServers"]["matchLabels"] == {"app": "vllm-qwen"}
-        assert pool["targetPorts"] == [{"number": 8000}]
-
-    def test_precise_config_carries_discovered_port(self):
-        vals = self._vals(kv_events_port=6789)
-        raw = vals["inferenceExtension"]["pluginsCustomConfig"]["precise-prefix-cache-config.yaml"]
-        cfg = yaml.safe_load(raw)
-        scorer = next(p for p in cfg["plugins"] if p["type"] == "precise-prefix-cache-scorer")
-        assert scorer["parameters"]["kvEventsConfig"]["podDiscoveryConfig"]["socketPort"] == 6789
-
-    def test_prometheus_auth_disabled_for_self_contained_install(self):
-        mon = self._vals()["inferenceExtension"]["monitoring"]
-        assert mon["prometheus"]["enabled"] is False
+    def test_estimate_tokens_without_render_url(self):
+        cfg = yaml.safe_load(_precise_prefix_cache_config("llama3", None, 20080))
+        assert "parameters" not in self._plugin(cfg, "token-producer")
 
 
 class TestDeployLlmDRouter:
-    """The multi-step install: agentgateway control plane + GIE CRDs + inferencepool chart + Gateway."""
+    """The multi-step install: agentgateway control plane + GIE CRDs + router chart + Gateway."""
 
     def _svc(self):
         svc = _service()
@@ -860,73 +820,80 @@ class TestDeployLlmDRouter:
         d.proxy_type = "llm-d-router"
         return d
 
-    def test_installs_inferencepool_chart_with_discovered_port(self, monkeypatch):
+    def _run(self, monkeypatch, routing, render=True):
         _patch_dataplane(monkeypatch)
+        applied = []
+        monkeypatch.setattr(pds, "_kubectl_apply", lambda kc, manifest, **k: applied.append(manifest))
+        monkeypatch.setattr(pds, "_render_endpoint_available", lambda *a, **k: render)
         svc = self._svc()
-        # Stub discovery → known selector + port.
-        monkeypatch.setattr(
-            svc, "_discover_target_routing",
-            lambda *a, **k: ({"app": "vllm-qwen"}, 6543, "Qwen/Qwen3-32B"),
-        )
+        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: routing)
         target = _target()
         target.cluster_id = 1
-        url, values = svc._deploy_llm_d_router(
+        url, values, info = svc._deploy_llm_d_router(
             self._deploy(), target, MagicMock(), "perf-llm-d-router-t", "perf-proxies", None, MagicMock(),
         )
-        # Returns the per-target Gateway data-plane URL.
+        return svc, url, values, info, applied
+
+    def _cfg(self, values):
+        return yaml.safe_load(values["router"]["epp"]["pluginsCustomConfig"]["precise-prefix-cache-config.yaml"])
+
+    def test_vllm_target_installs_router_chart_with_discovered_routing(self, monkeypatch):
+        routing = TargetRouting({"app": "vllm-qwen"}, kv_port=6543, pod_port=8000, served_model="qwen3")
+        svc, url, values, info, _ = self._run(monkeypatch, routing)
         assert url == f"http://10.0.0.5:{PROXY_LISTEN_PORT}"
-        # The inferencepool chart was installed under the per-target release in the
-        # model-server namespace.
-        ipool_call = next(
-            c for c in svc.helm.install_chart.call_args_list
-            if c.kwargs["release_name"] == "perf-llm-d-router-t"
-        )
-        assert ipool_call.kwargs["chart"] == LLM_D_ROUTER_CHART
-        assert ipool_call.kwargs["version"] == LLM_D_ROUTER_VERSION
-        assert ipool_call.kwargs["namespace"] == "default"  # target.llm_namespace
-        # Discovered port flows into the applied values + returned snapshot.
-        raw = values["inferenceExtension"]["pluginsCustomConfig"]["precise-prefix-cache-config.yaml"]
-        cfg = yaml.safe_load(raw)
-        scorer = next(p for p in cfg["plugins"] if p["type"] == "precise-prefix-cache-scorer")
-        assert scorer["parameters"]["kvEventsConfig"]["podDiscoveryConfig"]["socketPort"] == 6543
-
-    def test_ensures_agentgateway_control_plane_not_envoy(self, monkeypatch):
-        _patch_dataplane(monkeypatch)
-        svc = self._svc()
-        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: ({"app": "x"}, None, None))
-        target = _target()
-        target.cluster_id = 1
-        svc._deploy_llm_d_router(
-            self._deploy(), target, MagicMock(), "rel", "perf-proxies", None, MagicMock(),
-        )
+        call = next(c for c in svc.helm.install_chart.call_args_list if c.kwargs["release_name"] == "perf-llm-d-router-t")
+        assert call.kwargs["chart"] == LLM_D_ROUTER_CHART
+        assert call.kwargs["version"] == LLM_D_ROUTER_VERSION
+        assert call.kwargs["namespace"] == "default"  # target.llm_namespace
+        servers = values["router"]["modelServers"]
+        assert servers["matchLabels"] == {"app": "vllm-qwen"} and servers["targetPorts"] == [{"number": 8000}]
+        assert values["provider"] == {"name": "none"}
+        kv = next(p for p in self._cfg(values)["plugins"] if p["type"] == "precise-prefix-cache-producer")
+        assert kv["parameters"]["kvEventsConfig"]["podDiscoveryConfig"]["socketPort"] == 6543
+        assert info["model_server"] == "vLLM" and info["kv_events"].startswith("per pod")
+        # Agentgateway control plane only — none of the Envoy AI Gateway one.
         installed = [c.kwargs["release_name"] for c in svc.helm.install_chart.call_args_list]
-        # agentgateway control plane (CRDs + controller) is ensured...
-        assert AGENTGATEWAY_CRDS_RELEASE in installed
-        assert AGENTGATEWAY_RELEASE in installed
-        # ...and NONE of the Envoy AI Gateway control plane is touched (fully decoupled).
-        assert ENVOY_GATEWAY_RELEASE not in installed
-        assert AI_GATEWAY_CONTROLLER_RELEASE not in installed
-        # The controller install enables the GIE inference extension.
-        agw_call = next(
-            c for c in svc.helm.install_chart.call_args_list
-            if c.kwargs["release_name"] == AGENTGATEWAY_RELEASE
-        )
-        assert agw_call.kwargs["values"] == {"inferenceExtension": {"enabled": True}}
+        assert AGENTGATEWAY_CRDS_RELEASE in installed and AGENTGATEWAY_RELEASE in installed
+        assert ENVOY_GATEWAY_RELEASE not in installed and AI_GATEWAY_CONTROLLER_RELEASE not in installed
 
-    def test_defaults_port_when_discovery_finds_none(self, monkeypatch):
-        _patch_dataplane(monkeypatch)
-        svc = self._svc()
-        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: ({"app": "x"}, None, None))
-        target = _target()
-        target.cluster_id = 1
-        _url, values = svc._deploy_llm_d_router(
-            self._deploy(), target, MagicMock(), "rel", "perf-proxies", None, MagicMock(),
+    def test_no_render_endpoint_falls_back_to_estimate(self, monkeypatch):
+        _, _, values, info, _ = self._run(monkeypatch, TargetRouting({"app": "x"}), render=False)
+        tok = next(p for p in self._cfg(values)["plugins"] if p["type"] == "token-producer")
+        assert "parameters" not in tok
+        assert info["tokens"].startswith("estimate")
+
+    def test_simulator_with_kv_relay_is_connected_per_pod(self, monkeypatch):
+        routing = TargetRouting({"app": "vllm"}, kv_port=20080, simulator=True)
+        _, _, values, info, applied = self._run(monkeypatch, routing)
+        kv = next(p for p in self._cfg(values)["plugins"] if p["type"] == "precise-prefix-cache-producer")
+        assert kv["parameters"]["kvEventsConfig"]["podDiscoveryConfig"]["socketPort"] == 20080
+        assert "extraContainerPorts" not in values["router"]["epp"]
+        assert all(d["kind"] != "Service" for m in applied for d in _parse_docs(m))
+        assert info["kv_events"] == "per pod, EPP connects to :20080"
+        assert info["model_server"] == "llm-d inference simulator"
+
+
+class TestSimulatorDetection:
+    SIM = "ghcr.io/llm-d/llm-d-inference-sim:v0.11.2"
+
+    def _pods(self, *containers):
+        return {"items": [{"spec": {"containers": list(containers)}}]}
+
+    def test_simulator_with_relay_sidecar(self):
+        pods = self._pods(
+            {"name": "vllm", "image": self.SIM, "args": ["--zmq-endpoint=tcp://127.0.0.1:5557"],
+             "ports": [{"containerPort": 8000}, {"name": "kv-replay", "containerPort": 20081}]},
+            {"name": "kv-relay", "image": "python:3.12-slim", "ports": [{"name": "kv-events", "containerPort": 20080}]},
         )
-        raw = values["inferenceExtension"]["pluginsCustomConfig"]["precise-prefix-cache-config.yaml"]
-        cfg = yaml.safe_load(raw)
-        scorer = next(p for p in cfg["plugins"] if p["type"] == "precise-prefix-cache-scorer")
-        port = scorer["parameters"]["kvEventsConfig"]["podDiscoveryConfig"]["socketPort"]
-        assert port == LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT
+        assert _is_llm_d_simulator(pods)
+        assert _kv_events_port_from_pods(pods) == 20080
+
+    def test_vllm_is_not_the_simulator(self):
+        assert not _is_llm_d_simulator(self._pods({"image": "vllm/vllm-openai:v0.11.0", "args": ["--model", "m"]}))
+
+    def test_f5_epp_kv_events(self):
+        assert _f5_epp_kv_events(20080).startswith("per pod")
+        assert _f5_epp_kv_events(5557).startswith("none") and _f5_epp_kv_events(None).startswith("none")
 
 
 class TestGieCrdsPresent:
@@ -956,92 +923,6 @@ class TestGieCrdsPresent:
         pds._gie_crds_present("/kc")
         assert "inferencepools.inference.networking.k8s.io" in seen["cmd"]
         assert "get" in seen["cmd"] and "crd" in seen["cmd"]
-
-
-class TestEnsureHfTokenSecret:
-    """The deploy always ensures an HF-token secret exists (empty), idempotently."""
-
-    class _R:
-        def __init__(self, rc, stderr=""):
-            self.returncode = rc
-            self.stderr = stderr
-            self.stdout = ""
-
-    def test_skips_create_when_secret_present(self, monkeypatch):
-        calls = []
-
-        def fake_run(cmd, **kw):
-            calls.append(cmd)
-            return self._R(0)  # `get` succeeds → secret present
-
-        monkeypatch.setattr(pds.subprocess, "run", fake_run)
-        created = pds._ensure_hf_token_secret("/kc", "ns", "llm-d-hf-token")
-        assert created is False
-        assert all("create" not in c for c in calls)  # never attempted create
-
-    def test_creates_empty_secret_when_absent(self, monkeypatch):
-        calls = []
-
-        def fake_run(cmd, **kw):
-            calls.append(cmd)
-            return self._R(1) if "get" in cmd else self._R(0)
-
-        monkeypatch.setattr(pds.subprocess, "run", fake_run)
-        created = pds._ensure_hf_token_secret("/kc", "ns", "llm-d-hf-token")
-        assert created is True
-        create_cmd = next(c for c in calls if "create" in c)
-        assert "--from-literal=HF_TOKEN=" in create_cmd
-        assert "llm-d-hf-token" in create_cmd
-
-    def test_tolerates_already_exists_race(self, monkeypatch):
-        def fake_run(cmd, **kw):
-            if "get" in cmd:
-                return self._R(1)  # not found at check time
-            return self._R(1, stderr='secrets "llm-d-hf-token" already exists (AlreadyExists)')
-
-        monkeypatch.setattr(pds.subprocess, "run", fake_run)
-        # Concurrent creator won the race — must not raise.
-        assert pds._ensure_hf_token_secret("/kc", "ns", "llm-d-hf-token") is True
-
-    def test_raises_on_real_create_failure(self, monkeypatch):
-        import pytest
-
-        def fake_run(cmd, **kw):
-            if "get" in cmd:
-                return self._R(1)
-            return self._R(1, stderr="forbidden: cannot create secrets")
-
-        monkeypatch.setattr(pds.subprocess, "run", fake_run)
-        with pytest.raises(RuntimeError, match="failed to create HF token secret"):
-            pds._ensure_hf_token_secret("/kc", "ns", "llm-d-hf-token")
-
-
-class TestDeployLlmDRouterEnsuresSecret:
-    """_deploy_llm_d_router must ensure the HF-token secret before the chart install."""
-
-    def test_ensure_secret_called_for_pool_namespace(self, monkeypatch):
-        _patch_dataplane(monkeypatch)
-        seen = {}
-        monkeypatch.setattr(
-            pds, "_ensure_hf_token_secret",
-            lambda kc, ns, name, **k: seen.update(ns=ns, name=name) or True,
-        )
-        svc = _service()
-        svc.helm = MagicMock()
-        svc.helm.get_release.side_effect = ReleaseNotFoundError("eg")
-        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: ({"app": "x"}, None, None))
-        d = MagicMock()
-        d.helm_chart = None
-        d.helm_version = None
-        d.helm_values = None
-        d.proxy_type = "llm-d-router"
-        target = _target(namespace="dynamo-system")
-        target.cluster_id = 1
-        svc._deploy_llm_d_router(d, target, MagicMock(), "rel", "perf-proxies", None, MagicMock())
-        # Ensured in the model-server (pool) namespace, with the configured secret name.
-        assert seen["ns"] == "dynamo-system"
-        from services.proxy_deploy_service import LLM_D_ROUTER_HF_TOKEN_SECRET
-        assert seen["name"] == LLM_D_ROUTER_HF_TOKEN_SECRET
 
 
 class TestHfModelDiscovery:
@@ -1074,33 +955,6 @@ class TestHfModelDiscovery:
         assert _hf_model_from_pods(self._pods([{"name": "x", "args": ["--foo", "bar"]}])) is None
         assert _hf_model_from_pods(None) is None
 
-    def test_deploy_uses_discovered_model_for_tokenizer(self, monkeypatch):
-        # End-to-end: discovered --model id flows into the tokenizer config, not llm_model.
-        _patch_dataplane(monkeypatch)
-        svc = _service()
-        svc.helm = MagicMock()
-        svc.helm.get_release.side_effect = ReleaseNotFoundError("eg")
-        monkeypatch.setattr(
-            svc, "_discover_target_routing",
-            lambda *a, **k: ({"app": "vllm-qwen"}, 5557, "Qwen/Qwen3-32B"),
-        )
-        d = MagicMock()
-        d.helm_chart = None
-        d.helm_version = None
-        d.helm_values = None
-        d.proxy_type = "llm-d-router"
-        target = _target(llm_model="qwen3-32b")  # served-name, NOT a valid HF id
-        target.cluster_id = 1
-        _url, values = svc._deploy_llm_d_router(
-            d, target, MagicMock(), "rel", "perf-proxies", None, MagicMock(),
-        )
-        raw = values["inferenceExtension"]["pluginsCustomConfig"]["precise-prefix-cache-config.yaml"]
-        cfg = yaml.safe_load(raw)
-        tok = next(p for p in cfg["plugins"] if p["type"] == "tokenizer")
-        # The discovered HF id wins over the target's served-model-name.
-        assert tok["parameters"]["modelName"] == "Qwen/Qwen3-32B"
-
-
 class TestAgentgatewayManifest:
     """The agentgateway Gateway data plane for llm-d-router (replaces the Envoy one)."""
 
@@ -1115,10 +969,14 @@ class TestAgentgatewayManifest:
         kinds = [d["kind"] for d in self._docs()]
         assert kinds == [AGENTGATEWAY_PARAMS_KIND, "Gateway", "HTTPRoute"]
 
-    def test_params_force_clusterip_service(self):
+    def test_params_pin_nodeport_service(self):
         params = self._kind(self._docs(), AGENTGATEWAY_PARAMS_KIND)
-        # ClusterIP override so the Gateway gets an address on LB-less clusters.
-        assert params["spec"]["service"]["spec"]["type"] == "ClusterIP"
+        # Fixed NodePort (not LoadBalancer) so the Gateway gets an address on LB-less
+        # clusters and the external load generator reaches one opened port.
+        assert params["spec"]["service"]["spec"] == {
+            "type": "NodePort", "externalTrafficPolicy": "Cluster",
+            "ports": [{"port": PROXY_LISTEN_PORT, "nodePort": 30894}],
+        }
         assert params["metadata"]["namespace"] == "perf-proxies"
 
     def test_gateway_uses_agentgateway_class_and_params_ref(self):
@@ -1153,7 +1011,7 @@ class TestAgentgatewayManifest:
         svc = _service()
         svc.helm = MagicMock()
         svc.helm.get_release.side_effect = ReleaseNotFoundError("absent")
-        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: ({"app": "x"}, None, None))
+        monkeypatch.setattr(svc, "_discover_target_routing", lambda *a, **k: TargetRouting({"app": "x"}))
         d = MagicMock()
         d.helm_chart = None
         d.helm_version = None
@@ -1275,3 +1133,114 @@ class TestGieCrdNonClobber:
         svc._deploy_envoy_ai_gateway(d, target, MagicMock(), "rel", AI_GATEWAY_NAMESPACE, None, MagicMock())
         # GIE CRD present → the shared CRD is never (re)applied.
         assert applied == []
+
+
+class TestInstallWithRepo:
+    """A first-time Forge has no Helm repos: deploys add the chart's repo, then install."""
+
+    def test_adds_missing_repo_then_retries_once_on_stale_index(self):
+        svc = _service()
+        svc.helm = MagicMock()
+        svc.helm.list_repositories.return_value = []
+        svc.helm.install_chart.side_effect = [ValueError("Chart not found: no chart version"), None]
+        svc._install_with_repo(None, chart="ingress-nginx/ingress-nginx", release_name="r")
+        svc.helm.add_repository.assert_called_once_with("ingress-nginx", "https://kubernetes.github.io/ingress-nginx")
+        svc.helm.update_repositories.assert_called_once()
+        assert svc.helm.install_chart.call_count == 2
+
+    def test_oci_chart_needs_no_repo(self):
+        svc = _service()
+        svc.helm = MagicMock()
+        svc._install_with_repo(None, chart="oci://docker.io/envoyproxy/gateway-helm", release_name="r")
+        svc.helm.list_repositories.assert_not_called()
+        svc.helm.add_repository.assert_not_called()
+
+
+class TestNodePortUrls:
+    """Gateway proxies on a pinned NodePort: in-cluster URL = Service DNS, external = node IP."""
+
+    def test_urls_from_the_service_holding_the_node_port(self, monkeypatch):
+        from types import SimpleNamespace
+
+        def svc(name, ns, port, node_port):
+            return SimpleNamespace(
+                metadata=SimpleNamespace(name=name, namespace=ns),
+                spec=SimpleNamespace(ports=[SimpleNamespace(port=port, node_port=node_port)]),
+            )
+
+        core_v1 = MagicMock()
+        core_v1.list_service_for_all_namespaces.return_value = SimpleNamespace(
+            items=[svc("other", "default", 80, 31000), svc("envoy-perf-abc", "perf-proxies", PROXY_LISTEN_PORT, 30892)]
+        )
+        monkeypatch.setattr(pds, "KubernetesService", MagicMock())
+        monkeypatch.setattr(pds.k8s_client, "CoreV1Api", lambda _api: core_v1)
+        monkeypatch.setattr(pds, "_get_node_ip", lambda _core: "10.0.1.181")
+
+        assert _service()._node_port_urls(MagicMock(), 30892) == (
+            f"http://envoy-perf-abc.perf-proxies:{PROXY_LISTEN_PORT}",
+            "http://10.0.1.181:30892",
+        )
+
+
+class TestPodPortFromService:
+    """An InferencePool targets pods: Service 80 -> vLLM 8000 must give 8000."""
+
+    def _svc(self, target_port):
+        port = {"port": 80, "protocol": "TCP"}
+        if target_port is not None:
+            port["targetPort"] = target_port
+        return {"spec": {"ports": [port]}}
+
+    def test_numeric_target_port(self):
+        assert _pod_port_from_service(self._svc(8000), 80, None) == 8000
+
+    def test_named_target_port_from_pods(self):
+        pods = {"items": [{"spec": {"containers": [{"ports": [{"name": "http", "containerPort": 8000}]}]}}]}
+        assert _pod_port_from_service(self._svc("http"), 80, pods) == 8000
+
+    def test_omitted_target_port_is_the_service_port(self):
+        assert _pod_port_from_service(self._svc(None), 80, None) == 80
+
+    def test_unknown_service_port(self):
+        assert _pod_port_from_service(self._svc(8000), 8080, None) is None
+
+
+class TestF5EppManifest:
+    def test_alias_gets_rewrite_and_route_has_own_host(self):
+        docs = _parse_docs(pds._build_f5_epp_manifest(
+            "rel", "ai", {"app": "vllm"}, 8000, 64, "org/Model-8B", "llama3", "org/Model-8B", "gw", "ai", "rel.forge.local",
+        ))
+        kinds = {d["kind"]: d for d in docs}
+        assert kinds["F5EPP"]["spec"] == {"poolRef": {"name": "rel"}, "engine": "vllm", "blockSize": 64, "tokenizer": {"name": "org/Model-8B"}}
+        assert kinds["InferencePool"]["spec"]["endpointPickerRef"]["name"] == "rel-epp"
+        rule = kinds["InferenceModelRewrite"]["spec"]["rules"][0]
+        assert rule["matches"][0]["model"]["value"] == "llama3" and rule["targets"][0]["modelRewrite"] == "org/Model-8B"
+        assert kinds["HTTPRoute"]["spec"]["hostnames"] == ["rel.forge.local"]
+
+    def test_served_models_and_request_settings(self):
+        pods = {"items": [{"spec": {"containers": [{"args": ["--model=m", "--served-model-name", "llama3", "org/M", "--port=8000"]}]}}]}
+        assert pds._served_models_from_pods(pods) == ["llama3", "org/M"]
+        deploy = MagicMock(routing_info={"host_header": "rel.forge.local"})
+        assert pds.proxy_request_settings(deploy) == {"header": ["Host:rel.forge.local"], "host_header": "rel.forge.local"}
+        assert pds.proxy_request_settings(MagicMock(routing_info=None)) == {}
+
+
+class TestModelServerTags:
+    def test_simulator_profile_from_pod_annotations(self, monkeypatch):
+        from types import SimpleNamespace
+        pod = SimpleNamespace(
+            status=SimpleNamespace(phase="Running"),
+            spec=SimpleNamespace(containers=[SimpleNamespace(image="ghcr.io/llm-d/llm-d-inference-sim:v0.11.2")]),
+            metadata=SimpleNamespace(annotations={"awsbnkctl.io/sim-profile": "llama-3.3-70b", "awsbnkctl.io/sim-model": "org/M-70B"}),
+        )
+        core = MagicMock()
+        core.read_namespaced_service.return_value = SimpleNamespace(spec=SimpleNamespace(selector={"app": "vllm"}))
+        core.list_namespaced_pod.return_value = SimpleNamespace(items=[pod, pod])
+        monkeypatch.setattr(pds, "KubernetesService", MagicMock())
+        monkeypatch.setattr(pds.k8s_client, "CoreV1Api", lambda _api: core)
+        target = _target()
+        target.cluster_id = 1
+        assert pds.model_server_tags(MagicMock(), target) == {
+            "model_server": "llm-d-inference-sim", "model_server_replicas": 2,
+            "sim_profile": "llama-3.3-70b", "sim_model": "org/M-70B",
+        }
