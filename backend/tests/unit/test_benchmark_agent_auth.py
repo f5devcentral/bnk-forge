@@ -198,12 +198,23 @@ class TestAgentAuthFlagOn:
         from models.benchmark import BenchmarkAgent
 
         self._client = client
+        db.add(BenchmarkAgent(id=12345, name="ext-agent", status="connected", managed=False))
+        db.commit()
         tags = {"builtin": True, "_forge_builtin": True, "site": "lab"}
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "ext-agent", "tags": tags},
-                          sub="op-agent", role="agent", agent_id=12345)
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "ext-agent", "tags": tags},
+            sub="op-agent",
+            role="agent",
+            agent_id=12345,
+        )
         assert resp.status_code in (200, 201), resp.text
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "new-builtin", "tags": tags},
-                          sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "new-builtin", "tags": tags},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code in (200, 201), resp.text
 
         db.expire_all()
@@ -218,8 +229,12 @@ class TestAgentAuthFlagOn:
         self._client = client
         db.add(BenchmarkAgent(name="forge-local", status="connected", managed=False, tags={"builtin": True}))
         db.commit()
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local",
-                          "tags": {"builtin": True}}, sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "forge-local", "tags": {"builtin": True}},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code in (200, 201), resp.text
         db.expire_all()
         assert db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags["_forge_builtin"] is True
@@ -231,7 +246,9 @@ class TestAgentAuthFlagOn:
         self._client = client
         create_user(db, "op2", "op2@t.com", "pw-op-123", role="operator", must_change_password=False)
         marker = {"builtin": True, "_forge_builtin": True}
-        db.add(BenchmarkAgent(name="forge-local", hostname="orig", status="connected", managed=False, tags=marker))
+        db.add(
+            BenchmarkAgent(id=4242, name="forge-local", hostname="orig", status="connected", managed=False, tags=marker)
+        )
         db.commit()
         body = {**_register_payload(), "name": "forge-local", "tags": {"site": "x"}}
 
@@ -256,8 +273,12 @@ class TestAgentAuthFlagOn:
         db.commit()
         bench_routes._agent_ws_connections[legacy.id] = object()
         try:
-            resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local"},
-                              sub="forge-builtin-agent", role="agent")
+            resp = self._post(
+                "/api/benchmarks/agents",
+                {**_register_payload(), "name": "forge-local"},
+                sub="forge-builtin-agent",
+                role="agent",
+            )
         finally:
             bench_routes._agent_ws_connections.pop(legacy.id, None)
         assert resp.status_code == 409
@@ -268,13 +289,19 @@ class TestAgentAuthFlagOn:
         from models.benchmark import BenchmarkAgent
 
         self._client = client
-        db.add_all([
-            BenchmarkAgent(name="builtin-a", status="connected", managed=False, tags={"_forge_builtin": True}),
-            BenchmarkAgent(name="victim-a", status="connected", managed=False, tags={"builtin": True}),
-        ])
+        db.add_all(
+            [
+                BenchmarkAgent(name="builtin-a", status="connected", managed=False, tags={"_forge_builtin": True}),
+                BenchmarkAgent(name="victim-a", status="connected", managed=False, tags={"builtin": True}),
+            ]
+        )
         db.commit()
-        resp = self._post("/api/benchmarks/results/aiperf?agent_name=victim-a", {"request_count": {"avg": 1}},
-                          sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/results/aiperf?agent_name=victim-a",
+            {"request_count": {"avg": 1}},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code == 400
         assert "AGENT_AUTH_FORBIDDEN" in resp.text
 
@@ -466,8 +493,12 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        builtin = BenchmarkAgent(name="forge-local", status="connected", managed=False,
-                                 tags={"role": "forge-agent", "builtin": True, "_forge_builtin": True})
+        builtin = BenchmarkAgent(
+            name="forge-local",
+            status="connected",
+            managed=False,
+            tags={"role": "forge-agent", "builtin": True, "_forge_builtin": True},
+        )
         # forge_agent.py sends tags.builtin=true for every agent it runs.
         other = BenchmarkAgent(name="remote-1", status="connected", managed=False, tags={"builtin": True})
         db.add_all([builtin, other])
