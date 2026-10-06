@@ -647,7 +647,7 @@ export interface ClusterScanProxy {
   proxy_type: string;
   display_name: string;
   controller: string;
-  kind: 'IngressClass' | 'GatewayClass';
+  kind: 'IngressClass' | 'GatewayClass' | 'Deployment' | string;
   found: boolean;
   namespace: string | null;
   proxy_url: string | null;

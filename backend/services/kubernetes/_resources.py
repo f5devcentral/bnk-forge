@@ -46,9 +46,9 @@ def _kind_to_snake(kind: str) -> str:
     """
     # Insert underscore between: (uppercase-run)(Uppercase+lowercase)
     # e.g. "TLSRoute" → "TLS_Route", then lower everything
-    s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', kind)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", kind)
     # Insert underscore between: (lowercase/digit)(uppercase)
-    s = re.sub(r'([a-z\d])([A-Z])', r'\1_\2', s)
+    s = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", s)
     return s.lower()
 
 
@@ -63,6 +63,7 @@ def _resolve_via_discovery(db, cluster_id: int, resource_type_key: str, group: s
     Raises NotFoundError (404) or BadRequestError (400) on failure.
     """
     from services.crd_discovery_service import CrdDiscoveryService  # noqa: PLC0415
+
     svc = CrdDiscoveryService(db)
     crd_info = svc.resolve_crd(cluster_id, resource_type_key, group=group)
     return K8sResourceType(
@@ -113,6 +114,7 @@ def resolve_plural_by_kind(db, cluster_id: int, kind: str, group: str | None) ->
         return None
 
     from services.crd_discovery_service import CrdDiscoveryService  # noqa: PLC0415
+
     try:
         envelope = CrdDiscoveryService(db).list_crds(cluster_id, group_filter=[group])
     except Exception:
@@ -158,7 +160,7 @@ class ResourcesMixin:
         api_client: client.ApiClient,
         resource_type: K8sResourceType,
         namespace: str | None,
-        label_selector: str | None
+        label_selector: str | None,
     ) -> list[dict]:
         """Internal method to fetch resources from Kubernetes API."""
         try:
@@ -194,14 +196,14 @@ class ResourcesMixin:
                         _request_timeout=_LIST_REQUEST_TIMEOUT,
                     )
 
-                resources = response.get('items', [])
+                resources = response.get("items", [])
             else:
                 resources = self._fetch_core_resource(api_client, resource_type, namespace, label_selector)
 
             result = []
             for item in resources:
                 resource_dict = None
-                if hasattr(item, 'to_dict'):
+                if hasattr(item, "to_dict"):
                     resource_dict = item.to_dict()
                 elif isinstance(item, dict):
                     resource_dict = item
@@ -210,13 +212,13 @@ class ResourcesMixin:
                     continue
 
                 if resource_dict:
-                    if not resource_dict.get('kind'):
-                        resource_dict['kind'] = resource_type.kind
-                    if not resource_dict.get('api_version') and not resource_dict.get('apiVersion'):
+                    if not resource_dict.get("kind"):
+                        resource_dict["kind"] = resource_type.kind
+                    if not resource_dict.get("api_version") and not resource_dict.get("apiVersion"):
                         if resource_type.api_group:
-                            resource_dict['apiVersion'] = f"{resource_type.api_group}/{resource_type.api_version}"
+                            resource_dict["apiVersion"] = f"{resource_type.api_group}/{resource_type.api_version}"
                         else:
-                            resource_dict['apiVersion'] = resource_type.api_version
+                            resource_dict["apiVersion"] = resource_type.api_version
                     result.append(resource_dict)
 
             return result
@@ -233,7 +235,7 @@ class ResourcesMixin:
         api_client: client.ApiClient,
         resource_type: K8sResourceType,
         namespace: str | None,
-        label_selector: str | None
+        label_selector: str | None,
     ) -> list:
         """Fetch core Kubernetes resources using standard APIs (dynamic method dispatch)."""
         api_class = API_GROUP_CLIENTS.get(resource_type.api_group)
@@ -264,9 +266,7 @@ class ResourcesMixin:
                 _request_timeout=_LIST_REQUEST_TIMEOUT,
             )
         else:
-            response = list_method(
-                label_selector=label_selector or "", _request_timeout=_LIST_REQUEST_TIMEOUT
-            )
+            response = list_method(label_selector=label_selector or "", _request_timeout=_LIST_REQUEST_TIMEOUT)
 
         return response.items
 
@@ -280,7 +280,7 @@ class ResourcesMixin:
         resource_type_key: str,
         resource_yaml: str,
         namespace: str | None = None,
-        dry_run: bool = False
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Create a Kubernetes resource from YAML."""
         import yaml as yaml_lib
@@ -307,25 +307,30 @@ class ResourcesMixin:
                 custom_api = client.CustomObjectsApi(api_client)
                 if resource_type.namespaced:
                     result = custom_api.create_namespaced_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        namespace=namespace, plural=resource_type.plural,
-                        body=resource_dict, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        namespace=namespace,
+                        plural=resource_type.plural,
+                        body=resource_dict,
+                        dry_run=dry_run_param,
                     )
                 else:
                     result = custom_api.create_cluster_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        plural=resource_type.plural, body=resource_dict, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        plural=resource_type.plural,
+                        body=resource_dict,
+                        dry_run=dry_run_param,
                     )
             else:
                 result = self._write_typed_resource(
-                    "create", api_client, resource_type, namespace,
-                    body=resource_dict, dry_run=dry_run_param
+                    "create", api_client, resource_type, namespace, body=resource_dict, dry_run=dry_run_param
                 )
 
             return {
                 "success": True,
                 "message": f"{'Dry-run: ' if dry_run else ''}Resource created successfully",
-                "resource": result
+                "resource": result,
             }
         except ApiException as e:
             logger.error(f"Failed to create {resource_type.kind}: {e}")
@@ -341,7 +346,7 @@ class ResourcesMixin:
         resource_name: str,
         resource_yaml: str,
         namespace: str | None = None,
-        dry_run: bool = False
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Update an existing Kubernetes resource from YAML."""
         import yaml as yaml_lib
@@ -368,26 +373,38 @@ class ResourcesMixin:
                 custom_api = client.CustomObjectsApi(api_client)
                 if resource_type.namespaced:
                     result = custom_api.replace_namespaced_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        namespace=namespace, plural=resource_type.plural,
-                        name=resource_name, body=resource_dict, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        namespace=namespace,
+                        plural=resource_type.plural,
+                        name=resource_name,
+                        body=resource_dict,
+                        dry_run=dry_run_param,
                     )
                 else:
                     result = custom_api.replace_cluster_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        plural=resource_type.plural, name=resource_name,
-                        body=resource_dict, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        plural=resource_type.plural,
+                        name=resource_name,
+                        body=resource_dict,
+                        dry_run=dry_run_param,
                     )
             else:
                 result = self._write_typed_resource(
-                    "replace", api_client, resource_type, namespace,
-                    name=resource_name, body=resource_dict, dry_run=dry_run_param
+                    "replace",
+                    api_client,
+                    resource_type,
+                    namespace,
+                    name=resource_name,
+                    body=resource_dict,
+                    dry_run=dry_run_param,
                 )
 
             return {
                 "success": True,
                 "message": f"{'Dry-run: ' if dry_run else ''}Resource updated successfully",
-                "resource": result
+                "resource": result,
             }
         except ApiException as e:
             logger.error(f"Failed to update {resource_type.kind}/{resource_name}: {e}")
@@ -402,7 +419,7 @@ class ResourcesMixin:
         resource_type_key: str,
         resource_name: str,
         namespace: str | None = None,
-        dry_run: bool = False
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Delete a Kubernetes resource."""
         resource_type = resolve_resource_type(self.db, cluster_id, resource_type_key)
@@ -419,25 +436,27 @@ class ResourcesMixin:
                 custom_api = client.CustomObjectsApi(api_client)
                 if resource_type.namespaced:
                     custom_api.delete_namespaced_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        namespace=namespace, plural=resource_type.plural,
-                        name=resource_name, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        namespace=namespace,
+                        plural=resource_type.plural,
+                        name=resource_name,
+                        dry_run=dry_run_param,
                     )
                 else:
                     custom_api.delete_cluster_custom_object(
-                        group=resource_type.api_group, version=resource_type.api_version,
-                        plural=resource_type.plural, name=resource_name, dry_run=dry_run_param
+                        group=resource_type.api_group,
+                        version=resource_type.api_version,
+                        plural=resource_type.plural,
+                        name=resource_name,
+                        dry_run=dry_run_param,
                     )
             else:
                 self._write_typed_resource(
-                    "delete", api_client, resource_type, namespace,
-                    name=resource_name, dry_run=dry_run_param
+                    "delete", api_client, resource_type, namespace, name=resource_name, dry_run=dry_run_param
                 )
 
-            return {
-                "success": True,
-                "message": f"{'Dry-run: ' if dry_run else ''}Resource deleted successfully"
-            }
+            return {"success": True, "message": f"{'Dry-run: ' if dry_run else ''}Resource deleted successfully"}
         except ApiException as e:
             logger.error(f"Failed to delete {resource_type.kind}/{resource_name}: {e}")
             raise ValueError(f"Kubernetes API error: {e.reason}")

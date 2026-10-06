@@ -209,7 +209,7 @@ def fetch_all_bnk_data(
                 jobs = batch_api.list_namespaced_job(
                     namespace=ns,
                     label_selector=_CRD_INSTALLER_LABEL,
-                    _request_timeout=10,
+                    _request_timeout=(5, 15),
                 ).items
                 if jobs:
                     job = jobs[0]
@@ -223,6 +223,13 @@ def fetch_all_bnk_data(
         except Exception as e:
             logger.warning("Failed to fetch crd-installer job for cluster %s: %s", cluster_id, e)
             return None, True
+
+    # Release the DB connection back to the pool before waiting on parallel K8s network I/O
+    if k8s_service and getattr(k8s_service, "db", None):
+        try:
+            k8s_service.db.rollback()
+        except Exception:
+            pass
 
     # Fire all CRD fetches + pod discovery + job status + nodes in parallel.
     # Use the module-level shared executor so concurrent BNK page loads do not
