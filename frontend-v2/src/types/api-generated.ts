@@ -10984,10 +10984,63 @@ export interface paths {
          *
          *     Mutation route: requires operator role and, for project-scoped (managed)
          *     agents, project ownership — same pattern as delete_agent_host. Global /
-         *     self-registered agents (project_id NULL) have no owner, so operator alone
-         *     gates them.
+         *     self-registered agents (project_id NULL) have no owner, so admin role
+         *     is required (matching the mint gate).
          */
         delete: operations["delete_benchmark_agent_api_benchmarks_agents__agent_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/agents/{agent_id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint Benchmark Agent Token
+         * @description Mint an agent-bound bearer token for a registered benchmark agent.
+         *
+         *     External agents (awsbnkctl, customer hosts) register with an operator token,
+         *     then need a token that carries the ``agent_id`` claim the agent WebSocket
+         *     requires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the
+         *     same token written to /etc/forge/agent.env; this route hands it to agents
+         *     Forge does not provision. Project-scoped agents need operator role plus
+         *     project ownership; unscoped agents (project_id NULL, every self-registered
+         *     agent) need admin. Each token records the minting user and agent token_version;
+         *     calling rotate bumps the token_version and immediately revokes all prior tokens.
+         */
+        post: operations["mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post"];
+        /**
+         * Revoke Benchmark Agent Token
+         * @description Revoke all tokens for an agent without deleting the agent: bumps token_version and drops live WS.
+         */
+        delete: operations["revoke_benchmark_agent_token_api_benchmarks_agents__agent_id__token_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/agents/{agent_id}/token/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate Benchmark Agent Token
+         * @description Rotate an agent's token: bumps token_version, revokes earlier tokens, and force-closes live WS.
+         */
+        post: operations["rotate_benchmark_agent_token_api_benchmarks_agents__agent_id__token_rotate_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -13304,6 +13357,23 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * BenchmarkAgentTokenResponse
+         * @description Response for POST /api/benchmarks/agents/{agent_id}/token.
+         */
+        BenchmarkAgentTokenResponse: {
+            /** Agent Id */
+            agent_id: number;
+            /** Agent Name */
+            agent_name: string;
+            /** Token */
+            token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /**
          * BenchmarkCompareRequest
@@ -42726,6 +42796,103 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mint_benchmark_agent_token_api_benchmarks_agents__agent_id__token_post: {
+        parameters: {
+            query?: {
+                /** @description Token lifetime in days (1-3650, default 365) */
+                expires_in_days?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkAgentTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_benchmark_agent_token_api_benchmarks_agents__agent_id__token_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_benchmark_agent_token_api_benchmarks_agents__agent_id__token_rotate_post: {
+        parameters: {
+            query?: {
+                /** @description Token lifetime in days (1-3650, default 365) */
+                expires_in_days?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkAgentTokenResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

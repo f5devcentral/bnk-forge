@@ -16,9 +16,9 @@ import asyncio
 import json
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Body, Depends, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from core.auth_context import effective_role
@@ -39,6 +39,7 @@ from schemas.benchmarks import (
     BenchmarkAgentHostResponse,
     BenchmarkAgentRegister,
     BenchmarkAgentResponse,
+    BenchmarkAgentTokenResponse,
     BenchmarkCompareRequest,
     BenchmarkCompareResponse,
     BenchmarkConfigCreate,
@@ -151,6 +152,85 @@ def _require_agent_bearer(request: Request) -> dict:
     return payload
 
 
+def _token_agent(payload: dict, db: Session) -> BenchmarkAgent | None:
+    """The agent an agent-bound token (role=agent + agent_id) belongs to, or None.
+
+    A bound token whose agent row is gone is refused, so deleting the agent
+    revokes every token minted for it. Checks token_version for per-agent
+    revocation and created_by for active minter offboarding.
+    Returns None for human tokens and the claimless bootstrap token.
+    """
+    if payload.get("role") != "agent" or payload.get("agent_id") is None:
+        return None
+    try:
+        token_agent_id = int(payload["agent_id"])
+    except (TypeError, ValueError):
+        raise BadRequestError("Token carries a non-numeric agent_id claim", code="AGENT_AUTH_INVALID")
+    agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.id == token_agent_id).first()
+    if agent is None:
+        raise BadRequestError("Token's agent is no longer registered", code="AGENT_AUTH_INVALID")
+
+    # M1: Per-agent token revocation via token_version
+    token_ver = payload.get("token_version")
+    if token_ver is not None and token_ver != agent.token_version:
+        raise BadRequestError("Agent token has been revoked", code="AGENT_AUTH_REVOKED")
+
+    # M1: Tie to minting identity; offboarding minter invalidates the token
+    created_by = payload.get("created_by")
+    if created_by is not None:
+        minter = db.query(User).filter(User.id == created_by).first()
+        if not minter or not minter.is_active:
+            raise BadRequestError("Agent token minter is no longer active", code="AGENT_AUTH_REVOKED")
+
+    return agent
+
+
+def _bind_agent_name(bound: BenchmarkAgent | None, agent_name: str | None) -> str | None:
+    """Bind an agent-token write to its own agent name: refuse another agent's name, default to its own (foreign keys like target_id remain cluster-scoped)."""
+    if bound is None:
+        return agent_name
+    if agent_name is not None and agent_name != bound.name:
+        raise BadRequestError(f"Token is bound to agent '{bound.name}'", code="AGENT_AUTH_FORBIDDEN")
+    return str(bound.name)
+
+
+def _agent_exists(agent_id: int) -> bool:
+    """True if a BenchmarkAgent row with this id exists. Fails closed on a DB error."""
+    from database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            return db.query(BenchmarkAgent.id).filter(BenchmarkAgent.id == agent_id).first() is not None
+    except Exception:
+        return False
+
+
+def _agent_token_active(agent_id: int, payload: dict) -> bool:
+    """True if the agent exists, token_version matches, and minter is active."""
+    if not _agent_exists(agent_id):
+        return False
+    token_ver = payload.get("token_version")
+    created_by = payload.get("created_by")
+    if token_ver is None and created_by is None:
+        return True
+    from database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.id == agent_id).first()
+            if agent is None:
+                return False
+            if token_ver is not None and token_ver != agent.token_version:
+                return False
+            if created_by is not None:
+                minter = db.query(User).filter(User.id == created_by).first()
+                if not minter or not minter.is_active:
+                    return False
+            return True
+    except Exception:
+        return False
+
+
 # ============================================================================
 # Result Ingestion — called by aiperf CLI or user curl
 # ============================================================================
@@ -166,8 +246,10 @@ def ingest_benchmark_result(request: Request, data: BenchmarkResultPush, db: Ses
     denormalization and store the full result as-is.
     """
     claims = _require_agent_bearer(request)
+    bound = _token_agent(claims, db)
     result_data = data.model_dump()
-    result_data["agent_name"] = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
+    name = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
+    result_data["agent_name"] = _bind_agent_name(bound, name)
     svc = BenchmarkService(db)
     run = svc.ingest_result(result_data)
     db.commit()
@@ -222,7 +304,10 @@ def ingest_aiperf_result(
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
     """
-    agent_name = _bootstrap_agent_name(_require_agent_bearer(request), db, agent_name)
+    claims = _require_agent_bearer(request)
+    bound = _token_agent(claims, db)
+    agent_name = _bootstrap_agent_name(claims, db, agent_name)
+    agent_name = _bind_agent_name(bound, agent_name)
     svc = BenchmarkService(db)
     run = svc.ingest_aiperf_result(
         raw,
@@ -465,8 +550,11 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     already exists, it updates its info and marks it as connected.
     """
     claims = _require_agent_bearer(request) or _optional_bearer_claims(request)
+    # An agent-bound token may only re-register (upsert by name) its own agent.
+    _bind_agent_name(_token_agent(claims, db), data.name)
     bootstrap = _is_bootstrap_token(claims)
-    builtin_row = _is_builtin_agent(db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first())
+    existing_agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first()
+    builtin_row = _is_builtin_agent(existing_agent)
     if bootstrap:
         _check_bootstrap_register(db, data.name)
     elif builtin_row and settings.BENCHMARK_AGENT_AUTH_REQUIRED:
@@ -502,6 +590,97 @@ def get_benchmark_agent(agent_id: int, db: Session = Depends(get_db)):
     return svc.get_agent(agent_id)
 
 
+@router.post("/api/benchmarks/agents/{agent_id}/token", response_model=BenchmarkAgentTokenResponse)
+@handle_route_errors("mint benchmark agent token")
+def mint_benchmark_agent_token(
+    agent_id: int,
+    response: Response,
+    expires_in_days: int = Query(365, ge=1, le=3650, description="Token lifetime in days (1-3650, default 365)"),
+    user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Mint an agent-bound bearer token for a registered benchmark agent.
+
+    External agents (awsbnkctl, customer hosts) register with an operator token,
+    then need a token that carries the ``agent_id`` claim the agent WebSocket
+    requires under BENCHMARK_AGENT_AUTH_REQUIRED. SSH-provisioned hosts get the
+    same token written to /etc/forge/agent.env; this route hands it to agents
+    Forge does not provision. Project-scoped agents need operator role plus
+    project ownership; unscoped agents (project_id NULL, every self-registered
+    agent) need admin. Each token records the minting user and agent token_version;
+    calling rotate bumps the token_version and immediately revokes all prior tokens.
+    """
+    from services.auth_service import mint_agent_token
+
+    svc = BenchmarkService(db)
+    agent = svc.get_agent(agent_id)
+    if agent.project_id:
+        _check_project_access(agent.project_id, user, db)
+    elif effective_role(user) != "admin":
+        raise ForbiddenError("Minting a token for an unscoped agent requires admin")
+    token, expires_at = mint_agent_token(
+        agent.id,
+        expires_delta=timedelta(days=expires_in_days),
+        created_by=user.id,
+        token_version=agent.token_version,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return BenchmarkAgentTokenResponse(agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at)
+
+
+@router.post("/api/benchmarks/agents/{agent_id}/token/rotate", response_model=BenchmarkAgentTokenResponse)
+@handle_route_errors("rotate benchmark agent token")
+def rotate_benchmark_agent_token(
+    agent_id: int,
+    response: Response,
+    expires_in_days: int = Query(365, ge=1, le=3650, description="Token lifetime in days (1-3650, default 365)"),
+    user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Rotate an agent's token: bumps token_version, revokes earlier tokens, and force-closes live WS."""
+    from services.auth_service import mint_agent_token
+
+    svc = BenchmarkService(db)
+    agent = svc.get_agent(agent_id)
+    if agent.project_id:
+        _check_project_access(agent.project_id, user, db)
+    elif effective_role(user) != "admin":
+        raise ForbiddenError("Rotating a token for an unscoped agent requires admin")
+
+    agent.token_version += 1
+    db.commit()
+    close_agent_connection(agent.id)
+
+    token, expires_at = mint_agent_token(
+        agent.id,
+        expires_delta=timedelta(days=expires_in_days),
+        created_by=user.id,
+        token_version=agent.token_version,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return BenchmarkAgentTokenResponse(agent_id=agent.id, agent_name=agent.name, token=token, expires_at=expires_at)
+
+
+@router.delete("/api/benchmarks/agents/{agent_id}/token", status_code=204)
+@handle_route_errors("revoke benchmark agent tokens")
+def revoke_benchmark_agent_token(
+    agent_id: int,
+    user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Revoke all tokens for an agent without deleting the agent: bumps token_version and drops live WS."""
+    svc = BenchmarkService(db)
+    agent = svc.get_agent(agent_id)
+    if agent.project_id:
+        _check_project_access(agent.project_id, user, db)
+    elif effective_role(user) != "admin":
+        raise ForbiddenError("Revoking tokens for an unscoped agent requires admin")
+
+    agent.token_version += 1
+    db.commit()
+    close_agent_connection(agent.id)
+
+
 @router.delete("/api/benchmarks/agents/{agent_id}", status_code=204)
 @handle_route_errors("deregister benchmark agent")
 def delete_benchmark_agent(
@@ -513,15 +692,18 @@ def delete_benchmark_agent(
 
     Mutation route: requires operator role and, for project-scoped (managed)
     agents, project ownership — same pattern as delete_agent_host. Global /
-    self-registered agents (project_id NULL) have no owner, so operator alone
-    gates them.
+    self-registered agents (project_id NULL) have no owner, so admin role
+    is required (matching the mint gate).
     """
     svc = BenchmarkService(db)
     agent = svc.get_agent(agent_id)
     if agent.project_id:
         _check_project_access(agent.project_id, user, db)
+    elif effective_role(user) != "admin":
+        raise ForbiddenError("Deleting an unscoped agent requires admin")
     svc.delete_agent(agent_id)
     db.commit()
+    close_agent_connection(agent_id)
 
 
 # ============================================================================
@@ -656,6 +838,7 @@ def delete_agent_host(
 
     db.delete(agent)
     db.commit()
+    close_agent_connection(host_id)
 
     if cleanup_args is not None:
         from tasks.benchmark_agent_tasks import cleanup_benchmark_agent_host
@@ -1713,9 +1896,27 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
 
     Returns the WS close code to reject with, or ``None`` if authorized.
     """
+    # Header extraction (m1): accept via Sec-WebSocket-Protocol or Authorization header,
+    # falling back to query param ?token=
+    from collections.abc import Mapping
+
     from core.config import settings
 
-    token = websocket.query_params.get("token")
+    token = None
+    headers = websocket.headers if isinstance(getattr(websocket, "headers", None), Mapping) else {}
+    proto = headers.get("sec-websocket-protocol")
+    if proto and isinstance(proto, str):
+        for part in proto.split(","):
+            candidate = part.strip()
+            if candidate and candidate.lower() not in ("bearer", "token", "access_token"):
+                token = candidate
+                break
+    if not token and "authorization" in headers:
+        auth_header = str(headers.get("authorization") or "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+    if not token and hasattr(websocket, "query_params"):
+        token = websocket.query_params.get("token")
 
     # Layer 1 — agent-specific auth (close 4401)
     if settings.BENCHMARK_AGENT_AUTH_REQUIRED:
@@ -1753,6 +1954,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
             return 4401
         if not claim_matches:
             logger.warning("Agent %d WS rejected: token agent_id=%s does not match path", agent_id, token_agent_id)
+            return 4401
+        # Deleting the agent revokes its tokens. Check version and minter as well.
+        if not _agent_token_active(agent_id, payload):
+            logger.warning("Agent %d WS rejected: agent is not registered or token revoked", agent_id)
             return 4401
         return None
 
@@ -1794,7 +1999,29 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     # branch when agent auth is off, so gate ONLY a token that resolves to a real
     # user: refuse if that user owes a password change or no longer resolves
     # (deleted/disabled). Mirrors the POST /api/benchmarks/agents gate above.
-    if payload.get("role") != "agent":
+    # An agent-bound token (agent_id claim) gets the same binding as Layer 1:
+    # only its own agent, and only while that agent is registered.
+    if payload.get("role") == "agent":
+        token_agent_id = payload.get("agent_id")
+        if token_agent_id is None:
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
+                return None
+            logger.warning("Agent %d WS rejected: role=agent token missing agent_id claim", agent_id)
+            return 4401
+        try:
+            claim_matches = int(token_agent_id) == agent_id
+        except (TypeError, ValueError):
+            claim_matches = False
+        if not claim_matches or not _agent_token_active(agent_id, payload):
+            logger.warning(
+                "Agent %d WS rejected: token agent_id=%s is not valid/active for this agent",
+                agent_id,
+                token_agent_id,
+            )
+            # 4401, not 4001: the token itself is valid but no longer active for this
+            # agent, so the agent must re-mint rather than reconnect.
+            return 4401
+    else:
         from services.auth_service import token_user_state
 
         ws_user = token_user_state(token)
@@ -2166,6 +2393,32 @@ def dispatch_to_agent(agent_id: int, command: dict) -> bool:
             return False
     # No agent has connected yet (no loop captured) → nothing to send to.
     return False
+
+
+async def _close_agent_ws(ws: WebSocket) -> None:
+    try:
+        await ws.close(code=4401)
+    except Exception:
+        pass
+
+
+def close_agent_connection(agent_id: int) -> None:
+    """Drop an agent's live WebSocket (close 4401) from a SYNC route handler.
+
+    Deleting an agent or rotating its token revokes earlier credentials; without
+    this an already-open socket would keep working until it reconnected.
+    Popping the entry denies the socket immediately, and scheduling the close
+    without awaiting the 5s timeout avoids blocking route threads if the loop is busy.
+    """
+    ws = _agent_ws_connections.pop(agent_id, None)
+    if ws is None:
+        return
+    loop = _main_loop
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(_close_agent_ws(ws), loop)
+        except Exception:
+            logger.warning("Could not close WebSocket for agent %d", agent_id)
 
 
 # ============================================================================

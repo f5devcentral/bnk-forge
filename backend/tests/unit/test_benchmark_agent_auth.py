@@ -22,6 +22,7 @@ import pytest
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _register_payload():
     return {
         "name": "test-agent-auth-unit",
@@ -136,6 +137,7 @@ class TestAgentAuthFlagOn:
 
     def _headers_for(self, **claims) -> dict:
         from services.auth_service import create_access_token
+
         return {"Authorization": f"Bearer {create_access_token(claims)}"}
 
     def test_register_rejects_viewer_token(self, client):
@@ -196,12 +198,23 @@ class TestAgentAuthFlagOn:
         from models.benchmark import BenchmarkAgent
 
         self._client = client
+        db.add(BenchmarkAgent(id=12345, name="ext-agent", status="connected", managed=False))
+        db.commit()
         tags = {"builtin": True, "_forge_builtin": True, "site": "lab"}
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "ext-agent", "tags": tags},
-                          sub="op-agent", role="agent", agent_id=12345)
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "ext-agent", "tags": tags},
+            sub="op-agent",
+            role="agent",
+            agent_id=12345,
+        )
         assert resp.status_code in (200, 201), resp.text
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "new-builtin", "tags": tags},
-                          sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "new-builtin", "tags": tags},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code in (200, 201), resp.text
 
         db.expire_all()
@@ -216,8 +229,12 @@ class TestAgentAuthFlagOn:
         self._client = client
         db.add(BenchmarkAgent(name="forge-local", status="connected", managed=False, tags={"builtin": True}))
         db.commit()
-        resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local",
-                          "tags": {"builtin": True}}, sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/agents",
+            {**_register_payload(), "name": "forge-local", "tags": {"builtin": True}},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code in (200, 201), resp.text
         db.expire_all()
         assert db.query(BenchmarkAgent).filter_by(name="forge-local").one().tags["_forge_builtin"] is True
@@ -229,7 +246,9 @@ class TestAgentAuthFlagOn:
         self._client = client
         create_user(db, "op2", "op2@t.com", "pw-op-123", role="operator", must_change_password=False)
         marker = {"builtin": True, "_forge_builtin": True}
-        db.add(BenchmarkAgent(name="forge-local", hostname="orig", status="connected", managed=False, tags=marker))
+        db.add(
+            BenchmarkAgent(id=4242, name="forge-local", hostname="orig", status="connected", managed=False, tags=marker)
+        )
         db.commit()
         body = {**_register_payload(), "name": "forge-local", "tags": {"site": "x"}}
 
@@ -254,8 +273,12 @@ class TestAgentAuthFlagOn:
         db.commit()
         bench_routes._agent_ws_connections[legacy.id] = object()
         try:
-            resp = self._post("/api/benchmarks/agents", {**_register_payload(), "name": "forge-local"},
-                              sub="forge-builtin-agent", role="agent")
+            resp = self._post(
+                "/api/benchmarks/agents",
+                {**_register_payload(), "name": "forge-local"},
+                sub="forge-builtin-agent",
+                role="agent",
+            )
         finally:
             bench_routes._agent_ws_connections.pop(legacy.id, None)
         assert resp.status_code == 409
@@ -266,13 +289,19 @@ class TestAgentAuthFlagOn:
         from models.benchmark import BenchmarkAgent
 
         self._client = client
-        db.add_all([
-            BenchmarkAgent(name="builtin-a", status="connected", managed=False, tags={"_forge_builtin": True}),
-            BenchmarkAgent(name="victim-a", status="connected", managed=False, tags={"builtin": True}),
-        ])
+        db.add_all(
+            [
+                BenchmarkAgent(name="builtin-a", status="connected", managed=False, tags={"_forge_builtin": True}),
+                BenchmarkAgent(name="victim-a", status="connected", managed=False, tags={"builtin": True}),
+            ]
+        )
         db.commit()
-        resp = self._post("/api/benchmarks/results/aiperf?agent_name=victim-a", {"request_count": {"avg": 1}},
-                          sub="forge-builtin-agent", role="agent")
+        resp = self._post(
+            "/api/benchmarks/results/aiperf?agent_name=victim-a",
+            {"request_count": {"avg": 1}},
+            sub="forge-builtin-agent",
+            role="agent",
+        )
         assert resp.status_code == 400
         assert "AGENT_AUTH_FORBIDDEN" in resp.text
 
@@ -284,8 +313,8 @@ class TestAgentAuthFlagOn:
         disabled. A real curl operator always has a row (that is how they got the
         token), so create one, unlike a forged token for a phantom user."""
         from services.auth_service import create_user
-        create_user(db, "op", "op@t.com", "pw-op-123",
-                    role="operator", must_change_password=False)
+
+        create_user(db, "op", "op@t.com", "pw-op-123", role="operator", must_change_password=False)
         db.commit()
         with patch("routes.benchmarks.settings") as mock_settings:
             mock_settings.BENCHMARK_AGENT_AUTH_REQUIRED = True
@@ -303,8 +332,8 @@ class TestAgentAuthFlagOn:
         create an agent (201) because this path never gated must_change. A token
         that resolves to a real user owing a password change must be refused."""
         from services.auth_service import create_access_token, create_user
-        create_user(db, "mc-admin", "mc-admin@t.com", "pw",
-                    role="admin", must_change_password=True)
+
+        create_user(db, "mc-admin", "mc-admin@t.com", "pw", role="admin", must_change_password=True)
         db.commit()
         token = create_access_token({"sub": "mc-admin", "role": "admin"})
         with patch("routes.benchmarks.settings") as mock_settings:
@@ -354,6 +383,7 @@ class TestAgentAuthFlagOn:
     def test_default_is_secure(self):
         """#148: a default deployment must not accept unauthenticated writes."""
         from core.config import Settings
+
         assert Settings().BENCHMARK_AGENT_AUTH_REQUIRED is True
 
     def test_ingest_rejects_missing_bearer(self, client):
@@ -463,8 +493,12 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        builtin = BenchmarkAgent(name="forge-local", status="connected", managed=False,
-                                 tags={"role": "forge-agent", "builtin": True, "_forge_builtin": True})
+        builtin = BenchmarkAgent(
+            name="forge-local",
+            status="connected",
+            managed=False,
+            tags={"role": "forge-agent", "builtin": True, "_forge_builtin": True},
+        )
         # forge_agent.py sends tags.builtin=true for every agent it runs.
         other = BenchmarkAgent(name="remote-1", status="connected", managed=False, tags={"builtin": True})
         db.add_all([builtin, other])
@@ -495,8 +529,28 @@ class TestWSTokenValidationLogic:
         ws = MagicMock()
         ws.query_params = {"token": token}
 
-        with patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True):
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True),
+            patch("routes.benchmarks._agent_exists", return_value=True),
+        ):
             assert _agent_ws_authorized(ws, 7) is None
+
+    def test_matching_claim_for_deleted_agent_rejected(self):
+        """Deleting the agent revokes its tokens: a matching claim for a missing row fails."""
+        from unittest.mock import MagicMock, patch
+
+        from routes.benchmarks import _agent_ws_authorized
+        from services.auth_service import create_access_token
+
+        token = create_access_token(data={"sub": "agent:7", "role": "agent", "agent_id": 7})
+        ws = MagicMock()
+        ws.query_params = {"token": token}
+
+        with (
+            patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", True),
+            patch("routes.benchmarks._agent_exists", return_value=False),
+        ):
+            assert _agent_ws_authorized(ws, 7) == 4401
 
     def test_mismatched_agent_id_claim_rejected_through_helper(self):
         from unittest.mock import MagicMock, patch
@@ -518,9 +572,7 @@ class TestWSTokenValidationLogic:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(
-            data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"}
-        )
+        token = create_access_token(data={"sub": "agent", "role": "admin", "agent_id": "not-a-number"})
         ws = MagicMock()
         ws.query_params = {"token": token}
 
@@ -587,6 +639,7 @@ class TestAgentWSLayer2MustChangeGate:
 
     def _ws(self, token):
         from unittest.mock import MagicMock
+
         ws = MagicMock()
         ws.query_params = {"token": token}
         return ws
@@ -647,7 +700,7 @@ class TestAgentWSLayer2MustChangeGate:
         from routes.benchmarks import _agent_ws_authorized
         from services.auth_service import create_access_token
 
-        token = create_access_token(data={"sub": "forge-agent", "role": "agent"})
+        token = create_access_token(data={"sub": "forge-agent", "role": "agent", "agent_id": 5})
 
         def _boom(*_a, **_k):  # token_user_state must not be consulted for agents
             raise AssertionError("token_user_state should not be called for an agent token")
@@ -655,6 +708,7 @@ class TestAgentWSLayer2MustChangeGate:
         with (
             patch("core.config.settings.BENCHMARK_AGENT_AUTH_REQUIRED", False),
             patch("core.config.settings.REQUIRE_AUTH", True),
+            patch("routes.benchmarks._agent_exists", return_value=True),
             patch("services.auth_service.token_user_state", _boom),
         ):
             assert _agent_ws_authorized(self._ws(token), 5) is None

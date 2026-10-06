@@ -46,6 +46,7 @@ class BenchmarkRun(Base):
     The result_json column stores the full BenchmarkResult from the CLI tool.
     Created either by POST /api/benchmarks/results (CLI push) or POST /api/benchmarks/runs (UI trigger).
     """
+
     __tablename__ = "benchmark_runs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -69,7 +70,9 @@ class BenchmarkRun(Base):
     # Link to target/proxy (Phase 4b — optional, backward compatible)
     # target_id: index supplied by idx_benchmark_run_target in __table_args__ (avoid duplicate ix_*).
     target_id = Column(Integer, ForeignKey("benchmark_targets.id", ondelete="SET NULL"), nullable=True)
-    proxy_deployment_id = Column(Integer, ForeignKey("proxy_deployments.id", ondelete="SET NULL"), nullable=True, index=True)
+    proxy_deployment_id = Column(
+        Integer, ForeignKey("proxy_deployments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Link to parent run-group (Phase 6 — scenario expansion). A scenario expands into
     # one parent BenchmarkRunGroup + N child BenchmarkRuns (one per concurrency/phase).
@@ -142,6 +145,7 @@ class BenchmarkRunGroup(Base):
     Each child run remains a single aiperf invocation. Aggregate metrics are rolled
     up here once all children reach a terminal state.
     """
+
     __tablename__ = "benchmark_run_groups"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -209,6 +213,7 @@ class BenchmarkConfig(Base):
 
     ⚠️  This is NOT "model_provider + model_name". It's a load test configuration.
     """
+
     __tablename__ = "benchmark_configs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -229,9 +234,7 @@ class BenchmarkConfig(Base):
     # Relationships
     runs = relationship("BenchmarkRun", back_populates="config")
 
-    __table_args__ = (
-        Index("idx_benchmark_config_tool", "tool"),
-    )
+    __table_args__ = (Index("idx_benchmark_config_tool", "tool"),)
 
 
 class BenchmarkAgent(Base):
@@ -248,12 +251,15 @@ class BenchmarkAgent(Base):
 
     ⚠️  This is a PHYSICAL/VIRTUAL MACHINE, NOT an "AI model being evaluated".
     """
+
     __tablename__ = "benchmark_agents"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, unique=True, index=True)  # "loadgen-01"
     hostname = Column(String(255), nullable=True)  # OS hostname
-    ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6 — the address the agent *advertises* (self-registered)
+    ip_address = Column(
+        String(45), nullable=True
+    )  # IPv4 or IPv6 — the address the agent *advertises* (self-registered)
     tags = Column(JSON, nullable=True)  # {"datacenter": "us-east", "gpu": false}
     capabilities = Column(JSON, nullable=True)  # {"engines": ["burst"], "platform": "Linux", "python": "3.11"}
 
@@ -283,6 +289,19 @@ class BenchmarkAgent(Base):
     # Runtime readiness snapshot (populated after successful provision)
     readiness = Column(JSON, nullable=True)
 
+    @property
+    def token_version(self) -> int:
+        """Monotonic version for per-agent token revocation (stored in readiness JSON)."""
+        if self.readiness and isinstance(self.readiness, dict):
+            return int(self.readiness.get("_token_version", 1))
+        return 1
+
+    @token_version.setter
+    def token_version(self, value: int) -> None:
+        current = dict(self.readiness) if isinstance(self.readiness, dict) else {}
+        current["_token_version"] = int(value)
+        self.readiness = current  # type: ignore[assignment]
+
     # True = Forge-managed remote host; False = self-registered built-in agent
     managed = Column(Boolean, nullable=False, default=False)
     # ── end Slice 1 columns ─────────────────────────────────────────────────
@@ -308,6 +327,7 @@ class BenchmarkTarget(Base):
     endpoint details (base URL, model, namespace). Proxy deployments
     (envoy, nginx, etc.) are children of this target.
     """
+
     __tablename__ = "benchmark_targets"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -365,6 +385,7 @@ class ProxyDeployment(Base):
     forwards LLM inference traffic from the test agent to the target's
     LLM endpoint.
     """
+
     __tablename__ = "proxy_deployments"
 
     id = Column(Integer, primary_key=True, index=True)
