@@ -222,7 +222,7 @@ Can't plan/apply module, shows dependency error
 
 **Solution:**
 1. Check which dependencies are missing in the UI
-2. Deploy dependencies first (they should show ✅)
+2. Deploy dependencies first (they should show green / success)
 3. Verify dependency outputs exist:
    ```bash
    docker exec -it bnk-forge-backend python -c "
