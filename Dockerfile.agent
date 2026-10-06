@@ -11,12 +11,12 @@ FROM python:3.11-slim
 # Install aiperf + websockets + requests.
 # aiperf pulls in `crick` (a C-extension stats lib) which compiles from source,
 # so build tooling (gcc) is needed at install time; purge it afterwards to keep
-# the image slim. Pin aiperf to a specific version if a known-good release is
-# required (e.g. aiperf==0.3.1).
+# the image slim. aiperf is pinned: Forge ingest is verified against this
+# export format, and an unpinned rebuild silently changes it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && pip install --no-cache-dir \
-        aiperf \
+        aiperf==0.13.0 \
         websockets \
         requests \
     && apt-get purge -y --auto-remove build-essential \

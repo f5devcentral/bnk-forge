@@ -11,6 +11,7 @@ deployments (envoy, nginx, haproxy, f5-bnk) that route traffic to them.
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import joinedload
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Valid proxy types (nodeport = direct to LLM, no proxy layer)
 VALID_PROXY_TYPES = frozenset(
-    {"envoy", "nginx", "haproxy", "f5-bnk", "nodeport", "envoy-ai-gateway", "llm-d-router"}
+    {"envoy", "nginx", "haproxy", "f5-bnk", "f5-bnk-epp", "nodeport", "envoy-ai-gateway", "llm-d-router"}
 )
 
 # Real Helm chart references — used when deploying proxies that aren't already on cluster.
@@ -73,19 +74,19 @@ DEFAULT_HELM_CHARTS: dict[str, dict[str, str]] = {
         "version": "v0.6.0",
         "repo": "",  # OCI — no repo add needed
     },
-    # llm-d-router — the llm-d inference scheduler with PRECISE (KV-event-driven)
-    # prefix-cache-aware routing. The PRIMARY release below is the GAIE InferencePool
-    # chart (EPP + InferencePool); proxy_deploy_service runs the EPP as the llm-d
-    # inference-scheduler image with a UDS tokenizer sidecar and fronts it with
-    # AGENTGATEWAY (its own control plane + `agentgateway` GatewayClass) — NOT Envoy
-    # AI Gateway; llm-d-router shares no gateway infra with envoy-ai-gateway.
-    # Versions verified against ~/go/src/llm-d guides/precise-prefix-cache-aware
-    # (inferencepool chart v1.4.0; llm-d-inference-scheduler:v0.7.1).
+    # llm-d-router — llm-d's router with PRECISE (KV-event-driven) prefix-cache-aware
+    # routing. The PRIMARY release below is llm-d-router's own gateway chart (EPP +
+    # InferencePool), fronted by AGENTGATEWAY (its own control plane + `agentgateway`
+    # GatewayClass) — NOT Envoy AI Gateway; llm-d-router shares no gateway infra with
+    # envoy-ai-gateway. Version pairing per llm-d/llm-d v0.10.0 guides/env.sh.
     "llm-d-router": {
-        "chart": "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool",
-        "version": "v1.4.0",
+        "chart": "oci://ghcr.io/llm-d/charts/llm-d-router-gateway",
+        "version": "v0.11.0",
         "repo": "",  # OCI — no repo add needed
     },
+    # f5-bnk-epp — BNK 2.4's F5 Endpoint Picker on an existing BNK Gateway: F5EPP +
+    # InferencePool + an HTTPRoute of its own hostname (proxy_deploy_service._deploy_f5_epp).
+    "f5-bnk-epp": {"chart": "", "version": ""},
 }
 
 
@@ -100,15 +101,19 @@ class BenchmarkTargetService(BaseService):
         self,
         status: str | None = None,
         cluster_id: int | None = None,
+        name: str | None = None,
     ) -> tuple[list[BenchmarkTarget], int]:
         """List all benchmark targets with optional filters."""
         query = self.db.query(BenchmarkTarget).options(
+            joinedload(BenchmarkTarget.cluster),
             joinedload(BenchmarkTarget.proxy_deployments),
         )
         if status:
             query = query.filter(BenchmarkTarget.status == status)
         if cluster_id:
             query = query.filter(BenchmarkTarget.cluster_id == cluster_id)
+        if name:
+            query = query.filter(BenchmarkTarget.name == name)
 
         targets = query.order_by(desc(BenchmarkTarget.created_at)).all()
         # Use unique() to deduplicate rows caused by joinedload on a collection
@@ -118,7 +123,9 @@ class BenchmarkTargetService(BaseService):
 
     def get_target(self, target_id: int, with_details: bool = False) -> BenchmarkTarget:
         """Get a benchmark target by ID."""
-        query = self.db.query(BenchmarkTarget)
+        query = self.db.query(BenchmarkTarget).options(
+            joinedload(BenchmarkTarget.cluster),
+        )
         if with_details:
             query = query.options(
                 joinedload(BenchmarkTarget.proxy_deployments),
@@ -128,14 +135,17 @@ class BenchmarkTargetService(BaseService):
             raise NotFoundError("benchmark_target", target_id)
         return target
 
-    def create_target(self, data: dict) -> BenchmarkTarget:
+    def create_target(self, data: dict | Any) -> BenchmarkTarget:
         """Create a new benchmark target."""
-        # Check unique name
+        if hasattr(data, "model_dump"):
+            data = data.model_dump()
+        # Check unique (cluster_id, name)
         existing = self.db.query(BenchmarkTarget).filter(
-            BenchmarkTarget.name == data["name"]
+            BenchmarkTarget.cluster_id == data["cluster_id"],
+            BenchmarkTarget.name == data["name"],
         ).first()
         if existing:
-            raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists")
+            raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists for cluster {data['cluster_id']}")
 
         # Validate cluster_id references a real cluster
         from models.kubernetes import KubernetesCluster
@@ -152,17 +162,23 @@ class BenchmarkTargetService(BaseService):
                      target.id, target.name, target.cluster_id)
         return target
 
-    def update_target(self, target_id: int, data: dict) -> BenchmarkTarget:
+    def update_target(self, target_id: int, data: dict | Any) -> BenchmarkTarget:
         """Update a benchmark target."""
+        if hasattr(data, "model_dump"):
+            data = data.model_dump(exclude_unset=True)
         target = self.get_target(target_id)
 
-        # Check unique name if changing
-        if data.get("name") and data["name"] != target.name:
+        # Check unique (cluster_id, name) if changing
+        new_name = data.get("name", target.name)
+        new_cluster_id = data.get("cluster_id", target.cluster_id)
+        if new_name != target.name or new_cluster_id != target.cluster_id:
             existing = self.db.query(BenchmarkTarget).filter(
-                BenchmarkTarget.name == data["name"]
+                BenchmarkTarget.cluster_id == new_cluster_id,
+                BenchmarkTarget.name == new_name,
+                BenchmarkTarget.id != target_id,
             ).first()
             if existing:
-                raise ConflictError("benchmark_target", f"Target with name '{data['name']}' already exists")
+                raise ConflictError("benchmark_target", f"Target with name '{new_name}' already exists for cluster {new_cluster_id}")
 
         # Validate cluster_id if changing
         if data.get("cluster_id") and data["cluster_id"] != target.cluster_id:
@@ -241,6 +257,51 @@ class BenchmarkTargetService(BaseService):
                 http_msg = f"TCP connect OK to {host}:{port} (HTTP probes failed: {http_msg})"
             except (TimeoutError, OSError) as e:
                 http_msg = f"Unreachable — TCP connect to {host}:{port} failed: {e}"
+
+        # --- Layer 3: Kubernetes Service / Pod check fallback ---
+        # Only for URLs that name a Service in llm_namespace (svc, svc.ns, svc.ns.svc...);
+        # an external hostname's first label is not a Service reference.
+        svc_name = host.split(".")[0]
+        svc_ns = target.llm_namespace or "default"
+        in_cluster_host = host in {
+            svc_name, f"{svc_name}.{svc_ns}", f"{svc_name}.{svc_ns}.svc", f"{svc_name}.{svc_ns}.svc.cluster.local",
+        }
+        if not http_ok and target.cluster_id and in_cluster_host:
+            try:
+                from kubernetes import client as k8s_client
+
+                from services.kubernetes import KubernetesService
+
+                k8s = KubernetesService(self.db)
+                api_client = k8s.load_kubeconfig(target.cluster)
+                core = k8s_client.CoreV1Api(api_client)
+
+                svc = core.read_namespaced_service(name=svc_name, namespace=svc_ns, _request_timeout=10)
+                selector = svc.spec.selector
+                if port not in [p.port for p in (svc.spec.ports or [])]:
+                    http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but does not expose port {port}"
+                elif selector:
+                    label_selector = ",".join(f"{k}={v}" for k, v in selector.items())
+                    pods = core.list_namespaced_pod(svc_ns, label_selector=label_selector, _request_timeout=10)
+                    ready_pods = [
+                        p for p in (pods.items or [])
+                        if any(c.type == "Ready" and c.status == "True" for c in (p.status.conditions or []))
+                    ]
+                    if ready_pods:
+                        http_ok = True
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' healthy ({len(ready_pods)} ready pod(s))"
+                    else:
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but 0 ready pods"
+                else:
+                    # Selectorless Service: healthy only if its Endpoints carry ready addresses.
+                    eps = core.read_namespaced_endpoints(name=svc_name, namespace=svc_ns, _request_timeout=10)
+                    if any(s.addresses for s in (eps.subsets or [])):
+                        http_ok = True
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' has ready endpoints"
+                    else:
+                        http_msg = f"K8s Service '{svc_name}.{svc_ns}' found but has no ready endpoints"
+            except Exception as k8s_err:
+                logger.debug("K8s validation fallback failed for target %d: %s", target_id, k8s_err)
 
         if http_ok:
             target.status = BenchmarkTargetStatus.ACTIVE
@@ -369,6 +430,10 @@ class BenchmarkTargetService(BaseService):
         status to 'pending'.
         """
         deploy = self.get_proxy_deployment(target_id, proxy_id)
+        # An uninstalled row has no Helm release left: let the deploy derive the
+        # name again so it follows the current naming rules (e.g. the ingress-nginx cap).
+        if deploy.status == ProxyDeploymentStatus.UNINSTALLED:
+            deploy.helm_release = None
         deploy.status = ProxyDeploymentStatus.PENDING
         deploy.status_message = "Redeploy requested — awaiting Helm install (Phase 4c)"
         deploy.deployed_at = None

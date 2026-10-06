@@ -15,7 +15,7 @@ import {
   TrendingUp,
   TrendingDown,
 } from 'lucide-react';
-import type { BenchmarkRunStatus } from '@/types';
+import type { BenchmarkRunStatus, BenchmarkTarget } from '@/types';
 
 // ============================================================================
 // Constants
@@ -26,6 +26,7 @@ export const PROXY_COLORS: Record<string, string> = {
   nginx: '#10b981',     // emerald
   haproxy: '#f59e0b',   // amber
   'f5-bnk': '#ef4444',   // red
+  'f5-bnk-epp': '#b91c1c',  // dark red
   nodeport: '#3b82f6',  // blue
   'envoy-ai-gateway': '#ec4899',  // pink
   'llm-d-router': '#06b6d4',  // cyan
@@ -36,6 +37,7 @@ export const PROXY_LABELS: Record<string, string> = {
   nginx: 'Nginx',
   haproxy: 'HAProxy',
   'f5-bnk': 'F5 BNK',
+  'f5-bnk-epp': 'F5 BNK + F5 EPP',
   nodeport: 'NodePort (No Proxy)',
   'envoy-ai-gateway': 'Envoy AI Gateway',
   'llm-d-router': 'llm-d Router',
@@ -66,7 +68,7 @@ export const PROXY_DEPLOY_STATUS_CONFIG: Record<string, { label: string; variant
   uninstalled: { label: 'Uninstalled', variant: 'secondary', color: '#71717a' },
 };
 
-export const AVAILABLE_PROXY_TYPES = ['envoy', 'nginx', 'haproxy', 'f5-bnk', 'envoy-ai-gateway', 'llm-d-router'] as const;
+export const AVAILABLE_PROXY_TYPES = ['envoy', 'nginx', 'haproxy', 'f5-bnk', 'f5-bnk-epp', 'envoy-ai-gateway', 'llm-d-router'] as const;
 
 // ============================================================================
 // Badge Components
@@ -196,6 +198,14 @@ export function fmtPct(n: number | null | undefined): string {
 // ============================================================================
 // Utility Helpers
 // ============================================================================
+
+/**
+ * Target picker label. Target names are unique per cluster and cluster names
+ * only per project, so the cluster id disambiguates across projects.
+ */
+export function targetOptionLabel(t: Pick<BenchmarkTarget, 'name' | 'cluster_id' | 'cluster_name'>): string {
+  return `${t.name} (${t.cluster_name ? `${t.cluster_name} ` : 'cluster '}#${t.cluster_id})`;
+}
 
 /** Download helper — creates a Blob and triggers download */
 export function downloadJson(data: object, filename: string) {

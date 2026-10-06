@@ -11,6 +11,7 @@ export function CNEInstanceDetail({ resource }: DetailPanelProps) {
 
   // Feature toggles
   const features = [
+    { label: 'Dynamic Routing (BGP)', value: spec.dynamicRouting?.enabled },
     { label: 'Firewall ACL', value: spec.firewallACL?.enabled },
     { label: 'Intelligent LB', value: spec.intelligentLB?.enabled },
     { label: 'Metric Subsystem', value: spec.metricSubsystem?.enabled },

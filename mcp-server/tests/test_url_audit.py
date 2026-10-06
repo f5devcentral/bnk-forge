@@ -180,6 +180,9 @@ EXPECTED_TOOLS: dict[str, tuple[str, str]] = {
     "list_ssh_credentials": ("GET", "/api/ssh-credentials"),
     "create_ssh_credential": ("POST", "/api/ssh-credentials"),
     "test_ssh_credential": ("POST", "/api/ssh-credentials/{credential_id}/test"),
+    # benchmarks.py
+    "list_benchmark_targets": ("GET", "/api/benchmarks/targets"),
+    "create_benchmark_target": ("POST", "/api/benchmarks/targets"),
 }
 
 

@@ -10,8 +10,11 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
+import { queryKeys } from '@/lib/queryKeys';
 import {
   useBnkData,
+  useBnkRefresh,
+  refreshBnkData,
   useF5BNKHealth,
   useF5GatewayTopology,
   useF5PolicyGatewayAssociations,
@@ -50,6 +53,31 @@ const mockBnkData = {
   topologyCounts: { gateways: 1, routes: 1 },
   policyAssociations: [{ policy: 'p-1', gateways: ['gw-1'] }],
   policyCount: 1,
+  trafficStats: {
+    source: 'tmctl',
+    podName: 'f5-tmm-abc',
+    sampledAt: '2026-09-01T00:00:00Z',
+    available: true,
+    error: null,
+    listeners: [],
+    egresses: [],
+    firewallRules: [],
+  },
+};
+
+const mockBnkHealth = {
+  overall: 'healthy',
+  installShape: 'flo',
+  installMethod: 'FLO deploy flow',
+  connectivity: { status: 'connected', message: 'Kubernetes API is accessible', checkedAt: '2026-09-01T00:00:00Z' },
+  integration: { status: 'healthy', operatorConnected: false, operatorMode: 'kubeconfig', operatorVersion: null, lastSeen: null, message: 'Cluster managed via kubeconfig' },
+  platform: { severity: 'healthy' },
+  dataPlane: { severity: 'healthy' },
+  networking: { severity: 'healthy' },
+  security: { severity: 'healthy' },
+  ai: { severity: 'healthy', analyzers: 0, analyzerDetails: [] },
+  counts: { tmm_containers: 1, gateways: 0, httpRoutes: 0, vlans: 0 },
+  cluster_id: 1,
 };
 
 // Register BNK data handler
@@ -57,6 +85,9 @@ function setupBnkHandlers() {
   server.use(
     http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', () => {
       return HttpResponse.json(mockBnkData);
+    }),
+    http.get('*/api/k8s/clusters/:clusterId/f5bnk/health', () => {
+      return HttpResponse.json(mockBnkHealth);
     }),
     http.get('*/api/k8s/clusters/:clusterId/bnk/upgrade/versions', () => {
       return HttpResponse.json({
@@ -148,6 +179,100 @@ describe('useBnkData', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
+
+  function recordRequests() {
+    const urls: URL[] = [];
+    server.use(
+      http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', ({ request }) => {
+        urls.push(new URL(request.url));
+        return HttpResponse.json(mockBnkData);
+      }),
+    );
+    return urls;
+  }
+
+  function createClientWrapper() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 60_000 } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+    return { queryClient, wrapper };
+  }
+
+  it('uses one cache entry for every "all namespaces" param shape', async () => {
+    const urls = recordRequests();
+    const { wrapper } = createClientWrapper();
+    const { result } = renderHook(
+      () => [useBnkData(1, { namespace: undefined }), useBnkData(1), useBnkData(1, {})],
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.every((q) => q.isSuccess)).toBe(true));
+    expect(urls).toHaveLength(1);
+  });
+
+  it('sends force=true only for the fetch a refresh triggers', async () => {
+    const urls = recordRequests();
+    const { queryClient, wrapper } = createClientWrapper();
+    const { result } = renderHook(
+      () => ({ query: useBnkData(1, { namespace: 'prod' }), refresh: useBnkRefresh(1) }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.query.isSuccess).toBe(true));
+    expect(urls[0].searchParams.get('force')).toBeNull();
+
+    await act(() => result.current.refresh());
+    await waitFor(() => expect(urls).toHaveLength(2));
+    expect(urls[1].searchParams.get('force')).toBe('true');
+    expect(urls[1].searchParams.get('namespace')).toBe('prod');
+
+    await act(() => result.current.query.refetch());
+    await waitFor(() => expect(urls).toHaveLength(3));
+    expect(urls[2].searchParams.get('force')).toBeNull();
+
+    await act(() => queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.bnkDataAll(1) }));
+    await waitFor(() => expect(urls).toHaveLength(4));
+    expect(urls[3].searchParams.get('force')).toBeNull();
+  });
+
+  it('does not keep forcing after a failed forced fetch', async () => {
+    const forced: (string | null)[] = [];
+    let fail = false;
+    server.use(
+      http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', ({ request }) => {
+        forced.push(new URL(request.url).searchParams.get('force'));
+        return fail ? HttpResponse.json({}, { status: 500 }) : HttpResponse.json(mockBnkData);
+      }),
+    );
+    const { queryClient, wrapper } = createClientWrapper();
+    const { result } = renderHook(() => useBnkData(1), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    fail = true;
+    await act(() => refreshBnkData(queryClient, 1));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    fail = false;
+    await act(() => result.current.refetch());
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(forced).toEqual([null, 'true', null]);
+  });
+
+  it('does not show the previous cluster data after a cluster switch', async () => {
+    server.use(
+      http.get('*/api/k8s/clusters/:clusterId/f5bnk/data', async ({ params }) => {
+        if (params.clusterId === '2') await new Promise((r) => setTimeout(r, 50));
+        return HttpResponse.json(mockBnkData);
+      }),
+    );
+    const { wrapper } = createClientWrapper();
+    const { result, rerender } = renderHook(({ id }) => useBnkData(id), { wrapper, initialProps: { id: 1 } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    rerender({ id: 2 });
+    expect(result.current.data).toBeUndefined();
+    await waitFor(() => expect(result.current.data).toBeDefined());
+  });
 });
 
 // ============================================================================
@@ -155,13 +280,13 @@ describe('useBnkData', () => {
 // ============================================================================
 
 describe('useF5BNKHealth', () => {
-  it('returns health slice from unified data', async () => {
+  it('fetches health data directly from /f5bnk/health', async () => {
     setupBnkHandlers();
     const { result } = renderHook(() => useF5BNKHealth(1), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toMatchObject({ status: 'healthy' });
+    expect(result.current.data).toMatchObject({ status: 'healthy', cluster_id: 1 });
   });
 });
 
@@ -176,6 +301,7 @@ describe('useF5GatewayTopology', () => {
       topology: expect.any(Array),
       dataPlane: expect.any(Array),
       counts: { gateways: 1, routes: 1 },
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });
@@ -191,6 +317,7 @@ describe('useF5PolicyGatewayAssociations', () => {
     expect(result.current.data).toMatchObject({
       associations: expect.any(Array),
       count: 1,
+      trafficStats: { source: 'tmctl', available: true },
       cluster_id: 1,
     });
   });

@@ -59,12 +59,12 @@ def service(db_session):
 class TestBnkDeployableReleaseServiceSeed:
     """Tests for seed_profiles()."""
 
-    def test_seed_creates_three_releases(self, service, db_session):
+    def test_seed_creates_four_releases(self, service, db_session):
         count = service.seed_profiles()
         db_session.commit()
-        assert count == 3
+        assert count == 4
         releases = db_session.query(BnkDeployableRelease).all()
-        assert len(releases) == 3
+        assert len(releases) == 4
 
     def test_seed_idempotent_second_call_returns_zero(self, service, db_session):
         service.seed_profiles()
@@ -116,12 +116,27 @@ class TestBnkDeployableReleaseServiceSeed:
         assert defaults[0].name == "bnk-2.2"
 
     def test_seed_partial_idempotency(self, service, db_session):
-        """If one release exists, seed only creates the two missing ones."""
+        """If one release exists, seed only creates the three missing ones."""
         db_session.add(BnkDeployableRelease(**BNK_21_PROFILE))
         db_session.commit()
         count = service.seed_profiles()
         db_session.commit()
-        assert count == 2  # bnk-2.2 and bnk-2.3.1 were missing
+        assert count == 3  # bnk-2.2, bnk-2.3.1 and bnk-2.4 were missing
+
+    def test_oci_refresh_matches_seeded_24_row(self, service, db_session):
+        """The 2.4 seed carries the real CNEInstance manifestVersion, so an OCI
+        refresh of 2.4.0 updates the seeded row instead of inserting a duplicate."""
+        from services.bare_metal.deployable_release_refresh import DeployableReleaseRefreshService
+
+        service.seed_profiles()
+        db_session.commit()
+        result = DeployableReleaseRefreshService(db_session)._upsert_entry(
+            {"manifest_version": "2.4.0",
+             "component_versions": {"charts/f5-lifecycle-operator": "v2.30.0-0.5.2"}},
+            is_active=True, overrides={},
+        )
+        assert result == "updated"
+        assert db_session.query(BnkDeployableRelease).count() == 4
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +156,7 @@ class TestBnkDeployableReleaseServiceList:
         service.seed_profiles()
         db_session.commit()
         result = service.list_profiles()
-        assert len(result.releases) == 3
+        assert len(result.releases) == 4
 
     def test_list_ordered_by_name(self, service, db_session):
         service.seed_profiles()

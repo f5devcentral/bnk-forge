@@ -12,9 +12,12 @@ and returns a structured topology dict.
 import re
 from typing import Any
 
+from core.k8s_types import ApiGroups
 from services.bnk.helpers import (
+    get_policy_operational_status,
     has_condition,
     make_resource_map,
+    resolve_egress_config,
     resolve_list_refs,
     resource_name,
     resource_ns,
@@ -31,7 +34,58 @@ _ROUTE_KINDS: list[tuple[str, str]] = [
     ("udproute", "UDPRoute"),
     ("tlsroute", "TLSRoute"),
     ("l4route", "L4Route"),
+    ("l4route_24", "L4Route"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Operational-state helpers
+# ---------------------------------------------------------------------------
+
+
+def _listener_status(gw_status: dict, listener_name: str) -> dict:
+    """Find the Gateway status entry for a listener by name."""
+    for entry in gw_status.get("listeners", []) or []:
+        if isinstance(entry, dict) and entry.get("name") == listener_name:
+            return entry
+    return {}
+
+
+def _route_parent_status(route: dict, gw_name: str, gw_ns: str, listener_name: str) -> dict | None:
+    """Find the route's parent status entry matching a gateway/listener."""
+    status = route.get("status", {}) or {}
+    parents = status.get("parents") or status.get("parentRefs") or []
+    for parent in parents:
+        if not isinstance(parent, dict):
+            continue
+        ref = parent.get("parentRef", parent)
+        if not isinstance(ref, dict):
+            continue
+        parent_ns = ref.get("namespace", route.get("metadata", {}).get("namespace", ""))
+        if ref.get("name") == gw_name and parent_ns == gw_ns:
+            section = ref.get("sectionName")
+            if section and section != listener_name:
+                continue
+            return parent
+    # Fallback: legacy controllers may put conditions directly on status
+    if status.get("conditions"):
+        return status
+    return None
+
+
+def _first_condition_message(conditions: list) -> str:
+    """Return the first non-empty condition message, or an empty string."""
+    for cond in conditions:
+        if isinstance(cond, dict):
+            msg = cond.get("message")
+            if msg:
+                return str(msg)
+    return ""
+
+
+def _policy_status(resource: dict) -> dict[str, Any]:
+    """Derive resolved/programmed operational state from a BNK policy resource."""
+    return get_policy_operational_status(resource)
 
 
 # ---------------------------------------------------------------------------
@@ -45,29 +99,31 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
 
     gateways = resources.get("gateway", [])
     referencegrants = resources.get("referencegrant", [])
-    bnksecpolicies = resources.get("bnksecpolicy", [])
-    bnknetpolicies = resources.get("bnknetpolicy", [])
+    all_sec_policies = resources.get("secpolicy", []) + resources.get("bnksecpolicy", [])
+    all_net_policies = resources.get("netpolicy", []) + resources.get("bnknetpolicy", [])
+    gatewaysettings = resources.get("gatewaysettings", [])
 
     # Unify all route types for topology matching
-    all_routes: list[tuple[dict, str]] = []
+    all_routes: list[tuple[dict, str, str]] = []
     route_counts: dict[str, int] = {}
     for res_key, kind in _ROUTE_KINDS:
         items = resources.get(res_key, [])
         route_counts[res_key] = len(items)
-        all_routes.extend((r, kind) for r in items)
+        all_routes.extend((r, kind, res_key) for r in items)
 
     # Build lookup maps
     fw_map = make_resource_map(resources.get("f5bigfwpolicy", []))
     irule_map = make_resource_map(resources.get("f5bigcneirule", []))
     addr_map = make_resource_map(resources.get("f5bigcneaddresslist", []))
     port_map = make_resource_map(resources.get("f5bigcneportlist", []))
+    gs_map = make_resource_map(gatewaysettings)
     analyzers = resources.get("f5biganalyzer", [])
 
     # Build topology per gateway
     topology = [
         _build_gateway_node(
-            gw, all_routes, analyzers, bnknetpolicies, irule_map,
-            bnksecpolicies, fw_map, addr_map, port_map,
+            gw, all_routes, analyzers, all_net_policies, irule_map,
+            all_sec_policies, fw_map, addr_map, port_map, gs_map,
         )
         for gw in gateways
     ]
@@ -90,7 +146,7 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
         "topology": topology,
         "dataPlane": data_plane,
         "referenceGrants": ref_grants,
-        "counts": _build_counts(resources, gateways, route_counts, referencegrants),
+        "counts": _build_counts(resources, gateways, route_counts, referencegrants, data_plane),
     }
 
 
@@ -101,7 +157,7 @@ def analyze_topology(data: dict[str, Any]) -> dict[str, Any]:
 
 def _build_gateway_node(
     gw: dict,
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     bnknetpolicies: list[dict],
     irule_map: dict[str, dict],
@@ -109,8 +165,9 @@ def _build_gateway_node(
     fw_map: dict[str, dict],
     addr_map: dict[str, dict],
     port_map: dict[str, dict],
+    gs_map: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
-    """Build a single gateway topology node with listeners and policies."""
+    """Build a single gateway topology node with listeners, policies, and tenant settings."""
     gw_meta = gw.get("metadata", {})
     gw_spec = gw.get("spec", {})
     gw_status = gw.get("status", {})
@@ -120,7 +177,7 @@ def _build_gateway_node(
     listeners_data = [
         _build_listener_node(
             listener, all_routes, analyzers, bnknetpolicies, irule_map,
-            gw_name, gw_ns,
+            gw_name, gw_ns, gw_status,
         )
         for listener in gw_spec.get("listeners", [])
     ]
@@ -129,13 +186,33 @@ def _build_gateway_node(
         bnksecpolicies, fw_map, addr_map, port_map, gw_name,
     )
 
+    # Resolve 2.4 GatewaySettings (a Gateway parametersRef is local to its namespace)
+    params_ref = (gw_spec.get("infrastructure") or {}).get("parametersRef") or {}
+    gw_settings_data = None
+    if gs_map and params_ref.get("kind") == "GatewaySettings" and params_ref.get("group") == ApiGroups.F5_GATEWAY:
+        gs_name = params_ref.get("name", "")
+        gs_obj = gs_map.get(f"{gw_ns}/{gs_name}")
+        if gs_obj:
+            gs_spec = gs_obj.get("spec", {}) or {}
+            gw_settings_data = {
+                "name": gs_name,
+                "namespace": resource_ns(gs_obj),
+                "ingressConfig": gs_spec.get("ingressConfig") or {},
+                "sourceNATPools": gs_spec.get("sourceNATPools") or [],
+                "egressConfigs": gs_spec.get("egressConfigs") or [],
+            }
+
     return {
         "name": gw_name,
         "namespace": gw_ns,
         "gatewayClassName": gw_spec.get("gatewayClassName", ""),
         "addresses": [a.get("value", "") for a in gw_status.get("addresses", [])],
+        "accepted": has_condition(gw, "Accepted"),
+        "programmed": has_condition(gw, "Programmed"),
+        "conditions": gw_status.get("conditions", []) or [],
         "listeners": listeners_data,
         "securityPolicies": sec_policies_data,
+        "gatewaySettings": gw_settings_data,
     }
 
 
@@ -146,19 +223,23 @@ def _build_gateway_node(
 
 def _build_listener_node(
     listener: dict,
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     bnknetpolicies: list[dict],
     irule_map: dict[str, dict],
     gw_name: str,
     gw_ns: str,
+    gw_status: dict,
 ) -> dict[str, Any]:
     """Build a single listener node with routes and network policies."""
     listener_name = listener.get("name", "")
+    status = _listener_status(gw_status, listener_name)
     return {
         "name": listener_name,
         "protocol": listener.get("protocol", ""),
         "port": listener.get("port"),
+        "attachedRouteCount": status.get("attachedRoutes", 0) or 0,
+        "conditions": status.get("conditions", []) or [],
         "routes": _match_routes_to_listener(
             all_routes, analyzers, gw_name, gw_ns, listener_name,
         ),
@@ -174,7 +255,7 @@ def _build_listener_node(
 
 
 def _match_routes_to_listener(
-    all_routes: list[tuple[dict, str]],
+    all_routes: list[tuple[dict, str, str]],
     analyzers: list[dict],
     gw_name: str,
     gw_ns: str,
@@ -182,7 +263,7 @@ def _match_routes_to_listener(
 ) -> list[dict]:
     """Find all routes (HTTP, GRPC, TCP, UDP, TLS, L4) targeting a gateway/listener."""
     routes_data: list[dict] = []
-    for route, route_kind in all_routes:
+    for route, route_kind, route_key in all_routes:
         route_meta = route.get("metadata", {})
         route_spec = route.get("spec", {})
         route_ns = route_meta.get("namespace", "")
@@ -209,15 +290,50 @@ def _match_routes_to_listener(
             ]
 
             route_name = route_meta.get("name", "")
+            parent_status = _route_parent_status(route, gw_name, gw_ns, listener_name)
+            parent_conditions = parent_status.get("conditions", []) if parent_status else []
+            accepted = (
+                has_condition(parent_status, "Accepted")
+                or has_condition(parent_status, "Programmed")
+                or has_condition(parent_status, "Ready")
+                or has_condition(route, "Accepted")
+                or has_condition(route, "Programmed")
+            ) if parent_status else (has_condition(route, "Accepted") or has_condition(route, "Programmed"))
+
+            # MCP endpoint detection (aligned with awsbnkctl bnkscan)
+            annotations = route_meta.get("annotations", {}) or {}
+            is_mcp = (
+                annotations.get("bnk.f5.com/protocol") == "mcp"
+                or any(
+                    isinstance(m, dict) and isinstance(m.get("path"), dict) and "/mcp" in str(m.get("path", {}).get("value", ""))
+                    for rule in route_spec.get("rules", [])
+                    for m in rule.get("matches", [])
+                )
+            )
+            mcp_info = None
+            if is_mcp:
+                raw_tools = annotations.get("bnk.f5.com/mcp-tools", "")
+                tools = [t.strip() for t in raw_tools.split(",") if t.strip()] if raw_tools else []
+                mcp_info = {
+                    "auth": annotations.get("bnk.f5.com/auth", "unknown"),
+                    "tools": tools,
+                }
+
             routes_data.append({
                 "name": route_name,
                 "namespace": route_ns,
                 "kind": route_kind,
+                "resourceType": route_key,
                 "hostnames": route_spec.get("hostnames", []),
                 "backends": backends,
                 "analyzers": _match_analyzers(
                     analyzers, route_name, route_kind, route_ns, gw_ns,
                 ),
+                "accepted": accepted,
+                "conditions": parent_conditions,
+                "conditionMessage": _first_condition_message(parent_conditions) if not accepted else "",
+                "isMcp": is_mcp,
+                "mcpInfo": mcp_info,
             })
 
     return routes_data
@@ -240,9 +356,13 @@ def _match_analyzers(
                     and app.get("namespace", gw_ns) == route_ns):
                 script = a_spec.get("script", {})
                 params = script.get("custom", {}).get("parameters", [])
+                # F5BigAnalyzer spec.schedule is an object ({"every": "5m"}).
+                schedule = a_spec.get("schedule") or ""
+                if isinstance(schedule, dict):
+                    schedule = schedule.get("every") or ""
                 result.append({
                     "name": resource_name(analyzer),
-                    "schedule": a_spec.get("schedule", ""),
+                    "schedule": str(schedule),
                     "scriptType": script.get("type", ""),
                     "dataSources": [ds.get("name", "") for ds in a_spec.get("dataSources", [])],
                     "parameters": {p.get("key", ""): p.get("value", "") for p in params},
@@ -280,12 +400,17 @@ def _match_net_policies(
                 if any(c.get("status") == "True" for c in d.get("conditions", []))
             )
 
+            status = _policy_status(np_item)
             result.append({
                 "name": resource_name(np_item),
+                "kind": np_item.get("kind", ""),
                 "namespace": np_ns,
                 "extensions": extensions,
                 "resolvedCount": resolved_count,
                 "totalExtensions": len(extensions),
+                "resolved": status["resolved"],
+                "programmed": status["programmed"],
+                "messages": status["messages"],
             })
 
     return result
@@ -334,11 +459,16 @@ def _match_sec_policies(
             fw_refs = _build_firewall_refs(
                 sp_spec.get("extensionRefs", []), fw_map, addr_map, port_map, sp_ns,
             )
+            status = _policy_status(sp)
             result.append({
                 "name": resource_name(sp),
+                "kind": sp.get("kind", ""),
                 "namespace": sp_ns,
                 "targetListener": target.get("sectionName", ""),
                 "firewallPolicies": fw_refs,
+                "resolved": status["resolved"],
+                "programmed": status["programmed"],
+                "messages": status["messages"],
             })
 
     return result
@@ -391,6 +521,96 @@ def _build_firewall_refs(
 # ---------------------------------------------------------------------------
 
 
+def _is_internal_network(name: str) -> bool:
+    """Infra networks carry no internal/external flag; read it from whole name tokens (int-vlan, internal)."""
+    return any(token in ("int", "internal") for token in re.split(r"[^a-z0-9]+", name.lower()))
+
+
+def _build_infra_entry(infra: dict) -> dict[str, Any]:
+    """Build a single Infra underlay entry for the data plane section."""
+    spec = infra.get("spec", {}) or {}
+    status = infra.get("status", {}) or {}
+    return {
+        "name": resource_name(infra),
+        "namespace": resource_ns(infra),
+        "networks": spec.get("networks") or [],
+        "ipams": spec.get("ipams") or [],
+        "networkAttachments": spec.get("networkAttachments") or [],
+        "staticRoutes": spec.get("staticRoutes") or [],
+        "vrfs": spec.get("vrfs") or [],
+        "egressDefaults": spec.get("egressDefaults") or {},
+        "ready": has_condition(infra, "Programmed") or has_condition(infra, "Ready"),
+        "conditions": status.get("conditions", []) or [],
+    }
+
+
+def _build_gateway_settings_entry(gs: dict) -> dict[str, Any]:
+    """Build a single GatewaySettings entry for the data plane section."""
+    spec = gs.get("spec", {}) or {}
+    status = gs.get("status", {}) or {}
+    return {
+        "name": resource_name(gs),
+        "namespace": resource_ns(gs),
+        "ingressConfig": spec.get("ingressConfig") or {},
+        "sourceNATPools": spec.get("sourceNATPools") or [],
+        "egressConfigs": spec.get("egressConfigs") or [],
+        "ready": has_condition(gs, "Programmed") or has_condition(gs, "Accepted") or not status.get("conditions"),
+        "conditions": status.get("conditions", []) or [],
+    }
+
+
+def _build_egress_gateway(
+    eg: dict,
+    gs_map: dict[str, dict] | None = None,
+    sec_policies: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Build a single EgressGateway entry normalized for data plane and flow views."""
+    spec = eg.get("spec") or {}
+    eg_name = resource_name(eg)
+    eg_ns = resource_ns(eg)
+
+    source_selector = spec.get("sourceSelector") or {}
+    # NamespaceSelector captures exactly the namespaces listed in matchNames
+    namespaces = (source_selector.get("namespaces") or {}).get("matchNames") or []
+
+    params_ref = (spec.get("infrastructure") or {}).get("parametersRef") or {}
+    egress_config = resolve_egress_config(eg, gs_map or {}) or {}
+    snat_config = egress_config.get("sourceNATConfig") or {}
+
+    fw_policy_name = None
+    for sp in sec_policies or []:
+        if resource_ns(sp) != eg_ns:
+            continue
+        sp_spec = sp.get("spec") or {}
+        if not any(
+            t.get("kind") == "EgressGateway" and t.get("name") == eg_name
+            for t in sp_spec.get("targetRefs") or []
+        ):
+            continue
+        fw_policy_name = next(
+            (ext.get("name") for ext in sp_spec.get("extensionRefs") or [] if ext.get("kind") == "F5BigFwPolicy"),
+            None,
+        )
+        if fw_policy_name:
+            break
+
+    return {
+        "name": eg_name,
+        "namespace": eg_ns,
+        "kind": "EgressGateway",
+        "gatewayClassName": spec.get("gatewayClassName", ""),
+        "snatType": snat_config.get("type", ""),
+        "egressSnatpool": (snat_config.get("sourceNATPoolRef") or {}).get("name"),
+        "firewallEnforcedPolicy": fw_policy_name,
+        "logProfile": None,
+        "capturedNamespaces": namespaces,
+        "parametersRef": params_ref,
+        "sourceSelector": source_selector,
+        "vxlan": None,
+        "ready": has_condition(eg, "Programmed") or has_condition(eg, "Accepted") or has_condition(eg, "Ready"),
+    }
+
+
 def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
     """Build the data plane section of the topology response."""
     vlans = resources.get("f5spkvlan", [])
@@ -400,9 +620,61 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
     egresses = resources.get("f5spkegress", [])
     hslpubs = resources.get("f5bigloghslpub", [])
     logprofiles = resources.get("f5biglogprofile", [])
+    infras = resources.get("infra", [])
+    gatewaysettings = resources.get("gatewaysettings", [])
+    egressgateways = resources.get("egressgateway", [])
+    all_sec_policies = resources.get("secpolicy", []) + resources.get("bnksecpolicy", [])
+    gs_map = make_resource_map(gatewaysettings)
+
+    infra_entries = [_build_infra_entry(infra) for infra in infras]
+    gs_entries = [_build_gateway_settings_entry(gs) for gs in gatewaysettings]
+    egress_gw_entries = [_build_egress_gateway(eg, gs_map, all_sec_policies) for eg in egressgateways]
+
+    # Project networks from 2.4 Infra if legacy VLANs are absent. Clicks open the
+    # parent Infra (infraName); self IPs come from IPAM pools, so none are listed.
+    projected_vlans: list[dict[str, Any]] = []
+    if not vlans and infras:
+        for infra in infras:
+            infra_ns = resource_ns(infra)
+            infra_ready = has_condition(infra, "Programmed") or has_condition(infra, "Ready")
+            for net in (infra.get("spec") or {}).get("networks") or []:
+                v_cfg = net.get("vlan") or {}
+                att_ref = (v_cfg.get("networkAttachmentRef") or {}).get("name", "")
+                projected_vlans.append({
+                    "name": net.get("name", ""),
+                    "namespace": infra_ns,
+                    "kind": "Infra",
+                    "infraName": resource_name(infra),
+                    "interfaces": [att_ref] if att_ref else [],
+                    "selfipV4s": [],
+                    "prefixLen": None,
+                    "mtu": v_cfg.get("mtu", 1500),
+                    "internal": _is_internal_network(net.get("name", "")),
+                    "autoLasthop": "",
+                    "ready": infra_ready,
+                    "type": net.get("type", "vlan"),
+                    "tag": v_cfg.get("tag", 0),
+                })
+
+    # Project static routes from 2.4 Infra if legacy static routes are absent
+    projected_static_routes: list[dict[str, Any]] = []
+    if not staticroutes and infras:
+        for infra in infras:
+            infra_ns = resource_ns(infra)
+            for sr in (infra.get("spec") or {}).get("staticRoutes") or []:
+                projected_static_routes.append({
+                    "name": sr.get("name", ""),
+                    "namespace": infra_ns,
+                    "kind": "Infra",
+                    "infraName": resource_name(infra),
+                    "destination": ", ".join(sr.get("destinations") or []),
+                    "gateway": sr.get("nextHop", ""),
+                })
+
+    combined_egresses = [_build_egress(eg) for eg in egresses] + egress_gw_entries
 
     return {
-        "vlans": [_build_vlan(v) for v in vlans],
+        "vlans": [_build_vlan(v) for v in vlans] if vlans else projected_vlans,
         "cneInstances": [_build_cne_instance(c) for c in cneinstances],
         "staticRoutes": [
             {
@@ -412,7 +684,7 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
                 "gateway": sr.get("spec", {}).get("gateway", ""),
             }
             for sr in staticroutes
-        ],
+        ] if staticroutes else projected_static_routes,
         "snatPools": [
             {
                 "name": resource_name(sp),
@@ -421,7 +693,10 @@ def _build_data_plane(resources: dict[str, list]) -> dict[str, Any]:
             }
             for sp in snatpools
         ],
-        "egresses": [_build_egress(eg) for eg in egresses],
+        "egresses": combined_egresses,
+        "infra": infra_entries,
+        "gatewaySettings": gs_entries,
+        "egressGateways": egress_gw_entries,
         "logging": {
             "hslPublishers": [
                 {
@@ -450,6 +725,7 @@ def _build_vlan(vlan: dict) -> dict[str, Any]:
     return {
         "name": resource_name(vlan),
         "namespace": resource_ns(vlan),
+        "kind": "F5SPKVlan",
         "interfaces": v_spec.get("interfaces", []),
         "selfipV4s": v_spec.get("selfip_v4s", v_spec.get("selfipV4s", [])),
         "prefixLen": v_spec.get("prefixlen_v4", v_spec.get("prefix_len", v_spec.get("prefixLen"))),
@@ -471,13 +747,24 @@ def _build_cne_instance(cne: dict) -> dict[str, Any]:
         for key, val in c_spec.items()
         if isinstance(val, dict) and "enabled" in val
     }
+    c_status = cne.get("status", {}) or {}
+    phase = c_status.get("phase", "")
+    ready = (
+        has_condition(cne, "Programmed")
+        or has_condition(cne, "Ready")
+        or has_condition(cne, "Available")
+        or has_condition(cne, "Reconciled")
+    )
+    if not phase and ready:
+        phase = "Ready" if (has_condition(cne, "Ready") or has_condition(cne, "Available")) else "Active"
     return {
         "name": resource_name(cne),
         "namespace": resource_ns(cne),
         "features": features,
         "networkAttachments": c_spec.get("networkAttachments", []),
         "containerPlatform": c_spec.get("containerPlatform", ""),
-        "phase": cne.get("status", {}).get("phase", ""),
+        "phase": phase,
+        "ready": ready,
     }
 
 
@@ -494,6 +781,7 @@ def _build_egress(egress: dict) -> dict[str, Any]:
     return {
         "name": resource_name(egress),
         "namespace": resource_ns(egress),
+        "kind": "F5SPKEgress",
         "snatType": eg_spec.get("snatType", ""),
         "egressSnatpool": eg_spec.get("egressSnatpool"),
         "firewallEnforcedPolicy": eg_spec.get("firewallEnforcedPolicy"),
@@ -512,8 +800,11 @@ def _build_counts(
     gateways: list[dict],
     route_counts: dict[str, int],
     referencegrants: list[dict],
+    data_plane: dict[str, Any],
 ) -> dict[str, int]:
     """Build the counts summary for the topology response."""
+    all_sec_policies = resources.get("secpolicy", []) + resources.get("bnksecpolicy", [])
+    all_net_policies = resources.get("netpolicy", []) + resources.get("bnknetpolicy", [])
     return {
         "gateways": len(gateways),
         "listeners": sum(len(gw.get("spec", {}).get("listeners", [])) for gw in gateways),
@@ -522,19 +813,24 @@ def _build_counts(
         "tcpRoutes": route_counts.get("tcproute", 0),
         "udpRoutes": route_counts.get("udproute", 0),
         "tlsRoutes": route_counts.get("tlsroute", 0),
-        "l4Routes": route_counts.get("l4route", 0),
+        "l4Routes": route_counts.get("l4route", 0) + route_counts.get("l4route_24", 0),
         "totalRoutes": sum(route_counts.values()),
         "referenceGrants": len(referencegrants),
-        "securityPolicies": len(resources.get("bnksecpolicy", [])),
-        "networkPolicies": len(resources.get("bnknetpolicy", [])),
+        "securityPolicies": len(all_sec_policies),
+        "networkPolicies": len(all_net_policies),
         "firewallPolicies": len(resources.get("f5bigfwpolicy", [])),
         "iRules": len(resources.get("f5bigcneirule", [])),
         "analyzers": len(resources.get("f5biganalyzer", [])),
-        "vlans": len(resources.get("f5spkvlan", [])),
+        "vlans": len(data_plane["vlans"]),
         "cneInstances": len(resources.get("cneinstance", [])),
-        "staticRoutes": len(resources.get("f5spkstaticroute", [])),
+        "staticRoutes": len(data_plane["staticRoutes"]),
         "snatPools": len(resources.get("f5spksnatpool", [])),
-        "egresses": len(resources.get("f5spkegress", [])),
+        "egresses": len(resources.get("f5spkegress", [])) + len(resources.get("egressgateway", [])),
         "hslPublishers": len(resources.get("f5bigloghslpub", [])),
         "logProfiles": len(resources.get("f5biglogprofile", [])),
+        "infra": len(resources.get("infra", [])),
+        "gatewaySettings": len(resources.get("gatewaysettings", [])),
+        "egressGateways": len(resources.get("egressgateway", [])),
+        "inferencePools": len(resources.get("inferencepool", [])),
+        "f5epps": len(resources.get("f5epp", [])),
     }

@@ -59,3 +59,9 @@ class TestSafeReleaseName:
         result = _safe_release_name("envoy", "x" * 200)
         assert len(result) <= MAX_RELEASE_NAME_LEN
         assert len(result + ENVOY_CERTGEN_SUFFIX) <= 63
+
+
+def test_nginx_release_leaves_room_for_admission_service():
+    """ingress-nginx names `<release>-ingress-nginx-controller-admission`; that must fit 63 chars."""
+    release = _safe_release_name("nginx", "vllm-awsbnkctl-scn-aiinference")
+    assert len(release + "-ingress-nginx-controller-admission") <= 63

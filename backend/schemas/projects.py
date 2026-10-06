@@ -21,7 +21,13 @@ from utils.naming import (
     slugify_gcp_name,
     slugify_ibm_name,
 )
-from utils.validators import validate_aws_region, validate_cidr_fields, validate_ibm_region
+from utils.validators import (
+    validate_aws_region,
+    validate_azure_region,
+    validate_cidr_fields,
+    validate_gcp_region,
+    validate_ibm_region,
+)
 
 # =============================================================================
 # Shared / Nested Models
@@ -84,10 +90,15 @@ class ProjectCreate(BaseModel):
         is_aws = self.cloud_provider == "aws" or (self.project_type and self.project_type.startswith("cloud-aws"))
         is_ibm = self.cloud_provider == "ibm" or (self.project_type and self.project_type.startswith("cloud-ibm"))
         is_gcp = self.cloud_provider == "gcp" or (self.project_type and self.project_type.startswith("cloud-gcp"))
+        is_azure = self.cloud_provider == "azure" or (self.project_type and self.project_type.startswith("cloud-azure"))
         if is_aws:
             validate_aws_region(self.region, field_name="region")
         if is_ibm:
             validate_ibm_region(self.region, field_name="region")
+        if is_gcp:
+            validate_gcp_region(self.region, field_name="region")
+        if is_azure:
+            validate_azure_region(self.region, field_name="region")
         if is_aws and self.name and not is_aws_safe_name(self.name):
             suggested = slugify_aws_name(self.name)
             raise ValueError(
@@ -134,10 +145,15 @@ class ProjectUpdate(BaseModel):
         is_aws = self.cloud_provider == "aws" or (self.project_type and self.project_type.startswith("cloud-aws"))
         is_ibm = self.cloud_provider == "ibm" or (self.project_type and self.project_type.startswith("cloud-ibm"))
         is_gcp = self.cloud_provider == "gcp" or (self.project_type and self.project_type.startswith("cloud-gcp"))
+        is_azure = self.cloud_provider == "azure" or (self.project_type and self.project_type.startswith("cloud-azure"))
         if is_aws:
             validate_aws_region(self.region, field_name="region")
         if is_ibm:
             validate_ibm_region(self.region, field_name="region")
+        if is_gcp:
+            validate_gcp_region(self.region, field_name="region")
+        if is_azure:
+            validate_azure_region(self.region, field_name="region")
         if is_aws and self.name and not is_aws_safe_name(self.name):
             suggested = slugify_aws_name(self.name)
             raise ValueError(

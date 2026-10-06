@@ -230,6 +230,89 @@ export type K8sResourceStatus = Record<string, any>;
 // ─── Gateway API & CRD Sub-Resource Types ──────────────────────────────
 // Used to eliminate `any` in detail panel components that render CRD spec/status fields.
 
+// ── BNK 2.4 gateway.k8s.f5.com sub-resources ──
+
+/** Reference to a sibling object by name. */
+export interface BnkNamedRef {
+  name: string;
+}
+
+export interface BnkInfraNetwork {
+  name: string;
+  type?: string;
+  vlan?: { tag?: number; mtu?: number; networkAttachmentRef?: BnkNamedRef; ipamRefs?: BnkNamedRef[] };
+  vxlan?: { port?: number; vni?: number };
+}
+
+export interface BnkIpPool {
+  rangeStart?: string;
+  rangeEnd?: string;
+  availabilityZone?: string;
+}
+
+export interface BnkInfraIpam {
+  name: string;
+  ipPools?: BnkIpPool[];
+}
+
+export interface BnkInfraStaticRoute {
+  name?: string;
+  destinations?: string[];
+  nextHop?: string;
+}
+
+export interface BnkInfraEgressDefaults {
+  subnet?: string;
+  port?: number;
+  networkRef?: BnkNamedRef;
+}
+
+export type BnkInfraVrf = string | { name: string };
+
+/** GatewaySettings sourceNATConfig: type is Automap or Pool (with sourceNATPoolRef). */
+export interface BnkSourceNatConfig {
+  type?: string;
+  sourceNATPoolRef?: BnkNamedRef;
+}
+
+export interface BnkListenerNetwork {
+  ipamRefs?: BnkNamedRef[];
+  networkRefs?: BnkNamedRef[];
+  sourceNATConfig?: BnkSourceNatConfig;
+}
+
+export interface BnkSourceNatPool {
+  name: string;
+  ipamRefs?: BnkNamedRef[];
+}
+
+export interface BnkEgressConfig {
+  name: string;
+  networkRef?: BnkNamedRef;
+  sourceNATConfig?: BnkSourceNatConfig;
+}
+
+/** Gateway / EgressGateway spec.infrastructure.parametersRef (sectionName selects an egressConfigs entry). */
+export interface BnkParametersRef {
+  group?: string;
+  kind?: string;
+  name: string;
+  sectionName?: string;
+}
+
+// ── Gateway API Inference Extension (inference.networking.k8s.io/v1) ──
+
+export interface GaieEndpointPickerRef {
+  group?: string;
+  kind?: string;
+  name: string;
+  port?: { number: number };
+  failureMode?: string;
+}
+
+/** F5EPP status.endpoints entry; some controller builds emit bare address strings. */
+export type BnkEppEndpoint = string | { address?: string; name?: string; state?: string };
+
 /** Gateway API parentRef / targetRef (shared across HTTPRoute, L4Route, NetworkPolicy, SecurityPolicy) */
 export interface K8sGatewayRef {
   name: string;
@@ -647,7 +730,7 @@ export interface ClusterScanProxy {
   proxy_type: string;
   display_name: string;
   controller: string;
-  kind: 'IngressClass' | 'GatewayClass';
+  kind: 'IngressClass' | 'GatewayClass' | 'Deployment' | string;
   found: boolean;
   namespace: string | null;
   proxy_url: string | null;

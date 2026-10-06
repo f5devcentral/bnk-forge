@@ -179,7 +179,7 @@ class ClusterScanner:
         try:
             from services.proxy_discovery_service import ProxyDiscoveryService
             proxy_svc = ProxyDiscoveryService(self.db)
-            proxy_items = proxy_svc.discover_inventory(api_client)
+            proxy_items = proxy_svc.discover_inventory(api_client, cluster_id=cluster.id)
             existing_proxies = {
                 "status": "detected" if proxy_items else "none",
                 "proxies": proxy_items,
@@ -204,6 +204,10 @@ class ClusterScanner:
         )
         self.db.flush()
 
+        # Persist cluster metadata discovered by the scan so list/detail views
+        # can surface it without re-querying the cluster.
+        self._persist_cluster_metadata(cluster, cluster_info, data["nodes"])
+
         from services.scanner.recommendations import resolve_enabled_prereqs
 
         enabled_prereq_set = resolve_enabled_prereqs(cluster.enabled_prerequisites)
@@ -226,6 +230,38 @@ class ClusterScanner:
 
         end_time = datetime.now(UTC)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
+
+        # Issue #194: record when this cluster was last successfully scanned so
+        # "never scanned" (last_synced_at IS NULL) is distinguishable from
+        # "scanned and genuinely empty". Set only after all analysis has
+        # completed — a scan that raises earlier must NOT stamp a sync time.
+        # Every scan path routes through scan(), so this is the single place the
+        # stamp is written. It is FLUSHED here, not committed — the row is
+        # persisted only if the caller commits. Most callers do (the async
+        # registration/PUT task, the sync /scan route, the upgrade health gate,
+        # which commits each iteration), but some deliberately do NOT
+        # (get_adaptive_module_plan / get_adaptive_module_plan_from_scan run
+        # read-only and never commit), so for those the stamp is rolled back
+        # with the rest of their session — a missed stamp, never wrong data.
+        #
+        # CRITICAL: stamp ONLY when the scan genuinely reached the cluster's API
+        # server (data["reached"], derived from the version/namespace/API-group
+        # preflight in fetch_scan_data). Every fetcher swallows its exception and
+        # returns an empty default, so an expired-token / unreachable cluster
+        # otherwise produces a fully-shaped EMPTY dict and would stamp a fresh
+        # sync time over a panel with no data — the exact failure #194 reported,
+        # where a timestamp over an empty panel is strictly worse than NULL.
+        # A genuinely-empty-but-reachable cluster still stamps (reached is True);
+        # an unreachable / 401 one does not (reached is False) and stays NULL.
+        #
+        # Stamp start_time (NOT end_time): this is the same instant surfaced as
+        # scan_metadata.scanned_at, so "when was this scanned" has ONE answer
+        # across the DB stamp and the result payload (bonnyr-f5 r2 nit). It is a
+        # safe lower bound on freshness — the data is at most as old as the scan
+        # start; the scan duration remains available as scan_metadata.duration_ms.
+        if data.get("reached"):
+            cluster.last_synced_at = start_time
+            self.db.flush()
 
         return {
             "cluster_id": cluster_id,
@@ -255,6 +291,62 @@ class ClusterScanner:
             },
             "platform_context": platform_context.to_dict(),
         }
+
+    def _persist_cluster_metadata(
+        self,
+        cluster,
+        cluster_info: dict[str, Any],
+        nodes: list[dict[str, Any]],
+    ) -> None:
+        """Write scan-derived metadata back to the cluster record.
+
+        Updates version, node_count, zones, connectivity, integration, and
+        access_method so fleet/list/detail views can read them without extra
+        cloud/operator lookups. ``last_synced_at`` and ``connectivity_status``
+        are stamped only when the scan actually reached the API server (the
+        fetch returned a server version): every fetcher swallows its exception
+        and returns an empty default, so an unreachable or expired-token cluster
+        yields a fully shaped empty scan, and stamping it would show a fresh
+        sync time and "connected" over a panel with no data (#194). A scan that
+        didn't reach the server marks the cluster "unreachable".
+        """
+        from services.operator_registry import is_operator_live_connected
+
+        now = datetime.now(UTC)
+
+        cluster.version = cluster_info.get("version") or getattr(cluster, "version", None)
+        cluster.node_count = cluster_info.get("node_count") or len(nodes) or getattr(cluster, "node_count", None)
+        cluster.zones = sorted({
+            n.get("zone") for n in nodes if n.get("zone")
+        }) or getattr(cluster, "zones", None)
+        if cluster_info.get("version"):
+            cluster.last_synced_at = now
+            cluster.connectivity_status = "connected"
+        else:
+            cluster.connectivity_status = "unreachable"
+        cluster.access_method = "ssh_tunnel" if getattr(cluster, "ssh_tunnel_enabled", False) else "kubeconfig"
+
+        try:
+            from models import ConnectedOperator
+            linked_op = (
+                self.db.query(ConnectedOperator)
+                .filter(ConnectedOperator.cluster_id == cluster.id)
+                .first()
+            )
+            if linked_op:
+                cluster.integration_status = (
+                    "agent_connected" if is_operator_live_connected(linked_op) else "agent_disconnected"
+                )
+            else:
+                cluster.integration_status = "direct"
+        except Exception as exc:
+            logger.warning("Failed to determine cluster integration status (non-fatal): %s", exc)
+            cluster.integration_status = getattr(cluster, "integration_status", None) or "direct"
+
+        try:
+            self.db.flush()
+        except Exception as exc:
+            logger.warning("Failed to persist scan metadata for cluster %s: %s", cluster.id, exc)
 
 
 __all__ = [

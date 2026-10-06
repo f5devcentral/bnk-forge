@@ -15,15 +15,18 @@ Delegated to other modules in the execution/ package:
 - Dependency checking → variable_assembler.can_execute()
 """
 
+import codecs
 import hashlib
 import json
 import logging
 import os
 import re
+import select
 import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -34,6 +37,173 @@ from services.git_auth_service import GitAuthService
 from services.infrastructure_access_service import normalize_infrastructure_access_outputs
 
 logger = logging.getLogger(__name__)
+
+
+def _stream_subprocess(
+    cmd: list[str],
+    *,
+    cwd: str,
+    env: dict,
+    timeout: int,
+    on_output: Callable[[str], None],
+) -> tuple[int, str]:
+    """Run ``cmd`` streaming stdout+stderr line-by-line to ``on_output``.
+
+    Behaves like ``subprocess.run(..., capture_output=True, text=True,
+    timeout=...)`` from the caller's point of view: it returns
+    ``(returncode, combined_output)`` and raises ``subprocess.TimeoutExpired``
+    (with ``output`` populated) on timeout, so the existing timeout-handling
+    branches in each ``run_*`` method work unchanged.
+
+    The difference — and the whole point (issue #195) — is that output is
+    delivered incrementally: each line is handed to ``on_output`` the moment
+    OpenTofu emits it, letting the caller persist progress (``task.logs`` /
+    ``logs_full_size``) *during* a long run instead of only at completion.
+    stderr is merged into stdout (``STDOUT``) so lines interleave in the order
+    they were produced.
+
+    This is a faithful, safe wrapper of ``subprocess.run``'s guarantees, not a
+    partial reimplementation. Two properties matter for correctness and are
+    handled exactly as CPython's ``subprocess.run`` handles them (its POSIX
+    ``_communicate`` reads the pipes with a ``selectors`` loop — which is what we
+    do here — never a plain ``for line in proc.stdout`` that a descendant can
+    wedge):
+
+    * **The timeout is really enforced.** The deadline cannot be honoured by the
+      naive "kill the direct child ⇒ the pipe reaches EOF" implication, because
+      that implication is *false* whenever any descendant (e.g. a ``local-exec``
+      / ``null_resource`` / ``data "external"`` grandchild) inherited the write
+      end of the stdout pipe: a blocking read would then hang forever and
+      ``TimeoutExpired`` would never fire, permanently locking the module. We
+      instead ``select`` on the pipe with the *remaining* time budget, so the
+      loop always terminates at the deadline regardless of who holds the pipe;
+      we then ``kill()`` the child and raise ``TimeoutExpired`` with the partial
+      output. Reading on this (the caller's) thread — rather than a helper
+      thread blocked in ``read()`` — is also what lets ``with Popen`` close the
+      pipe on exit without deadlocking on that thread's buffer lock.
+    * **The child is killed on ANY abrupt exit.** ``subprocess.run`` wraps its
+      read in ``except BaseException: process.kill(); raise`` precisely so that
+      a ``SoftTimeLimitExceeded`` (Celery raises it in this very thread, while it
+      is blocked in ``select``) / ``KeyboardInterrupt`` / ``UnicodeDecodeError``
+      (non-UTF-8 provider output) / ``OSError`` cannot leave a live ``tofu
+      apply`` orphaned — still mutating cloud state and ``.tfstate`` after the
+      task is marked failed and the workspace lock released. We do the same.
+    """
+    deadline = time.monotonic() + timeout
+    chunks: list[str] = []           # decoded+newline-normalized pieces == combined output
+    # Incremental UTF-8 decoder: correctly reassembles multibyte characters that
+    # straddle two reads, and (strict) raises UnicodeDecodeError on genuinely
+    # invalid bytes — the same failure ``text=True`` would surface.
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    pending = ""                     # current partial line, not yet newline-terminated
+    carry_cr = False                 # a trailing '\r' held back — maybe the first half of a CRLF
+
+    def _deliver(line: str) -> None:
+        try:
+            on_output(line)
+        except Exception:  # noqa: BLE001 — a log sink must never break the run
+            logger.exception("on_output callback raised while streaming subprocess output")
+
+    def _emit(text: str, *, flush: bool = False) -> None:
+        # MINOR 3: match ``subprocess.run(text=True)`` universal-newline semantics
+        # (the no-callback path uses it) so streamed logs don't diverge — translate
+        # CRLF and lone CR to LF. Normalize on the *accumulated* stream (via
+        # ``carry_cr``), never per-chunk, so a CRLF split across two reads
+        # (``…\r`` | ``\n…``) is not mistaken for two newlines. ``chunks`` (the
+        # returned combined output) is fed here too, so return value and delivered
+        # lines stay identical to the ``text=True`` path.
+        nonlocal pending, carry_cr
+        if carry_cr:
+            text = "\r" + text
+            carry_cr = False
+        text = text.replace("\r\n", "\n")
+        if not flush and text.endswith("\r"):
+            # Hold the trailing CR: the next read may bring the LF of a CRLF.
+            carry_cr = True
+            text = text[:-1]
+        text = text.replace("\r", "\n")
+        if text:
+            chunks.append(text)
+        pending += text
+        newline = pending.find("\n")
+        while newline != -1:
+            _deliver(pending[:newline])
+            pending = pending[newline + 1:]
+            newline = pending.find("\n")
+        if flush and pending:
+            _deliver(pending)
+            pending = ""
+
+    # ``with Popen(...)`` guarantees the pipes are closed on every exit path,
+    # exactly like the ``with Popen`` inside ``subprocess.run``. bufsize=0 keeps
+    # the parent side unbuffered so our ``os.read`` on the fd sees bytes as soon
+    # as the child writes them (line streaming, issue #195).
+    with subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    ) as proc:
+        assert proc.stdout is not None
+        fd = proc.stdout.fileno()
+        timed_out = False
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                # PEP 475: select retries automatically on EINTR, but a signal
+                # handler that *raises* (Celery's SoftTimeLimitExceeded) surfaces
+                # its exception here — handled by the kill-and-reraise below.
+                readable, _, _ = select.select([fd], [], [], remaining)
+                if not readable:
+                    timed_out = True  # deadline reached with no more output
+                    break
+                data = os.read(fd, 65536)
+                if not data:
+                    break  # EOF: all write ends (incl. any descendant's) closed
+                text = decoder.decode(data)  # may raise UnicodeDecodeError → killed below
+                _emit(text)
+
+            # MINOR 2: honour the deadline BEFORE the final decoder flush. If the
+            # deadline expired with a partial multibyte sequence buffered,
+            # ``decoder.decode(b"", final=True)`` would raise UnicodeDecodeError,
+            # which would surface IN PLACE OF TimeoutExpired and bypass the
+            # callers' graceful ``except subprocess.TimeoutExpired`` branch. Raise
+            # TimeoutExpired first, with the partial output accumulated so far.
+            if timed_out:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(chunks))
+
+            # Genuine EOF on all pipe write ends. Flush any bytes buffered inside
+            # the incremental decoder plus the trailing line that had no newline.
+            _emit(decoder.decode(b"", final=True), flush=True)
+
+            # MINOR 1: EOF does NOT imply the child has exited — a descendant may
+            # have closed the inherited stdout pipe while the child keeps running
+            # (real EOF, child alive). A bare ``proc.wait()`` here would block
+            # forever, defeating the timeout the docstring promises. Bound the wait
+            # by the remaining deadline; on expiry, kill and raise TimeoutExpired
+            # with the accumulated partial output (same shape as the in-loop path).
+            try:
+                proc.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(chunks))
+        except BaseException:
+            # Any abrupt exit — SoftTimeLimitExceeded, KeyboardInterrupt,
+            # UnicodeDecodeError, OSError, … — must not orphan a live child.
+            # Mirror CPython's ``subprocess.run``: kill, then re-raise.
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001 — process may have already exited
+                pass
+            raise
+
+    return proc.returncode, "".join(chunks)
 
 
 def _add_provider_lock_timeout_hint(output: str) -> str:
@@ -1516,7 +1686,43 @@ class OpenTofuRuntime:
     APPLY_TIMEOUT = 90 * 60     # 90 minutes - long-running resource creation
     REFRESH_TIMEOUT = 30 * 60   # 30 minutes - state refresh
 
-    def run_init(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    @staticmethod
+    def _run_tofu(
+        cmd: list[str],
+        work_dir: str,
+        tofu_env: dict,
+        timeout: int,
+        on_output: Callable[[str], None] | None,
+    ) -> tuple[int, str]:
+        """Execute a tofu command, returning ``(returncode, stdout+stderr)``.
+
+        When ``on_output`` is provided the output is streamed line-by-line via
+        :func:`_stream_subprocess` (issue #195); otherwise it falls back to the
+        classic blocking ``subprocess.run`` capture. Both paths raise
+        ``subprocess.TimeoutExpired`` on timeout so each caller's existing
+        timeout branch is unchanged.
+        """
+        if on_output is not None:
+            return _stream_subprocess(
+                cmd, cwd=work_dir, env=tofu_env, timeout=timeout, on_output=on_output,
+            )
+        result = subprocess.run(
+            cmd,
+            cwd=work_dir,
+            env=tofu_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    def run_init(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu init.
 
@@ -1524,6 +1730,9 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: INIT_TIMEOUT)
+            on_output: Optional line callback. When provided, output is streamed
+                line-by-line (issue #195) so callers can persist progress during
+                the run; when None, behaviour is the classic blocking capture.
 
         Returns:
             Tuple of (exit_code, output)
@@ -1535,19 +1744,15 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu init in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, raw_output = self._run_tofu(
                 ["tofu", "init", "-no-color", "-input=false"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = _add_provider_lock_timeout_hint(result.stdout + result.stderr)
-            logger.info(f"tofu init completed with exit code {result.returncode}")
+            output = _add_provider_lock_timeout_hint(raw_output)
+            logger.info(f"tofu init completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for init
@@ -1565,7 +1770,13 @@ class OpenTofuRuntime:
             output = _add_provider_lock_timeout_hint((stdout or "") + (stderr or "") + timeout_msg)
             return 1, output
 
-    def run_plan(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    def run_plan(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu plan.
 
@@ -1573,6 +1784,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: PLAN_TIMEOUT)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output)
@@ -1584,19 +1796,14 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu plan in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "plan", "-no-color", "-input=false", "-out=plan.out"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu plan completed with exit code {result.returncode}")
+            logger.info(f"tofu plan completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for plan
@@ -1673,6 +1880,7 @@ class OpenTofuRuntime:
         env: dict,
         timeout: int | None = None,
         module: ProjectModule | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> tuple[int, str, dict]:
         """
         Run tofu apply and capture outputs.
@@ -1681,6 +1889,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Optional timeout in seconds (default: APPLY_TIMEOUT)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output, captured_outputs)
@@ -1693,21 +1902,16 @@ class OpenTofuRuntime:
 
         try:
             # Apply the plan
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "apply", "-no-color", "-input=false", "-auto-approve", "plan.out"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu apply completed with exit code {result.returncode}")
+            logger.info(f"tofu apply completed with exit code {returncode}")
 
             # Capture outputs if apply succeeded
             outputs = {}
-            if result.returncode == 0:
+            if returncode == 0:
                 outputs = self._capture_outputs(work_dir, tofu_env)
                 if module is not None:
                     normalized = normalize_infrastructure_access_outputs(
@@ -1717,7 +1921,7 @@ class OpenTofuRuntime:
                     )
                     outputs = normalized.outputs
 
-            return result.returncode, output, outputs
+            return returncode, output, outputs
 
         except subprocess.TimeoutExpired as e:
             # S14-021: Handle timeout for apply
@@ -1841,7 +2045,13 @@ class OpenTofuRuntime:
         )
         return normalized.outputs
 
-    def run_destroy(self, work_dir: str, env: dict, timeout: int | None = None) -> tuple[int, str]:
+    def run_destroy(
+        self,
+        work_dir: str,
+        env: dict,
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
         """
         Run tofu destroy.
 
@@ -1849,6 +2059,7 @@ class OpenTofuRuntime:
             work_dir: Workspace directory
             env: Environment variables
             timeout: Timeout in seconds (default: 30 minutes)
+            on_output: Optional line callback for incremental log streaming (#195).
 
         Returns:
             Tuple of (exit_code, output)
@@ -1860,19 +2071,14 @@ class OpenTofuRuntime:
         logger.info(f"Running tofu destroy in {work_dir} (timeout: {timeout}s)")
 
         try:
-            result = subprocess.run(
+            returncode, output = self._run_tofu(
                 ["tofu", "destroy", "-no-color", "-input=false", "-auto-approve"],
-                cwd=work_dir,
-                env=tofu_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                work_dir, tofu_env, timeout, on_output,
             )
 
-            output = result.stdout + result.stderr
-            logger.info(f"tofu destroy completed with exit code {result.returncode}")
+            logger.info(f"tofu destroy completed with exit code {returncode}")
 
-            return result.returncode, output
+            return returncode, output
 
         except subprocess.TimeoutExpired as e:
             timeout_msg = (
@@ -1895,7 +2101,8 @@ class OpenTofuRuntime:
         module: ProjectModule | None = None,
         max_retries: int | None = None,
         initial_delay: float | None = None,
-        timeout: int | None = None
+        timeout: int | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> tuple[int, str]:
         """
         Run tofu destroy with retry logic for dependency violations.
@@ -1941,7 +2148,9 @@ class OpenTofuRuntime:
                 time.sleep(delay)
 
             # Run destroy
-            exit_code, output = self.run_destroy(work_dir, env, timeout=timeout)
+            exit_code, output = self.run_destroy(
+                work_dir, env, timeout=timeout, on_output=on_output,
+            )
             all_output += output
 
             # Success - return immediately

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { countDetectedClusters } from '@/lib/api/kubernetes';
 import type { K8sClusterCreateRequest, K8sClusterUpdateRequest } from '@/types';
 import { QUERY_STALE_TIME, POLL_INTERVALS } from '@/lib/constants';
 import { notify } from '@/lib/notify';
@@ -113,21 +114,26 @@ export function useTestClusterConnection() {
   });
 }
 
-export function useDetectEKSClusters() {
+export function useDetectClusters() {
   const queryClient = useQueryClient();
 
   return useAppMutation({
-    mutationFn: (projectId: number) => api.detectEKSClusters(projectId),
+    mutationFn: (projectId: number) => api.detectClusters(projectId),
     onSuccess: (data, projectId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.batchConnectivity() });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 
-      if (data.registered.length > 0) {
-        notify.success(data.message, `Registered ${data.registered.length} EKS cluster(s)`, { category: 'cluster' });
-      } else if (data.skipped.length > 0) {
-        notify.info(data.message, 'All EKS clusters are already registered', { category: 'cluster' });
+      // Module-output detection lists already-registered clusters as registered too.
+      const detected = countDetectedClusters(data);
+      if (detected > 0) {
+        notify.success(
+          `Detected ${detected} cluster(s)`,
+          'New clusters were registered; existing ones were left unchanged',
+          { category: 'cluster' },
+        );
       } else {
-        notify.info(data.message, undefined, { category: 'cluster' });
+        notify.info('No clusters detected', data.message, { category: 'cluster' });
       }
 
       if (data.errors.length > 0) {
@@ -136,6 +142,9 @@ export function useDetectEKSClusters() {
     },
   });
 }
+
+/** @deprecated Use useDetectClusters(). */
+export const useDetectEKSClusters = useDetectClusters;
 
 export function useRefreshClusterKubeconfig() {
   const queryClient = useQueryClient();
@@ -196,6 +205,7 @@ export function useClusterResources(
     queryKey: queryKeys.k8s.clusters.resources(clusterId, resourceType, params),
     queryFn: () => api.getClusterResources(clusterId, resourceType, params),
     enabled: options?.enabled !== false && !!clusterId && !!resourceType,
+    staleTime: QUERY_STALE_TIME.DEFAULT,
     refetchInterval: options?.pollingEnabled ? POLL_INTERVALS.MEDIUM : false,
     placeholderData: (previousData) => previousData,
   });

@@ -482,6 +482,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/k8s/clusters/detect-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Detect And Register Clusters From Credentials
+         * @description Discover Kubernetes clusters via the project's bound cloud credential template.
+         */
+        post: operations["detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/k8s/clusters": {
         parameters: {
             query?: never;
@@ -546,6 +566,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/connectivity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Batch Connectivity Check
+         * @description Probe connectivity for all clusters in a project in parallel.
+         */
+        get: operations["project_batch_connectivity_check_api_projects__project_id__connectivity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}": {
         parameters: {
             query?: never;
@@ -569,6 +609,26 @@ export interface paths {
          * @description Delete cluster configuration (owner or admin only).
          */
         delete: operations["delete_cluster_api_k8s_clusters__cluster_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Project Cluster
+         * @description Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.
+         */
+        delete: operations["delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1432,6 +1492,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global Search
+         * @description Unified global multi-cluster and infrastructure search.
+         *
+         *     Searches across:
+         *     - Ingresses, HTTPRoutes, VirtualServers, and Services in all reachable clusters
+         *     - Clusters (by name, cloud provider, region)
+         *     - Projects (by name, description, cloud provider, region)
+         */
+        get: operations["global_search_api_k8s_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/f5bnk/data": {
         parameters: {
             query?: never;
@@ -1446,6 +1531,9 @@ export interface paths {
          *     Returns health analysis, topology graph, and policy associations
          *     in a single response. The frontend caches this under one query key
          *     so switching between Health, Topology, and Policy Map tabs is instant.
+         *
+         *     Query parameters:
+         *       - force: bypass the BNK data, pod discovery and TMM traffic-stats caches.
          */
         get: operations["get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get"];
         put?: never;
@@ -1788,6 +1876,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Stats
+         * @description Summary tiles: total requests, success rate, avg latency, tokens, cost, models.
+         */
+        get: operations["get_llm_stats_api_k8s_llm_observability_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/histogram": {
         parameters: {
             query?: never;
@@ -1800,6 +1908,26 @@ export interface paths {
          * @description Time-series for one metric (requests|tokens|cost|models|latency).
          */
         get: operations["get_llm_histogram_api_k8s_clusters__cluster_id__llm_observability_histogram_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/histogram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Histogram
+         * @description Time-series for one metric (requests|tokens|cost|models|latency).
+         */
+        get: operations["get_llm_histogram_api_k8s_llm_observability_histogram_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1828,6 +1956,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/rankings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Rankings
+         * @description Per-model rows with window-over-window trend deltas.
+         */
+        get: operations["get_llm_rankings_api_k8s_llm_observability_rankings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/provider-usage": {
         parameters: {
             query?: never;
@@ -1840,6 +1988,26 @@ export interface paths {
          * @description Time-series folded to inferred provider (cost|tokens|latency).
          */
         get: operations["get_llm_provider_usage_api_k8s_clusters__cluster_id__llm_observability_provider_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/provider-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Provider Usage
+         * @description Time-series folded to inferred provider (cost|tokens|latency).
+         */
+        get: operations["get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1868,6 +2036,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Logs
+         * @description Per-request log rows, newest first; ``next_end`` is the load-older cursor.
+         */
+        get: operations["get_llm_logs_api_k8s_llm_observability_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/filterdata": {
         parameters: {
             query?: never;
@@ -1880,6 +2068,26 @@ export interface paths {
          * @description Distinct model + status label values for filter dropdowns.
          */
         get: operations["get_llm_filterdata_api_k8s_clusters__cluster_id__llm_observability_filterdata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/filterdata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Filterdata
+         * @description Distinct model + status label values for filter dropdowns.
+         */
+        get: operations["get_llm_filterdata_api_k8s_llm_observability_filterdata_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4873,6 +5081,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud-auth/azure/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Azure Regions
+         * @description List Azure regions in the canonical {value, label} shape.
+         */
+        get: operations["list_azure_regions_api_cloud_auth_azure_regions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud-auth/ibm/cos-instances/query": {
         parameters: {
             query?: never;
@@ -6073,6 +6301,26 @@ export interface paths {
          *     diffs consecutive samples to compute rates.
          */
         get: operations["get_process_metrics_api_system_process_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/bnk-consumption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Bnk Consumption
+         * @description Get fleet-wide BNK resource consumption.
+         */
+        get: operations["get_bnk_consumption_api_system_bnk_consumption_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10690,6 +10938,7 @@ export interface paths {
          *       config_id           — link to a BenchmarkConfig row
          *       proxy_deployment_id — link to a ProxyDeployment row
          *       dataset_name        — dataset label (stored in result_json)
+         *       tags                — JSON object stored as the run's tags
          */
         post: operations["ingest_aiperf_result_api_benchmarks_results_aiperf_post"];
         delete?: never;
@@ -11459,6 +11708,46 @@ export interface paths {
         get: operations["get_benchmark_run_group_api_benchmarks_run_groups__group_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/run-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Benchmark Run Groups
+         * @description Run-groups (scenario sweeps), newest first.
+         */
+        get: operations["list_benchmark_run_groups_api_benchmarks_run_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmarks/run-groups/curves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Benchmark Run Group Curves
+         * @description Load curves for several sweeps (latency / throughput / goodput per load point).
+         */
+        post: operations["benchmark_run_group_curves_api_benchmarks_run_groups_curves_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13292,6 +13581,11 @@ export interface components {
              * @default false
              */
             context_mismatch: boolean;
+            /**
+             * Server Mismatch
+             * @default false
+             */
+            server_mismatch: boolean;
         };
         /**
          * BenchmarkCompareRunMetrics
@@ -13334,8 +13628,18 @@ export interface components {
             duration_seconds: number | null;
             /** Ttft Avg */
             ttft_avg?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P90 */
+            ttft_p90?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
             /** Itl Avg */
             itl_avg?: number | null;
+            /** Itl P50 */
+            itl_p50?: number | null;
+            /** Itl P99 */
+            itl_p99?: number | null;
             /** Tst Avg */
             tst_avg?: number | null;
             /** Osl Avg */
@@ -13344,6 +13648,42 @@ export interface components {
             isl_avg?: number | null;
             /** Per User Throughput Avg */
             per_user_throughput_avg?: number | null;
+            /** Per User Throughput P50 */
+            per_user_throughput_p50?: number | null;
+            /** Goodput */
+            goodput?: number | null;
+            /** Good Request Pct */
+            good_request_pct?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+            /** Requested Osl */
+            requested_osl?: number | null;
+            /** Effective Concurrency */
+            effective_concurrency?: number | null;
+            /** Cache Hit Pct */
+            cache_hit_pct?: number | null;
+            /** Load Spread */
+            load_spread?: number | null;
+            /** Max Share Pct */
+            max_share_pct?: number | null;
+            /** Preemptions */
+            preemptions?: number | null;
+            /** Ttft P10 */
+            ttft_p10?: number | null;
+            /** Ttft P25 */
+            ttft_p25?: number | null;
+            /** Pods */
+            pods?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Tags */
+            tags?: {
+                [key: string]: unknown;
+            } | null;
+            /** Config Snapshot */
+            config_snapshot?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * BenchmarkConfigCreate
@@ -13578,6 +13918,8 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -13683,6 +14025,8 @@ export interface components {
             agent_id: number | null;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy Deployment Id */
             proxy_deployment_id: number | null;
             /** Scenario Key */
@@ -13820,6 +14164,8 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -13884,6 +14230,8 @@ export interface components {
             description: string | null;
             /** Cluster Id */
             cluster_id: number;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Llm Base Url */
             llm_base_url: string;
             /** Llm Model */
@@ -14415,6 +14763,51 @@ export interface components {
              */
             dpu_ids?: number[];
         };
+        /**
+         * BnkClusterConsumption
+         * @description Per-cluster BNK resource consumption breakdown.
+         */
+        BnkClusterConsumption: {
+            /** Cluster Id */
+            cluster_id: number;
+            /** Cluster Name */
+            cluster_name: string;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Reachable */
+            reachable: boolean;
+            /** Bnk Installed */
+            bnk_installed: boolean;
+            /** Bnk Version */
+            bnk_version?: string | null;
+            /** Status */
+            status: string;
+            /** Node Count */
+            node_count?: number | null;
+            control_plane: components["schemas"]["BnkPlaneConsumption"];
+            data_plane: components["schemas"]["BnkPlaneConsumption"];
+            total: components["schemas"]["BnkPlaneConsumption"];
+            node_capacity?: components["schemas"]["BnkNodeCapacity"];
+            /** Metrics Available */
+            metrics_available: boolean;
+            /** Metrics Error */
+            metrics_error?: string | null;
+            dpf: components["schemas"]["BnkClusterDpfSummary"];
+            /** Top Pods */
+            top_pods?: components["schemas"]["BnkTopPod"][];
+        };
+        /**
+         * BnkClusterDpfSummary
+         * @description Lightweight DPF/DPU summary for a single cluster.
+         */
+        BnkClusterDpfSummary: {
+            /** Detected */
+            detected: boolean;
+            /** Dpu Count */
+            dpu_count: number;
+        };
         /** BnkClusterMemberAssignRequest */
         BnkClusterMemberAssignRequest: {
             /**
@@ -14452,6 +14845,416 @@ export interface components {
             }[];
             bnk_config: components["schemas"]["BnkClusterConfigSummary"];
         };
+        /**
+         * BnkConsumptionResponse
+         * @description Response for GET /api/system/bnk-consumption.
+         */
+        BnkConsumptionResponse: {
+            /** Timestamp */
+            timestamp: string;
+            fleet_summary: components["schemas"]["BnkFleetSummary"];
+            /** Clusters */
+            clusters: components["schemas"]["BnkClusterConsumption"][];
+        };
+        /**
+         * BnkDataResponse
+         * @description Wrapper for the unified /f5bnk/data endpoint.
+         *
+         *     The ``health`` and ``trafficStats`` keys are strongly typed; the remaining
+         *     keys are kept as loose dicts because their schemas are large and already
+         *     typed manually in the frontend. This lets OpenAPI capture new fields
+         *     without coupling the whole topology/palette response to Pydantic.
+         */
+        BnkDataResponse: {
+            health: components["schemas"]["BnkHealthResponse"];
+            /** Topology */
+            topology: {
+                [key: string]: unknown;
+            }[];
+            /** Dataplane */
+            dataPlane: {
+                [key: string]: unknown;
+            };
+            /** Referencegrants */
+            referenceGrants: {
+                [key: string]: unknown;
+            }[];
+            /** Topologycounts */
+            topologyCounts: {
+                [key: string]: unknown;
+            };
+            /** Policyassociations */
+            policyAssociations: {
+                [key: string]: unknown;
+            }[];
+            /** Policycount */
+            policyCount: number;
+            /** Backends */
+            backends?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Palette */
+            palette?: {
+                [key: string]: unknown;
+            } | null;
+            trafficStats?: components["schemas"]["BnkTrafficStatsResponse"] | null;
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkEgressTrafficStats */
+        BnkEgressTrafficStats: {
+            /** Egressname */
+            egressName: string;
+            /** Namespace */
+            namespace: string;
+            /**
+             * Clientsidebytesin
+             * @default 0
+             */
+            clientsideBytesIn: number;
+            /**
+             * Clientsidebytesout
+             * @default 0
+             */
+            clientsideBytesOut: number;
+            /**
+             * Clientsidecurconns
+             * @default 0
+             */
+            clientsideCurConns: number;
+            /**
+             * Clientsidetotconns
+             * @default 0
+             */
+            clientsideTotConns: number;
+            /**
+             * Serversidebytesin
+             * @default 0
+             */
+            serversideBytesIn: number;
+            /**
+             * Serversidebytesout
+             * @default 0
+             */
+            serversideBytesOut: number;
+            /**
+             * Serversidecurconns
+             * @default 0
+             */
+            serversideCurConns: number;
+            /**
+             * Serversidetotconns
+             * @default 0
+             */
+            serversideTotConns: number;
+        };
+        /** BnkFirewallRuleTrafficStats */
+        BnkFirewallRuleTrafficStats: {
+            /** Policyname */
+            policyName: string;
+            /** Namespace */
+            namespace: string;
+            /** Rulename */
+            ruleName: string;
+            /**
+             * Action
+             * @default
+             */
+            action: string;
+            /**
+             * Ipprotocol
+             * @default
+             */
+            ipProtocol: string;
+            /**
+             * Hitcount
+             * @default 0
+             */
+            hitCount: number;
+        };
+        /**
+         * BnkFleetSummary
+         * @description Fleet-wide BNK consumption rollup.
+         */
+        BnkFleetSummary: {
+            /** Total Clusters */
+            total_clusters: number;
+            /** Reachable Clusters */
+            reachable_clusters: number;
+            /** Bnk Installed Clusters */
+            bnk_installed_clusters: number;
+            /** Total Bnk Pods */
+            total_bnk_pods: number;
+            /** Control Plane Pods */
+            control_plane_pods: number;
+            /** Data Plane Pods */
+            data_plane_pods: number;
+            /** Total Cpu Millicores */
+            total_cpu_millicores: number;
+            /** Total Memory Bytes */
+            total_memory_bytes: number;
+            /**
+             * Node Capacity Cpu Millicores
+             * @default 0
+             */
+            node_capacity_cpu_millicores: number;
+            /**
+             * Node Capacity Memory Bytes
+             * @default 0
+             */
+            node_capacity_memory_bytes: number;
+            /** Dpf Detected Clusters */
+            dpf_detected_clusters: number;
+            /** Dpu Count */
+            dpu_count: number;
+        };
+        /** BnkHealthAISection */
+        BnkHealthAISection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Analyzers */
+            analyzers: number;
+            /** Analyzerdetails */
+            analyzerDetails: components["schemas"]["HealthAnalyzerDetail"][];
+            /**
+             * F5Epps
+             * @default 0
+             */
+            f5epps: number;
+            /**
+             * Inferencepools
+             * @default 0
+             */
+            inferencePools: number;
+            /** Inferencepooldetails */
+            inferencePoolDetails?: components["schemas"]["HealthInferencePoolDetail"][];
+        };
+        /** BnkHealthDataPlaneSection */
+        BnkHealthDataPlaneSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            tmm: components["schemas"]["HealthTmmComponent"];
+            /** Cneinstance */
+            cneInstance: components["schemas"]["HealthCneInstance"] | {
+                [key: string]: unknown;
+            };
+        };
+        /** BnkHealthEndpointResponse */
+        BnkHealthEndpointResponse: {
+            /**
+             * Overall
+             * @enum {string}
+             */
+            overall: "healthy" | "warning" | "critical" | "unknown";
+            /**
+             * Installshape
+             * @default unknown
+             */
+            installShape: string;
+            /**
+             * Installmethod
+             * @default Unknown
+             */
+            installMethod: string;
+            connectivity: components["schemas"]["HealthConnectivityStatus"];
+            integration: components["schemas"]["HealthIntegrationStatus"];
+            platform: components["schemas"]["BnkHealthPlatformSection"];
+            dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
+            networking: components["schemas"]["BnkHealthNetworkingSection"];
+            security: components["schemas"]["BnkHealthSecuritySection"];
+            ai: components["schemas"]["BnkHealthAISection"];
+            counts: components["schemas"]["HealthCounts"];
+            /** Cluster Id */
+            cluster_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkHealthNetworkingSection */
+        BnkHealthNetworkingSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            gateways: components["schemas"]["HealthGatewayComponent"];
+            vlans: components["schemas"]["HealthVlanComponent"];
+            infra?: components["schemas"]["HealthInfraComponent"] | null;
+            /**
+             * Gatewaysettings
+             * @default 0
+             */
+            gatewaySettings: number;
+            /**
+             * Egressgateways
+             * @default 0
+             */
+            egressGateways: number;
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Staticroutes */
+            staticRoutes: number;
+            /** Snatpools */
+            snatPools: number;
+        };
+        /** BnkHealthPlatformSection */
+        BnkHealthPlatformSection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            flo: components["schemas"]["HealthPlatformComponent"];
+            controller: components["schemas"]["HealthPlatformComponent"];
+            crdInstaller: components["schemas"]["HealthPlatformComponent"];
+            analyzer: components["schemas"]["HealthPlatformComponent"];
+        };
+        /** BnkHealthResponse */
+        BnkHealthResponse: {
+            /**
+             * Overall
+             * @enum {string}
+             */
+            overall: "healthy" | "warning" | "critical" | "unknown";
+            /**
+             * Installshape
+             * @default unknown
+             */
+            installShape: string;
+            /**
+             * Installmethod
+             * @default Unknown
+             */
+            installMethod: string;
+            connectivity: components["schemas"]["HealthConnectivityStatus"];
+            integration: components["schemas"]["HealthIntegrationStatus"];
+            platform: components["schemas"]["BnkHealthPlatformSection"];
+            dataPlane: components["schemas"]["BnkHealthDataPlaneSection"];
+            networking: components["schemas"]["BnkHealthNetworkingSection"];
+            security: components["schemas"]["BnkHealthSecuritySection"];
+            ai: components["schemas"]["BnkHealthAISection"];
+            counts: components["schemas"]["HealthCounts"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** BnkHealthSecuritySection */
+        BnkHealthSecuritySection: {
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Securitypolicies */
+            securityPolicies: number;
+            /** Networkpolicies */
+            networkPolicies: number;
+            /** Addresslists */
+            addressLists: number;
+            /** Portlists */
+            portLists: number;
+            irules: components["schemas"]["HealthIRulesComponent"];
+        };
+        /** BnkListenerTrafficStats */
+        BnkListenerTrafficStats: {
+            /** Gatewayname */
+            gatewayName: string;
+            /** Gatewaynamespace */
+            gatewayNamespace: string;
+            /** Listenername */
+            listenerName: string;
+            /**
+             * Clientsidebytesin
+             * @default 0
+             */
+            clientsideBytesIn: number;
+            /**
+             * Clientsidebytesout
+             * @default 0
+             */
+            clientsideBytesOut: number;
+            /**
+             * Clientsidecurconns
+             * @default 0
+             */
+            clientsideCurConns: number;
+            /**
+             * Clientsidetotconns
+             * @default 0
+             */
+            clientsideTotConns: number;
+            /**
+             * Serversidebytesin
+             * @default 0
+             */
+            serversideBytesIn: number;
+            /**
+             * Serversidebytesout
+             * @default 0
+             */
+            serversideBytesOut: number;
+            /**
+             * Serversidecurconns
+             * @default 0
+             */
+            serversideCurConns: number;
+            /**
+             * Serversidetotconns
+             * @default 0
+             */
+            serversideTotConns: number;
+        };
+        /**
+         * BnkNodeCapacity
+         * @description Node allocatable CPU/memory capacity for a cluster.
+         */
+        BnkNodeCapacity: {
+            /**
+             * Cpu Millicores
+             * @description Aggregated node allocatable CPU in millicores
+             * @default 0
+             */
+            cpu_millicores: number;
+            /**
+             * Memory Bytes
+             * @description Aggregated node allocatable memory in bytes
+             * @default 0
+             */
+            memory_bytes: number;
+        };
+        /**
+         * BnkPlaneConsumption
+         * @description CPU/memory/pod count for a single BNK plane (control-plane or data-plane).
+         */
+        BnkPlaneConsumption: {
+            /**
+             * Count
+             * @description Number of BNK pods in this plane
+             */
+            count: number;
+            /**
+             * Cpu Millicores
+             * @description Aggregated CPU usage in millicores
+             */
+            cpu_millicores: number;
+            /**
+             * Memory Bytes
+             * @description Aggregated memory usage in bytes
+             */
+            memory_bytes: number;
+        };
         /** BnkReleaseListResponse */
         BnkReleaseListResponse: {
             /** Releases */
@@ -14469,6 +15272,47 @@ export interface components {
             unmatched: number;
             /** Upserted */
             upserted: number;
+        };
+        /**
+         * BnkTopPod
+         * @description A single BNK pod ranked by resource consumption.
+         */
+        BnkTopPod: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Role */
+            role: string;
+            /** Cpu Millicores */
+            cpu_millicores: number;
+            /** Memory Bytes */
+            memory_bytes: number;
+        };
+        /**
+         * BnkTrafficStatsResponse
+         * @description Traffic statistics mapped from TMM dataplane counters.
+         */
+        BnkTrafficStatsResponse: {
+            /** Source */
+            source?: string | null;
+            /** Podname */
+            podName?: string | null;
+            /** Sampledat */
+            sampledAt?: string | null;
+            /**
+             * Available
+             * @default false
+             */
+            available: boolean;
+            /** Error */
+            error?: string | null;
+            /** Listeners */
+            listeners?: components["schemas"]["BnkListenerTrafficStats"][];
+            /** Egresses */
+            egresses?: components["schemas"]["BnkEgressTrafficStats"][];
+            /** Firewallrules */
+            firewallRules?: components["schemas"]["BnkFirewallRuleTrafficStats"][];
         };
         /** Body_create_file_secret_api_projects__project_id__secrets_file_post */
         Body_create_file_secret_api_projects__project_id__secrets_file_post: {
@@ -15015,6 +15859,20 @@ export interface components {
             meta_data?: {
                 [key: string]: unknown;
             } | null;
+            /** Node Count */
+            node_count?: number | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
+            /** Connectivity Status */
+            connectivity_status?: string | null;
+            /** Integration Status */
+            integration_status?: string | null;
+            /** Zones */
+            zones?: string[];
+            /** Access Method */
+            access_method?: string | null;
             /** Deployable Release Id */
             deployable_release_id?: number | null;
             /** Running Release Id */
@@ -15085,7 +15943,7 @@ export interface components {
         };
         /**
          * ClusterOperationResponse
-         * @description Generic response for cluster mutations (delete).
+         * @description Response for DELETE /api/k8s/clusters/{id} (cluster delete).
          */
         ClusterOperationResponse: {
             /**
@@ -15150,6 +16008,25 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ClusterSearchResult */
+        ClusterSearchResult: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Project Id */
+            project_id?: number | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Status */
+            status: string;
+            /** Node Count */
+            node_count?: number | null;
+            /** Detected Platform Profile */
+            detected_platform_profile?: string | null;
+        };
         /**
          * ClusterSummary
          * @description Single cluster in list response.
@@ -15208,6 +16085,18 @@ export interface components {
             bnk_config?: components["schemas"]["BnkClusterConfigSummary"] | null;
             /** Node Count */
             node_count?: number | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
+            /** Connectivity Status */
+            connectivity_status?: string | null;
+            /** Integration Status */
+            integration_status?: string | null;
+            /** Zones */
+            zones?: string[];
+            /** Access Method */
+            access_method?: string | null;
             /** Deployable Release Id */
             deployable_release_id?: number | null;
             /** Running Release Id */
@@ -15667,8 +16556,11 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
-            /** Provider */
-            provider: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "aws" | "azure" | "gcp" | "ibm" | "ssh";
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -15698,10 +16590,16 @@ export interface components {
             gcp_credentials?: string | null;
             /** Gcp Project Id */
             gcp_project_id?: string | null;
+            /** Azure Auth Method */
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
             azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /** Azure Client Secret */
+            azure_client_secret?: string | null;
             /** Azure Credentials */
             azure_credentials?: string | null;
             /** Ibmcloud Api Key */
@@ -15782,12 +16680,28 @@ export interface components {
             gcp_project_id: string | null;
             /** Has Gcp Credentials */
             has_gcp_credentials: boolean;
+            /** Azure Auth Method */
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
-            azure_subscription_id: string | null;
+            azure_subscription_id?: string | null;
             /** Azure Tenant Id */
-            azure_tenant_id: string | null;
-            /** Has Azure Credentials */
+            azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /**
+             * Has Azure Client Secret
+             * @default false
+             */
+            has_azure_client_secret: boolean;
+            /**
+             * Has Azure Credentials
+             * @default false
+             */
             has_azure_credentials: boolean;
+            /** Azure Sso Authenticated At */
+            azure_sso_authenticated_at?: string | null;
+            /** Azure Sso Token Expiry */
+            azure_sso_token_expiry?: string | null;
             /** Has Ibmcloud Api Key */
             has_ibmcloud_api_key: boolean;
             /** Ibmcloud Resource Group */
@@ -15865,7 +16779,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Provider */
-            provider?: string | null;
+            provider?: ("aws" | "azure" | "gcp" | "ibm" | "ssh") | null;
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -15892,10 +16806,16 @@ export interface components {
             gcp_credentials?: string | null;
             /** Gcp Project Id */
             gcp_project_id?: string | null;
+            /** Azure Auth Method */
+            azure_auth_method?: ("service_principal" | "sso") | null;
             /** Azure Subscription Id */
             azure_subscription_id?: string | null;
             /** Azure Tenant Id */
             azure_tenant_id?: string | null;
+            /** Azure Client Id */
+            azure_client_id?: string | null;
+            /** Azure Client Secret */
+            azure_client_secret?: string | null;
             /** Azure Credentials */
             azure_credentials?: string | null;
             /** Ibmcloud Api Key */
@@ -15924,6 +16844,99 @@ export interface components {
             ssh_key_passphrase?: string | null;
             /** Is Default */
             is_default?: boolean | null;
+        };
+        /** CurveGroup */
+        CurveGroup: {
+            /** Id */
+            id: number;
+            /** Scenario Key */
+            scenario_key: string;
+            /** Scenario Name */
+            scenario_name: string | null;
+            /** Run Label */
+            run_label: string | null;
+            /** Status */
+            status: string;
+            /** Target Id */
+            target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
+            /** Proxy */
+            proxy: string | null;
+            /** Model */
+            model: string | null;
+            /** Total Runs */
+            total_runs: number;
+            /** Completed Runs */
+            completed_runs: number;
+            /** Failed Runs */
+            failed_runs: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Points */
+            points: components["schemas"]["CurvePoint"][];
+            /**
+             * Load Axis
+             * @default concurrency
+             */
+            load_axis: string;
+            /** Goodput Targets */
+            goodput_targets?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * CurvePoint
+         * @description One load point of a sweep (a completed child run); latencies in ms except latency_p50/p99 (s).
+         */
+        CurvePoint: {
+            /** Run Id */
+            run_id: number;
+            /** Variant Label */
+            variant_label: string | null;
+            /** Concurrency */
+            concurrency?: number | null;
+            /** Request Rate */
+            request_rate?: number | null;
+            /** Benchmark Duration */
+            benchmark_duration?: number | null;
+            /** Total Requests */
+            total_requests?: number | null;
+            /** Latency P50 */
+            latency_p50?: number | null;
+            /** Latency P99 */
+            latency_p99?: number | null;
+            /** Overall Rps */
+            overall_rps?: number | null;
+            /** Tokens Per Sec */
+            tokens_per_sec?: number | null;
+            /** Success Rate Pct */
+            success_rate_pct?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
+            /** Itl P50 */
+            itl_p50?: number | null;
+            /** Itl P99 */
+            itl_p99?: number | null;
+            /** Per User Throughput P50 */
+            per_user_throughput_p50?: number | null;
+            /** Goodput */
+            goodput?: number | null;
+            /** Good Request Pct */
+            good_request_pct?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+            /** Osl Avg */
+            osl_avg?: number | null;
+            /** Requested Osl */
+            requested_osl?: number | null;
+            /** Effective Concurrency */
+            effective_concurrency?: number | null;
         };
         /** DecisionOut */
         DecisionOut: {
@@ -17167,6 +18180,95 @@ export interface components {
             /** Verify Https Cert */
             verify_https_cert?: boolean | null;
         };
+        /** F5EgressPolicyAssociation */
+        F5EgressPolicyAssociation: {
+            /**
+             * Kind
+             * @default egress
+             * @constant
+             */
+            kind: "egress";
+            /** Egress Name */
+            egress_name?: string | null;
+            /** Namespace */
+            namespace: string;
+            /** Captured Namespaces */
+            captured_namespaces?: string[];
+            /** Snat Type */
+            snat_type?: string | null;
+            /** Firewall Policy Name */
+            firewall_policy_name: string;
+            /** Rules Count */
+            rules_count?: number | null;
+            /** Rules */
+            rules?: components["schemas"]["F5FirewallRule"][];
+            egress_status?: components["schemas"]["PolicyStatus"];
+        };
+        /** F5FirewallRule */
+        F5FirewallRule: {
+            /** Name */
+            name: string;
+            /** Action */
+            action: string;
+            /** Ipprotocol */
+            ipProtocol: string;
+            source: components["schemas"]["F5FirewallRuleEndpoint"];
+            destination: components["schemas"]["F5FirewallRuleEndpoint"];
+            /** Logging */
+            logging: boolean;
+        };
+        /** F5FirewallRuleEndpoint */
+        F5FirewallRuleEndpoint: {
+            /** Addresses */
+            addresses: unknown[];
+            /** Ports */
+            ports: string[];
+            /** Addresslists */
+            addressLists: string[];
+            /** Portlists */
+            portLists: string[];
+        };
+        /** F5GatewayPolicyAssociation */
+        F5GatewayPolicyAssociation: {
+            /**
+             * Kind
+             * @default gateway
+             * @constant
+             */
+            kind: "gateway";
+            /** Bnk Policy Name */
+            bnk_policy_name: string;
+            /** Namespace */
+            namespace: string;
+            /** Gateway Name */
+            gateway_name?: string | null;
+            /** Listener Name */
+            listener_name?: string | null;
+            /** Firewall Policy Name */
+            firewall_policy_name: string;
+            /** Gateway Ip */
+            gateway_ip?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Protocol */
+            protocol?: string | null;
+            /** Rules Count */
+            rules_count?: number | null;
+            /** Rules */
+            rules?: components["schemas"]["F5FirewallRule"][];
+            bnk_policy_status?: components["schemas"]["PolicyStatus"];
+        };
+        /** F5PolicyGatewayAssociationsResponse */
+        F5PolicyGatewayAssociationsResponse: {
+            /** Associations */
+            associations: (components["schemas"]["F5GatewayPolicyAssociation"] | components["schemas"]["F5EgressPolicyAssociation"])[];
+            /** Count */
+            count: number;
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
+        };
         /**
          * FailedTag
          * @description A single tag that could not be added to the Catalog.
@@ -17490,6 +18592,27 @@ export interface components {
             detected_platform_profile: string;
             /** Detected Platform Provider */
             detected_platform_provider?: string | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Discovery Status */
+            discovery_status?: string | null;
+        };
+        /** GatewayTopologyResponse */
+        GatewayTopologyResponse: {
+            /** Topology */
+            topology: components["schemas"]["TopologyGateway"][];
+            dataPlane: components["schemas"]["TopologyDataPlane"];
+            /** Referencegrants */
+            referenceGrants: components["schemas"]["TopologyReferenceGrant"][];
+            counts: components["schemas"]["TopologyCounts"];
+            /** Cluster Id */
+            cluster_id: number;
+            /** Namespace */
+            namespace?: string | null;
         };
         /**
          * GitSourceValidation
@@ -17504,10 +18627,245 @@ export interface components {
              */
             git_ref: string;
         };
+        /** GlobalSearchResultResponse */
+        GlobalSearchResultResponse: {
+            /** Query */
+            query: string;
+            /** Ingresses */
+            ingresses?: components["schemas"]["IngressSearchResult"][];
+            /** Clusters */
+            clusters?: components["schemas"]["ClusterSearchResult"][];
+            /** Projects */
+            projects?: components["schemas"]["ProjectSearchResult"][];
+            /** Timed Out Clusters */
+            timed_out_clusters?: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthAnalyzerDetail */
+        HealthAnalyzerDetail: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Schedule */
+            schedule: string;
+        };
+        /** HealthCneInstance */
+        HealthCneInstance: {
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** HealthConnectivityStatus */
+        HealthConnectivityStatus: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "reachable" | "partial" | "unreachable" | "unknown";
+            /** Message */
+            message: string;
+            /** Checkedat */
+            checkedAt: string;
+        };
+        /** HealthCounts */
+        HealthCounts: {
+            /** Gateways */
+            gateways: number;
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Vlans */
+            vlans: number;
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Irules */
+            irules: number;
+            /** Analyzers */
+            analyzers: number;
+            /** Cneinstances */
+            cneInstances: number;
+            /** Tmm Pods */
+            tmm_pods: number;
+            /** Tmm Running */
+            tmm_running: number;
+            /** Tmm Containers */
+            tmm_containers: string;
+        };
+        /** HealthGatewayComponent */
+        HealthGatewayComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /** Accepted */
+            accepted: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Addresses */
+            addresses: string[];
+        };
+        /** HealthIRuleDetail */
+        HealthIRuleDetail: {
+            /** Name */
+            name: string;
+            /** Accepted */
+            accepted: boolean;
+            /** Programmed */
+            programmed: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /** HealthIRulesComponent */
+        HealthIRulesComponent: {
+            /** Total */
+            total: number;
+            /** Accepted */
+            accepted: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthIRuleDetail"][];
+        };
+        /** HealthInferencePoolDetail */
+        HealthInferencePoolDetail: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Targetports */
+            targetPorts: number[];
+            /** Endpointpicker */
+            endpointPicker: string;
+        };
+        /** HealthInfraComponent */
+        HealthInfraComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthInfraDetail"][];
+        };
+        /** HealthInfraDetail */
+        HealthInfraDetail: {
+            /** Name */
+            name: string;
+            /** Programmed */
+            programmed: boolean;
+            /** Networks */
+            networks: number;
+            /** Ipams */
+            ipams: number;
+        };
+        /** HealthIntegrationStatus */
+        HealthIntegrationStatus: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "warning" | "critical" | "unknown";
+            /** Operatorconnected */
+            operatorConnected: boolean;
+            /**
+             * Operatormode
+             * @enum {string}
+             */
+            operatorMode: "direct_ws" | "reverse_ssh" | "polling" | "ngrok_tunnel" | "in_cluster" | "kubeconfig";
+            /** Operatorversion */
+            operatorVersion?: string | null;
+            /** Lastseen */
+            lastSeen?: string | null;
+            /** Message */
+            message: string;
+        };
+        /** HealthPlatformComponent */
+        HealthPlatformComponent: {
+            /** Explanation */
+            explanation: string;
+            /** Poddetails */
+            podDetails: components["schemas"]["HealthPodDetail"][];
+            /** Remediationactions */
+            remediationActions: components["schemas"]["HealthRemediationAction"][];
+            /** Namespaces */
+            namespaces?: string[];
+            /** Zones */
+            zones?: string[];
+            /** Nodes */
+            nodes?: string[];
+            /** Total */
+            total: number;
+            /** Running */
+            running?: number | null;
+            /** Completed */
+            completed?: number | null;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+        };
+        /** HealthPodDetail */
+        HealthPodDetail: {
+            /** Podname */
+            podName: string;
+            /** Namespace */
+            namespace: string;
+            /** Nodename */
+            nodeName?: string | null;
+            /** Nodezone */
+            nodeZone?: string | null;
+            /** Nodeinstancetype */
+            nodeInstanceType?: string | null;
+            /** Hostip */
+            hostIP?: string | null;
+            /** Phase */
+            phase: string;
+            /** Restartcount */
+            restartCount: number;
+            /** Containersready */
+            containersReady: string;
+            /** Issue */
+            issue: string;
+        };
+        /** HealthRemediationAction */
+        HealthRemediationAction: {
+            /** Label */
+            label: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "view_logs" | "restart_pod" | "describe" | "diagnostics";
+            /** Target */
+            target: string;
+            /** Namespace */
+            namespace: string;
         };
         /** HealthSubmission */
         HealthSubmission: {
@@ -17519,6 +18877,65 @@ export interface components {
             bnk?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** HealthTmmComponent */
+        HealthTmmComponent: {
+            /** Explanation */
+            explanation: string;
+            /** Poddetails */
+            podDetails: components["schemas"]["HealthPodDetail"][];
+            /** Remediationactions */
+            remediationActions: components["schemas"]["HealthRemediationAction"][];
+            /** Namespaces */
+            namespaces?: string[];
+            /** Zones */
+            zones?: string[];
+            /** Nodes */
+            nodes?: string[];
+            /** Pods */
+            pods: number;
+            /** Running */
+            running: number;
+            /** Containerstotal */
+            containersTotal: number;
+            /** Containersready */
+            containersReady: number;
+            /** Totalrestarts */
+            totalRestarts: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+        };
+        /** HealthVlanComponent */
+        HealthVlanComponent: {
+            /** Total */
+            total: number;
+            /** Programmed */
+            programmed: number;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "healthy" | "warning" | "critical" | "unknown";
+            /** Explanation */
+            explanation: string;
+            /** Details */
+            details: components["schemas"]["HealthVlanDetail"][];
+        };
+        /** HealthVlanDetail */
+        HealthVlanDetail: {
+            /** Name */
+            name: string;
+            /** Programmed */
+            programmed: boolean;
+            /** Interfaces */
+            interfaces: string[];
+            /** Selfips */
+            selfIPs: string[];
+            /** Mtu */
+            mtu?: number | null;
         };
         /** HeartbeatSubmission */
         HeartbeatSubmission: {
@@ -17837,6 +19254,38 @@ export interface components {
             created_module_ids: number[];
             /** Message */
             message: string;
+        };
+        /** IngressSearchResult */
+        IngressSearchResult: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Matched Host */
+            matched_host: string;
+            /** All Hosts */
+            all_hosts?: string[];
+            /** Cluster Id */
+            cluster_id: number;
+            /** Cluster Name */
+            cluster_name: string;
+            /** Project Id */
+            project_id?: number | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Target Service */
+            target_service?: string | null;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /** Resource Type */
+            resource_type?: string | null;
         };
         /** InstallChartRequest */
         InstallChartRequest: {
@@ -18259,6 +19708,10 @@ export interface components {
             req_body: string;
             /** Resp Body */
             resp_body: string;
+            /** Cluster Id */
+            cluster_id?: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
         };
         /**
          * LoginRequest
@@ -19187,6 +20640,23 @@ export interface components {
             /** Created At */
             created_at: string | null;
         };
+        /** PolicyStatus */
+        PolicyStatus: {
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
+        };
         /** PreviewMemberOut */
         PreviewMemberOut: {
             /** Id */
@@ -19754,6 +21224,34 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** ProjectSearchResult */
+        ProjectSearchResult: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /**
+             * Module Count
+             * @default 0
+             */
+            module_count: number;
+            /**
+             * Deployed Count
+             * @default 0
+             */
+            deployed_count: number;
+            /**
+             * Failed Count
+             * @default 0
+             */
+            failed_count: number;
+        };
         /**
          * ProjectUpdate
          * @description Schema for updating a project — all fields optional.
@@ -19914,6 +21412,10 @@ export interface components {
             proxy_url: string | null;
             /** External Url */
             external_url: string | null;
+            /** Routing Info */
+            routing_info?: {
+                [key: string]: unknown;
+            } | null;
             /** Status */
             status: string;
             /** Status Message */
@@ -21182,6 +22684,8 @@ export interface components {
             status: string;
             /** Concurrency */
             concurrency?: number | null;
+            /** Request Rate */
+            request_rate?: number | null;
             /** Latency P50 */
             latency_p50?: number | null;
             /** Latency P99 */
@@ -21190,6 +22694,44 @@ export interface components {
             overall_rps?: number | null;
             /** Tokens Per Sec */
             tokens_per_sec?: number | null;
+            /** Cache Hit Pct */
+            cache_hit_pct?: number | null;
+            /** Ttft Avg */
+            ttft_avg?: number | null;
+            /** Ttft P50 */
+            ttft_p50?: number | null;
+            /** Ttft P99 */
+            ttft_p99?: number | null;
+            /** Error Rate Pct */
+            error_rate_pct?: number | null;
+        };
+        /**
+         * RunGroupCurvesRequest
+         * @description Sweeps to plot against each other (one line per group).
+         */
+        RunGroupCurvesRequest: {
+            /** Group Ids */
+            group_ids: number[];
+        };
+        /**
+         * RunGroupCurvesResponse
+         * @description Load curves for several sweeps, aligned by variant label.
+         */
+        RunGroupCurvesResponse: {
+            /** Groups */
+            groups: components["schemas"]["CurveGroup"][];
+            /** Mismatch Reasons */
+            mismatch_reasons?: string[];
+        };
+        /**
+         * RunGroupListResponse
+         * @description Response from GET /api/benchmarks/run-groups.
+         */
+        RunGroupListResponse: {
+            /** Groups */
+            groups: components["schemas"]["RunGroupSummary"][];
+            /** Total */
+            total: number;
         };
         /**
          * RunGroupResponse
@@ -21208,6 +22750,8 @@ export interface components {
             status: string;
             /** Target Id */
             target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
             /** Proxy */
             proxy: string | null;
             /** Model */
@@ -21256,6 +22800,41 @@ export interface components {
             updated_at: string;
             /** Runs */
             runs?: components["schemas"]["RunGroupChildSummary"][];
+        };
+        /**
+         * RunGroupSummary
+         * @description Compact run-group summary (list view).
+         */
+        RunGroupSummary: {
+            /** Id */
+            id: number;
+            /** Scenario Key */
+            scenario_key: string;
+            /** Scenario Name */
+            scenario_name: string | null;
+            /** Run Label */
+            run_label: string | null;
+            /** Status */
+            status: string;
+            /** Target Id */
+            target_id: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
+            /** Proxy */
+            proxy: string | null;
+            /** Model */
+            model: string | null;
+            /** Total Runs */
+            total_runs: number;
+            /** Completed Runs */
+            completed_runs: number;
+            /** Failed Runs */
+            failed_runs: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** RunProgress */
         RunProgress: {
@@ -21586,6 +23165,16 @@ export interface components {
             child_run_count: number;
             /** Tags */
             tags?: string[];
+            /** Sweep Param */
+            sweep_param?: string | null;
+            /** Default Steps */
+            default_steps?: number[];
+            /** Step Warmup S */
+            step_warmup_s?: number | null;
+            /** Step Duration Floor S */
+            step_duration_floor_s?: number | null;
+            /** Step Min Requests */
+            step_min_requests?: number | null;
         };
         /**
          * ScenarioCatalogResponse
@@ -21629,6 +23218,11 @@ export interface components {
             overrides?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Steps
+             * @description Load steps for a sweep preset (e.g. request rates in req/s); replaces its default steps.
+             */
+            steps?: number[] | null;
         };
         /**
          * ScenarioRunResponse
@@ -22358,6 +23952,152 @@ export interface components {
             /** Task Ids */
             task_ids: number[];
         };
+        /** TopologyAddressList */
+        TopologyAddressList: {
+            /** Name */
+            name: string;
+            /** Addresses */
+            addresses: unknown[];
+        };
+        /** TopologyAnalyzer */
+        TopologyAnalyzer: {
+            /** Name */
+            name: string;
+            /** Schedule */
+            schedule: string;
+            /** Scripttype */
+            scriptType: string;
+            /** Datasources */
+            dataSources: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: string;
+            };
+        };
+        /** TopologyCneInstance */
+        TopologyCneInstance: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Features */
+            features: {
+                [key: string]: boolean;
+            };
+            /** Networkattachments */
+            networkAttachments: unknown[];
+            /** Containerplatform */
+            containerPlatform: string;
+            /** Phase */
+            phase: string;
+            /** Ready */
+            ready: boolean;
+        };
+        /** TopologyCondition */
+        TopologyCondition: {
+            /** Type */
+            type: string;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Lasttransitiontime */
+            lastTransitionTime?: string | null;
+        };
+        /** TopologyCounts */
+        TopologyCounts: {
+            /** Gateways */
+            gateways: number;
+            /** Listeners */
+            listeners: number;
+            /** Httproutes */
+            httpRoutes: number;
+            /** Grpcroutes */
+            grpcRoutes: number;
+            /** Tcproutes */
+            tcpRoutes: number;
+            /** Udproutes */
+            udpRoutes: number;
+            /** Tlsroutes */
+            tlsRoutes: number;
+            /** L4Routes */
+            l4Routes: number;
+            /** Totalroutes */
+            totalRoutes: number;
+            /** Referencegrants */
+            referenceGrants: number;
+            /** Securitypolicies */
+            securityPolicies: number;
+            /** Networkpolicies */
+            networkPolicies: number;
+            /** Firewallpolicies */
+            firewallPolicies: number;
+            /** Irules */
+            iRules: number;
+            /** Analyzers */
+            analyzers: number;
+            /** Vlans */
+            vlans: number;
+            /** Cneinstances */
+            cneInstances: number;
+            /** Staticroutes */
+            staticRoutes: number;
+            /** Snatpools */
+            snatPools: number;
+            /** Egresses */
+            egresses: number;
+            /** Hslpublishers */
+            hslPublishers: number;
+            /** Logprofiles */
+            logProfiles: number;
+            /**
+             * Infra
+             * @default 0
+             */
+            infra: number;
+            /**
+             * Gatewaysettings
+             * @default 0
+             */
+            gatewaySettings: number;
+            /**
+             * Egressgateways
+             * @default 0
+             */
+            egressGateways: number;
+            /**
+             * Inferencepools
+             * @default 0
+             */
+            inferencePools: number;
+            /**
+             * F5Epps
+             * @default 0
+             */
+            f5epps: number;
+        };
+        /** TopologyDataPlane */
+        TopologyDataPlane: {
+            /** Vlans */
+            vlans: components["schemas"]["TopologyVlan"][];
+            /** Cneinstances */
+            cneInstances: components["schemas"]["TopologyCneInstance"][];
+            /** Staticroutes */
+            staticRoutes: components["schemas"]["TopologyStaticRoute"][];
+            /** Snatpools */
+            snatPools: components["schemas"]["TopologySnatPool"][];
+            /** Egresses */
+            egresses: components["schemas"]["TopologyEgress"][];
+            logging: components["schemas"]["TopologyLogging"];
+            /** Infra */
+            infra?: components["schemas"]["TopologyInfra"][];
+            /** Gatewaysettings */
+            gatewaySettings?: components["schemas"]["TopologyGatewaySettings"][];
+            /** Egressgateways */
+            egressGateways?: components["schemas"]["TopologyEgress"][];
+        };
         /**
          * TopologyEdge
          * @description A directed edge in the topology graph.
@@ -22371,6 +24111,139 @@ export interface components {
             target: string;
             /** Kind */
             kind: string;
+        };
+        /** TopologyEgress */
+        TopologyEgress: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Snattype */
+            snatType: string;
+            /** Egresssnatpool */
+            egressSnatpool?: string | null;
+            /** Firewallenforcedpolicy */
+            firewallEnforcedPolicy?: string | null;
+            /** Logprofile */
+            logProfile?: string | null;
+            /** Capturednamespaces */
+            capturedNamespaces: string[];
+            /** Vxlan */
+            vxlan?: {
+                [key: string]: string;
+            } | null;
+            /** Ready */
+            ready: boolean;
+            /** Gatewayclassname */
+            gatewayClassName?: string | null;
+            /** Parametersref */
+            parametersRef?: {
+                [key: string]: unknown;
+            } | null;
+            /** Sourceselector */
+            sourceSelector?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** TopologyFirewallPolicy */
+        TopologyFirewallPolicy: {
+            /** Name */
+            name: string;
+            /** Rules */
+            rules: components["schemas"]["TopologyFwRule"][];
+            /** Addresslists */
+            addressLists: components["schemas"]["TopologyAddressList"][];
+            /** Portlists */
+            portLists: components["schemas"]["TopologyPortList"][];
+        };
+        /** TopologyFwRule */
+        TopologyFwRule: {
+            /** Name */
+            name: string;
+            /** Action */
+            action: string;
+            /** Ipprotocol */
+            ipProtocol: string;
+            /** Logging */
+            logging: boolean;
+        };
+        /** TopologyGateway */
+        TopologyGateway: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Gatewayclassname */
+            gatewayClassName: string;
+            /** Addresses */
+            addresses: string[];
+            /**
+             * Accepted
+             * @default false
+             */
+            accepted: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Listeners */
+            listeners: components["schemas"]["TopologyListener"][];
+            /** Securitypolicies */
+            securityPolicies: components["schemas"]["TopologySecurityPolicy"][];
+            gatewaySettings?: components["schemas"]["TopologyGatewaySettingsRef"] | null;
+        };
+        /** TopologyGatewaySettings */
+        TopologyGatewaySettings: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Ingressconfig */
+            ingressConfig?: {
+                [key: string]: unknown;
+            };
+            /** Sourcenatpools */
+            sourceNATPools?: {
+                [key: string]: unknown;
+            }[];
+            /** Egressconfigs */
+            egressConfigs?: {
+                [key: string]: unknown;
+            }[];
+            /** Ready */
+            ready: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+        };
+        /**
+         * TopologyGatewaySettingsRef
+         * @description GatewaySettings resolved from a Gateway's spec.infrastructure.parametersRef (BNK 2.4).
+         */
+        TopologyGatewaySettingsRef: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Ingressconfig */
+            ingressConfig?: {
+                [key: string]: unknown;
+            };
+            /** Sourcenatpools */
+            sourceNATPools?: {
+                [key: string]: unknown;
+            }[];
+            /** Egressconfigs */
+            egressConfigs?: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * TopologyGraphResponse
@@ -22387,6 +24260,122 @@ export interface components {
             namespace: string;
             /** Info */
             info?: string | null;
+        };
+        /** TopologyInfra */
+        TopologyInfra: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Networks */
+            networks?: {
+                [key: string]: unknown;
+            }[];
+            /** Ipams */
+            ipams?: {
+                [key: string]: unknown;
+            }[];
+            /** Networkattachments */
+            networkAttachments?: {
+                [key: string]: unknown;
+            }[];
+            /** Staticroutes */
+            staticRoutes?: {
+                [key: string]: unknown;
+            }[];
+            /** Vrfs */
+            vrfs?: unknown[];
+            /** Egressdefaults */
+            egressDefaults?: {
+                [key: string]: unknown;
+            };
+            /** Ready */
+            ready: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+        };
+        /** TopologyListener */
+        TopologyListener: {
+            /** Name */
+            name: string;
+            /** Protocol */
+            protocol: string;
+            /** Port */
+            port?: number | null;
+            /**
+             * Attachedroutecount
+             * @default 0
+             */
+            attachedRouteCount: number;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Routes */
+            routes: components["schemas"]["TopologyRoute"][];
+            /** Networkpolicies */
+            networkPolicies: components["schemas"]["TopologyNetworkPolicy"][];
+        };
+        /** TopologyLogging */
+        TopologyLogging: {
+            /** Hslpublishers */
+            hslPublishers: {
+                [key: string]: unknown;
+            }[];
+            /** Logprofiles */
+            logProfiles: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** TopologyMcpInfo */
+        TopologyMcpInfo: {
+            /** Auth */
+            auth: string;
+            /** Tools */
+            tools: string[];
+        };
+        /** TopologyNetworkPolicy */
+        TopologyNetworkPolicy: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Namespace */
+            namespace: string;
+            /** Extensions */
+            extensions: components["schemas"]["TopologyNetworkPolicyExtension"][];
+            /** Resolvedcount */
+            resolvedCount: number;
+            /** Totalextensions */
+            totalExtensions: number;
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
+        };
+        /** TopologyNetworkPolicyExtension */
+        TopologyNetworkPolicyExtension: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Group */
+            group: string;
+            /** Linecount */
+            lineCount?: number | null;
+            /** Eventhandlers */
+            eventHandlers?: string[];
         };
         /**
          * TopologyNode
@@ -22412,6 +24401,188 @@ export interface components {
             meta?: {
                 [key: string]: unknown;
             };
+        };
+        /** TopologyPortList */
+        TopologyPortList: {
+            /** Name */
+            name: string;
+            /** Ports */
+            ports: unknown[];
+        };
+        /** TopologyReferenceGrant */
+        TopologyReferenceGrant: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** From */
+            from: components["schemas"]["TopologyReferenceGrantFrom"][];
+            /** To */
+            to: components["schemas"]["TopologyReferenceGrantTo"][];
+        };
+        /** TopologyReferenceGrantFrom */
+        TopologyReferenceGrantFrom: {
+            /** Group */
+            group: string;
+            /** Kind */
+            kind: string;
+            /** Namespace */
+            namespace: string;
+        };
+        /** TopologyReferenceGrantTo */
+        TopologyReferenceGrantTo: {
+            /** Group */
+            group: string;
+            /** Kind */
+            kind: string;
+        };
+        /** TopologyRoute */
+        TopologyRoute: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Kind */
+            kind: string;
+            /** Resourcetype */
+            resourceType?: string | null;
+            /** Hostnames */
+            hostnames: string[];
+            /** Backends */
+            backends: components["schemas"]["TopologyRouteBackend"][];
+            /** Analyzers */
+            analyzers: components["schemas"]["TopologyAnalyzer"][];
+            /**
+             * Accepted
+             * @default false
+             */
+            accepted: boolean;
+            /** Conditions */
+            conditions?: components["schemas"]["TopologyCondition"][];
+            /** Conditionmessage */
+            conditionMessage?: string | null;
+            /**
+             * Ismcp
+             * @default false
+             */
+            isMcp: boolean;
+            mcpInfo?: components["schemas"]["TopologyMcpInfo"] | null;
+            /** Servicesettings */
+            serviceSettings?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            } | null;
+        };
+        /** TopologyRouteBackend */
+        TopologyRouteBackend: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Weight */
+            weight?: number | null;
+            /**
+             * Kind
+             * @default Service
+             */
+            kind: string;
+            /**
+             * Group
+             * @default
+             */
+            group: string;
+        };
+        /** TopologySecurityPolicy */
+        TopologySecurityPolicy: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Namespace */
+            namespace: string;
+            /** Targetlistener */
+            targetListener: string;
+            /** Firewallpolicies */
+            firewallPolicies: components["schemas"]["TopologyFirewallPolicy"][];
+            /**
+             * Resolved
+             * @default false
+             */
+            resolved: boolean;
+            /**
+             * Programmed
+             * @default false
+             */
+            programmed: boolean;
+            /** Messages */
+            messages?: {
+                [key: string]: string | null;
+            };
+        };
+        /** TopologySnatPool */
+        TopologySnatPool: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Addresses */
+            addresses: unknown[];
+        };
+        /** TopologyStaticRoute */
+        TopologyStaticRoute: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Destination */
+            destination: string;
+            /** Gateway */
+            gateway: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Infraname */
+            infraName?: string | null;
+        };
+        /** TopologyVlan */
+        TopologyVlan: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /** Infraname */
+            infraName?: string | null;
+            /** Interfaces */
+            interfaces: unknown[];
+            /** Selfipv4S */
+            selfipV4s: string[];
+            /** Prefixlen */
+            prefixLen?: number | string | null;
+            /** Mtu */
+            mtu?: number | null;
+            /** Internal */
+            internal: boolean;
+            /** Autolasthop */
+            autoLasthop: string;
+            /** Ready */
+            ready: boolean;
+            /** Type */
+            type?: string | null;
+            /** Tag */
+            tag?: number | null;
         };
         /**
          * TransferOwnershipRequest
@@ -22492,6 +24663,13 @@ export interface components {
              * @description Override HTTP request timeout (seconds)
              */
             timeout?: number | null;
+            /**
+             * Overrides
+             * @description aiperf settings applied over the saved config (e.g. {'concurrency': 64}). url/model/endpoint always come from the target/proxy.
+             */
+            overrides?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * TriggerRunResponse
@@ -23913,6 +26091,37 @@ export interface operations {
             };
         };
     };
+    detect_and_register_clusters_from_credentials_api_projects__project_id__k8s_clusters_detect_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_project_clusters_api_projects__project_id__k8s_clusters_get: {
         parameters: {
             query?: never;
@@ -24019,6 +26228,37 @@ export interface operations {
             };
         };
     };
+    project_batch_connectivity_check_api_projects__project_id__connectivity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchConnectivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_cluster_details_api_k8s_clusters__cluster_id__get: {
         parameters: {
             query?: never;
@@ -24090,6 +26330,38 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
                 cluster_id: number;
             };
             cookie?: never;
@@ -25474,10 +27746,44 @@ export interface operations {
             };
         };
     };
+    global_search_api_k8s_search_get: {
+        parameters: {
+            query: {
+                /** @description Search query string (FQDN, hostname, IP, cluster, project) */
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSearchResultResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get: {
         parameters: {
             query?: {
                 namespace?: string | null;
+                force?: boolean;
             };
             header?: never;
             path: {
@@ -25493,7 +27799,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BnkDataResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25526,7 +27832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BnkHealthEndpointResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25559,7 +27865,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GatewayTopologyResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25592,7 +27898,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["F5PolicyGatewayAssociationsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25993,8 +28299,42 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmStatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_stats_api_k8s_llm_observability_stats_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26029,8 +28369,43 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmHistogramResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_histogram_api_k8s_llm_observability_histogram_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                metric?: string;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26064,8 +28439,42 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmRankingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_rankings_api_k8s_llm_observability_rankings_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26100,8 +28509,43 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                metric?: string;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26139,8 +28583,46 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmLogsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_logs_api_k8s_llm_observability_logs_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                limit?: number;
+                content_search?: string | null;
+                /** @description nanosecond cursor for load-older */
+                end?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26172,8 +28654,40 @@ export interface operations {
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmFilterDataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_filterdata_api_k8s_llm_observability_filterdata_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -29139,7 +31653,9 @@ export interface operations {
     };
     get_recovery_status_api_k8s_clusters__cluster_id__recovery_status_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;
@@ -31326,6 +33842,26 @@ export interface operations {
             };
         };
     };
+    list_azure_regions_api_cloud_auth_azure_regions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudRegionsResponse"];
+                };
+            };
+        };
+    };
     query_ibm_cos_instances_api_cloud_auth_ibm_cos_instances_query_post: {
         parameters: {
             query?: never;
@@ -33143,6 +35679,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProcessMetricsResponse"];
+                };
+            };
+        };
+    };
+    get_bnk_consumption_api_system_bnk_consumption_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BnkConsumptionResponse"];
                 };
             };
         };
@@ -39700,7 +42256,9 @@ export interface operations {
     };
     get_license_status_endpoint_api_licensing__cluster_id__status_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;
@@ -39731,7 +42289,9 @@ export interface operations {
     };
     get_license_report_endpoint_api_licensing__cluster_id__report_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;
@@ -40752,6 +43312,8 @@ export interface operations {
                 config_id?: number | null;
                 proxy_deployment_id?: number | null;
                 dataset_name?: string | null;
+                /** @description JSON object of run tags, e.g. the simulated model profile */
+                tags?: string | null;
             };
             header?: never;
             path?: never;
@@ -40951,6 +43513,12 @@ export interface operations {
                 tool?: string | null;
                 model?: string | null;
                 status?: string | null;
+                cluster_id?: number | null;
+                /** @description Search run label, model or proxy */
+                q?: string | null;
+                /** @description Sort column; unknown values sort by created_at */
+                sort?: string;
+                order?: string;
                 limit?: number;
                 offset?: number;
             };
@@ -41661,6 +44229,8 @@ export interface operations {
             query?: {
                 status?: string | null;
                 cluster_id?: number | null;
+                /** @description Exact match filter by target name */
+                name?: string | null;
             };
             header?: never;
             path?: never;
@@ -42215,6 +44785,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_benchmark_run_groups_api_benchmarks_run_groups_get: {
+        parameters: {
+            query?: {
+                scenario_key?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunGroupListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    benchmark_run_group_curves_api_benchmarks_run_groups_curves_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunGroupCurvesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunGroupCurvesResponse"];
                 };
             };
             /** @description Validation Error */

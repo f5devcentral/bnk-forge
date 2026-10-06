@@ -16,6 +16,8 @@ import pytest
 
 from services.proxy_discovery_service import (
     _classify_controller,
+    _classify_deployment,
+    _extract_backends_from_configmaps,
     _map_httproute_backends,
     _map_ingress_backends,
 )
@@ -591,3 +593,446 @@ class TestClusterScannerProxyIntegration:
         ep = result["prerequisites"]["existing_proxies"]
         assert ep["discovered_count"] == 1
         assert ep["status"] == "detected"
+
+
+# ---------------------------------------------------------------------------
+# _classify_deployment tests
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyDeployment:
+    def test_classify_haproxy_by_name(self):
+        pt, dn = _classify_deployment("perf-haproxy-vllm-12345", {}, ["docker.io/haproxytech/haproxy-alpine:3.3.1"])
+        assert pt == "haproxy"
+        assert dn == "HAProxy"
+
+    def test_classify_envoy_by_image(self):
+        pt, dn = _classify_deployment("my-proxy", {"app": "custom-proxy"}, ["envoyproxy/envoy:v1.28.0"])
+        assert pt == "envoy"
+        assert dn == "Envoy"
+
+    def test_classify_nginx_proxy(self):
+        pt, dn = _classify_deployment("nginx-proxy", {}, ["nginx:1.25-alpine"])
+        assert pt == "nginx"
+        assert dn == "NGINX"
+
+    def test_exclude_backend_nginx_pods(self):
+        pt, dn = _classify_deployment("backend-a", {"app": "backend-a"}, ["nginx:1.25"])
+        assert pt is None
+        assert dn is None
+
+    def test_classify_traefik(self):
+        pt, dn = _classify_deployment("traefik-proxy", {}, ["traefik:v2.10"])
+        assert pt == "traefik"
+        assert dn == "Traefik"
+
+
+# ---------------------------------------------------------------------------
+# _extract_backends_from_configmaps tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBackendsFromConfigmaps:
+    def test_extract_haproxy_backends(self):
+        mock_core = MagicMock()
+        cm = MagicMock()
+        cm.metadata.name = "haproxy-cfg"
+        cm.data = {
+            "haproxy.cfg": """
+frontend llm_proxy
+    bind *:10080
+    default_backend llm_backend
+
+backend llm_backend
+    server llm1 vllm.awsbnkctl-scn-aiinference.svc.cluster.local:80 check
+"""
+        }
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            backends = _extract_backends_from_configmaps(mock_core, "perf-proxies", "haproxy", {"haproxy-cfg"})
+
+        assert len(backends) == 1
+        assert backends[0]["service"] == "vllm"
+        assert backends[0]["namespace"] == "awsbnkctl-scn-aiinference"
+        assert backends[0]["port"] == 80
+
+    def test_extract_nginx_backends(self):
+        mock_core = MagicMock()
+        cm = MagicMock()
+        cm.metadata.name = "nginx-conf"
+        cm.data = {
+            "default.conf": """
+server {
+    listen 80;
+    location / {
+        proxy_pass http://vllm-service.inference:8000;
+    }
+}
+"""
+        }
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            backends = _extract_backends_from_configmaps(mock_core, "default", "nginx", {"nginx-conf"})
+
+        assert len(backends) == 1
+        assert backends[0]["service"] == "vllm-service"
+        assert backends[0]["namespace"] == "inference"
+        assert backends[0]["port"] == 8000
+
+
+# ---------------------------------------------------------------------------
+# discover_inventory with standalone Deployment proxies
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverInventoryDeployments:
+    def test_discovers_standalone_haproxy_deployment(self):
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        db = MagicMock()
+        api_client = MagicMock()
+
+        dep = MagicMock()
+        dep.metadata.name = "perf-haproxy-vllm-952188"
+        dep.metadata.namespace = "perf-proxies"
+        dep.metadata.labels = {"app.kubernetes.io/instance": "perf-haproxy-vllm-952188"}
+        container = MagicMock()
+        container.image = "docker.io/haproxytech/haproxy-alpine:3.3.1"
+        dep.spec.template.spec.containers = [container]
+        vol = MagicMock()
+        vol.config_map.name = "perf-haproxy-vllm-952188"
+        dep.spec.template.spec.volumes = [vol]
+
+        cm = MagicMock()
+        cm.metadata.name = "perf-haproxy-vllm-952188"
+        cm.data = {
+            "haproxy.cfg": "server llm1 vllm.awsbnkctl-scn-aiinference.svc.cluster.local:80 check"
+        }
+
+        with patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_ingresses", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_deployments", return_value=[dep]), \
+             patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]), \
+             patch.object(ProxyDiscoveryService, "_find_proxy_service_for_deployment", return_value=("http://perf-haproxy:10080", "http://10.10.1.229:30267")):
+
+            svc = ProxyDiscoveryService(db)
+            items = svc.discover_inventory(api_client)
+
+        assert len(items) == 1
+        item = items[0]
+        assert item["proxy_type"] == "haproxy"
+        assert item["kind"] == "Deployment"
+        assert item["namespace"] == "perf-proxies"
+        assert item["proxy_url"] == "http://perf-haproxy:10080"
+        assert item["external_url"] == "http://10.10.1.229:30267"
+        assert len(item["backends"]) == 1
+        assert item["backends"][0]["service"] == "vllm"
+        assert item["backends"][0]["namespace"] == "awsbnkctl-scn-aiinference"
+
+    def test_discover_inventory_scopes_db_lookup_to_cluster_id(self):
+        """INV-1: db_deploy_map query must be filtered to the scanned cluster_id."""
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        db = MagicMock()
+        api_client = MagicMock()
+
+        with patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_ingresses", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_deployments", return_value=[]):
+
+            svc = ProxyDiscoveryService(db)
+            svc.discover_inventory(api_client, cluster_id=123)
+
+        # Verify DB query was made and filtered
+        db.query.assert_called_once()
+        filter_call = db.query.return_value.join.return_value.filter
+        filter_call.assert_called_once()
+
+    def test_db_row_matches_only_deployment_in_target_proxy_namespace(self):
+        """A same-named Deployment outside the target's proxy namespace is not
+        Forge's proxy: no invented target backend, no borrowed proxy_url."""
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        row = MagicMock()
+        row.helm_release = "perf-haproxy-demo"
+        row.proxy_url = "http://perf-haproxy-demo.perf-proxies:10080"
+        row.external_url = None
+        row.target.proxy_namespace = "perf-proxies"
+        row.target.llm_base_url = "http://vllm.llm:8000"
+        row.target.llm_namespace = "llm"
+        row.target.name = "t1"
+        db = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.all.return_value = [row]
+
+        def _dep(ns):
+            dep = MagicMock()
+            dep.metadata.name = "perf-haproxy-demo"
+            dep.metadata.namespace = ns
+            dep.metadata.labels = {"app.kubernetes.io/instance": "perf-haproxy-demo"}
+            container = MagicMock()
+            container.image = "docker.io/haproxytech/haproxy-alpine:3.3.1"
+            dep.spec.template.spec.containers = [container]
+            dep.spec.template.spec.volumes = []
+            return dep
+
+        with patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_ingresses", return_value=[]), \
+             patch("services.proxy_discovery_service._safe_list_all_deployments",
+                   return_value=[_dep("default"), _dep("perf-proxies")]), \
+             patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[]), \
+             patch.object(ProxyDiscoveryService, "_find_proxy_service_for_deployment", return_value=(None, None)):
+            items = ProxyDiscoveryService(db).discover_inventory(MagicMock(), cluster_id=1)
+
+        by_ns = {i["namespace"]: i for i in items}
+        assert by_ns["default"]["backends"] == []
+        assert by_ns["default"]["proxy_url"] is None
+        assert by_ns["perf-proxies"]["backends"][0]["via"] == "Benchmark Target (t1)"
+        assert by_ns["perf-proxies"]["proxy_url"] == row.proxy_url
+
+    def test_envoy_configmap_linear_extraction_and_size_cap(self):
+        """Major 2: Envoy ConfigMaps are parsed line-by-line in linear time with size bounding."""
+        from services.proxy_discovery_service import _extract_backends_from_configmaps
+
+        core = MagicMock()
+        cm = MagicMock()
+        cm.metadata.name = "envoy-cm"
+        cm.data = {
+            "envoy.yaml": """
+static_resources:
+  clusters:
+  - name: service_vllm
+    load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: vllm-server.ai-inference.svc.cluster.local
+                port_value: 8000
+"""
+        }
+
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            backends = _extract_backends_from_configmaps(core, "ai-inference", "envoy", {"envoy-cm"})
+
+        assert len(backends) == 1
+        assert backends[0]["service"] == "vllm-server"
+        assert backends[0]["namespace"] == "ai-inference"
+        assert backends[0]["port"] == 8000
+        assert backends[0]["via"] == "Envoy Config (envoy-cm)"
+
+
+
+class TestConfigBackendParsing:
+    @staticmethod
+    def _extract(proxy_type, data, cm_name="own-cm", names=None):
+        cm = MagicMock()
+        cm.metadata.name = cm_name
+        cm.data = data
+        with patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm]):
+            return _extract_backends_from_configmaps(
+                MagicMock(), "perf-proxies", proxy_type, names if names is not None else {"own-cm"},
+            )
+
+    def test_envoy_skips_listener_admin_and_ip_addresses(self):
+        backends = self._extract("envoy", {"envoy.yaml": """
+admin:
+  address:
+    socket_address:
+      address: 127.0.0.1
+      port_value: 9901
+static_resources:
+  listeners:
+  - address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10080
+  clusters:
+  - load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.0.12
+                port_value: 8000
+        - endpoint:
+            address:
+              socket_address:
+                address: vllm.inference.svc.cluster.local
+                port_value: 8000
+"""})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
+    def test_envoy_flow_style_address(self):
+        backends = self._extract("envoy", {"envoy.yaml": (
+            "        - endpoint: {address: {socket_address: {address: vllm.inference, port_value: 8000}}}\n"
+            "          admin: {address: {socket_address: {address: 127.0.0.1, port_value: 9901}}}\n"
+        )})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
+    def test_haproxy_only_server_lines(self):
+        backends = self._extract("haproxy", {"haproxy.cfg": """
+defaults
+    default-server inter 2s fall 3
+backend llm
+    server s1 10.0.0.5:8000 check
+    server s2 localhost:8000
+    server s3 vllm.inference:8000 check
+"""})
+        assert [(b["service"], b["namespace"], b["port"]) for b in backends] == [("vllm", "inference", 8000)]
+
+    def test_out_of_range_and_oversized_ports_do_not_break_parsing(self):
+        backends = self._extract("nginx", {"default.conf": (
+            "proxy_pass http://a.ns:99999;\n"
+            "proxy_pass http://d.ns:123456;\n"
+            f"proxy_pass http://b.ns:{'9' * 5000};\n"
+            "proxy_pass http://c.ns:8080;\n"
+        )})
+        assert [(b["service"], b["port"]) for b in backends] == [("c", 8080)]
+
+    def test_only_named_configmaps_are_parsed(self):
+        data = {"haproxy.cfg": "    server s1 vllm.inference:8000"}
+        assert self._extract("haproxy", data, cm_name="other-cm") == []
+        assert self._extract("haproxy", data, names=set()) == []
+
+
+class TestTargetDeploymentMatch:
+    @staticmethod
+    def _dep(name, instance=None, namespace="perf-proxies"):
+        d = MagicMock()
+        d.metadata.name = name
+        d.metadata.namespace = namespace
+        d.metadata.labels = {"app.kubernetes.io/instance": instance} if instance else {}
+        return d
+
+    def _match(self, releases, deployments, target_name="llm"):
+        from services.proxy_discovery_service import _has_target_deployment_match
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = [(r,) for r in releases]
+        target = MagicMock(id=1)
+        target.name = target_name
+        target.proxy_namespace = "perf-proxies"
+        return _has_target_deployment_match(db, target, deployments, proxy_type="haproxy")
+
+    def test_db_row_without_live_deployment_does_not_match(self):
+        assert self._match(["perf-haproxy-llm-1"], []) is False
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-other")]) is False
+
+    def test_target_name_substring_does_not_match(self):
+        assert self._match([], [self._dep("llm-gateway-haproxy")]) is False
+
+    def test_exact_release_identity_matches(self):
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-llm-1")]) is True
+        assert self._match(["rel-a"], [self._dep("rel-a-kubernetes-ingress", instance="rel-a")]) is True
+
+    def test_same_release_in_another_namespace_does_not_match(self):
+        assert self._match(["perf-haproxy-llm-1"], [self._dep("perf-haproxy-llm-1", namespace="other")]) is False
+
+
+class TestCoveredControllerWorkload:
+    def test_envoy_gateway_and_haproxy_ingress_are_deduplicated(self):
+        from services.proxy_discovery_service import _is_covered_controller_workload
+
+        eg = {"gateway.envoyproxy.io/gatewayclass-controller"}
+        assert _is_covered_controller_workload("envoy-gateway", {}, ["docker.io/envoyproxy/gateway:v1.2.0"], eg)
+        assert _is_covered_controller_workload(
+            "envoy-default-eg-1234", {"app.kubernetes.io/managed-by": "envoy-gateway"},
+            ["docker.io/envoyproxy/envoy:v1.31"], eg,
+        )
+        assert not _is_covered_controller_workload("my-envoy", {}, ["envoyproxy/envoy:v1.31"], eg)
+
+        hap = {"haproxy.org/ingress-controller"}
+        assert _is_covered_controller_workload(
+            "haproxy-kubernetes-ingress", {}, ["haproxytech/kubernetes-ingress:3.0"], hap,
+        )
+        assert not _is_covered_controller_workload("perf-haproxy-x", {}, ["haproxytech/haproxy-alpine:3.3"], hap)
+
+
+def _svc_obj(name, *, selector=None, labels=None, svc_type="ClusterIP", port=10080):
+    s = MagicMock()
+    s.metadata.name = name
+    s.metadata.labels = labels or {}
+    s.spec.selector = selector
+    s.spec.type = svc_type
+    p = MagicMock()
+    p.port = port
+    s.spec.ports = [p]
+    return s
+
+
+def _deployment(name, namespace="perf-proxies", pod_labels=None, labels=None, cm=None):
+    d = MagicMock()
+    d.metadata.name = name
+    d.metadata.namespace = namespace
+    d.metadata.labels = labels or {}
+    d.spec.template.metadata.labels = pod_labels or {}
+    vol = MagicMock()
+    vol.config_map.name = cm
+    d.spec.template.spec.volumes = [vol] if cm else []
+    return d
+
+
+class TestFindProxyServiceForDeployment:
+    def _find(self, services, dep):
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        core = MagicMock()
+        core.list_namespaced_service.return_value = MagicMock(items=services)
+        with patch("services.proxy_discovery_service._resolve_external_url", return_value=None):
+            return ProxyDiscoveryService(MagicMock())._find_proxy_service_for_deployment(core, dep)
+
+    def test_selector_match_beats_name_substring(self):
+        dep = _deployment("perf-haproxy", pod_labels={"app": "mine"})
+        services = [
+            _svc_obj("perf-haproxy-other", selector={"app": "other"}),
+            _svc_obj("front", selector={"app": "mine"}),
+        ]
+        assert self._find(services, dep) == ("http://front.perf-proxies:10080", None)
+
+    def test_exact_name_first_and_no_substring_fallback(self):
+        dep = _deployment("perf-haproxy", pod_labels={"app": "mine"})
+        assert self._find([_svc_obj("front", selector={"app": "mine"}), _svc_obj("perf-haproxy")], dep)[0] == \
+            "http://perf-haproxy.perf-proxies:10080"
+        assert self._find([_svc_obj("perf-haproxy-x", selector={"app": "x"})], dep) == (None, None)
+
+    def test_release_label_prefers_exposed_service(self):
+        dep = _deployment("rel-ingress-nginx-controller", labels={"app.kubernetes.io/instance": "rel"})
+        services = [
+            _svc_obj("rel-admission", labels={"app.kubernetes.io/instance": "rel"}, port=443),
+            _svc_obj("rel-controller", labels={"app.kubernetes.io/instance": "rel"}, svc_type="NodePort", port=80),
+        ]
+        assert self._find(services, dep)[0] == "http://rel-controller.perf-proxies:80"
+
+
+class TestHaproxyDiscoveryUsesRoutingDeployment:
+    def test_service_of_the_deployment_that_routes_to_target(self):
+        from services.proxy_discovery_service import ProxyDiscoveryService
+
+        other = _deployment("perf-haproxy-a", pod_labels={"app": "a"}, cm="cfg-a")
+        mine = _deployment("perf-haproxy-b", pod_labels={"app": "b"}, cm="cfg-b")
+        cm_a = MagicMock()
+        cm_a.metadata.name = "cfg-a"
+        cm_a.data = {"haproxy.cfg": "    server s1 billing.finance:9000"}
+        cm_b = MagicMock()
+        cm_b.metadata.name = "cfg-b"
+        cm_b.data = {"haproxy.cfg": "    server s1 vllm.inference:8000"}
+        services = [_svc_obj("svc-a", selector={"app": "a"}), _svc_obj("svc-b", selector={"app": "b"})]
+
+        target = MagicMock(id=1, llm_base_url="http://vllm.inference:8000", llm_namespace="inference",
+                           proxy_namespace="perf-proxies")
+        core = MagicMock()
+        core.list_namespaced_service.return_value = MagicMock(items=services)
+        with patch("services.proxy_discovery_service._safe_list_namespaced_deployments",
+                   side_effect=lambda apps, ns, **kw: [other, mine] if ns == "haproxy-controller" else []), \
+             patch("services.proxy_discovery_service._safe_list_cluster_custom", return_value=[]), \
+             patch("services.proxy_discovery_service._has_ingress_to_backend", return_value=False), \
+             patch("services.proxy_discovery_service._safe_list_namespaced_configmaps", return_value=[cm_a, cm_b]), \
+             patch("services.proxy_discovery_service._resolve_external_url", return_value=None), \
+             patch("services.proxy_discovery_service.k8s_client.CoreV1Api", return_value=core):
+            result = ProxyDiscoveryService(None)._scan_haproxy(MagicMock(), target)
+
+        assert result.found is True
+        assert result.proxy_url == "http://svc-b.perf-proxies:10080"

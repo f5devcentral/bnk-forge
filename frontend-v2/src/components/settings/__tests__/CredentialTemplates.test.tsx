@@ -312,6 +312,33 @@ describe('CredentialTemplates', () => {
     });
   });
 
+  it('drops a typed client secret when an Azure template is created with SSO', async () => {
+    const user = userEvent.setup();
+    let body: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/credential-templates', () => HttpResponse.json([])),
+      http.post('*/api/credential-templates', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 1 });
+      }),
+    );
+
+    render(<CredentialTemplates />);
+    await user.click(await screen.findByText('New Template'));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getAllByRole('combobox')[0]);
+    await user.click(screen.getByRole('option', { name: 'Microsoft Azure' }));
+
+    await user.type(screen.getByLabelText('Template Name *'), 'azure-sso');
+    await user.type(screen.getByLabelText(/Client Secret/i), 'typed-before-switch');
+    await user.click(screen.getByLabelText(/Entra ID SSO/i));
+    await user.click(screen.getByRole('button', { name: 'Create Template' }));
+
+    await waitFor(() => expect(body).not.toBeNull());
+    expect(body).toMatchObject({ provider: 'azure', azure_auth_method: 'sso' });
+    expect(body).not.toHaveProperty('azure_client_secret');
+  });
+
   it('renders IBM template details in the list', async () => {
     server.use(
       http.get('*/api/credential-templates', () =>

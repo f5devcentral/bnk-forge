@@ -45,6 +45,27 @@ class TestClusterCreate:
         assert data["cloud_provider"] == "aws"
         mock_svc.create_cluster.assert_called_once()
 
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_registration_enqueues_initial_scan(self, mock_svc_cls, mock_enqueue, client, admin_headers,
+                                                 sample_user, sample_project):
+        """Issue #194 defect 1: registering a cluster enqueues the first inventory sync.
+
+        This is the path a roks/ibm register hits — the initial sync must be
+        enqueued so last_synced_at can be stamped when it completes.
+        """
+        mock_svc = MagicMock()
+        mock_svc.create_cluster.return_value = {"id": 16, "name": "f5e2e1", "cloud_provider": "ibm"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters",
+            json={"name": "f5e2e1", "kubeconfig": "YXBpVmVyc2lvbjogdjEK", "cloud_provider": "ibm"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(16)
+
     @patch("routes.k8s.clusters.ClusterManagementService")
     def test_create_cluster_operator_allowed(self, mock_svc_cls, client, operator_headers, all_test_users, sample_project):
         """Operator can create clusters."""
@@ -175,6 +196,26 @@ class TestClusterUpdate:
         )
         assert response.status_code == 403
 
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_noop_put_enqueues_rescan(self, mock_svc_cls, mock_enqueue, client, admin_headers,
+                                      sample_user, sample_project, make_k8s_cluster):
+        """Issue #194 defect 2: a no-op PUT (empty body) still enqueues a rescan.
+
+        Operators use a no-op PUT to force a refresh; the route must enqueue a
+        scan regardless of whether any field actually changed.
+        """
+        cluster = make_k8s_cluster(project=sample_project, name="noop-put")
+        mock_svc = MagicMock()
+        mock_svc.update_cluster.return_value = {"id": cluster.id, "name": "noop-put"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.put(
+            f"/api/k8s/clusters/{cluster.id}", json={}, headers=admin_headers
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(cluster.id)
+
 
 class TestClusterDelete:
     """DELETE /api/k8s/clusters/{id}."""
@@ -198,6 +239,31 @@ class TestClusterDelete:
         cluster = make_k8s_cluster(project=sample_project)
         response = client.delete(f"/api/k8s/clusters/{cluster.id}", headers=viewer_headers)
         assert response.status_code == 403
+
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_delete_cluster_project_scoped_route(self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster):
+        """Admin can delete a cluster via the project-scoped route alias."""
+        cluster = make_k8s_cluster(project=sample_project, name="delete-cluster-scoped")
+        mock_svc = MagicMock()
+        mock_svc.delete_cluster.return_value = {"success": True, "message": "Cluster deleted"}
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.delete(f"/api/projects/{sample_project.id}/k8s/clusters/{cluster.id}", headers=admin_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        mock_svc.delete_cluster.assert_called_once_with(cluster.id)
+
+    @patch("routes.k8s.clusters.ClusterManagementService")
+    def test_delete_cluster_project_scoped_route_rejects_other_project(
+        self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster
+    ):
+        """The project-scoped alias 404s when the cluster belongs to another project."""
+        cluster = make_k8s_cluster(project=sample_project, name="delete-cluster-other")
+
+        response = client.delete(f"/api/projects/{sample_project.id + 999}/k8s/clusters/{cluster.id}", headers=admin_headers)
+        assert response.status_code == 404
+        mock_svc_cls.return_value.delete_cluster.assert_not_called()
 
 
 class TestClusterTestConnection:
@@ -225,4 +291,60 @@ class TestClusterTestConnection:
         """Viewer cannot test cluster connection — returns 403."""
         cluster = make_k8s_cluster(project=sample_project)
         response = client.post(f"/api/k8s/clusters/{cluster.id}/test", headers=viewer_headers)
+        assert response.status_code == 403
+
+
+class TestDetectClustersFromCredentials:
+    """POST /api/projects/{pid}/k8s/clusters/detect-credentials."""
+
+    @patch("routes.k8s.clusters.ClusterDiscoveryService")
+    def test_detect_credentials_owner_allowed(self, mock_svc_cls, client, admin_headers, sample_user, sample_project):
+        """Project owner/admin can trigger credential-driven discovery."""
+        mock_svc = MagicMock()
+        mock_svc.detect_clusters_from_credentials.return_value = {
+            "success": True,
+            "message": "Discovered 1 cluster(s)",
+            "registered": [{"id": 1, "name": "eks-prod", "provider": "aws", "status": "registered"}],
+            "skipped": [],
+            "errors": [],
+        }
+        mock_svc_cls.return_value = mock_svc
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert len(data["registered"]) == 1
+        mock_svc.detect_clusters_from_credentials.assert_called_once_with(sample_project.id)
+
+    @patch("routes.k8s.clusters.enqueue_cluster_scan")
+    @patch("routes.k8s.clusters.ClusterDiscoveryService")
+    def test_detect_credentials_enqueues_scan_for_registered(
+        self, mock_svc_cls, mock_enqueue, client, admin_headers, sample_user, sample_project
+    ):
+        """Registered clusters are committed and get a background scan."""
+        mock_svc_cls.return_value.detect_clusters_from_credentials.return_value = {
+            "success": True,
+            "message": "Discovered 2 cluster(s)",
+            "registered": [{"id": 7, "name": "eks-prod", "provider": "aws", "status": "registered"}],
+            "skipped": [{"provider": "aws", "name": "eks-old", "reason": "already_registered"}],
+            "errors": [],
+        }
+
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once_with(7)
+
+    def test_detect_credentials_viewer_forbidden(self, client, viewer_headers, all_test_users, sample_project):
+        """Viewer cannot trigger credential-driven discovery — returns 403."""
+        response = client.post(
+            f"/api/projects/{sample_project.id}/k8s/clusters/detect-credentials",
+            headers=viewer_headers,
+        )
         assert response.status_code == 403

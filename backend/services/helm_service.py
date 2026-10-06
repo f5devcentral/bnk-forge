@@ -317,7 +317,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         create_namespace: bool = True,
         wait: bool = True,
         timeout: str = DEFAULT_HELM_TIMEOUT,
-        context: str | None = None
+        context: str | None = None,
+        disable_openapi_validation: bool = False,
     ) -> dict[str, Any]:
         """
         Install a Helm chart.
@@ -334,6 +335,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
             timeout: Timeout for wait (e.g., '5m', '10m')
             context: Optional kubectl context to target (default: kubeconfig's
                 current-context).
+            disable_openapi_validation: Skip Helm's OpenAPI schema fetch and
+                validation (slow over a WAN link to the API server).
 
         Returns:
             Installation result
@@ -350,6 +353,8 @@ class HelmService(HelmRepositoryMixin, HelmChartStoreMixin):
         # present.  Avoids "release name already in use" failures on Forge's
         # Redeploy flow when a prior partial install left a release behind.
         command = ['upgrade', '--install', release_name, chart, '--output', 'json']
+        if disable_openapi_validation:
+            command.append('--disable-openapi-validation')
 
         if version:
             command.extend(['--version', version])

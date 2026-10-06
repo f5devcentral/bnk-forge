@@ -19,6 +19,8 @@ interface ResourceDescribeViewerProps {
   resource: K8sResource | null;
   clusterId: number;
   namespace?: string;
+  /** Registry key when kind alone is ambiguous (BNK 2.4 L4Route); defaults to kind.toLowerCase(). */
+  resourceType?: string;
 }
 
 export function ResourceDescribeViewer({
@@ -27,12 +29,13 @@ export function ResourceDescribeViewer({
   resource,
   clusterId,
   namespace,
+  resourceType,
 }: ResourceDescribeViewerProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
   const { data: description, isLoading } = useDescribeResource(
     clusterId,
-    resource?.kind?.toLowerCase() || '',
+    resourceType || resource?.kind?.toLowerCase() || '',
     resource?.metadata?.name || '',
     namespace || resource?.metadata?.namespace,
     { enabled: open && !!resource }

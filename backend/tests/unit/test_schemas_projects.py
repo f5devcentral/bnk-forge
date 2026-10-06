@@ -75,14 +75,14 @@ class TestProjectCreate:
         # Error should suggest a slugified form.
         assert "prod-ibm" in str(exc_info.value)
 
-    def test_invalid_ibm_region_rejected(self):
-        """IBM-shaped regions outside the canonical MZR set are rejected."""
+    def test_invalid_ibm_region_type_rejected(self):
+        """Region must be a string."""
         with pytest.raises(ValidationError):
             ProjectCreate(
                 name="prod-ibm",
                 project_type="cloud-ibm",
                 cloud_provider="ibm",
-                region="us-bogus",
+                region=123,  # type: ignore[arg-type]
             )
 
     def test_empty_name_rejected(self):
@@ -97,9 +97,15 @@ class TestProjectCreate:
         req = ProjectCreate(name="Test", region="eu-west-1")
         assert req.region == "eu-west-1"
 
-    def test_invalid_aws_region_rejected(self):
+    def test_invalid_aws_region_type_rejected(self):
+        """Region must be a string."""
         with pytest.raises(ValidationError):
-            ProjectCreate(name="Test", cloud_provider="aws", region="xx-fake-1")
+            ProjectCreate(name="Test", cloud_provider="aws", region=123)  # type: ignore[arg-type]
+
+    def test_aws_shaped_region_accepted(self):
+        """Any AWS-shaped region is accepted (new/private regions)."""
+        req = ProjectCreate(name="Test", cloud_provider="aws", region="xx-fake-1")
+        assert req.region == "xx-fake-1"
 
     def test_freeform_region_accepted(self):
         """Non-AWS-pattern regions like 'on-prem' should pass validation."""
@@ -123,9 +129,13 @@ class TestProjectUpdate:
         assert req.name == "Updated"
         assert req.environment == "staging"
 
-    def test_invalid_region_rejected(self):
+    def test_invalid_region_type_rejected(self):
         with pytest.raises(ValidationError):
-            ProjectUpdate(cloud_provider="aws", region="xx-fake-1")
+            ProjectUpdate(cloud_provider="aws", region=123)  # type: ignore[arg-type]
+
+    def test_aws_shaped_region_accepted(self):
+        req = ProjectUpdate(cloud_provider="aws", region="xx-fake-1")
+        assert req.region == "xx-fake-1"
 
     def test_empty_name_rejected(self):
         with pytest.raises(ValidationError):

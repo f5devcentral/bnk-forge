@@ -14,7 +14,7 @@
  * Each mutation test captures the request payload and verifies it matches
  * the backend Pydantic schema (CT-012 contract testing pattern).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -51,6 +51,7 @@ import {
   useScenarios,
   useRunScenario,
   useRunGroup,
+  useBenchmarkWebSocket,
 } from '@/hooks/useBenchmarks';
 import React from 'react';
 
@@ -747,6 +748,28 @@ describe('useBenchmarkTargets', () => {
       targets: [expect.objectContaining({ id: 1, name: 'target-a', status: 'active' })],
       total: 1,
     });
+  });
+
+  it('fetches target list with name filter', async () => {
+    let capturedUrl = '';
+    server.use(
+      http.get('*/api/benchmarks/targets', ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({
+          targets: [mockTargetResponse({ name: 'target-a', cluster_name: 'cluster-prod' })],
+          total: 1,
+        });
+      })
+    );
+
+    const { result } = renderHook(() => useBenchmarkTargets({ name: 'target-a', cluster_id: 10 }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(capturedUrl).toContain('name=target-a');
+    expect(capturedUrl).toContain('cluster_id=10');
+    expect(result.current.data?.targets[0].cluster_name).toBe('cluster-prod');
   });
 });
 
@@ -1483,5 +1506,42 @@ describe('Response contract: ProxyDeploymentResponse', () => {
     expect(proxy).toHaveProperty('deployed_at');
     expect(proxy).toHaveProperty('created_at');
     expect(proxy).toHaveProperty('updated_at');
+  });
+});
+
+// ============================================================================
+// Run-progress WebSocket auth
+// ============================================================================
+
+describe('useBenchmarkWebSocket', () => {
+  afterEach(() => {
+    localStorage.removeItem('auth_token');
+    vi.unstubAllGlobals();
+  });
+
+  function capturedUrls() {
+    const urls: string[] = [];
+    class CapturingWebSocket extends window.WebSocket {
+      constructor(url: string | URL) {
+        super(url);
+        urls.push(String(url));
+      }
+    }
+    vi.stubGlobal('WebSocket', CapturingWebSocket);
+    return urls;
+  }
+
+  it('sends the JWT as ?token= (the backend rejects the WS without it)', () => {
+    localStorage.setItem('auth_token', 'test-jwt-token-123');
+    const urls = capturedUrls();
+    renderHook(() => useBenchmarkWebSocket(42), { wrapper: createWrapper() });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toMatch(/\/ws\/benchmarks\/runs\/42\?token=test-jwt-token-123$/);
+  });
+
+  it('omits the token param when not logged in', () => {
+    const urls = capturedUrls();
+    renderHook(() => useBenchmarkWebSocket(42), { wrapper: createWrapper() });
+    expect(urls[0]).toMatch(/\/ws\/benchmarks\/runs\/42$/);
   });
 });

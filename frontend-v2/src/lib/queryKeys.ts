@@ -105,7 +105,8 @@ export const queryKeys = {
       allResources: (clusterId: number) => ['k8s', 'clusters', clusterId, 'resources'] as const,
       resources: (clusterId: number, resourceType: string, params?: Record<string, string | undefined>) =>
         ['k8s', 'clusters', clusterId, 'resources', resourceType, params] as const,
-      // BNK data
+      // BNK data (bnkDataAll = prefix of every namespace variant, for invalidation)
+      bnkDataAll: (clusterId: number) => ['k8s', 'clusters', clusterId, 'f5bnk', 'data'] as const,
       bnkData: (clusterId: number, params?: Record<string, string | undefined>) =>
         ['k8s', 'clusters', clusterId, 'f5bnk', 'data', params] as const,
       // A2A agent discovery
@@ -272,6 +273,7 @@ export const queryKeys = {
     defaultsStatus: () => ['defaults-status'] as const,
     backupStatus: () => [...queryKeys.system.all, 'backup', 'status'] as const,
     maintenanceStatus: () => [...queryKeys.system.all, 'maintenance'] as const,
+    bnkConsumption: () => [...queryKeys.system.all, 'bnk-consumption'] as const,
   },
 
   // Registry hierarchy
@@ -393,7 +395,7 @@ export const queryKeys = {
     },
     runs: {
       all: ['benchmarks', 'runs'] as const,
-      list: (params?: { proxy?: string; tool?: string; model?: string; status?: string; limit?: number; offset?: number }) =>
+      list: (params?: { proxy?: string; tool?: string; model?: string; status?: string; cluster_id?: number; q?: string; sort?: string; order?: 'asc' | 'desc'; limit?: number; offset?: number }) =>
         ['benchmarks', 'runs', 'list', params] as const,
       detail: (runId: number) => ['benchmarks', 'runs', 'detail', runId] as const,
     },
@@ -412,7 +414,7 @@ export const queryKeys = {
     summary: () => ['benchmarks', 'summary'] as const,
     targets: {
       all: ['benchmarks', 'targets'] as const,
-      list: (params?: { status?: string; cluster_id?: number }) =>
+      list: (params?: { status?: string; cluster_id?: number; name?: string }) =>
         ['benchmarks', 'targets', 'list', params] as const,
       detail: (targetId: number) => ['benchmarks', 'targets', 'detail', targetId] as const,
       proxies: (targetId: number) => ['benchmarks', 'targets', targetId, 'proxies'] as const,
@@ -421,6 +423,8 @@ export const queryKeys = {
     runGroups: {
       all: ['benchmarks', 'run-groups'] as const,
       detail: (groupId: number) => ['benchmarks', 'run-groups', 'detail', groupId] as const,
+      list: (params?: { scenario_key?: string; limit?: number }) => ['benchmarks', 'run-groups', 'list', params] as const,
+      curves: (groupIds: number[]) => ['benchmarks', 'run-groups', 'curves', groupIds] as const,
     },
     trends: (params?: { target_id?: number; proxy?: string; scenario_key?: string; config_id?: number; limit?: number }) =>
       ['benchmarks', 'trends', params] as const,
@@ -529,6 +533,11 @@ export const queryKeys = {
     clusterStatus: (clusterId: number | undefined) => ['cluster-drift-status', clusterId] as const,
     stats: (projectId?: number, days?: number) => ['drift-stats', projectId, days] as const,
   },
+
+  // Global multi-cluster search
+  search: {
+    query: (q: string) => ['global-search', q] as const,
+  },
 } as const;
 
 /**
@@ -536,3 +545,13 @@ export const queryKeys = {
  * Usage: type ProjectsKey = QueryKey<typeof queryKeys.projects.all>
  */
 export type QueryKey<T extends readonly unknown[]> = T;
+
+/**
+ * placeholderData that keeps the previous result only while the key still
+ * holds the same cluster id, so switching clusters never shows (or acts on)
+ * the previous cluster's data. For keys whose only numeric part is the id.
+ */
+export function keepPreviousForCluster(clusterId: number) {
+  return <T>(previousData: T | undefined, previousQuery?: { queryKey: readonly unknown[] }) =>
+    previousQuery?.queryKey.includes(clusterId) ? previousData : undefined;
+}

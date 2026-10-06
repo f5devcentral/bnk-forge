@@ -2,7 +2,7 @@
  * React Query hooks for benchmarks (Phase 2 + Phase 4b: LLM Inference Load Testing Dashboard)
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { notify, notifyError } from '@/lib/notify';
@@ -86,6 +86,10 @@ export const useBenchmarkRuns = (params?: {
   tool?: string;
   model?: string;
   status?: string;
+  cluster_id?: number;
+  q?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
   pollingEnabled?: boolean;
@@ -95,6 +99,8 @@ export const useBenchmarkRuns = (params?: {
     queryKey: queryKeys.benchmarks.runs.list(queryParams),
     queryFn: () => api.listRuns(queryParams),
     refetchInterval: pollingEnabled ? POLL_INTERVALS.STANDARD : false,
+    // Keep the current page on screen while the next page / sort loads.
+    placeholderData: keepPreviousData,
   });
 };
 
@@ -359,7 +365,7 @@ const PROXY_TRANSITIONAL_STATES = new Set(['pending', 'deploying', 'uninstalling
 // Target Queries / Mutations (Phase 4b)
 // ============================================================================
 
-export const useBenchmarkTargets = (params?: { status?: string; cluster_id?: number }) =>
+export const useBenchmarkTargets = (params?: { status?: string; cluster_id?: number; name?: string }) =>
   useQuery({
     queryKey: queryKeys.benchmarks.targets.list(params),
     queryFn: () => api.listTargets(params),
@@ -604,6 +610,19 @@ export const useRunScenario = () => {
   });
 };
 
+export const useRunGroups = (params?: { scenario_key?: string; limit?: number }) =>
+  useQuery({
+    queryKey: queryKeys.benchmarks.runGroups.list(params),
+    queryFn: () => api.listRunGroups(params),
+  });
+
+export const useRunGroupCurves = (groupIds: number[]) =>
+  useQuery({
+    queryKey: queryKeys.benchmarks.runGroups.curves(groupIds),
+    queryFn: () => api.runGroupCurves(groupIds),
+    enabled: groupIds.length > 0,
+  });
+
 export const useRunGroup = (groupId: number | undefined) =>
   useQuery({
     queryKey: queryKeys.benchmarks.runGroups.detail(groupId!),
@@ -634,7 +653,12 @@ export const useBenchmarkWebSocket = (runId: number | undefined) => {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}/ws/benchmarks/runs/${runId}`;
+    // The WS path is outside the HTTP auth middleware; the backend checks ?token=.
+    const authToken = localStorage.getItem('auth_token');
+    let url = `${protocol}//${host}/ws/benchmarks/runs/${runId}`;
+    if (authToken) {
+      url += `?token=${encodeURIComponent(authToken)}`;
+    }
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

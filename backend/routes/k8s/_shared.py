@@ -13,7 +13,12 @@ from pydantic import BaseModel, model_validator
 from models import KubernetesCluster
 from services.platform_context_service import PlatformContextService
 from utils.provider_config import normalize_cloud_provider
-from utils.validators import validate_aws_region
+from utils.validators import (
+    validate_aws_region,
+    validate_azure_region,
+    validate_gcp_region,
+    validate_ibm_region,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +61,16 @@ def serialize_cluster(
         "platform_capabilities": platform_context.platform_capabilities,
         "platform_constraints": platform_context.platform_constraints,
         "region": cluster.region,
+        "account_id": cluster.account_id,
+        "discovery_status": cluster.discovery_status,
         "default_namespace": cluster.default_namespace,
         "status": cluster.status,
         "version": cluster.version,
+        "node_count": cluster.node_count,
+        "connectivity_status": cluster.connectivity_status,
+        "integration_status": cluster.integration_status,
+        "zones": list(cluster.zones or []),
+        "access_method": cluster.access_method,
         "last_synced_at": cluster.last_synced_at.isoformat() if cluster.last_synced_at else None,
         "created_at": cluster.created_at.isoformat() if cluster.created_at else None,
         # SSH tunnel per-cluster config
@@ -180,6 +192,12 @@ class ClusterCreateRequest(BaseModel):
         self.cloud_provider = normalize_cloud_provider(self.cloud_provider)
         if self.cloud_provider in {"aws", "eks"}:
             validate_aws_region(self.region, field_name="region")
+        if self.cloud_provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+        if self.cloud_provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.cloud_provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 
@@ -208,6 +226,12 @@ class ClusterUpdateRequest(BaseModel):
         self.cloud_provider = normalize_cloud_provider(self.cloud_provider)
         if self.cloud_provider in {"aws", "eks"}:
             validate_aws_region(self.region, field_name="region")
+        if self.cloud_provider == "ibm":
+            validate_ibm_region(self.region, field_name="region")
+        if self.cloud_provider == "azure":
+            validate_azure_region(self.region, field_name="region")
+        if self.cloud_provider == "gcp":
+            validate_gcp_region(self.region, field_name="region")
         return self
 
 

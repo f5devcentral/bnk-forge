@@ -19,10 +19,12 @@ import re
 import subprocess
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 import yaml
+from kubernetes import client as k8s_client
+from kubernetes.client.rest import ApiException
 from sqlalchemy.orm import Session
 
 from core.errors import BadRequestError, NotFoundError, ReleaseNotFoundError
@@ -31,6 +33,8 @@ from models.enums import ProxyDeploymentStatus
 from services.cluster_utils import kubeconfig_for_cluster
 from services.entity_lock import EntityLock, set_locked_entity_fields
 from services.helm_service import HelmService
+from services.kubernetes_service import KubernetesService
+from services.proxy_discovery_service import _get_node_ip, _resolve_external_url
 from utils.security import validate_cli_arg
 
 logger = logging.getLogger(__name__)
@@ -38,9 +42,11 @@ logger = logging.getLogger(__name__)
 # K8s label values cap at 63 chars.  The envoy gateway-helm chart (our
 # longest-suffixed default) appends `-gateway-helm-certgen` (21 chars) to
 # the release name when it generates the cert-gen Job's pod labels.
-# 63 - 21 = 42 is the safe ceiling; nginx/haproxy/f5-bnk have shorter
-# suffixes so this also works for them.
+# 63 - 21 = 42 is the safe ceiling for most charts. ingress-nginx is longer:
+# it names resources `<release>-ingress-nginx-controller-admission` (35 chars
+# after the release), so its ceiling is 63 - 35 = 28.
 MAX_RELEASE_NAME_LEN = 42
+MAX_RELEASE_NAME_LEN_BY_TYPE: dict[str, int] = {"nginx": 28}
 
 
 def _safe_release_name(proxy_type: str, target_name: str) -> str:
@@ -55,10 +61,11 @@ def _safe_release_name(proxy_type: str, target_name: str) -> str:
     long names don't collide and re-deploys of the same target stay idempotent.
     """
     candidate = f"perf-{proxy_type}-{target_name}"
-    if len(candidate) <= MAX_RELEASE_NAME_LEN:
+    max_len = MAX_RELEASE_NAME_LEN_BY_TYPE.get(proxy_type, MAX_RELEASE_NAME_LEN)
+    if len(candidate) <= max_len:
         return candidate
     digest = hashlib.sha256(candidate.encode()).hexdigest()[:6]
-    prefix = candidate[: MAX_RELEASE_NAME_LEN - 7].rstrip("-")
+    prefix = candidate[: max_len - 7].rstrip("-")
     return f"{prefix}-{digest}"
 
 # ---------------------------------------------------------------------------
@@ -90,6 +97,14 @@ DEFAULT_CHARTS: dict[str, dict[str, str]] = {
         "chart": "oci://docker.io/envoyproxy/ai-gateway-helm",
         "version": "v0.6.0",
     },
+}
+
+# Classic (non-OCI) Helm repos the default charts come from. A first-time Forge
+# has none configured, so deploys add the repo before installing (OCI charts
+# need no repo). Mirrors the repo URLs in benchmark_target_service.DEFAULT_HELM_CHARTS.
+HELM_REPO_URLS: dict[str, str] = {
+    "ingress-nginx": "https://kubernetes.github.io/ingress-nginx",
+    "haproxytech": "https://haproxytech.github.io/helm-charts",
 }
 
 # ---------------------------------------------------------------------------
@@ -156,45 +171,31 @@ EPP_GRPC_PORT = 9002
 EPP_HEALTH_PORT = 9003
 
 # ---------------------------------------------------------------------------
-# llm-d-router — the llm-d inference scheduler with PRECISE (KV-event-driven)
-# prefix-cache-aware routing. Mirrors the llm-d precise-prefix-cache-aware guide
-# (~/go/src/llm-d/guides/precise-prefix-cache-aware/gaie-kv-events/values.yaml).
+# llm-d-router — llm-d's router (llm-d/llm-d-router) with PRECISE (KV-event-driven)
+# prefix-cache-aware routing, per its deploy/config/epp-precise-prefix-cache-config.yaml.
 #
-# Data plane: the GAIE InferencePool helm chart's EPP, but running the llm-d
-# inference-scheduler image (precise KV-cache awareness) with a UDS tokenizer
-# sidecar, fronted by AGENTGATEWAY (_build_agentgateway_manifest) — NOT Envoy AI
-# Gateway. llm-d-router shares zero gateway infra with envoy-ai-gateway: it installs
+# Data plane: llm-d-router's own gateway chart renders the EPP + InferencePool
+# (provider none), fronted by AGENTGATEWAY (_build_agentgateway_manifest) — NOT Envoy
+# AI Gateway. llm-d-router shares zero gateway infra with envoy-ai-gateway: it installs
 # its own agentgateway control plane (see AGENTGATEWAY_* below) and routes via the
 # `agentgateway` GatewayClass directly to the InferencePool backend.
 #
-# PREREQUISITES for true end-to-end precise routing (documented, not enforced —
-# we don't control the benchmark target's vLLM):
-#   1. The target's vLLM pods must publish KV-cache events over ZMQ
-#      (vLLM `--kv-events-config`). The EPP subscribes per-pod (pod discovery);
-#      the publish port is auto-discovered from the target pods, defaulting to
-#      LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT when not found.
-#   2. An HF token secret (LLM_D_ROUTER_HF_TOKEN_SECRET, key HF_TOKEN) must exist
-#      in the target's llm_namespace so the tokenizer can fetch the model tokenizer.
-#      The deploy AUTO-CREATES this secret EMPTY if absent (_ensure_hf_token_secret) —
-#      enough for public models like Qwen. For a gated model, pre-create the secret
-#      with a real token and the deploy will reuse it (never overwritten).
-# Without (1) the scheduler still routes (degrading toward load-aware); precise
-# scoring activates once KV-events flow.
+# What the EPP needs from the model server (read from the target pods at deploy time):
+#   * tokens: vLLM's /v1/chat/completions/render endpoint. When the target doesn't
+#     serve it, the EPP falls back to llm-d's estimate tokenizer (precise scoring
+#     then degrades toward load-aware).
+#   * KV-cache events over ZMQ. vLLM (`--kv-events-config`) listens per pod and the
+#     EPP connects to each pod (awsbnkctl's llm-d simulator pods do the same through
+#     a relay sidecar).
 # ---------------------------------------------------------------------------
-LLM_D_ROUTER_CHART = "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool"
-LLM_D_ROUTER_VERSION = os.environ.get("LLM_D_ROUTER_VERSION", "v1.4.0")
-# EPP image — the llm-d inference-scheduler (supports precise KV-cache awareness),
-# pinned independently and env-overridable.
-LLM_D_ROUTER_EPP_IMAGE_HUB = "ghcr.io/llm-d"
-LLM_D_ROUTER_EPP_IMAGE_NAME = "llm-d-inference-scheduler"
-LLM_D_ROUTER_EPP_IMAGE_TAG = os.environ.get("LLM_D_ROUTER_EPP_IMAGE_TAG", "v0.7.1")
-# UDS tokenizer sidecar — pre-tokenizes prompts for the precise prefix-cache scorer.
-LLM_D_ROUTER_TOKENIZER_IMAGE = os.environ.get(
-    "LLM_D_ROUTER_TOKENIZER_IMAGE", "ghcr.io/llm-d/llm-d-uds-tokenizer:v0.7.1"
-)
-# HF token secret the EPP/tokenizer needs to fetch the model tokenizer. Must exist
-# in the target's llm_namespace with key HF_TOKEN (prerequisite, not created here).
-LLM_D_ROUTER_HF_TOKEN_SECRET = os.environ.get("LLM_D_ROUTER_HF_TOKEN_SECRET", "llm-d-hf-token")
+LLM_D_ROUTER_CHART = "oci://ghcr.io/llm-d/charts/llm-d-router-gateway"
+LLM_D_ROUTER_VERSION = os.environ.get("LLM_D_ROUTER_VERSION", "v0.11.0")
+# Charts earlier Forge versions stored on llm-d-router rows; deploys move them to LLM_D_ROUTER_CHART.
+_LEGACY_LLM_D_ROUTER_CHARTS = frozenset({
+    "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool",
+})
+# EPP resources: the chart default (8 CPU / 8Gi request) does not fit typical benchmark nodes.
+LLM_D_ROUTER_EPP_RESOURCES = {"requests": {"cpu": "1", "memory": "1Gi"}, "limits": {"memory": "4Gi"}}
 # Default base ZMQ port vLLM publishes KV-cache events on — used only when
 # discovery from the target's model-server pods finds nothing.
 LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT = int(
@@ -203,6 +204,10 @@ LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT = int(
 # KV-cache block size the prefix-cache token processor hashes on; matches vLLM's
 # `--block-size=64` in the llm-d guide so cache-block boundaries line up.
 LLM_D_ROUTER_KV_BLOCK_SIZE = 64
+# Image name of the llm-d inference simulator (ghcr.io/llm-d/llm-d-inference-sim).
+LLM_D_SIM_IMAGE_NAME = "llm-d-inference-sim"
+# Port the F5 EPP subscribes to on every pod for KV-cache events (replay on the next port).
+F5_EPP_KV_EVENTS_PORT = 20080
 
 # ---------------------------------------------------------------------------
 # agentgateway — the inference gateway for llm-d-router (NOT Envoy AI Gateway).
@@ -236,8 +241,31 @@ AGENTGATEWAY_PARAMS_API_VERSION = "agentgateway.dev/v1alpha1"
 # Proxy types whose install needs multiple ordered Helm/kubectl steps.
 _MULTI_STEP_PROXY_TYPES = frozenset({"envoy-ai-gateway", "llm-d-router"})
 
+
+class TargetRouting(NamedTuple):
+    """What the target's Service and pods say about routing to them (see _discover_target_routing)."""
+
+    match_labels: dict[str, str]
+    kv_port: int | None = None
+    hf_model: str | None = None
+    pod_port: int | None = None
+    served_model: str | None = None
+    simulator: bool = False
+
 # Default proxy listen port inside the cluster (NodePort will be different)
 PROXY_LISTEN_PORT = 10080
+
+# Fixed NodePorts for benchmark proxies, so the cluster firewall opens exactly
+# these to the load generator (awsbnkctl jumphost) instead of the whole
+# NodePort range (clear of BNK's own fixed NodePorts, e.g. f5-spk-cwc on
+# 30881). Keep in sync with awsbnkctl bnkconst.BenchmarkProxyNodePorts.
+PROXY_NODE_PORTS: dict[str, int] = {
+    "haproxy": 30890,
+    "nginx": 30891,
+    "envoy": 30892,
+    "envoy-ai-gateway": 30893,
+    "llm-d-router": 30894,
+}
 
 
 class ProxyDeployService:
@@ -285,6 +313,9 @@ class ProxyDeployService:
         # Mark deploying
         self._write(deploy, lock, status=ProxyDeploymentStatus.DEPLOYING, status_message="Helm install in progress")
 
+        if deploy.proxy_type == "f5-bnk-epp":
+            return self._deploy_f5_epp(deploy, target, cluster, lock, on_status)
+
         # Multi-step proxy types (base + CRDs + controller / EPP) own their own
         # orchestration; the single-install path below doesn't fit them.
         if deploy.proxy_type in _MULTI_STEP_PROXY_TYPES:
@@ -304,7 +335,8 @@ class ProxyDeployService:
 
             self._emit(on_status, f"Helm install: release={release} chart={chart} ns={namespace}")
 
-            self.helm.install_chart(
+            self._install_with_repo(
+                on_status,
                 cluster_id=target.cluster_id,
                 release_name=release,
                 chart=chart,
@@ -315,6 +347,7 @@ class ProxyDeployService:
                 wait=True,
                 timeout="5m",
                 context=cluster.context,
+                disable_openapi_validation=True,
             )
 
             # Per-proxy post-install: apply data-plane resources Helm doesn't
@@ -326,7 +359,9 @@ class ProxyDeployService:
                 )
             else:
                 proxy_url = f"http://{release}.{namespace}:{PROXY_LISTEN_PORT}"
-                external_url = None
+                external_url = self._resolve_service_external_url(
+                    cluster, release, namespace, on_status,
+                )
 
             self._write(
                 deploy,
@@ -382,6 +417,9 @@ class ProxyDeployService:
         target = self._get_target(deploy.target_id)
         cluster = self._get_cluster(target.cluster_id)
 
+        if deploy.proxy_type == "f5-bnk-epp":
+            return self._undeploy_f5_epp(deploy, target, cluster, lock, on_status)
+
         # Multi-step proxy types own their own teardown (aux releases + namespaces).
         if deploy.proxy_type in _MULTI_STEP_PROXY_TYPES:
             return self._undeploy_multi_step(deploy, target, cluster, lock, on_status)
@@ -409,7 +447,7 @@ class ProxyDeployService:
                     deploy, target, release, namespace, on_status,
                 )
 
-            self.helm.uninstall_release(
+            self._uninstall_release(
                 cluster_id=target.cluster_id,
                 release_name=release,
                 namespace=namespace,
@@ -439,6 +477,133 @@ class ProxyDeployService:
             )
             self._emit(on_status, f"Uninstall FAILED: {exc}")
             raise
+
+    def _install_with_repo(self, on_status: Any, **install_kwargs: Any) -> None:
+        """``helm.install_chart`` with the chart's repo added first when missing.
+
+        A first-time Forge has no Helm repos configured; a stale local index
+        lacks newly pinned versions, so a "chart not found" refreshes the repos
+        once and retries.
+        """
+        chart = install_kwargs.get("chart") or ""
+        repo = chart.split("/", 1)[0] if "/" in chart and not chart.startswith("oci://") else None
+        if repo and repo not in {r.get("name") for r in self.helm.list_repositories()}:
+            url = HELM_REPO_URLS.get(repo)
+            if not url:
+                raise ValueError(
+                    f"Helm repo '{repo}' for chart '{chart}' is not configured and has no known URL; "
+                    f"add it under Helm repositories",
+                )
+            self._emit(on_status, f"Adding Helm repo {repo} ({url})")
+            self.helm.add_repository(repo, url)
+        try:
+            self.helm.install_chart(**install_kwargs)
+        except ValueError as exc:
+            if not repo or "Chart not found" not in str(exc):
+                raise
+            self._emit(on_status, f"Chart {chart} not in the local index; refreshing Helm repos and retrying")
+            self.helm.update_repositories()
+            self.helm.install_chart(**install_kwargs)
+
+    def _uninstall_release(self, **kwargs: Any) -> None:
+        """``helm uninstall`` that treats an already-removed release as uninstalled.
+
+        A retried undeploy (e.g. after a later step failed) must not fail on it.
+        """
+        try:
+            self.helm.uninstall_release(**kwargs)
+        except RuntimeError as exc:
+            if "release: not found" not in str(exc):
+                raise
+
+    def _node_port_urls(
+        self, cluster: Any, node_port: int, on_status: Any = None,
+    ) -> tuple[str | None, str | None]:
+        """``(in_cluster_url, external_url)`` of the Service holding a fixed NodePort.
+
+        Gateway-API proxies (Envoy, AI Gateway, agentgateway) create their
+        data-plane Service through their controller, in its own namespace, so it
+        is found by the pinned NodePort rather than by Helm release name. The
+        in-cluster URL is the Service DNS name: for a NodePort Service the
+        Gateway status reports node IPs (often public), not a usable address.
+        """
+        try:
+            api_client = KubernetesService(self.db).load_kubeconfig(cluster)
+            core_v1 = k8s_client.CoreV1Api(api_client)
+            for _ in range(12):
+                svcs = core_v1.list_service_for_all_namespaces(_request_timeout=10).items or []
+                for s in svcs:
+                    port = next((p for p in (s.spec.ports or []) if p.node_port == node_port), None)
+                    if port is None:
+                        continue
+                    in_cluster = f"http://{s.metadata.name}.{s.metadata.namespace}:{port.port}"
+                    node_ip = _get_node_ip(core_v1)
+                    return in_cluster, (f"http://{node_ip}:{node_port}" if node_ip else None)
+                time.sleep(5)
+            self._emit(on_status, f"No Service holds NodePort {node_port}; no external URL")
+        except Exception as exc:
+            self._emit(on_status, f"Could not resolve the NodePort {node_port} URL: {exc}")
+        return None, None
+
+    def _resolve_service_external_url(
+        self,
+        cluster: Any,
+        release: str,
+        namespace: str,
+        on_status: Any = None,
+    ) -> str | None:
+        """Resolve a routable external URL (NodePort or LoadBalancer) for a deployed proxy service."""
+        try:
+            k8s_svc = KubernetesService(self.db)
+            api_client = k8s_svc.load_kubeconfig(cluster)
+            core_v1 = k8s_client.CoreV1Api(api_client)
+
+            # Look up the service by exact name, else by the Helm release label
+            # (a name substring match would pick up another release's service).
+            svc = None
+            try:
+                svc = core_v1.read_namespaced_service(name=release, namespace=namespace, _request_timeout=10)
+            except ApiException:
+                pass
+
+            if not svc:
+                svcs = core_v1.list_namespaced_service(
+                    namespace=namespace,
+                    label_selector=f"app.kubernetes.io/instance={release}",
+                    _request_timeout=10,
+                )
+                items = svcs.items or []
+                # Prefer an externally exposed service (e.g. the ingress-nginx
+                # controller over its ClusterIP admission webhook).
+                exposed = [i for i in items if i.spec.type in ("NodePort", "LoadBalancer")]
+                svc = (exposed or items or [None])[0]
+
+            if not svc:
+                self._emit(on_status, f"Could not find K8s Service for release '{release}' to resolve external URL")
+                return None
+
+            ports = svc.spec.ports or []
+            if not ports:
+                return None
+
+            # The proxy listener port first (NGINX proxies a TCP stream on it next
+            # to its unused http/https ports), then http/proxy/web names or port 80.
+            chosen_port = next((p for p in ports if p.port == PROXY_LISTEN_PORT), None)
+            if chosen_port is None:
+                chosen_port = next(
+                    (p for p in ports if (p.name or "").lower() in ("http", "proxy", "web") or p.port == 80),
+                    ports[0],
+                )
+
+            ext_url = _resolve_external_url(core_v1, svc, chosen_port)
+            if ext_url:
+                self._emit(on_status, f"Resolved external URL: {ext_url}")
+            return ext_url
+
+        except Exception as exc:
+            logger.warning("Failed to resolve external URL for service %s/%s: %s", namespace, release, exc)
+            self._emit(on_status, f"Warning: failed to resolve external URL: {exc}")
+            return None
 
     # ------------------------------------------------------------------
     # Envoy Gateway data-plane resources (Helm chart only ships controller)
@@ -495,13 +660,17 @@ class ProxyDeployService:
         self._emit(on_status, f"Envoy data-plane reachable at {proxy_url}")
 
         # external_url is the externally/jumphost-reachable front-end the
-        # benchmark drives load through. Only the internal-NLB path produces a
-        # reachable address (the NLB hostname); the default ClusterIP path is
-        # in-cluster only, so it stays None and the benchmark fail-closes.
-        if target_tags.get("proxy_expose") == "internal-nlb":
+        # benchmark drives load through: the NLB hostname for internal-nlb, a
+        # node IP on the fixed NodePort by default, none for clusterip (in-cluster
+        # only, so the benchmark fail-closes for external agents).
+        expose = target_tags.get("proxy_expose")
+        if expose == "internal-nlb":
             external_url: str | None = f"http://{address}:{PROXY_LISTEN_PORT}"
-        else:
+        elif expose == "clusterip":
             external_url = None
+        else:
+            in_cluster_url, external_url = self._node_port_urls(cluster, PROXY_NODE_PORTS["envoy"], on_status)
+            proxy_url = in_cluster_url or proxy_url
         return proxy_url, external_url
 
     def _pre_uninstall_envoy(
@@ -514,7 +683,7 @@ class ProxyDeployService:
     ) -> None:
         """Delete Gateway API resources we created for an envoy deploy.
 
-        GatewayClass `eg` is shared across envoy deploys — leave it alone.
+        The GatewayClass is this release's own (see ``_values_envoy``).
         """
         cluster = self._get_cluster(target.cluster_id)
         self._emit(on_status, f"Deleting Gateway API resources for envoy release {release}")
@@ -540,6 +709,125 @@ class ProxyDeployService:
                 ignore_missing=True,
                 context=cluster.context,
             )
+            _kubectl_delete_cluster_scoped(
+                kubeconfig_path, f"gatewayclass/{release}", ignore_missing=True, context=cluster.context,
+            )
+
+    # ------------------------------------------------------------------
+    # F5 BNK 2.4 Endpoint Picker (f5-bnk-epp)
+    # ------------------------------------------------------------------
+
+    def _deploy_f5_epp(
+        self, deploy: ProxyDeployment, target: BenchmarkTarget, cluster: Any,
+        lock: EntityLock | None, on_status: Any,
+    ) -> ProxyDeployment:
+        """Route the target through BNK's F5 Endpoint Picker on an existing BNK Gateway.
+
+        Applies, in the target's namespace: F5EPP + InferencePool selecting the target
+        pods (+ an InferenceModelRewrite when the served name is an alias of the
+        tokenizer's HF repo) and an HTTPRoute with its own hostname on the BNK
+        Gateway. The benchmark reaches it on the Gateway VIP with that Host header.
+        """
+        context = cluster.context
+        release = deploy.helm_release or _safe_release_name(deploy.proxy_type, target.name)
+        self._write(deploy, lock, helm_release=release)
+        pool_namespace = target.llm_namespace or "default"
+        try:
+            api_client = KubernetesService(self.db).load_kubeconfig(cluster)
+            from services.proxy_discovery_service import ProxyDiscoveryService
+            scan = ProxyDiscoveryService(self.db)._scan_f5_bnk(api_client, target)
+            gateways = [g for g in (scan.details or {}).get("gateways", []) if g.get("vip") and g.get("listeners")]
+            gw = next((g for g in gateways if g["name"] == (scan.details or {}).get("matched_gateway")), None) or (gateways or [None])[0]
+            if not gw:
+                raise RuntimeError("No F5 BNK Gateway with a VIP on this cluster to attach the route to")
+            port = gw["listeners"][0].get("port", 80)
+            routing = self._discover_target_routing(cluster, target, pool_namespace, on_status)
+
+            with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
+                if _kubectl_get_json(kubeconfig_path, ["get", "crd", "f5-epps.inference.k8s.f5.com"], context=context) is None:
+                    raise RuntimeError("F5EPP CRD not installed: the F5 Endpoint Picker needs BNK 2.4")
+                cne = ((_kubectl_get_json(kubeconfig_path, ["get", "cneinstances", "-A"], context=context) or {}).get("items") or [None])[0]
+                epp_namespaces = ((cne or {}).get("spec") or {}).get("eppNamespaces") or []
+                if "All" not in epp_namespaces and pool_namespace not in epp_namespaces:
+                    raise RuntimeError(
+                        f"CNEInstance eppNamespaces does not include '{pool_namespace}', so BNK runs no F5 EPP there: "
+                        "add it (or \"All\"), e.g. awsbnkctl bnk heal --only epp-namespaces",
+                    )
+                if _gie_crds_present(kubeconfig_path, context=context):
+                    self._emit(on_status, "[1/3] GIE InferencePool CRD already present — reusing")
+                else:
+                    self._emit(on_status, f"[1/3] Applying GIE CRDs ({GIE_CRD_VERSION})")
+                    _kubectl_apply_url(kubeconfig_path, GIE_CRD_MANIFEST_URL, context=context, force_conflicts=False)
+                # The controller puts the CNEInstance registry pull secrets on the EPP pod.
+                cne_ns = ((cne or {}).get("metadata") or {}).get("namespace", "f5-cne-system")
+                for ref in (((cne or {}).get("spec") or {}).get("registry") or {}).get("imagePullSecrets") or []:
+                    _copy_secret_if_absent(kubeconfig_path, ref.get("name", ""), cne_ns, pool_namespace, context=context)
+                selector = ",".join(f"{k}={v}" for k, v in routing.match_labels.items())
+                pods = _kubectl_get_json(kubeconfig_path, ["-n", pool_namespace, "get", "pods", "-l", selector], context=context)
+
+            model = routing.served_model or target.llm_model
+            names = _served_models_from_pods(pods)
+            tokenizer = next((n for n in names if "/" in n), None) or (routing.hf_model if "/" in (routing.hf_model or "") else None)
+            rewrite = tokenizer if tokenizer and tokenizer in names and model != tokenizer else None
+            hostname = f"{release}.forge.local"
+            manifest = _build_f5_epp_manifest(
+                release, pool_namespace, routing.match_labels, routing.pod_port or _svc_port(target.llm_base_url),
+                _block_size_from_pods(pods), tokenizer, model, rewrite, gw["name"], gw["namespace"], hostname,
+            )
+            with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
+                self._emit(on_status, f"[2/3] Applying F5EPP + InferencePool + HTTPRoute ({hostname}) on Gateway {gw['namespace']}/{gw['name']}")
+                _kubectl_apply(kubeconfig_path, manifest, context=context)
+                self._emit(on_status, "[3/3] Waiting for the F5 EPP to become Available")
+                if not _wait_f5_epp_available(kubeconfig_path, pool_namespace, f"{release}-epp", context=context):
+                    raise RuntimeError(f"F5EPP {release}-epp not Available within 5 min (see kubectl get f5-epps -n {pool_namespace})")
+
+            url = f"http://{gw['vip']}:{port}"
+            info = {
+                "epp": f"F5 Endpoint Picker (F5EPP {release}-epp, InferencePool {release})",
+                "model_server": "llm-d inference simulator" if routing.simulator else "vLLM",
+                "tokens": (f"F5 tokenizer {tokenizer}" + (f" (requests for {model} rewritten to it)" if rewrite else ""))
+                if tokenizer else f"F5 auto-discovery from the model server metrics ({model})",
+                "kv_events": _f5_epp_kv_events(routing.kv_port),
+                "host_header": hostname,
+            }
+            self._write(
+                deploy, lock, proxy_url=url, external_url=url, helm_release=release, routing_info=info,
+                status=ProxyDeploymentStatus.READY, status_message="Deployed successfully",
+                deployed_at=datetime.now(UTC),
+            )
+            self._emit(on_status, f"Deploy complete: {url} (Host: {hostname})")
+            return deploy
+        except Exception as exc:
+            self._write(deploy, lock, status=ProxyDeploymentStatus.FAILED, status_message=f"Deploy failed: {exc}")
+            self._emit(on_status, f"Deploy failed: {exc}")
+            return deploy
+
+    def _undeploy_f5_epp(
+        self, deploy: ProxyDeployment, target: BenchmarkTarget, cluster: Any,
+        lock: EntityLock | None, on_status: Any,
+    ) -> ProxyDeployment:
+        """Delete what _deploy_f5_epp applied; the BNK controller removes the EPP stack."""
+        release = deploy.helm_release
+        pool_namespace = target.llm_namespace or "default"
+        self._write(deploy, lock, status=ProxyDeploymentStatus.UNINSTALLING, status_message="Removing F5 EPP route")
+        try:
+            if release:
+                with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
+                    for resource in (
+                        f"httproute/{release}",
+                        f"inferencemodelrewrite.inference.networking.x-k8s.io/{release}",
+                        f"f5epp.inference.k8s.f5.com/{release}-epp",
+                        f"inferencepool.inference.networking.k8s.io/{release}",
+                    ):
+                        _kubectl_delete(kubeconfig_path, resource, pool_namespace, ignore_missing=True, context=cluster.context)
+            self._write(
+                deploy, lock, status=ProxyDeploymentStatus.UNINSTALLED, status_message="Uninstalled successfully",
+                proxy_url=None, external_url=None, routing_info=None, deployed_at=None,
+            )
+            self._emit(on_status, "Uninstall complete")
+        except Exception as exc:
+            self._write(deploy, lock, status=ProxyDeploymentStatus.FAILED, status_message=f"Uninstall error: {exc}")
+        return deploy
 
     # ------------------------------------------------------------------
     # Multi-step proxy installs (envoy-ai-gateway)
@@ -581,22 +869,33 @@ class ProxyDeployService:
                     deploy, target, cluster, release, namespace, context, on_status,
                 )
                 applied_values = self._build_values(deploy, target)
+                routing_info = {"epp": f"Gateway API Inference Extension EPP {GIE_EPP_IMAGE.rsplit(':', 1)[-1]} (approximate prefix cache)"}
             elif deploy.proxy_type == "llm-d-router":
+                # Rows created by earlier Forge versions carry the retired GIE chart.
+                if deploy.helm_chart in _LEGACY_LLM_D_ROUTER_CHARTS:
+                    self._write(deploy, lock, helm_chart=LLM_D_ROUTER_CHART, helm_version=LLM_D_ROUTER_VERSION)
                 # llm-d-router re-derives values at install time (discovered KV-events
                 # port + pod selector), so the per-type method returns the dict it
                 # actually applied for the stored snapshot.
-                proxy_url, applied_values = self._deploy_llm_d_router(
+                proxy_url, applied_values, routing_info = self._deploy_llm_d_router(
                     deploy, target, cluster, release, namespace, context, on_status,
                 )
             else:  # pragma: no cover — guarded by _MULTI_STEP_PROXY_TYPES
                 raise BadRequestError(f"Unknown multi-step proxy type: {deploy.proxy_type}")
 
+            # Reachable from the external load generator on the fixed NodePort.
+            in_cluster_url, external_url = self._node_port_urls(
+                cluster, PROXY_NODE_PORTS[deploy.proxy_type], on_status,
+            )
+            proxy_url = in_cluster_url or proxy_url
             self._write(
                 deploy,
                 lock,
                 proxy_url=proxy_url,
+                external_url=external_url,
                 helm_release=release,
                 helm_values=applied_values,
+                routing_info=routing_info,
                 status=ProxyDeploymentStatus.READY,
                 status_message="Deployed successfully",
                 deployed_at=datetime.now(UTC),
@@ -660,7 +959,8 @@ class ProxyDeployService:
             self._emit(on_status, f"{label}: '{release}' already present — reusing")
             return
         self._emit(on_status, f"{label}: installing '{release}' ({version})")
-        self.helm.install_chart(
+        self._install_with_repo(
+            on_status,
             cluster_id=cluster_id,
             release_name=release,
             chart=chart,
@@ -671,6 +971,7 @@ class ProxyDeployService:
             wait=True,
             timeout="5m",
             context=context,
+            disable_openapi_validation=True,
         )
 
     def _deploy_envoy_ai_gateway(
@@ -725,10 +1026,11 @@ class ProxyDeployService:
         # Per-target data plane: GIE CRDs + InferencePool/EPP + Gateway/HTTPRoute.
         pool_namespace = target.llm_namespace or "default"
         gw_namespace = target.proxy_namespace or "perf-proxies"
-        backend_label = _svc_name(target.llm_base_url)
-        backend_port = _svc_port(target.llm_base_url)
+        # The pool selects pods, so it needs the Service's selector and the pod
+        # port behind it (e.g. Service 80 -> vLLM 8000), not the Service port.
+        routing = self._discover_target_routing(cluster, target, pool_namespace, on_status)
         epp_manifest = _build_inference_epp_manifest(
-            release, pool_namespace, backend_label, backend_port,
+            release, pool_namespace, routing.match_labels, routing.pod_port or _svc_port(target.llm_base_url),
         )
         gateway_manifest = _build_gaie_gateway_manifest(release, gw_namespace, pool_namespace)
 
@@ -770,8 +1072,8 @@ class ProxyDeployService:
         namespace: str,
         context: str | None,
         on_status: Any,
-    ) -> tuple[str, dict]:
-        """Install the llm-d inference scheduler (precise prefix-cache) for a target.
+    ) -> tuple[str, dict, dict]:
+        """Install llm-d-router (precise prefix-cache) for a target.
 
         Uses **agentgateway** as the inference gateway (not Envoy AI Gateway), so it
         shares ZERO gateway infra with envoy-ai-gateway.
@@ -786,20 +1088,18 @@ class ProxyDeployService:
 
         Per-target data plane:
           2. GIE InferencePool CRDs — applied ONLY IF ABSENT (never bumped, to protect
-             BNK's shared CRD). HF-token secret ensured (empty if absent).
-          3. Discover the target's pod selector, the ZMQ port its vLLM pods publish
-             KV-cache events on, and its HF model id (vLLM ``--model``), then
-             helm-install the GAIE InferencePool chart with the llm-d inference-scheduler
-             image, UDS tokenizer sidecar, and a precise-prefix-cache-scorer wired to
-             that discovered port. The chart emits the InferencePool + EPP + RBAC.
+             BNK's shared CRD).
+          3. Read the target's Service and pods (selector, pod port, served model, KV
+             events, simulator) and probe its render endpoint, then helm-install the
+             llm-d-router-gateway chart (EPP + InferencePool) into the model-server
+             namespace.
           4. agentgateway Gateway + HTTPRoute backing the InferencePool, with an
-             AgentgatewayParameters forcing a ClusterIP data-plane Service (the default
-             LoadBalancer stays pending on LB-less clusters). Wait for the Gateway
-             address, return its URL.
+             AgentgatewayParameters pinning the NodePort data-plane Service. Wait for
+             the Gateway address, return its URL.
 
         Returns:
-            (proxy_url, applied_values) — the values dict actually applied (with the
-            discovered KV-events port) so the caller can persist an accurate snapshot.
+            (proxy_url, applied_values, routing_info) — the values actually applied and
+            what the EPP routes on (shown on the proxy, read back by undeploy).
         """
         # 1. agentgateway control plane (cluster-wide singletons): its own CRDs +
         #    the controller with the GIE inference extension enabled. Both installed
@@ -819,43 +1119,16 @@ class ProxyDeployService:
 
         pool_namespace = target.llm_namespace or "default"
         gw_namespace = target.proxy_namespace or "perf-proxies"
-        target_port = _svc_port(target.llm_base_url)
+        svc_name = _svc_name(target.llm_base_url)
+        svc_port = _svc_port(target.llm_base_url)
 
-        # 2-3. Discover the target's pod selector, KV-events ZMQ port, and HF model id.
-        match_labels, kv_port, hf_model = self._discover_target_routing(
-            cluster, target, pool_namespace, on_status,
-        )
-        if kv_port is None:
-            kv_port = LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT
-            self._emit(
-                on_status,
-                f"[llm-d-router] No KV-events port found on target pods — defaulting "
-                f"to {kv_port}. Precise routing needs the target vLLM to publish "
-                f"KV-cache events (vLLM --kv-events-config); see prerequisites.",
-            )
-        else:
-            self._emit(on_status, f"[llm-d-router] Discovered KV-events ZMQ port {kv_port}")
-
-        # The tokenizer needs a real HF repo id. Prefer the vLLM pod's --model arg
-        # (e.g. Qwen/Qwen3-32B) over the target's llm_model, which is usually the
-        # served-model-name (e.g. qwen3-32b) and would fail tokenizer init.
-        model_name = hf_model or target.llm_model
-        if hf_model:
-            self._emit(on_status, f"[llm-d-router] Discovered HF model id '{hf_model}' from vLLM --model")
-        else:
-            self._emit(
-                on_status,
-                f"[llm-d-router] No --model arg found on target pods; using llm_model "
-                f"'{target.llm_model}' for the tokenizer (must be an HF-resolvable repo id).",
-            )
-
-        values = _build_llm_d_router_values(
-            model_name=model_name,
-            target_port=target_port,
-            match_labels=match_labels,
-            kv_events_port=kv_port,
-        )
-        gateway_manifest = _build_agentgateway_manifest(release, gw_namespace, pool_namespace)
+        routing = self._discover_target_routing(cluster, target, pool_namespace, on_status)
+        target_port = routing.pod_port or svc_port
+        model = routing.served_model or target.llm_model
+        info: dict = {
+            "epp": f"llm-d-router {LLM_D_ROUTER_VERSION} (precise prefix cache)",
+            "model_server": "llm-d inference simulator" if routing.simulator else "vLLM",
+        }
 
         with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
             # GIE InferencePool CRD: apply ONLY IF ABSENT. The CRD is cluster-scoped and
@@ -866,40 +1139,55 @@ class ProxyDeployService:
             else:
                 self._emit(on_status, f"[2/4] Applying GIE CRDs ({GIE_CRD_VERSION})")
                 _kubectl_apply_url(kubeconfig_path, GIE_CRD_MANIFEST_URL, context=context, force_conflicts=False)
-
-            # Ensure the EPP's HF-token secret exists BEFORE the chart install — a
-            # MISSING secret makes the EPP container fail with CreateContainerConfigError
-            # and the helm --wait then hangs to timeout. We create it empty (sufficient
-            # for public model tokenizers) but never overwrite an existing one, so a
-            # real token pre-created for a gated model is preserved.
-            created = _ensure_hf_token_secret(
-                kubeconfig_path, pool_namespace, LLM_D_ROUTER_HF_TOKEN_SECRET, context=context,
-            )
-            self._emit(
-                on_status,
-                f"[llm-d-router] HF token secret '{LLM_D_ROUTER_HF_TOKEN_SECRET}' "
-                + ("created (empty)" if created else "already present — reusing"),
+            render = _render_endpoint_available(
+                kubeconfig_path, pool_namespace, svc_name, svc_port, model, context=context,
             )
 
-        # 4. Install the InferencePool chart (EPP + InferencePool + RBAC) as the
-        #    per-target release, into the model-server namespace so the pool selector
-        #    resolves locally and the HTTPRoute's InferencePool backendRef is in-ns.
-        self._emit(
-            on_status,
-            f"[3/4] Installing inferencepool chart (precise): release={release} "
-            f"ns={pool_namespace}",
+        render_url = f"http://{svc_name}.{pool_namespace}:{svc_port}" if render else None
+        info["tokens"] = (
+            f"vLLM render ({render_url})" if render_url
+            else "estimate (the model server has no /v1/chat/completions/render)"
         )
-        self.helm.install_chart(
+
+        # KV-cache events: the EPP connects to each model-server pod.
+        kv_port = routing.kv_port or LLM_D_ROUTER_DEFAULT_KV_EVENTS_PORT
+        if routing.kv_port:
+            info["kv_events"] = f"per pod, EPP connects to :{kv_port}"
+        else:
+            info["kv_events"] = (
+                f"per pod on default :{kv_port}; no KV-events port found on the target pods"
+            )
+        for key in ("tokens", "kv_events"):
+            self._emit(on_status, f"[llm-d-router] {key.replace('_', ' ')}: {info[key]}")
+
+        values = _build_llm_d_router_values(
+            model_name=model,
+            target_port=target_port,
+            match_labels=routing.match_labels,
+            kv_events_port=kv_port,
+            render_url=render_url,
+        )
+        gateway_manifest = _build_agentgateway_manifest(release, gw_namespace, pool_namespace)
+        chart = deploy.helm_chart or LLM_D_ROUTER_CHART
+        version = deploy.helm_version or LLM_D_ROUTER_VERSION
+
+        # 3. Install the router chart (EPP + InferencePool) as the per-target release,
+        #    into the model-server namespace so the pool selector resolves locally and
+        #    the HTTPRoute's InferencePool backendRef is in-ns.
+        self._emit(on_status, f"[3/4] Installing {chart}:{version}: release={release} ns={pool_namespace}")
+        self._install_with_repo(
+            on_status,
             cluster_id=target.cluster_id,
             release_name=release,
-            chart=deploy.helm_chart or LLM_D_ROUTER_CHART,
+            chart=chart,
             namespace=pool_namespace,
             values=values,
-            version=deploy.helm_version or LLM_D_ROUTER_VERSION,
+            version=version,
             create_namespace=True,
             wait=True,
             timeout="5m",
             context=context,
+            disable_openapi_validation=True,
         )
 
         with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
@@ -916,7 +1204,7 @@ class ProxyDeployService:
             )
         proxy_url = f"http://{address}:{PROXY_LISTEN_PORT}"
         self._emit(on_status, f"llm-d-router data-plane reachable at {proxy_url}")
-        return proxy_url, values
+        return proxy_url, values, info
 
     def _discover_target_routing(
         self,
@@ -924,10 +1212,10 @@ class ProxyDeployService:
         target: BenchmarkTarget,
         pool_namespace: str,
         on_status: Any,
-    ) -> tuple[dict[str, str], int | None, str | None]:
-        """Discover the target's pod selector, KV-events ZMQ port, and HF model id.
+    ) -> "TargetRouting":
+        """Discover how to route to the target's model-server pods.
 
-        All three are read live from the cluster so the deploy needs no manual config:
+        All read live from the cluster so the deploy needs no manual config:
 
           * pod selector ← the target Service's ``spec.selector`` (falls back to
             ``{"app": <svc-name>}`` if the Service has no selector / isn't found).
@@ -938,9 +1226,12 @@ class ProxyDeployService:
             vLLM *served-model-name* (e.g. ``qwen3-32b``), which is NOT a valid HF repo
             and breaks the tokenizer — so we prefer the discovered ``--model`` value.
             None if not found (caller falls back to ``llm_model``).
+          * pod port ← the target Service's ``targetPort`` for the URL's port (an
+            InferencePool targets pods, so Service 80 -> vLLM 8000 needs 8000).
+            None if not found (caller falls back to the URL's port).
 
-        Returns:
-            (match_labels, kv_events_port, hf_model_id).
+          * served model ← ``--served-model-name``, else ``--model`` (what clients request).
+          * simulator ← an llm-d inference simulator container (shown on the proxy card).
         """
         fallback_labels = {"app": _svc_name(target.llm_base_url)}
         svc_name = _svc_name(target.llm_base_url)
@@ -962,11 +1253,14 @@ class ProxyDeployService:
                 )
                 kv_port = _kv_events_port_from_pods(pods)
                 hf_model = _hf_model_from_pods(pods)
+                pod_port = _pod_port_from_service(svc, _svc_port(target.llm_base_url), pods)
+                simulator = _is_llm_d_simulator(pods)
+                served_model = _served_model_from_pods(pods)
         except Exception as exc:  # discovery is best-effort — never fail the deploy on it
-            self._emit(on_status, f"[llm-d-router] routing discovery failed ({exc}); using fallbacks")
-            return fallback_labels, None, None
+            self._emit(on_status, f"Target routing discovery failed ({exc}); using fallbacks")
+            return TargetRouting(fallback_labels)
 
-        return match_labels, kv_port, hf_model
+        return TargetRouting(match_labels, kv_port, hf_model, pod_port, served_model, simulator)
 
     def _undeploy_multi_step(
         self,
@@ -1033,12 +1327,10 @@ class ProxyDeployService:
             elif deploy.proxy_type == "llm-d-router" and release:
                 # Delete only the per-target agentgateway data plane we applied via
                 # kubectl (HTTPRoute + Gateway + AgentgatewayParameters). The EPP +
-                # InferencePool + RBAC are owned by the helm release (inferencepool
+                # InferencePool + RBAC are owned by the helm release (llm-d-router-gateway
                 # chart) and removed by helm uninstall below. The shared agentgateway
                 # control plane (agentgateway-crds / agentgateway) + GatewayClass + GIE
-                # CRDs are cluster-wide singletons and preserved. The HF-token secret is
-                # also left in place — it's empty/credential-bearing and may be shared by
-                # other workloads in the namespace; we never created data worth deleting.
+                # CRDs are cluster-wide singletons and preserved.
                 pool_namespace = target.llm_namespace or "default"
                 gw_namespace = target.proxy_namespace or "perf-proxies"
                 with kubeconfig_for_cluster(cluster, self.db) as kubeconfig_path:
@@ -1051,7 +1343,7 @@ class ProxyDeployService:
                             kubeconfig_path, resource, ns,
                             ignore_missing=True, context=context,
                         )
-                self.helm.uninstall_release(
+                self._uninstall_release(
                     cluster_id=target.cluster_id,
                     release_name=release,
                     namespace=pool_namespace,
@@ -1066,6 +1358,7 @@ class ProxyDeployService:
                 status_message="Uninstalled successfully",
                 proxy_url=None,
                 external_url=None,
+                routing_info=None,
                 deployed_at=None,
             )
             self._emit(on_status, "Uninstall complete")
@@ -1150,8 +1443,13 @@ class ProxyDeployService:
         controller — it has no values keys for ``Gateway`` or ``HTTPRoute``
         resources.  Those are applied separately in ``_post_install_envoy()``
         as raw Gateway API CRDs after Helm install completes.
+
+        Each release gets its own controller name, so it reconciles only its own
+        GatewayClass and leaves alone the shared ``eg`` controller that
+        envoy-ai-gateway installs (and any other envoy target's).
         """
-        return {}
+        release = deploy.helm_release or _safe_release_name(deploy.proxy_type, target.name)
+        return {"config": {"envoyGateway": {"gateway": {"controllerName": _envoy_controller_name(release)}}}}
 
     def _values_nginx(self, deploy: ProxyDeployment, target: BenchmarkTarget) -> dict:
         """NGINX Ingress Controller Helm values.
@@ -1164,6 +1462,7 @@ class ProxyDeployService:
             "controller": {
                 "service": {
                     "type": "NodePort",
+                    "nodePorts": {"tcp": {str(PROXY_LISTEN_PORT): PROXY_NODE_PORTS["nginx"]}},
                 },
                 "config": {
                     "proxy-connect-timeout": "60",
@@ -1186,6 +1485,15 @@ class ProxyDeployService:
         return {
             "service": {
                 "type": "NodePort",
+                "ports": {
+                    "http": PROXY_LISTEN_PORT,
+                },
+                "nodePorts": {
+                    "http": PROXY_NODE_PORTS["haproxy"],
+                },
+            },
+            "containerPorts": {
+                "http": PROXY_LISTEN_PORT,
             },
             "config": (
                 f"frontend llm_proxy\n"
@@ -1446,6 +1754,11 @@ def _backend_svc_port(target: "BenchmarkTarget") -> int:  # type: ignore[name-de
 ENVOY_GATEWAY_CLASS_NAME = "eg"
 ENVOY_GATEWAY_CONTROLLER = "gateway.envoyproxy.io/gatewayclass-controller"
 
+
+def _envoy_controller_name(release: str) -> str:
+    """Controller name of an ``envoy`` proxy's own Envoy Gateway install."""
+    return f"gateway.envoyproxy.io/{release}"
+
 # AWS LB Controller annotations that configure an internal NLB for the envoy data-plane Service.
 # Applied to the EnvoyProxy CR (spec.provider.kubernetes.envoyService.annotations) when the
 # target opts in via tags["proxy_expose"] == "internal-nlb".  Subnet auto-discovery works
@@ -1457,16 +1770,9 @@ AWS_INTERNAL_NLB_ANNOTATIONS: dict[str, str] = {
 }
 
 
-def _envoy_proxy_clusterip_doc(release: str, namespace: str) -> dict:
-    """Backward-compatible shim — delegates to ``_envoy_proxy_doc`` with default intent.
-
-    Retained so any callers outside ``_build_envoy_dataplane_manifest`` (e.g.
-    the GAIE manifest builder) continue to work without modification.
-    """
-    return _envoy_proxy_doc(release, namespace, expose_intent=None)
-
-
-def _envoy_proxy_doc(release: str, namespace: str, expose_intent: str | None) -> dict:
+def _envoy_proxy_doc(
+    release: str, namespace: str, expose_intent: str | None, node_port: int | None = None,
+) -> dict:
     """EnvoyProxy that controls the data-plane Envoy Service type.
 
     When ``expose_intent == "internal-nlb"``:
@@ -1476,8 +1782,14 @@ def _envoy_proxy_doc(release: str, namespace: str, expose_intent: str | None) ->
         propagating in Envoy Gateway v1.7.1 via ``KubernetesServiceSpec.Annotations``
         + controller ``Service()`` ``maps.Copy`` — no post-apply kubectl patch needed.
 
-    Otherwise (default / kind / OCI / bare-metal):
-      - ``envoyService.type`` is ``ClusterIP`` — byte-identical to the prior behaviour.
+    With a ``node_port`` (the default for Forge's benchmark proxies):
+      - ``envoyService.type`` is ``NodePort``, patched to the fixed ``node_port``
+        (``PROXY_NODE_PORTS``) on the listener port, so the external load
+        generator reaches it and the cluster firewall opens just that port.
+        The ClusterIP still exists for in-cluster agents.
+
+    Otherwise, or with ``expose_intent == "clusterip"``:
+      - ``envoyService.type`` is ``ClusterIP`` (in-cluster benchmarking only).
       - No ``annotations`` key is emitted (avoids surprising empty-dict diffs on redeploy).
 
     On bare-metal clusters with no LoadBalancer provider, the default LB-type
@@ -1491,6 +1803,19 @@ def _envoy_proxy_doc(release: str, namespace: str, expose_intent: str | None) ->
         envoy_service: dict = {
             "type": "LoadBalancer",
             "annotations": dict(AWS_INTERNAL_NLB_ANNOTATIONS),
+        }
+    elif node_port and expose_intent != "clusterip":
+        # Fixed NodePort on the listener port, so a load generator outside the
+        # cluster (the awsbnkctl jumphost) reaches it through one opened port.
+        # Strategic merge keys Service ports by ``port``. Envoy Gateway defaults the
+        # policy to Local, which drops traffic sent to a node without an Envoy pod.
+        envoy_service = {
+            "type": "NodePort",
+            "externalTrafficPolicy": "Cluster",
+            "patch": {
+                "type": "StrategicMerge",
+                "value": {"spec": {"ports": [{"port": PROXY_LISTEN_PORT, "nodePort": node_port}]}},
+            },
         }
     else:
         envoy_service = {"type": "ClusterIP"}
@@ -1553,8 +1878,9 @@ def _build_envoy_dataplane_manifest(
 ) -> str:
     """Render GatewayClass + Gateway + HTTPRoute as a single multi-doc YAML.
 
-    GatewayClass is cluster-scoped and shared across envoy deploys.  Gateway
-    lives in the proxy namespace.  HTTPRoute lives in the route namespace
+    GatewayClass is cluster-scoped, named after the release and bound to that
+    release's own controller (see ``_values_envoy``).  Gateway lives in the
+    proxy namespace.  HTTPRoute lives in the route namespace
     resolved by ``_route_namespace`` — ``tags["upstream_namespace"]`` when
     provided, else the target's ``llm_namespace`` — so its namespace-LESS
     backendRef is local and avoids needing a ReferenceGrant.
@@ -1570,10 +1896,10 @@ def _build_envoy_dataplane_manifest(
         {
             "apiVersion": "gateway.networking.k8s.io/v1",
             "kind": "GatewayClass",
-            "metadata": {"name": ENVOY_GATEWAY_CLASS_NAME},
-            "spec": {"controllerName": ENVOY_GATEWAY_CONTROLLER},
+            "metadata": {"name": release},
+            "spec": {"controllerName": _envoy_controller_name(release)},
         },
-        _envoy_proxy_doc(release, gateway_namespace, expose_intent),
+        _envoy_proxy_doc(release, gateway_namespace, expose_intent, node_port=PROXY_NODE_PORTS["envoy"]),
         {
             "apiVersion": "gateway.networking.k8s.io/v1",
             "kind": "Gateway",
@@ -1583,7 +1909,7 @@ def _build_envoy_dataplane_manifest(
                 "labels": {"app.kubernetes.io/managed-by": "bnk-forge"},
             },
             "spec": {
-                "gatewayClassName": ENVOY_GATEWAY_CLASS_NAME,
+                "gatewayClassName": release,
                 "infrastructure": _gateway_infrastructure_ref(release),
                 "listeners": [{
                     "name": "llm",
@@ -1681,7 +2007,7 @@ def _envoy_gateway_base_values() -> dict:
 
 
 def _build_inference_epp_manifest(
-    release: str, pool_namespace: str, backend_label: str, backend_port: int,
+    release: str, pool_namespace: str, match_labels: dict[str, str], backend_port: int,
 ) -> str:
     """Render the per-target GAIE Endpoint Picker (EPP) data plane as multi-doc YAML.
 
@@ -1719,7 +2045,7 @@ def _build_inference_epp_manifest(
             "metadata": {"name": release, "namespace": pool_namespace, "labels": managed_by},
             "spec": {
                 "targetPorts": [{"number": backend_port}],
-                "selector": {"matchLabels": {"app": backend_label}},
+                "selector": {"matchLabels": dict(match_labels)},
                 "endpointPickerRef": {"name": epp_name, "port": {"number": EPP_GRPC_PORT}},
             },
         },
@@ -1915,8 +2241,14 @@ def _build_agentgateway_manifest(
             "apiVersion": AGENTGATEWAY_PARAMS_API_VERSION,
             "kind": AGENTGATEWAY_PARAMS_KIND,
             "metadata": {"name": release, "namespace": gateway_namespace, "labels": managed_by},
-            # KubernetesResourceOverlay: strategic-merge ServiceSpec patch.
-            "spec": {"service": {"spec": {"type": "ClusterIP"}}},
+            # KubernetesResourceOverlay: strategic-merge ServiceSpec patch (ports keyed
+            # by ``port``). NodePort with a fixed port so the awsbnkctl jumphost can
+            # reach it through one opened port on any node; the ClusterIP is still the address.
+            "spec": {"service": {"spec": {
+                "type": "NodePort",
+                "externalTrafficPolicy": "Cluster",
+                "ports": [{"port": PROXY_LISTEN_PORT, "nodePort": PROXY_NODE_PORTS["llm-d-router"]}],
+            }}},
         },
         {
             "apiVersion": "gateway.networking.k8s.io/v1",
@@ -1979,7 +2311,7 @@ def _build_gaie_gateway_manifest(
             "metadata": {"name": ENVOY_GATEWAY_CLASS_NAME},
             "spec": {"controllerName": ENVOY_GATEWAY_CONTROLLER},
         },
-        _envoy_proxy_clusterip_doc(release, gateway_namespace),
+        _envoy_proxy_doc(release, gateway_namespace, None, node_port=PROXY_NODE_PORTS["envoy-ai-gateway"]),
         {
             "apiVersion": "gateway.networking.k8s.io/v1",
             "kind": "Gateway",
@@ -2074,61 +2406,66 @@ def _build_gaie_gateway_manifest(
 # llm-d-router (precise prefix-cache) values + KV-events port discovery
 # ---------------------------------------------------------------------------
 
-def _precise_prefix_cache_config(model_name: str, kv_events_port: int) -> str:
-    """Render the EndpointPickerConfig for the precise prefix-cache scorer.
+def _precise_prefix_cache_config(
+    model_name: str, render_url: str | None, kv_events_port: int,
+) -> str:
+    """Render the llm-d EndpointPickerConfig for precise prefix-cache routing.
 
-    Mirrors ~/go/src/llm-d/guides/precise-prefix-cache-aware/gaie-kv-events/
-    values.yaml's ``precise-prefix-cache-config.yaml``, parameterized by the
-    target's model (for the tokenizer) and the discovered KV-events ZMQ port.
+    Mirrors llm-d-router v0.11.0 deploy/config/epp-precise-prefix-cache-config.yaml:
+    token-producer -> precise-prefix-cache-producer -> prefix-cache-scorer.
 
-    Uses POD DISCOVERY (``discoverPods: true`` + ``podDiscoveryConfig.socketPort``)
-    so the EPP connects out to each model-server pod's published port — no
-    dependency on the (already-deployed) vLLM knowing the EPP's address.
+    * ``render_url``: the model server's base URL; tokens come from its vLLM render
+      endpoint. None = llm-d's estimate tokenizer (no model-server dependency).
+    * ``kv_events_port``: the EPP connects to each discovered pod on it (vLLM
+      ``--kv-events-config``).
     """
+    token_producer: dict = {"type": "token-producer"}
+    if render_url:
+        token_producer["parameters"] = {"modelName": model_name, "vllm": {"url": render_url}}
+    kv_events = {
+        "topicFilter": "kv@",
+        "concurrency": 4,
+        "discoverPods": True,
+        "podDiscoveryConfig": {"socketPort": kv_events_port},
+    }
+    sources = [{"pluginRef": "metrics-data-source", "extractors": [{"pluginRef": "core-metrics-extractor"}]}]
+    # Per-pod subscriptions are driven by endpoint notifications.
+    plugins = [token_producer, {"type": "endpoint-notification-source"}]
+    sources.append({
+        "pluginRef": "endpoint-notification-source",
+        "extractors": [{"pluginRef": "precise-prefix-cache-producer"}],
+    })
+    plugins += [
+        {"type": "metrics-data-source"},
+        {"type": "core-metrics-extractor"},
+        {"type": "single-profile-handler"},
+        {"type": "decode-filter"},
+        {
+            "type": "precise-prefix-cache-producer",
+            "parameters": {
+                "tokenProcessorConfig": {"blockSizeTokens": LLM_D_ROUTER_KV_BLOCK_SIZE},
+                "speculativeIndexing": True,
+                "kvEventsConfig": kv_events,
+            },
+        },
+        {"type": "prefix-cache-scorer", "parameters": {"prefixMatchInfoProducerName": "precise-prefix-cache-producer"}},
+        {"type": "kv-cache-utilization-scorer"},
+        {"type": "queue-scorer"},
+        {"type": "max-score-picker"},
+    ]
     cfg = {
-        "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
+        "apiVersion": "llm-d.ai/v1alpha1",
         "kind": "EndpointPickerConfig",
-        "plugins": [
-            {"type": "single-profile-handler"},
-            {
-                "type": "tokenizer",
-                "parameters": {
-                    "modelName": model_name,
-                    "udsTokenizerConfig": {"socketFile": "/tmp/tokenizer/tokenizer-uds.socket"},
-                },
-            },
-            {
-                "type": "precise-prefix-cache-scorer",
-                "parameters": {
-                    "tokenProcessorConfig": {"blockSize": LLM_D_ROUTER_KV_BLOCK_SIZE},
-                    "indexerConfig": {
-                        "speculativeIndexing": True,
-                        "tokenizersPoolConfig": {
-                            "modelName": model_name,
-                            "local": None,
-                            "hf": None,
-                            "uds": {"socketFile": "/tmp/tokenizer/tokenizer-uds.socket"},
-                        },
-                    },
-                    "kvEventsConfig": {
-                        "topicFilter": "kv@",
-                        "concurrency": 4,
-                        "discoverPods": True,
-                        "podDiscoveryConfig": {"socketPort": kv_events_port},
-                    },
-                },
-            },
-            {"type": "kv-cache-utilization-scorer"},
-            {"type": "queue-scorer"},
-            {"type": "max-score-picker"},
-        ],
+        "plugins": plugins,
+        "dataLayer": {"sources": sources},
         "schedulingProfiles": [
             {
                 "name": "default",
                 "plugins": [
-                    {"pluginRef": "precise-prefix-cache-scorer", "weight": 3.0},
-                    {"pluginRef": "kv-cache-utilization-scorer", "weight": 2.0},
-                    {"pluginRef": "queue-scorer", "weight": 2.0},
+                    {"pluginRef": "decode-filter"},
+                    {"pluginRef": "prefix-cache-scorer", "weight": 2.0},
+                    {"pluginRef": "kv-cache-utilization-scorer", "weight": 1.0},
+                    {"pluginRef": "queue-scorer", "weight": 1.0},
                     {"pluginRef": "max-score-picker"},
                 ],
             },
@@ -2143,72 +2480,34 @@ def _build_llm_d_router_values(
     target_port: int,
     match_labels: dict[str, str],
     kv_events_port: int,
+    render_url: str | None = None,
 ) -> dict:
-    """Build the GAIE InferencePool chart values for the precise llm-d scheduler.
+    """Build the llm-d-router-gateway chart values for precise prefix-cache routing.
 
     The InferencePool selects the target's model-server pods (``match_labels``,
-    ``target_port``); the EPP runs the llm-d inference-scheduler image with a UDS
-    tokenizer sidecar and the precise prefix-cache scorer wired to ``kv_events_port``.
+    ``target_port``); the EPP runs the chart's llm-d-router image with the config
+    from ``_precise_prefix_cache_config``. No gateway provider: Forge applies its own
+    agentgateway Gateway + HTTPRoute.
     """
-    return {
-        "inferenceExtension": {
-            "replicas": 1,
-            "flags": {"v": 4},
-            "image": {
-                "name": LLM_D_ROUTER_EPP_IMAGE_NAME,
-                "hub": LLM_D_ROUTER_EPP_IMAGE_HUB,
-                "tag": LLM_D_ROUTER_EPP_IMAGE_TAG,
-                "pullPolicy": "Always",
-            },
-            "extProcPort": EPP_GRPC_PORT,
-            # HF token for the tokenizer pool. Secret must pre-exist in the pool ns.
-            "env": [
-                {
-                    "name": "HF_TOKEN",
-                    "valueFrom": {
-                        "secretKeyRef": {"name": LLM_D_ROUTER_HF_TOKEN_SECRET, "key": "HF_TOKEN"},
-                    },
-                },
-            ],
-            # UDS tokenizer sidecar — the single epplib sidecar slot (which is why
-            # the self-contained standalone proxy sidecar can't coexist with precise).
-            "sidecar": {
-                "enabled": True,
-                "image": LLM_D_ROUTER_TOKENIZER_IMAGE,
-                "imagePullPolicy": "IfNotPresent",
-                "name": "tokenizer-uds",
-                "configMap": {"name": "tokenizer-uds-config", "data": {"placeholder": ""}},
-                "env": [
-                    {"name": "TOKENIZERS_DIR", "value": "/tokenizers"},
-                    {"name": "HF_HOME", "value": "/tokenizers"},
-                ],
-                "volumeMounts": [
-                    {"mountPath": "/tokenizers", "name": "tokenizers"},
-                    {"mountPath": "/tmp/tokenizer", "name": "tokenizer-uds"},
-                ],
-            },
-            "volumes": [
-                {"name": "tokenizers", "emptyDir": {}},
-                {"name": "tokenizer-uds", "emptyDir": {}},
-            ],
-            "volumeMounts": [
-                {"mountPath": "/tmp/tokenizer", "name": "tokenizer-uds"},
-            ],
-            "pluginsConfigFile": "precise-prefix-cache-config.yaml",
-            "pluginsCustomConfig": {
-                "precise-prefix-cache-config.yaml": _precise_prefix_cache_config(
-                    model_name, kv_events_port,
-                ),
-            },
-            # Benchmark deploys don't ship the infra prometheus-reader secret the
-            # llm-d guide references; disable EPP prometheus auth to keep the install
-            # self-contained (no missing-secret dependency).
-            "monitoring": {"prometheus": {"enabled": False}},
+    epp: dict = {
+        "pluginsConfigFile": "precise-prefix-cache-config.yaml",
+        "pluginsCustomConfig": {
+            "precise-prefix-cache-config.yaml": _precise_prefix_cache_config(
+                model_name, render_url, kv_events_port,
+            ),
         },
-        "inferencePool": {
-            "targetPorts": [{"number": target_port}],
-            "modelServerType": "vllm",
-            "modelServers": {"matchLabels": match_labels},
+        "resources": LLM_D_ROUTER_EPP_RESOURCES,
+    }
+    return {
+        "provider": {"name": "none"},
+        "router": {
+            "epp": epp,
+            "modelServers": {
+                "matchLabels": match_labels,
+                "type": "vllm",
+                "protocol": "http",
+                "targetPorts": [{"number": target_port}],
+            },
         },
     }
 
@@ -2306,6 +2605,27 @@ def _parse_kv_events_port(container: dict) -> int | None:
 
     # Shell-wrapped form: scan the whole command line.
     return _kv_port_from_cmdline(_container_cmdline(container))
+
+
+def _pod_port_from_service(svc_json: dict | None, svc_port: int, pods_json: dict | None) -> int | None:
+    """The pod port behind ``svc_port`` on a ``kubectl get service -o json`` payload.
+
+    A numeric ``targetPort`` is returned as is, a named one is looked up in the
+    pods' containerPorts; an omitted ``targetPort`` equals the Service port.
+    """
+    ports = ((svc_json or {}).get("spec") or {}).get("ports") or []
+    port = next((p for p in ports if p.get("port") == svc_port), None)
+    if port is None:
+        return None
+    target = port.get("targetPort", svc_port)
+    if isinstance(target, int):
+        return target
+    for pod in ((pods_json or {}).get("items") or []):
+        for container in ((pod.get("spec") or {}).get("containers") or []):
+            for cport in (container.get("ports") or []):
+                if cport.get("name") == target:
+                    return cport.get("containerPort")
+    return None
 
 
 def _kv_events_port_from_pods(pods_json: dict | None) -> int | None:
@@ -2423,40 +2743,144 @@ def _gie_crds_present(kubeconfig_path: str, context: str | None = None) -> bool:
     return proc.returncode == 0
 
 
-def _ensure_hf_token_secret(
-    kubeconfig_path: str, namespace: str, name: str, context: str | None = None,
+def _served_models_from_pods(pods_json: dict | None) -> list[str]:
+    """Every name the model server answers to: all ``--served-model-name`` values, else ``--model``."""
+    for pod in ((pods_json or {}).get("items") or []):
+        for container in ((pod.get("spec") or {}).get("containers") or []):
+            tokens = (container.get("command") or []) + (container.get("args") or [])
+            for idx, tok in enumerate(tokens):
+                if tok == "--served-model-name":
+                    names = []
+                    for nxt in tokens[idx + 1:]:
+                        if not isinstance(nxt, str) or nxt.startswith("--"):
+                            break
+                        names.append(nxt)
+                    return names
+                if isinstance(tok, str) and tok.startswith("--served-model-name="):
+                    return tok.split("=", 1)[1].split()
+            model = _model_from_container(container)
+            if model:
+                return [model]
+    return []
+
+
+def _block_size_from_pods(pods_json: dict | None) -> int:
+    """The model server's KV-cache block size (``--block-size``); vLLM's default is 16."""
+    for pod in ((pods_json or {}).get("items") or []):
+        for container in ((pod.get("spec") or {}).get("containers") or []):
+            match = re.search(r"--block-size[=\s]+(\d+)", _container_cmdline(container))
+            if match:
+                return int(match.group(1))
+    return 16
+
+
+def _copy_secret_if_absent(kubeconfig_path: str, name: str, src_ns: str, dst_ns: str, context: str | None = None) -> None:
+    """Copy Secret ``name`` from ``src_ns`` to ``dst_ns`` unless it already exists there."""
+    if not name or _kubectl_get_json(kubeconfig_path, ["-n", dst_ns, "get", "secret", name], context=context) is not None:
+        return
+    src = _kubectl_get_json(kubeconfig_path, ["-n", src_ns, "get", "secret", name], context=context)
+    if src is None:
+        raise RuntimeError(f"pull secret {src_ns}/{name} not found to copy into {dst_ns}")
+    copy = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": dst_ns},
+            "type": src.get("type"), "data": src.get("data")}
+    _kubectl_apply(kubeconfig_path, yaml.safe_dump(copy), context=context)
+
+
+def _f5_epp_kv_events(kv_port: int | None) -> str:
+    """How the F5 EPP gets KV-cache events: it connects to each pod on :20080 (replay :20081)."""
+    if kv_port == F5_EPP_KV_EVENTS_PORT:
+        return f"per pod, F5 EPP connects to :{F5_EPP_KV_EVENTS_PORT} (replay :{F5_EPP_KV_EVENTS_PORT + 1})"
+    if kv_port:
+        return (f"none (the model server publishes on :{kv_port}, the F5 EPP connects to "
+                f":{F5_EPP_KV_EVENTS_PORT}; it tracks the cache speculatively)")
+    return "none (no KV-events port on the model-server pods; the EPP tracks the cache speculatively)"
+
+
+def _build_f5_epp_manifest(
+    release: str, namespace: str, match_labels: dict[str, str], target_port: int, block_size: int,
+    tokenizer: str | None, model: str, rewrite: str | None, gw_name: str, gw_namespace: str, hostname: str,
+) -> str:
+    """F5EPP + InferencePool (+ InferenceModelRewrite) + HTTPRoute on a BNK Gateway (BNK 2.4 how-to)."""
+    managed_by = {"app.kubernetes.io/managed-by": "bnk-forge"}
+    epp_spec: dict = {"poolRef": {"name": release}, "engine": "vllm", "blockSize": block_size}
+    if tokenizer:
+        epp_spec["tokenizer"] = {"name": tokenizer}
+    docs = [
+        {"apiVersion": "inference.k8s.f5.com/v1alpha1", "kind": "F5EPP",
+         "metadata": {"name": f"{release}-epp", "namespace": namespace, "labels": managed_by}, "spec": epp_spec},
+        {"apiVersion": "inference.networking.k8s.io/v1", "kind": "InferencePool",
+         "metadata": {"name": release, "namespace": namespace, "labels": managed_by},
+         "spec": {"selector": {"matchLabels": dict(match_labels)}, "targetPorts": [{"number": target_port}],
+                  "endpointPickerRef": {"name": f"{release}-epp", "port": {"number": EPP_GRPC_PORT}, "failureMode": "FailClose"}}},
+    ]
+    if rewrite:
+        # The F5 EPP looks the tokenizer up by the request's model: map the alias to the HF repo.
+        docs.append({
+            "apiVersion": "inference.networking.x-k8s.io/v1alpha2", "kind": "InferenceModelRewrite",
+            "metadata": {"name": release, "namespace": namespace, "labels": managed_by},
+            "spec": {"poolRef": {"group": "inference.networking.k8s.io", "kind": "InferencePool", "name": release},
+                     "rules": [{"matches": [{"model": {"type": "Exact", "value": model}}], "targets": [{"modelRewrite": rewrite}]}]},
+        })
+    docs.append({
+        "apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+        "metadata": {"name": release, "namespace": namespace, "labels": managed_by},
+        "spec": {"parentRefs": [{"name": gw_name, "namespace": gw_namespace}], "hostnames": [hostname],
+                 "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": "/"}}],
+                            "backendRefs": [{"group": "inference.networking.k8s.io", "kind": "InferencePool",
+                                             "name": release, "port": target_port}]}]},
+    })
+    return "\n---\n".join(yaml.safe_dump(d, sort_keys=False) for d in docs)
+
+
+def _wait_f5_epp_available(
+    kubeconfig_path: str, namespace: str, name: str, timeout_sec: int = 300, context: str | None = None,
 ) -> bool:
-    """Create an empty HF-token secret (key ``HF_TOKEN``) if it doesn't already exist.
+    """Poll the F5EPP until its Available condition is True."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        obj = _kubectl_get_json(kubeconfig_path, ["-n", namespace, "get", "f5-epps", name], context=context) or {}
+        conditions = (obj.get("status") or {}).get("conditions") or []
+        if any(c.get("type") == "Available" and c.get("status") == "True" for c in conditions):
+            return True
+        time.sleep(5)
+    return False
 
-    The llm-d EPP container references ``HF_TOKEN`` via ``secretKeyRef``; a *missing*
-    secret causes ``CreateContainerConfigError`` so the pod never starts and the helm
-    ``--wait`` hangs to timeout. Creating the secret empty is enough for public model
-    tokenizers (e.g. Qwen) to resolve and makes the deploy self-contained.
 
-    Idempotent and non-destructive: if the secret already exists it is left untouched,
-    so a real token a user pre-created for a gated model is preserved.
+def _served_model_from_pods(pods_json: dict | None) -> str | None:
+    """The model name clients request: ``--served-model-name``, else ``--model``."""
+    for pod in ((pods_json or {}).get("items") or []):
+        for container in ((pod.get("spec") or {}).get("containers") or []):
+            model = _served_model_from_container(container) or _model_from_container(container)
+            if model:
+                return model
+    return None
 
-    Returns:
-        True if it created the secret, False if one already existed.
+
+def _is_llm_d_simulator(pods_json: dict | None) -> bool:
+    """True if the target's model-server pods run the llm-d inference simulator."""
+    return any(
+        LLM_D_SIM_IMAGE_NAME in str(container.get("image") or "")
+        for pod in ((pods_json or {}).get("items") or [])
+        for container in ((pod.get("spec") or {}).get("containers") or [])
+    )
+
+
+def _render_endpoint_available(
+    kubeconfig_path: str, namespace: str, service: str, port: int, model: str,
+    context: str | None = None,
+) -> bool:
+    """True if the target Service answers vLLM's ``/v1/chat/completions/render``.
+
+    Probed through the API server's Service proxy, so it works from outside the cluster.
     """
-    get = subprocess.run(
-        ["kubectl", "--kubeconfig", kubeconfig_path, *_context_args(context),
-         "-n", namespace, "get", "secret", name],
-        capture_output=True, text=True, timeout=30,
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": "hi"}]})
+    proc = subprocess.run(
+        ["kubectl", "--kubeconfig", kubeconfig_path, *_context_args(context), "create", "--raw",
+         f"/api/v1/namespaces/{namespace}/services/http:{service}:{port}/proxy/v1/chat/completions/render",
+         "-f", "-"],
+        input=body, capture_output=True, text=True, timeout=30,
     )
-    if get.returncode == 0:
-        return False
-    create = subprocess.run(
-        ["kubectl", "--kubeconfig", kubeconfig_path, *_context_args(context),
-         "-n", namespace, "create", "secret", "generic", name, "--from-literal=HF_TOKEN="],
-        capture_output=True, text=True, timeout=30,
-    )
-    # Tolerate a concurrent creator (AlreadyExists) — the goal is "exists", not "I made it".
-    if create.returncode != 0 and "AlreadyExists" not in (create.stderr or ""):
-        raise RuntimeError(
-            f"failed to create HF token secret '{name}' in {namespace}: {create.stderr.strip()}"
-        )
-    return True
+    return proc.returncode == 0 and "token_ids" in proc.stdout
 
 
 def _context_args(context: str | None) -> list[str]:
@@ -2598,3 +3022,53 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
         else:
             result[key] = val
     return result
+
+
+def proxy_request_settings(deploy: ProxyDeployment | None) -> dict:
+    """Run settings a proxy needs on every request: the Host header of an f5-bnk-epp route.
+
+    ``header`` is aiperf's flag (Forge agents); ``host_header`` is the awsbnkctl daemon's.
+    """
+    host = ((deploy.routing_info or {}) if deploy else {}).get("host_header")
+    return {"header": [f"Host:{host}"], "host_header": host} if host else {}
+
+
+def router_tags(deploy: ProxyDeployment | None) -> dict:
+    """How the proxy picks a pod, recorded on each run: its endpoint picker and KV-event feed."""
+    info = (deploy.routing_info or {}) if deploy else {}
+    return {k: info[src] for k, src in (("router", "epp"), ("router_kv_events", "kv_events")) if info.get(src)}
+
+
+def model_server_tags(db: Any, target: BenchmarkTarget) -> dict:
+    """What the target's model-server pods are, recorded on each benchmark run.
+
+    Best effort (never fails a run): the engine (the llm-d simulator or the image
+    name), the pod count, and the simulated profile/model awsbnkctl annotates on
+    its simulator pods (``awsbnkctl.io/sim-profile``, ``awsbnkctl.io/sim-model``).
+    """
+    try:
+        from models import KubernetesCluster
+        cluster = db.get(KubernetesCluster, target.cluster_id) if target.cluster_id else None
+        if cluster is None:
+            return {}
+        core = k8s_client.CoreV1Api(KubernetesService(db).load_kubeconfig(cluster))
+        namespace = target.llm_namespace or "default"
+        svc = core.read_namespaced_service(_svc_name(target.llm_base_url), namespace, _request_timeout=10)
+        selector = ",".join(f"{k}={v}" for k, v in (svc.spec.selector or {}).items())
+        pods = [p for p in core.list_namespaced_pod(namespace, label_selector=selector, _request_timeout=10).items
+                if p.status and p.status.phase == "Running"] if selector else []
+    except Exception as exc:  # recording is informational only
+        logger.debug("model server lookup for target %s failed: %s", target.id, exc)
+        return {}
+    if not pods:
+        return {}
+    image = (pods[0].spec.containers[0].image or "") if pods[0].spec.containers else ""
+    annotations = pods[0].metadata.annotations or {}
+    tags = {
+        "model_server": "llm-d-inference-sim" if LLM_D_SIM_IMAGE_NAME in image else image.rsplit("/", 1)[-1].split(":")[0],
+        "model_server_replicas": len(pods),
+    }
+    for key in ("sim-profile", "sim-model"):
+        if annotations.get(f"awsbnkctl.io/{key}"):
+            tags[key.replace("-", "_")] = annotations[f"awsbnkctl.io/{key}"]
+    return tags

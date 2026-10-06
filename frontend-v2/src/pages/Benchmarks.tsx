@@ -10,7 +10,6 @@
  */
 import { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -24,17 +23,14 @@ import {
   Activity,
   Server,
   LayoutDashboard,
-  CheckCircle2,
-  Circle,
-  ArrowRight,
   ArrowLeft,
   X,
   BookOpen,
   ChevronDown,
   ChevronRight,
   SearchX,
+  LineChart,
 } from 'lucide-react';
-import { useBenchmarkTargets, useBenchmarkAgents } from '@/hooks/useBenchmarks';
 
 import { BenchmarkTargetsTab } from './BenchmarkTargetsTab';
 import { BenchmarkAgentsTab } from './BenchmarkAgentsTab';
@@ -44,16 +40,11 @@ import { BenchmarkRunDetail } from './BenchmarkRunDetail';
 import { BenchmarkCompareTab } from './BenchmarkCompareTab';
 import { BenchmarkTrendsView } from './BenchmarkTrendsView';
 import { BenchmarkRunGroupView } from './BenchmarkRunGroupView';
+import { BenchmarkCurvesView } from './BenchmarkCurvesView';
 import { BenchmarkOverviewTab } from './BenchmarkOverviewTab';
 import { RunBenchmarkWizard, type RunBenchmarkWizardLaunchResult } from './RunBenchmarkWizard';
 import { deriveRunsViewState, derivePrimaryTabState, type SetupSection } from './benchmark-runs-view';
-
-interface StepState {
-  label: string;
-  description: string;
-  done: boolean;
-  tab: string;
-}
+import { ClusterPicker } from '@/components/observability/pickers';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Getting Started Banner — dismissible, collapses to a re-openable pill (never
@@ -158,62 +149,7 @@ function SetupGuidePill({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Stepper banner — token-pure progress bar + step buttons
-// ──────────────────────────────────────────────────────────────────────────────
 
-function StepperBanner({
-  steps,
-  onStepClick,
-}: {
-  steps: StepState[];
-  onStepClick: (tab: string) => void;
-}) {
-  const completedCount = steps.filter((s) => s.done).length;
-  const allDone = completedCount === steps.length;
-  if (allDone) return null;
-
-  return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
-      <div className="flex items-center gap-2 mb-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Setup progress — {completedCount}/{steps.length}
-        </p>
-        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-success rounded-full transition-all duration-500"
-            style={{ width: `${(completedCount / steps.length) * 100}%` }}
-          />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-0.5">
-        {steps.map((step, i) => (
-          <div key={step.label} className="flex items-center">
-            <button
-              onClick={() => onStepClick(step.tab)}
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors',
-                step.done
-                  ? 'text-success'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
-              )}
-            >
-              {step.done ? (
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <Circle className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="font-medium">{step.label}</span>
-            </button>
-            {i < steps.length - 1 && (
-              <ArrowRight className="h-3 w-3 text-muted-foreground/60 mx-0.5 shrink-0" />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Setup tab — Targets/Agents/Configs as sub-sections, existing components as-is
@@ -222,9 +158,11 @@ function StepperBanner({
 function BenchmarkSetupSection({
   activeSection,
   onSectionChange,
+  selectedClusterId,
 }: {
   activeSection: SetupSection;
   onSectionChange: (section: SetupSection) => void;
+  selectedClusterId?: number;
 }) {
   return (
     <Tabs value={activeSection} onValueChange={(v) => onSectionChange(v as SetupSection)}>
@@ -240,7 +178,7 @@ function BenchmarkSetupSection({
         ]}
       />
       <TabsContent value="targets" className="mt-6">
-        <BenchmarkTargetsTab />
+        <BenchmarkTargetsTab selectedClusterId={selectedClusterId} />
       </TabsContent>
       <TabsContent value="agents" className="mt-6">
         <BenchmarkAgentsTab />
@@ -258,16 +196,17 @@ function BenchmarkSetupSection({
 // only additive support for ?group=<id> (scenario launches from the wizard).
 // ──────────────────────────────────────────────────────────────────────────────
 
-function BenchmarkRunsSection({ searchParams, setSearchParams }: {
+function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId }: {
   searchParams: URLSearchParams;
   setSearchParams: (params: URLSearchParams) => void;
+  selectedClusterId?: number;
 }) {
   const [proxyFilter, setProxyFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingCompareIds, setPendingCompareIds] = useState<number[]>([]);
 
-  const { subView, selectedRunId, compareRunIds, selectedGroupId } = deriveRunsViewState(searchParams);
+  const { subView, selectedRunId, compareRunIds, selectedGroupId, curveGroupIds } = deriveRunsViewState(searchParams);
 
   const goToList = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -298,6 +237,14 @@ function BenchmarkRunsSection({ searchParams, setSearchParams }: {
     const next = new URLSearchParams();
     next.set('tab', 'runs');
     next.set('view', 'trends');
+    setSearchParams(next);
+  }, [setSearchParams]);
+
+  const goToCurves = useCallback((ids: number[]) => {
+    const next = new URLSearchParams();
+    next.set('tab', 'runs');
+    next.set('view', 'curves');
+    if (ids.length) next.set('groups', ids.join(','));
     setSearchParams(next);
   }, [setSearchParams]);
 
@@ -336,6 +283,12 @@ function BenchmarkRunsSection({ searchParams, setSearchParams }: {
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to runs
         </Button>
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => goToCurves([selectedGroupId])}>
+            <LineChart className="h-3.5 w-3.5" />
+            Load curves
+          </Button>
+        </div>
         <BenchmarkRunGroupView groupId={selectedGroupId} />
       </div>
     );
@@ -358,6 +311,18 @@ function BenchmarkRunsSection({ searchParams, setSearchParams }: {
             action={{ label: 'Back to runs', onClick: goToList, variant: 'outline' }}
           />
         )}
+      </div>
+    );
+  }
+
+  if (subView === 'curves') {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" size="sm" className="gap-1.5" onClick={goToList}>
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to runs
+        </Button>
+        <BenchmarkCurvesView groupIds={curveGroupIds} onGroupIdsChange={goToCurves} />
       </div>
     );
   }
@@ -387,6 +352,8 @@ function BenchmarkRunsSection({ searchParams, setSearchParams }: {
       onToggleCompare={toggleCompare}
       onCompare={() => goToCompare(pendingCompareIds)}
       onViewTrends={goToTrends}
+      onViewCurves={() => goToCurves([])}
+      selectedClusterId={selectedClusterId}
     />
   );
 }
@@ -403,10 +370,27 @@ export default function Benchmarks() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardReRunLast, setWizardReRunLast] = useState(false);
 
+  const clusterParam = searchParams.get('cluster');
+  const selectedClusterId = clusterParam ? Number(clusterParam) : undefined;
+
+  const handleClusterChange = useCallback((id: number | null | undefined) => {
+    const next = new URLSearchParams(searchParams);
+    if (id != null) {
+      next.set('cluster', String(id));
+    } else {
+      next.delete('cluster');
+    }
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
+
   const { primaryTab, setupSection } = derivePrimaryTabState(searchParams);
 
   const goToPrimaryTab = useCallback((tab: string) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     if (tab === 'runs') {
       next.set('tab', 'runs');
     } else if (tab === 'setup') {
@@ -416,45 +400,48 @@ export default function Benchmarks() {
       next.set('tab', 'overview');
     }
     setSearchParams(next);
-  }, [setSearchParams, setupSection]);
+  }, [searchParams, setSearchParams, setupSection]);
 
   const goToSetupSection = useCallback((section: SetupSection) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'setup');
     next.set('section', section);
     setSearchParams(next);
-  }, [setSearchParams]);
-
-  // Stepper steps use legacy tab-string semantics: 'runs' -> primary Runs tab,
-  // anything else -> that Setup sub-section. Keeps StepperBanner itself untouched.
-  const handleStepClick = useCallback((tab: string) => {
-    if (tab === 'runs') {
-      goToPrimaryTab('runs');
-      return;
-    }
-    goToSetupSection(tab as SetupSection);
-  }, [goToPrimaryTab, goToSetupSection]);
+  }, [searchParams, setSearchParams]);
 
   const goToRunDetail = useCallback((runId: number) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('group');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'runs');
     next.set('run', String(runId));
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const goToRunGroup = useCallback((groupId: number) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('compare');
+    next.delete('view');
     next.set('tab', 'runs');
     next.set('group', String(groupId));
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const goToTrends = useCallback(() => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
+    next.delete('run');
+    next.delete('group');
+    next.delete('compare');
     next.set('tab', 'runs');
     next.set('view', 'trends');
     setSearchParams(next);
-  }, [setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const openWizard = useCallback((reRunLast = false) => {
     setWizardReRunLast(reRunLast);
@@ -481,59 +468,27 @@ export default function Benchmarks() {
 
   const { refresh: handleRefresh, isRefreshing } = usePageRefresh();
 
-  const { data: targetsData } = useBenchmarkTargets();
-  const { data: agents } = useBenchmarkAgents();
-  const targets = targetsData?.targets ?? [];
-  const hasTargets = targets.length > 0;
-  const hasProxies = targets.some((t) => (t.proxy_count ?? 0) > 0);
-  const hasAgent = (agents ?? []).length > 0;
-
-  const steps: StepState[] = [
-    {
-      label: 'Add target',
-      description: 'Scan or add a K8s cluster + LLM endpoint',
-      done: hasTargets,
-      tab: 'targets',
-    },
-    {
-      label: 'Deploy proxies',
-      description: 'Deploy envoy/nginx/haproxy/BNK',
-      done: hasProxies,
-      tab: 'targets',
-    },
-    {
-      label: 'Connect agent',
-      description: 'Register a test machine',
-      done: hasAgent,
-      tab: 'agents',
-    },
-    {
-      label: 'Run test',
-      description: 'Trigger a benchmark run',
-      done: hasTargets && hasProxies && hasAgent,
-      tab: 'runs',
-    },
-  ];
-
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <PageHeader
-          title="Performance Benchmarks"
-          subtitle="Compare proxy / load-balancer performance for LLM inference traffic."
-          onRefresh={handleRefresh}
-          isRefreshing={isRefreshing}
-        />
-        {guideCollapsed && <SetupGuidePill onExpand={expandGuide} />}
-      </div>
+      <PageHeader
+        title="Performance Benchmarks"
+        subtitle="Compare proxy / load-balancer performance for LLM inference traffic."
+        actions={
+          <div className="flex items-center gap-2">
+            <ClusterPicker value={selectedClusterId} onChange={handleClusterChange} />
+            {guideCollapsed && <SetupGuidePill onExpand={expandGuide} />}
+          </div>
+        }
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+      />
 
       <GettingStartedBanner
         collapsed={guideCollapsed}
         onCollapse={collapseGuide}
         onGoToAgents={() => goToSetupSection('agents')}
       />
-      <StepperBanner steps={steps} onStepClick={handleStepClick} />
 
       <Tabs value={primaryTab} onValueChange={goToPrimaryTab}>
         <ResourceViewTabs
@@ -554,14 +509,23 @@ export default function Benchmarks() {
             onGoToRun={goToRunDetail}
             onGoToRunsList={() => goToPrimaryTab('runs')}
             onGoToTrends={goToTrends}
-            onOpenWizard={() => openWizard(false)}
+            onOpenWizard={openWizard}
+            selectedClusterId={selectedClusterId}
           />
         </TabsContent>
         <TabsContent value="runs" className="mt-6">
-          <BenchmarkRunsSection searchParams={searchParams} setSearchParams={setSearchParams} />
+          <BenchmarkRunsSection
+            searchParams={searchParams}
+            setSearchParams={setSearchParams}
+            selectedClusterId={selectedClusterId}
+          />
         </TabsContent>
         <TabsContent value="setup" className="mt-6">
-          <BenchmarkSetupSection activeSection={setupSection} onSectionChange={goToSetupSection} />
+          <BenchmarkSetupSection
+            activeSection={setupSection}
+            onSectionChange={goToSetupSection}
+            selectedClusterId={selectedClusterId}
+          />
         </TabsContent>
       </Tabs>
 
