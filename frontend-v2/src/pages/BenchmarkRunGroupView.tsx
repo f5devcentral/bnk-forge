@@ -103,10 +103,12 @@ export function BenchmarkRunGroupView({ groupId }: { groupId: number }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Variant</TableHead>
-                <TableHead className="text-right">Concurrency</TableHead>
-                <TableHead className="text-right">p50</TableHead>
-                <TableHead className="text-right">p99</TableHead>
-                <TableHead className="text-right">RPS</TableHead>
+                <TableHead className="text-right">Load</TableHead>
+                <TableHead className="text-right">Cache hit</TableHead>
+                <TableHead className="text-right">TTFT avg</TableHead>
+                <TableHead className="text-right">TTFT p50</TableHead>
+                <TableHead className="text-right">TTFT p99</TableHead>
+                <TableHead className="text-right">Errors</TableHead>
                 <TableHead className="text-right">Tokens/s</TableHead>
                 <TableHead className="text-right">Status</TableHead>
               </TableRow>
@@ -114,7 +116,7 @@ export function BenchmarkRunGroupView({ groupId }: { groupId: number }) {
             <TableBody>
               {runs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                     No child runs yet.
                   </TableCell>
                 </TableRow>
@@ -122,10 +124,14 @@ export function BenchmarkRunGroupView({ groupId }: { groupId: number }) {
                 runs.map((run) => (
                   <TableRow key={run.id}>
                     <TableCell className="font-medium">{run.variant_label ?? `Run #${run.id}`}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtNum(run.concurrency, 0)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtLatency(run.latency_p50)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtLatency(run.latency_p99)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtNum(run.overall_rps)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {run.request_rate != null ? `${fmtNum(run.request_rate)} req/s` : run.concurrency != null ? `c${run.concurrency}` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{run.cache_hit_pct != null ? `${run.cache_hit_pct.toFixed(0)}%` : '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMs(run.ttft_avg)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMs(run.ttft_p50)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMs(run.ttft_p99)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{run.error_rate_pct != null ? `${run.error_rate_pct.toFixed(1)}%` : '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtNum(run.tokens_per_sec)}</TableCell>
                     <TableCell className="flex justify-end">
                       <StatusBadge status={run.status as BenchmarkRunStatus} />
@@ -139,4 +145,8 @@ export function BenchmarkRunGroupView({ groupId }: { groupId: number }) {
       </CardContent>
     </Card>
   );
+}
+
+function fmtMs(v: number | null | undefined): string {
+  return v != null ? `${v.toFixed(0)} ms` : '—';
 }

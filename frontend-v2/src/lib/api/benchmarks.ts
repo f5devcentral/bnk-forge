@@ -36,6 +36,8 @@ import type {
   ProxyDeploymentUpdate,
   ProxyDiscoveryResponse,
   ProxyTaskStatus,
+  RunGroupCurvesResponse,
+  RunGroupListItem,
   RunGroupResponse,
   ScenarioCatalogResponse,
   ScenarioRunRequest,
@@ -64,7 +66,7 @@ export const benchmarksApi = {
 
   // ── Runs (load test results) ─────────────────────────────────────────
 
-  listRuns: (params?: { proxy?: string; tool?: string; model?: string; status?: string; cluster_id?: number; limit?: number; offset?: number }) =>
+  listRuns: (params?: { proxy?: string; tool?: string; model?: string; status?: string; cluster_id?: number; q?: string; sort?: string; order?: 'asc' | 'desc'; limit?: number; offset?: number }) =>
     apiClient.get<BenchmarkRunListResponse>('/api/benchmarks/runs', { params }).then((res) => res.data),
 
   getRun: (runId: number) =>
@@ -181,6 +183,13 @@ export const benchmarksApi = {
   /** Fetch a run-group: parent aggregate metrics + child run summaries. */
   getRunGroup: (groupId: number) =>
     apiClient.get<RunGroupResponse>(`/api/benchmarks/run-groups/${groupId}`).then((res) => res.data),
+
+  listRunGroups: (params?: { scenario_key?: string; limit?: number }) =>
+    apiClient.get<{ groups: RunGroupListItem[]; total: number }>('/api/benchmarks/run-groups', { params }).then((res) => res.data),
+
+  /** Load curves: latency / throughput / goodput per load point, one line per sweep. */
+  runGroupCurves: (groupIds: number[]) =>
+    apiClient.post<RunGroupCurvesResponse>('/api/benchmarks/run-groups/curves', { group_ids: groupIds }).then((res) => res.data),
 
   // ── Agent Hosts (Slice 1) — project-scoped managed remote hosts ──────────
 

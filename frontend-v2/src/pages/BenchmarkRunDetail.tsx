@@ -1,5 +1,7 @@
 /**
- * BenchmarkRunDetail — D-020: single run deep-dive with metrics, charts, timeline.
+ * BenchmarkRunDetail — D-020: single run deep-dive. Leads with what happened (model server,
+ * router, workload, cache hits, per-pod routing, TTFT split); the full aiperf output sits in a
+ * collapsed Details section.
  * Includes MetricCard, AiperfMetricBarChart, LatencyPercentilesChart,
  * PhaseBreakdownTable, and TimelineChart sub-components.
  *
@@ -18,6 +20,7 @@ import {
   ResponsiveContainer,
   ScatterChart,
   Scatter,
+  Cell,
 } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,7 +35,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Zap, Clock, Activity, Trophy, Star, SearchX } from 'lucide-react';
+import { Zap, Clock, Activity, Trophy, Star, SearchX, AlertTriangle, ChevronRight, Database } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   useBenchmarkRun,
   useBenchmarkWebSocket,
@@ -47,9 +52,10 @@ import {
   fmtDuration,
   fmtLatency,
   fmtNum,
-  fmtPct,
 } from './benchmark-utils';
-import type { LatencyStats, PhaseResult, TimelineEvent } from '@/types';
+import type { LatencyStats, ModelServerStats, PhaseResult, TimelineEvent } from '@/types';
+import { RoutingTable } from './benchmark-routing';
+import { cacheSentence, modelServerLabel, routerLabel, workloadSummary } from './benchmark-labels';
 
 // Chart chrome tokens — shared across sub-components.
 const CHART_GRID = 'hsl(var(--border))';
@@ -103,6 +109,19 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
   const osl = aiperfMetrics?.osl;
   const isl = aiperfMetrics?.isl;
   const perUserThroughput = aiperfMetrics?.output_token_throughput_per_user;
+  // Service level (aiperf 0.13+ with --goodput): share of requests meeting every target.
+  const goodFraction = aiperfMetrics?.good_request_fraction?.avg;
+  const goodput = aiperfMetrics?.goodput?.avg;
+  const oslMismatch = aiperfMetrics?.osl_mismatch_count?.avg;
+  const snapshot = (run.config_snapshot ?? {}) as Record<string, unknown>;
+  const requestedOsl = Number(snapshot.output_tokens_mean ?? snapshot.osl) || null;
+  const actualOsl = osl?.avg ?? null;
+  // Far fewer tokens than asked: latency measures the proxy path, not generation.
+  const shortOutput = requestedOsl != null && actualOsl != null && actualOsl < requestedOsl * 0.5;
+  const errorRate = run.total_requests ? ((run.failed_requests ?? 0) / run.total_requests) * 100 : null;
+  const served = result?.model_server as ModelServerStats | undefined;
+  const serverLabel = modelServerLabel(run.tags);
+  const workload = workloadSummary(run.config_snapshot as Record<string, unknown> | null);
 
   return (
     <div className="space-y-6">
@@ -116,10 +135,16 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
                 {run.run_label || `${run.proxy} → ${run.model}`}
               </h2>
             </div>
-            <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-              <span>Model: <span className="font-medium text-foreground/80">{run.model}</span></span>
-              <span>Tool: <span className="font-medium text-foreground/80">{run.tool}</span></span>
-              <span>Target: <span className="font-mono text-xs text-foreground/80">{run.base_url}</span></span>
+            <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+              <p>
+                Model server: <span className="font-medium text-foreground/80">{serverLabel ?? run.model}</span>
+                <span className="mx-2">·</span>
+                Router: <span className="font-medium text-foreground/80">{routerLabel(run.proxy, run.tags)}</span>
+              </p>
+              {workload && <p>Workload: <span className="font-medium text-foreground/80">{workload}</span></p>}
+              <p className="text-xs">
+                Model {run.model} · {run.tool} · <span className="font-mono">{run.base_url}</span>
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -146,18 +171,69 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
           </div>
         </div>
 
-        {/* Summary metrics row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mt-5 pt-5 border-t border-border">
-          <MetricCard icon={Zap} label="Latency P50" value={fmtLatency(run.latency_p50)} tone="info" />
-          <MetricCard icon={Zap} label="Latency P99" value={fmtLatency(run.latency_p99)} tone="destructive" />
-          <MetricCard icon={Clock} label="TTFT (avg)" value={ttft?.avg != null ? `${ttft.avg.toFixed(1)}ms` : '—'} tone="info" />
-          <MetricCard icon={Clock} label="ITL (avg)" value={itl?.avg != null ? `${itl.avg.toFixed(1)}ms` : '—'} tone="info" />
-          <MetricCard icon={Activity} label="RPS" value={fmtNum(run.overall_rps)} tone="primary" />
-          <MetricCard icon={Activity} label="Tokens/sec" value={fmtNum(run.tokens_per_sec)} tone="warning" />
-          <MetricCard icon={Trophy} label="Success" value={fmtPct(run.success_rate_pct)} tone="success" />
-          <MetricCard icon={Clock} label="Duration" value={fmtDuration(run.duration_seconds)} tone="muted" />
+        {/* Result — the numbers that tell how the proxy did */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mt-5 pt-5 border-t border-border">
+          <MetricCard icon={Database} label="Prefix-cache hit" value={served?.totals.hit_pct != null ? `${served.totals.hit_pct.toFixed(0)}%` : '—'} tone="primary" />
+          <MetricCard icon={Clock} label="TTFT avg" value={ttft?.avg != null ? `${ttft.avg.toFixed(0)} ms` : '—'} tone="info" />
+          <MetricCard icon={Clock} label="TTFT p50 / p90 / p99" value={ttft?.p50 != null ? `${ttft.p50.toFixed(0)} / ${(ttft.p90 ?? ttft.p50).toFixed(0)} / ${(ttft.p99 ?? ttft.p50).toFixed(0)} ms` : '—'} tone="info" />
+          <MetricCard icon={Clock} label="Inter-token p50" value={itl?.p50 != null ? `${itl.p50.toFixed(1)} ms` : itl?.avg != null ? `${itl.avg.toFixed(1)} ms` : '—'} tone="info" />
+          <MetricCard icon={Trophy} label="Errors" value={errorRate != null ? `${errorRate.toFixed(1)}%` : '—'} tone={errorRate ? 'destructive' : 'success'} />
+          <MetricCard icon={Activity} label="Output tok/s" value={fmtNum(run.tokens_per_sec)} tone="warning" />
+          <MetricCard icon={Activity} label="Requests" value={run.total_requests != null ? `${run.total_requests.toLocaleString()} in ${fmtDuration(run.duration_seconds)}` : '—'} tone="muted" />
         </div>
+        {cacheSentence(served) && <p className="mt-3 text-sm text-muted-foreground">{cacheSentence(served)}</p>}
       </SectionCard>
+
+      {/* Routing — what the router did, from the model-server pods */}
+      {run.status === 'completed' && (
+        <SectionCard title="Routing — what the router did" compact>
+          {served ? (
+            <RoutingTable stats={served} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No per-pod data for this run. Forge reads it from the model-server pods’ /metrics when a run starts and
+              ends; runs pushed from outside Forge, or started before this was recorded, don’t have it.
+            </p>
+          )}
+        </SectionCard>
+      )}
+
+      {/* Latency — TTFT by percentile: cache hits are the fast band, full prefill the slow one */}
+      {ttft && <TtftPercentileChart ttft={ttft} proxy={run.proxy} withCache={served?.totals.hit_pct != null} />}
+
+      {shortOutput && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            The model returned about {actualOsl!.toFixed(0)} output tokens per request against {requestedOsl} requested.
+            Latency and token throughput here measure proxy overhead, not real generation.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Details — the full aiperf output, collapsed */}
+      {result && (
+      <Collapsible className="space-y-4">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted/40">
+          <ChevronRight className="h-4 w-4 transition-transform group-data-[state=open]:rotate-90" />
+          Details — service level, latency, throughput and the full aiperf metrics
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-6">
+      {aiperfMetrics && (
+        <SectionCard title="Service level" compact>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
+            <ServiceStat label="Requests meeting targets" value={goodFraction != null ? `${(goodFraction * 100).toFixed(1)}%` : 'no targets set'} />
+            <ServiceStat label="Goodput" value={goodput != null ? `${fmtNum(goodput)} req/s` : '—'} />
+            <ServiceStat label="Errors" value={errorRate != null ? `${errorRate.toFixed(1)}%` : '—'} />
+            <ServiceStat label="Output tokens (asked / got)" value={`${requestedOsl ?? '—'} / ${actualOsl != null ? actualOsl.toFixed(0) : '—'}`} />
+            <ServiceStat label="Short outputs" value={oslMismatch != null ? `${oslMismatch.toFixed(0)} requests` : '—'} />
+            <ServiceStat label="Per-user speed p50" value={perUserThroughput?.p50 != null ? `${perUserThroughput.p50.toFixed(1)} tok/s` : '—'} />
+          </div>
+          {goodFraction == null && (
+            <p className="text-xs text-muted-foreground pt-3">Set TTFT / inter-token targets under aiperf settings (Service-level targets) to measure goodput.</p>
+          )}
+        </SectionCard>
+      )}
 
       {/* Smart Routing Breakdown — shows how each requested model was routed by the proxy.
           F5 BNK with the LLM iRule will distribute weighted across multiple backends;
@@ -226,8 +302,8 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
         </div>
       )}
 
-      {/* Per-Phase Breakdown */}
-      {phases && Object.keys(phases).length > 0 && <PhaseBreakdownTable phases={phases} />}
+      {/* Per-Phase Breakdown — only when a tool reports more than one phase */}
+      {phases && Object.keys(phases).length > 1 && <PhaseBreakdownTable phases={phases} />}
 
       {/* Timeline Scatter (if available and not too large) */}
       {timeline && timeline.length > 0 && timeline.length <= 50000 && (
@@ -240,7 +316,8 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 text-sm">
             {throughput && <>
               <div><span className="text-muted-foreground">Overall RPS</span><p className="font-mono font-medium text-foreground">{fmtNum(throughput.overall_rps)}</p></div>
-              <div><span className="text-muted-foreground">Peak RPS</span><p className="font-mono font-medium text-foreground">{fmtNum(throughput.peak_rps)}</p></div>
+              {/* aiperf exports an average only; older rows stored that average as the peak. */}
+              {throughput.peak_rps != null && throughput.peak_rps !== throughput.overall_rps && <div><span className="text-muted-foreground">Peak RPS</span><p className="font-mono font-medium text-foreground">{fmtNum(throughput.peak_rps)}</p></div>}
               {throughput.p50_rps != null && <div><span className="text-muted-foreground">P50 RPS</span><p className="font-mono font-medium text-foreground">{fmtNum(throughput.p50_rps)}</p></div>}
               <div><span className="text-muted-foreground">Output Tokens/sec</span><p className="font-mono font-medium text-foreground">{fmtNum(throughput.gen_tokens_per_sec)}</p></div>
             </>}
@@ -254,6 +331,9 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
           </div>
         </SectionCard>
       )}
+        </CollapsibleContent>
+      </Collapsible>
+      )}
     </div>
   );
 }
@@ -263,6 +343,15 @@ export function BenchmarkRunDetail({ runId, onBack }: { runId: number; onBack?: 
 // ============================================================================
 
 type MetricTone = 'info' | 'destructive' | 'primary' | 'warning' | 'success' | 'muted';
+
+function ServiceStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="text-muted-foreground">{label}</span>
+      <p className="font-mono font-medium text-foreground">{value}</p>
+    </div>
+  );
+}
 
 function MetricCard({ icon: Icon, label, value, tone }: { icon: typeof Zap; label: string; value: string; tone: MetricTone }) {
   const toneClass: Record<MetricTone, string> = {
@@ -281,6 +370,42 @@ function MetricCard({ icon: Icon, label, value, tone }: { icon: typeof Zap; labe
       </div>
       <span className="text-lg font-semibold font-mono text-foreground">{value}</span>
     </div>
+  );
+}
+
+/**
+ * TTFT at each percentile. With prefix caching the distribution splits in two: requests
+ * whose prompt prefix was cached return fast, the rest pay a full prefill. Bars below the
+ * midpoint of the range are drawn as the fast band.
+ */
+function TtftPercentileChart({ ttft, proxy, withCache }: { ttft: Record<string, number>; proxy: string; withCache: boolean }) {
+  const keys = ['p1', 'p5', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95', 'p99'];
+  const data = keys.filter(k => ttft[k] != null).map(k => ({ name: k.toUpperCase(), value: ttft[k] }));
+  if (data.length === 0) return null;
+  const values = data.map(d => d.value);
+  const mid = (Math.min(...values) + Math.max(...values)) / 2;
+  const slow = PROXY_COLORS[proxy] || '#3b82f6';
+  const fast = '#10b981';
+  return (
+    <SectionCard title="Time to first token by percentile (ms)" compact>
+      {withCache && (
+        <p className="mb-3 text-xs text-muted-foreground">
+          <span className="font-medium" style={{ color: fast }}>■ fast</span> — the prompt prefix was already in a pod’s KV cache ·{' '}
+          <span className="font-medium" style={{ color: slow }}>■ slow</span> — full prefill of the prompt
+        </p>
+      )}
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+          <XAxis dataKey="name" tick={{ fill: CHART_TEXT, fontSize: 11 }} />
+          <YAxis tick={{ fill: CHART_TEXT, fontSize: 11 }} />
+          <RechartsTooltip contentStyle={CHART_TOOLTIP} formatter={(v) => [`${Number(v).toFixed(0)} ms`, 'TTFT']} />
+          <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+            {data.map(d => <Cell key={d.name} fill={withCache && d.value < mid ? fast : slow} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </SectionCard>
   );
 }
 

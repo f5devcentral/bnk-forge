@@ -3,7 +3,7 @@
  * Configs table + field reference are rendered in SectionCards. Form-submit
  * buttons stay primary (solid). Action icons are ghost variant.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -52,6 +52,7 @@ import {
   useUpdateBenchmarkConfig,
 } from '@/hooks/useBenchmarks';
 import { ProxyBadge, downloadJson } from './benchmark-utils';
+import { AiperfSettingsEditor, type AiperfSettings } from './AiperfSettingsEditor';
 
 // ============================================================================
 // Config Templates
@@ -186,6 +187,14 @@ function ConfigDialog({
   };
 
   const isPending = createConfig.isPending || updateConfig.isPending;
+  const parsedSettings = useMemo(() => {
+    try {
+      const parsed = JSON.parse(jsonText);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as AiperfSettings : {};
+    } catch {
+      return {};
+    }
+  }, [jsonText]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -222,12 +231,20 @@ function ConfigDialog({
             <Input id="config-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional description" />
           </div>
 
+          {tool === 'aiperf' ? (
+            <div className="space-y-2">
+              <Label>Settings</Label>
+              <AiperfSettingsEditor
+                value={parsedSettings}
+                onChange={(next) => { setJsonText(JSON.stringify(next, null, 2)); setJsonError(null); }}
+                lockedNote="When run against a target, url, model and endpoint come from the target."
+              />
+            </div>
+          ) : (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="config-json">Config JSON</Label>
-              <span className="text-xs text-muted-foreground">
-                {tool === 'aiperf' ? 'RunConfig schema (base_url, model, proxy, phases, ...)' : 'burst_config.json (phases array)'}
-              </span>
+              <span className="text-xs text-muted-foreground">burst_config.json (phases array)</span>
             </div>
             <Textarea
               id="config-json"
@@ -242,6 +259,7 @@ function ConfigDialog({
               </p>
             )}
           </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -302,7 +320,7 @@ export function BenchmarkConfigsTab() {
                   <TableHead>Tool</TableHead>
                   <TableHead>Proxy</TableHead>
                   <TableHead>Model</TableHead>
-                  <TableHead>Base URL</TableHead>
+                  <TableHead>URL</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -319,9 +337,10 @@ export function BenchmarkConfigsTab() {
                         </div>
                       </TableCell>
                       <TableCell><Badge variant="outline" className="text-xs">{config.tool}</Badge></TableCell>
-                      <TableCell>{cj?.proxy ? <ProxyBadge proxy={String(cj.proxy)} /> : '—'}</TableCell>
+                      {/* Saved configs use aiperf keys (url, _proxy_type); proxy/base_url are the legacy names. */}
+                      <TableCell>{(cj?._proxy_type ?? cj?.proxy) ? <ProxyBadge proxy={String(cj._proxy_type ?? cj.proxy)} /> : '—'}</TableCell>
                       <TableCell className="text-sm max-w-[200px] truncate">{String(cj?.model || '—')}</TableCell>
-                      <TableCell className="text-xs font-mono max-w-[200px] truncate">{String(cj?.base_url || '—')}</TableCell>
+                      <TableCell className="text-xs font-mono max-w-[200px] truncate">{String(cj?.url || cj?.base_url || '—')}</TableCell>
                       <TableCell className="text-sm text-muted-foreground"><TimeAgo dateStr={config.created_at} /></TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
