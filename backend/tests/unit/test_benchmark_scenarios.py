@@ -27,13 +27,16 @@ def _expand(key, **kw):
 # Catalog
 # ---------------------------------------------------------------------------
 
+
 def test_catalog_lists_all_presets():
     catalog = list_scenarios()
     keys = {c["key"] for c in catalog}
     assert keys == set(SCENARIO_PRESETS.keys())
     for item in catalog:
         assert item["child_run_count"] >= 1
-        assert {"key", "name", "description", "trace_driven", "child_run_count", "tags", "sweep_param"} <= set(item.keys())
+        assert {"key", "name", "description", "trace_driven", "child_run_count", "tags", "sweep_param"} <= set(
+            item.keys()
+        )
 
 
 def test_catalog_child_count_matches_expansion():
@@ -46,21 +49,22 @@ def test_catalog_child_count_matches_expansion():
 # Per-scenario child counts
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "key,expected",
     [
-        ("baseline", 4),                 # sweep of 4
+        ("baseline", 4),  # sweep of 4
         ("high-concurrency", 4),
-        ("mixed-workload", 1 + 4 + 4),   # warmup + short sweep + long sweep
-        ("multi-turn", 4 + 4 + 4 + 4),   # 4 turns x sweep
-        ("prefix-cache", 4),             # 4 (concurrency, ISL) pairs, 80% prefix
+        ("mixed-workload", 1 + 4 + 4),  # warmup + short sweep + long sweep
+        ("multi-turn", 4 + 4 + 4 + 4),  # 4 turns x sweep
+        ("prefix-cache", 4),  # 4 (concurrency, ISL) pairs, 80% prefix
         ("prefix-cache-completions", 4),
         ("bimodal", 4),
-        ("sustained-load", 5),           # sweep {50,100,150,200,250}
-        ("burst-recovery", 5 * 2),       # 5 rounds x (burst + probe)
-        ("poisson-rate", 5),             # rates {2,4,8,16,32}
-        ("poisson-rate-prefix", 5),      # rates {1,2,4,8,16}
-        ("mooncake", 1),                 # single open-loop trace
+        ("sustained-load", 5),  # sweep {50,100,150,200,250}
+        ("burst-recovery", 5 * 2),  # 5 rounds x (burst + probe)
+        ("poisson-rate", 5),  # rates {2,4,8,16,32}
+        ("poisson-rate-prefix", 5),  # rates {1,2,4,8,16}
+        ("mooncake", 1),  # single open-loop trace
     ],
 )
 def test_scenario_child_count(key, expected):
@@ -70,6 +74,7 @@ def test_scenario_child_count(key, expected):
 # ---------------------------------------------------------------------------
 # Sweep math + flag correctness
 # ---------------------------------------------------------------------------
+
 
 def test_baseline_request_count_formula():
     children = _expand("baseline")
@@ -110,7 +115,10 @@ def test_prefix_cache_heavy_pairs_with_80pct_prefix():
     # (concurrency, ISL) pairs with prefix = 80% of ISL, unique = 20% of ISL.
     seen = {(c["concurrency"], c["prefix_prompt_length"], c["synthetic_input_tokens_mean"]) for c in children}
     assert seen == {
-        (150, 4000, 1000), (200, 5600, 1400), (250, 7200, 1800), (300, 8000, 2000),
+        (150, 4000, 1000),
+        (200, 5600, 1400),
+        (250, 7200, 1800),
+        (300, 8000, 2000),
     }
     for c in children:
         assert c["num_prefix_prompts"] == 20
@@ -176,6 +184,7 @@ def test_burst_recovery_rounds_and_phases():
 # Mooncake — single open-loop trace variant
 # ---------------------------------------------------------------------------
 
+
 def test_mooncake_is_single_open_loop_trace():
     preset = get_scenario("mooncake")
     assert preset.trace_driven is True
@@ -198,6 +207,7 @@ def test_mooncake_is_single_open_loop_trace():
 # ---------------------------------------------------------------------------
 # Overrides + model injection + immutability
 # ---------------------------------------------------------------------------
+
 
 def test_model_override_applies_to_all_children():
     children = _expand("baseline", model="my-deployed-model")
@@ -224,6 +234,7 @@ def test_unknown_scenario_raises_keyerror():
 # ---------------------------------------------------------------------------
 # Description ↔ computed-variant consistency (L2 — catalog strings must not lie)
 # ---------------------------------------------------------------------------
+
 
 def test_prefix_cache_description_matches_computed_prefix_lengths():
     """The catalog description must reflect the real prefix-prompt-length range
@@ -253,6 +264,7 @@ def test_high_concurrency_description_matches_computed_isl():
 # Override-key SSRF guard (belt-and-suspenders layer in expand_scenario)
 # ---------------------------------------------------------------------------
 
+
 def test_expand_scenario_strips_trace_url_override():
     """expand_scenario must not let caller's trace_url override the preset value."""
     # Use mooncake — it has a real trace_url in its preset
@@ -269,7 +281,7 @@ def test_expand_scenario_strips_underscore_prefixed_overrides():
     """expand_scenario must strip _-prefixed keys from caller overrides (Forge metadata namespace)."""
     children = _expand("baseline", overrides={"_scenario_key": "injected", "request_timeout_seconds": 30})
     for c in children:
-        assert c["_scenario_key"] == "baseline"   # preset value wins
+        assert c["_scenario_key"] == "baseline"  # preset value wins
         assert c["request_timeout_seconds"] == 30  # benign override preserved
 
 
@@ -284,6 +296,7 @@ def test_expand_scenario_benign_override_applied():
 # ---------------------------------------------------------------------------
 # Open-loop Poisson rate sweeps
 # ---------------------------------------------------------------------------
+
 
 def test_poisson_steps_keep_rate_warmup_and_duration_floor():
     """Custom rates replace the defaults; overrides cannot shorten a step or cap it by count."""
@@ -308,3 +321,26 @@ def test_steps_rejected_for_fixed_sweeps():
         _expand("baseline", steps=[1, 2])
     with pytest.raises(ValueError):
         _expand("poisson-rate", steps=[0])
+
+
+def test_steps_magnitude_bounds_and_dataset_cap():
+    # Rate below 0.1 rejected
+    with pytest.raises(ValueError, match="out of bounds"):
+        _expand("poisson-rate", steps=[0.05])
+
+    # Rate above 10000 rejected
+    with pytest.raises(ValueError, match="out of bounds"):
+        _expand("poisson-rate", steps=[10001])
+
+    # Non-finite values rejected
+    with pytest.raises(ValueError):
+        _expand("poisson-rate", steps=[float("inf")])
+
+    with pytest.raises(ValueError):
+        _expand("poisson-rate", steps=[float("nan")])
+
+    # High valid rate caps dataset entries and duration
+    children = _expand("poisson-rate", steps=[1000.0])
+    assert len(children) == 1
+    assert children[0]["num_dataset_entries"] <= 50000
+    assert children[0]["benchmark_duration"] <= 3600

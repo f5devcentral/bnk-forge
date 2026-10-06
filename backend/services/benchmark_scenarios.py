@@ -63,6 +63,7 @@ class ScenarioPreset:
 # Shared base-flag builders
 # ---------------------------------------------------------------------------
 
+
 def _synthetic_base(endpoint_type: str = "chat") -> dict:
     """Common base flags for all synthetic (non-trace) scenarios."""
     return {
@@ -82,6 +83,7 @@ def _rc_min(c: int, mult: int = 5, floor: int = 20) -> int:
 # ---------------------------------------------------------------------------
 # Variant builders (one per scenario) — pure functions returning child configs
 # ---------------------------------------------------------------------------
+
 
 def _baseline_variants() -> list[dict]:
     return [
@@ -124,25 +126,29 @@ def _mixed_workload_variants() -> list[dict]:
         }
     ]
     for c in DEFAULT_SWEEP:
-        variants.append({
-            "_variant_label": f"short-c{c}",
-            "_phase": "short",
-            "concurrency": c,
-            "request_count": c * 5,
-            "synthetic_input_tokens_mean": 500,
-            "output_tokens_mean": 64,
-        })
+        variants.append(
+            {
+                "_variant_label": f"short-c{c}",
+                "_phase": "short",
+                "concurrency": c,
+                "request_count": c * 5,
+                "synthetic_input_tokens_mean": 500,
+                "output_tokens_mean": 64,
+            }
+        )
     for c in DEFAULT_SWEEP:
-        variants.append({
-            "_variant_label": f"long-c{c}",
-            "_phase": "long",
-            "concurrency": c,
-            "request_count": c * 5,
-            "synthetic_input_tokens_mean": 600,
-            "output_tokens_mean": 128,
-            "prefix_prompt_length": 1400,
-            "num_prefix_prompts": 10,
-        })
+        variants.append(
+            {
+                "_variant_label": f"long-c{c}",
+                "_phase": "long",
+                "concurrency": c,
+                "request_count": c * 5,
+                "synthetic_input_tokens_mean": 600,
+                "output_tokens_mean": 128,
+                "prefix_prompt_length": 1400,
+                "num_prefix_prompts": 10,
+            }
+        )
     return variants
 
 
@@ -161,16 +167,18 @@ def _multi_turn_variants() -> list[dict]:
     ]
     for turn, prefix_len in ((2, 500), (3, 1000), (4, 1500)):
         for c in DEFAULT_SWEEP:
-            variants.append({
-                "_variant_label": f"turn{turn}-c{c}",
-                "_turn": turn,
-                "concurrency": c,
-                "request_count": c * 5,
-                "synthetic_input_tokens_mean": 500,
-                "output_tokens_mean": 128,
-                "prefix_prompt_length": prefix_len,
-                "num_prefix_prompts": 10,
-            })
+            variants.append(
+                {
+                    "_variant_label": f"turn{turn}-c{c}",
+                    "_turn": turn,
+                    "concurrency": c,
+                    "request_count": c * 5,
+                    "synthetic_input_tokens_mean": 500,
+                    "output_tokens_mean": 128,
+                    "prefix_prompt_length": prefix_len,
+                    "num_prefix_prompts": 10,
+                }
+            )
     return variants
 
 
@@ -183,16 +191,18 @@ def _prefix_cache_variants() -> list[dict]:
     for c, isl in HEAVY_CONC_ISL:
         prefix_len = isl * 8 // 10
         unique_len = isl - prefix_len
-        variants.append({
-            "_variant_label": f"isl{isl}-c{c}",
-            "concurrency": c,
-            "request_count": c * 5,
-            "synthetic_input_tokens_mean": unique_len,
-            "synthetic_input_tokens_stddev": unique_len // 10,
-            "output_tokens_mean": 128,
-            "num_prefix_prompts": 20,
-            "prefix_prompt_length": prefix_len,
-        })
+        variants.append(
+            {
+                "_variant_label": f"isl{isl}-c{c}",
+                "concurrency": c,
+                "request_count": c * 5,
+                "synthetic_input_tokens_mean": unique_len,
+                "synthetic_input_tokens_stddev": unique_len // 10,
+                "output_tokens_mean": 128,
+                "num_prefix_prompts": 20,
+                "prefix_prompt_length": prefix_len,
+            }
+        )
     return variants
 
 
@@ -229,24 +239,28 @@ def _burst_recovery_variants() -> list[dict]:
     burst_seq_dist = "300|100,64|16:50;3000|400,200|50:50"
     variants: list[dict] = []
     for rnd in range(1, 6):
-        variants.append({
-            "_variant_label": f"round{rnd}-burst",
-            "_round": rnd,
-            "_phase": "burst",
-            "concurrency": 200,
-            "request_count": 400,
-            "seq_dist": burst_seq_dist,
-        })
-        variants.append({
-            "_variant_label": f"round{rnd}-probe",
-            "_round": rnd,
-            "_phase": "probe",
-            "concurrency": 25,
-            "request_count": 50,
-            "synthetic_input_tokens_mean": 256,
-            "synthetic_input_tokens_stddev": 50,
-            "output_tokens_mean": 64,
-        })
+        variants.append(
+            {
+                "_variant_label": f"round{rnd}-burst",
+                "_round": rnd,
+                "_phase": "burst",
+                "concurrency": 200,
+                "request_count": 400,
+                "seq_dist": burst_seq_dist,
+            }
+        )
+        variants.append(
+            {
+                "_variant_label": f"round{rnd}-probe",
+                "_round": rnd,
+                "_phase": "probe",
+                "concurrency": 25,
+                "request_count": 50,
+                "synthetic_input_tokens_mean": 256,
+                "synthetic_input_tokens_stddev": 50,
+                "output_tokens_mean": 64,
+            }
+        )
     return variants
 
 
@@ -263,13 +277,19 @@ DEFAULT_GOODPUT = "time_to_first_token:2000 inter_token_latency:200"
 # enough to collect STEP_MIN_REQUESTS so p99 rests on a few hundred samples.
 STEP_WARMUP_S = 30
 STEP_DURATION_FLOOR_S = 120
+MAX_STEP_DURATION_S = 3600
 STEP_MIN_REQUESTS = 300
 MAX_STEPS = 12
+MIN_STEP_RATE = 0.1
+MAX_STEP_RATE = 10000.0
+MAX_DATASET_ENTRIES = 50000
 
 
 def step_duration_s(rate: float) -> int:
-    """Measured seconds for one rate step: the floor, longer at low rates."""
-    return max(STEP_DURATION_FLOOR_S, math.ceil(STEP_MIN_REQUESTS / rate))
+    """Measured seconds for one rate step: the floor, longer at low rates, capped at MAX_STEP_DURATION_S."""
+    if not math.isfinite(rate) or rate <= 0:
+        return STEP_DURATION_FLOOR_S
+    return min(MAX_STEP_DURATION_S, max(STEP_DURATION_FLOOR_S, math.ceil(STEP_MIN_REQUESTS / rate)))
 
 
 def _rate_label(rate: float) -> str:
@@ -287,7 +307,7 @@ def _poisson_step(rate: float, workload: dict, index: int = 0) -> dict:
         "goodput": DEFAULT_GOODPUT,
         # A distinct prompt for every request the step sends: aiperf otherwise cycles
         # through 100, which a KV cache holds whole and every request then hits.
-        "num_dataset_entries": math.ceil(rate * (STEP_WARMUP_S + duration)),
+        "num_dataset_entries": min(MAX_DATASET_ENTRIES, math.ceil(rate * (STEP_WARMUP_S + duration))),
         # Same prompts for every proxy, so sweeps compare like for like; a new seed per
         # step so each step brings new sessions instead of replaying the last step's.
         "random_seed": 42 + index,
@@ -338,8 +358,7 @@ def _poisson_agentic_variants(rates: tuple[float, ...]) -> list[dict]:
 # Mooncake production trace — open-loop, single variant, no sweep.
 MOONCAKE_MODEL = "Qwen/Qwen3-32B"
 MOONCAKE_TRACE_URL = (
-    "https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/"
-    "FAST25-release/traces/toolagent_trace.jsonl"
+    "https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/toolagent_trace.jsonl"
 )
 MOONCAKE_DILATION = 0.80
 
@@ -540,10 +559,23 @@ def get_scenario(scenario_key: str) -> ScenarioPreset:
 def _check_steps(preset: ScenarioPreset, steps: list[float]) -> list[float]:
     if not preset.sweep_param:
         raise ValueError(f"Scenario '{preset.key}' has a fixed sweep; load steps cannot be changed")
-    clean = sorted({float(s) for s in steps})
-    if not clean or len(clean) > MAX_STEPS or clean[0] <= 0:
-        raise ValueError(f"Give 1-{MAX_STEPS} load steps, each above 0")
-    return clean
+    clean: list[float] = []
+    for s in steps:
+        try:
+            val = float(s)
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Invalid step rate '{s}': must be a finite number between {MIN_STEP_RATE} and {MAX_STEP_RATE}"
+            )
+        if not math.isfinite(val) or val < MIN_STEP_RATE or val > MAX_STEP_RATE:
+            raise ValueError(
+                f"Step rate {s} out of bounds: must be a finite number between {MIN_STEP_RATE} and {MAX_STEP_RATE} req/s"
+            )
+        clean.append(val)
+    dedup = sorted(set(clean))
+    if not dedup or len(dedup) > MAX_STEPS:
+        raise ValueError(f"Give 1-{MAX_STEPS} load steps between {MIN_STEP_RATE} and {MAX_STEP_RATE}")
+    return dedup
 
 
 def expand_scenario(
@@ -576,10 +608,7 @@ def expand_scenario(
     # ensures the preset's own trace_url always wins even if overrides somehow
     # bypass validation (e.g. internal callers, future code paths).
     _FORBIDDEN = frozenset({"trace_url"})
-    safe_overrides = {
-        k: v for k, v in overrides.items()
-        if k not in _FORBIDDEN and not k.startswith("_")
-    }
+    safe_overrides = {k: v for k, v in overrides.items() if k not in _FORBIDDEN and not k.startswith("_")}
 
     child_configs: list[dict] = []
     for variant in preset.variants(steps):
