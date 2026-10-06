@@ -86,6 +86,7 @@ export const useBenchmarkRuns = (params?: {
   tool?: string;
   model?: string;
   status?: string;
+  cluster_id?: number;
   limit?: number;
   offset?: number;
   pollingEnabled?: boolean;

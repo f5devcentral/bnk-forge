@@ -8,10 +8,11 @@ proxy-vs-proxy comparison, and manages test client agents.
 """
 
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from core.errors import BadRequestError, ConflictError, NotFoundError
 from models.benchmark import (
@@ -62,9 +63,7 @@ class BenchmarkService(BaseService):
         agent_id = None
         agent_name = result_data.get("agent_name")
         if agent_name:
-            agent = self.db.query(BenchmarkAgent).filter(
-                BenchmarkAgent.name == agent_name
-            ).first()
+            agent = self.db.query(BenchmarkAgent).filter(BenchmarkAgent.name == agent_name).first()
             if agent:
                 agent_id = agent.id
 
@@ -77,7 +76,10 @@ class BenchmarkService(BaseService):
         if config_id is not None and not self.db.query(BenchmarkConfig).filter(BenchmarkConfig.id == config_id).first():
             config_id = None
         proxy_deployment_id = result_data.get("proxy_deployment_id")
-        if proxy_deployment_id is not None and not self.db.query(ProxyDeployment).filter(ProxyDeployment.id == proxy_deployment_id).first():
+        if (
+            proxy_deployment_id is not None
+            and not self.db.query(ProxyDeployment).filter(ProxyDeployment.id == proxy_deployment_id).first()
+        ):
             proxy_deployment_id = None
 
         run = BenchmarkRun(
@@ -94,7 +96,6 @@ class BenchmarkService(BaseService):
             status=BenchmarkRunStatus.COMPLETED,
             config_snapshot=config,
             result_json=result_data,
-
             # Denormalized metrics
             duration_seconds=result_data.get("duration_seconds"),
             total_requests=result_data.get("total_requests"),
@@ -107,7 +108,6 @@ class BenchmarkService(BaseService):
             peak_rps=throughput.get("peak_rps"),
             tokens_per_sec=throughput.get("gen_tokens_per_sec"),
             total_output_tokens=result_data.get("total_output_tokens"),
-
             # Timestamps from the result
             started_at=_parse_iso(result_data.get("run_start")),
             completed_at=_parse_iso(result_data.get("run_end")),
@@ -117,8 +117,11 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Ingested benchmark result: run_id=%d proxy=%s model=%s p50=%.3fs rps=%.1f",
-            run.id, proxy, run.model,
-            run.latency_p50 or 0, run.overall_rps or 0,
+            run.id,
+            proxy,
+            run.model,
+            run.latency_p50 or 0,
+            run.overall_rps or 0,
         )
         return run
 
@@ -127,7 +130,7 @@ class BenchmarkService(BaseService):
     # ================================================================
 
     def complete_run_with_aiperf_result(self, run_id: int, raw: dict) -> BenchmarkRun:
-        """Update an existing pending/running run with aiperf result data.
+        """Update an existing running run with aiperf result data.
 
         Used when an agent completes a run triggered from Forge.
         Unlike ingest_aiperf_result(), this updates the existing run row
@@ -136,6 +139,9 @@ class BenchmarkService(BaseService):
         run = self.db.query(BenchmarkRun).get(run_id)
         if not run:
             raise NotFoundError("benchmark_run", run_id)
+        if run.status != BenchmarkRunStatus.RUNNING:
+            # A late result must not overwrite a run already failed/cancelled/completed.
+            raise ConflictError("benchmark_run", f"Run #{run_id} is {run.status}, not running")
 
         # Parse the raw aiperf JSON (same logic as ingest_aiperf_result)
         req_lat = raw.get("request_latency", {})
@@ -229,7 +235,10 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Completed run #%d with aiperf result: proxy=%s p50=%.3fs rps=%.1f",
-            run.id, run.proxy, run.latency_p50 or 0, run.overall_rps or 0,
+            run.id,
+            run.proxy,
+            run.latency_p50 or 0,
+            run.overall_rps or 0,
         )
 
         # Roll up the parent run-group aggregate once all children are terminal.
@@ -320,8 +329,11 @@ class BenchmarkService(BaseService):
         # a missing key simply omits the block rather than raising.
         http_timing: dict | None = None
         _timing_keys = (
-            "http_req_blocked", "http_req_dns_lookup", "http_req_connecting",
-            "http_req_waiting", "http_req_sending",
+            "http_req_blocked",
+            "http_req_dns_lookup",
+            "http_req_connecting",
+            "http_req_waiting",
+            "http_req_sending",
         )
         _timing_data = {k: raw.get(k) for k in _timing_keys if raw.get(k) is not None}
         if _timing_data:
@@ -347,7 +359,8 @@ class BenchmarkService(BaseService):
                 "proxy": proxy,
                 "model": model,
                 "base_url": url,
-                "endpoint": (aiperf_config.get("endpoint") or {}).get("type") or aiperf_config.get("endpoint_type", "chat"),
+                "endpoint": (aiperf_config.get("endpoint") or {}).get("type")
+                or aiperf_config.get("endpoint_type", "chat"),
                 "run_label": run_label or f"aiperf-{proxy}",
             },
             "tags": {
@@ -449,9 +462,7 @@ class BenchmarkService(BaseService):
 
     def create_config(self, data: dict) -> BenchmarkConfig:
         """Create a new benchmark config."""
-        existing = self.db.query(BenchmarkConfig).filter(
-            BenchmarkConfig.name == data["name"]
-        ).first()
+        existing = self.db.query(BenchmarkConfig).filter(BenchmarkConfig.name == data["name"]).first()
         if existing:
             raise ConflictError("benchmark_config", f"Config with name '{data['name']}' already exists")
 
@@ -465,9 +476,7 @@ class BenchmarkService(BaseService):
         config = self.get_config(config_id)
 
         if data.get("name") and data["name"] != config.name:
-            existing = self.db.query(BenchmarkConfig).filter(
-                BenchmarkConfig.name == data["name"]
-            ).first()
+            existing = self.db.query(BenchmarkConfig).filter(BenchmarkConfig.name == data["name"]).first()
             if existing:
                 raise ConflictError("benchmark_config", f"Config with name '{data['name']}' already exists")
 
@@ -495,11 +504,14 @@ class BenchmarkService(BaseService):
         tool: str | None = None,
         model: str | None = None,
         status: str | None = None,
+        cluster_id: int | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[BenchmarkRun], int]:
         """List benchmark runs with optional filters."""
-        query = self.db.query(BenchmarkRun)
+        query = self.db.query(BenchmarkRun).options(
+            joinedload(BenchmarkRun.target).joinedload(BenchmarkTarget.cluster),
+        )
         if proxy:
             query = query.filter(BenchmarkRun.proxy == proxy)
         if tool:
@@ -508,6 +520,10 @@ class BenchmarkService(BaseService):
             query = query.filter(BenchmarkRun.model == model)
         if status:
             query = query.filter(BenchmarkRun.status == status)
+        if cluster_id:
+            query = query.join(BenchmarkTarget, BenchmarkRun.target_id == BenchmarkTarget.id).filter(
+                BenchmarkTarget.cluster_id == cluster_id
+            )
 
         total = query.count()
         runs = query.order_by(desc(BenchmarkRun.created_at)).limit(limit).offset(offset).all()
@@ -516,7 +532,9 @@ class BenchmarkService(BaseService):
 
     def get_run(self, run_id: int, with_details: bool = False) -> BenchmarkRun:
         """Get a benchmark run by ID."""
-        query = self.db.query(BenchmarkRun)
+        query = self.db.query(BenchmarkRun).options(
+            joinedload(BenchmarkRun.target).joinedload(BenchmarkTarget.cluster),
+        )
         if with_details:
             query = query.options(
                 joinedload(BenchmarkRun.config),
@@ -743,11 +761,7 @@ class BenchmarkService(BaseService):
         group = self.db.query(BenchmarkRunGroup).get(group_id)
         if not group:
             return
-        children = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.run_group_id == group_id)
-            .all()
-        )
+        children = self.db.query(BenchmarkRun).filter(BenchmarkRun.run_group_id == group_id).all()
         completed = [r for r in children if r.status == BenchmarkRunStatus.COMPLETED]
         failed = [r for r in children if r.status == BenchmarkRunStatus.FAILED]
         group.completed_runs = len(completed)
@@ -800,9 +814,7 @@ class BenchmarkService(BaseService):
         try:
             preset = get_scenario(scenario_key)
         except KeyError as exc:
-            raise BadRequestError(
-                f"Unknown scenario '{scenario_key}'", code="UNKNOWN_SCENARIO"
-            ) from exc
+            raise BadRequestError(f"Unknown scenario '{scenario_key}'", code="UNKNOWN_SCENARIO") from exc
 
         child_configs = expand_scenario(
             scenario_key,
@@ -856,7 +868,9 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Created run-group #%d scenario=%s with %d child runs",
-            group.id, scenario_key, len(runs),
+            group.id,
+            scenario_key,
+            len(runs),
         )
         return group, runs
 
@@ -864,7 +878,10 @@ class BenchmarkService(BaseService):
         """Get a run-group by ID with its child runs eagerly loaded."""
         group = (
             self.db.query(BenchmarkRunGroup)
-            .options(joinedload(BenchmarkRunGroup.runs))
+            .options(
+                joinedload(BenchmarkRunGroup.runs),
+                joinedload(BenchmarkRunGroup.target).joinedload(BenchmarkTarget.cluster),
+            )
             .filter(BenchmarkRunGroup.id == group_id)
             .first()
         )
@@ -889,7 +906,63 @@ class BenchmarkService(BaseService):
             .first()
         )
 
-    def claim_pending_run(self, run_id: int) -> bool:
+    def get_first_pending_run_for_agent(self, agent_id: int) -> BenchmarkRun | None:
+        """Find the earliest pending run assigned to an agent that has no sibling currently running."""
+        running = (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+            )
+            .first()
+        )
+        if running:
+            return None
+        return (
+            self.db.query(BenchmarkRun)
+            .filter(
+                BenchmarkRun.agent_id == agent_id,
+                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+            )
+            .order_by(BenchmarkRun.id)
+            .first()
+        )
+
+    def fail_interrupted_runs_for_agent(
+        self,
+        agent_id: int,
+        *,
+        only: Collection[int] | None = None,
+        keep: Collection[int] = (),
+        reason: str = "agent reconnected; run interrupted",
+    ) -> list[int]:
+        """Mark an agent's RUNNING runs FAILED when their connection is gone.
+
+        A run's result is reported over the WebSocket it was dispatched on, so a
+        run whose connection is gone can never report back. Left RUNNING it
+        blocks get_first_pending_run_for_agent (and the group claim guard)
+        forever. ``only`` limits this to the given runs; ``keep`` spares runs
+        whose dispatch is still in flight. Rolls up affected run-groups. Caller
+        commits.
+        """
+        query = self.db.query(BenchmarkRun).filter(
+            BenchmarkRun.agent_id == agent_id,
+            BenchmarkRun.status == BenchmarkRunStatus.RUNNING,
+        )
+        if only is not None:
+            query = query.filter(BenchmarkRun.id.in_(list(only)))
+        runs = [r for r in query.all() if r.id not in keep]
+        now = datetime.now(UTC)
+        for run in runs:
+            run.status = BenchmarkRunStatus.FAILED
+            run.error_message = reason
+            run.completed_at = now
+        self.db.flush()
+        for group_id in {r.run_group_id for r in runs if r.run_group_id}:
+            self.maybe_finalize_run_group(group_id)
+        return [r.id for r in runs]
+
+    def claim_pending_run(self, run_id: int, group_id: int | None = None) -> bool:
         """Atomically transition a run PENDING→RUNNING. Returns True iff this call
         won the claim (rowcount == 1).
 
@@ -899,14 +972,40 @@ class BenchmarkService(BaseService):
         UPDATE (WHERE status='pending') means exactly one caller flips it to RUNNING
         and dispatches; the loser sees rowcount 0 and skips, so aiperf is invoked
         once. Caller commits the surrounding transaction.
+
+        ``group_id`` adds the group-sequential guard (MAJOR-2 / MAJOR-A):
+        Under PostgreSQL READ COMMITTED, evaluating NOT EXISTS without a lock can
+        suffer write-skew if concurrent transactions claim different sibling rows.
+        To guarantee mutual exclusion across transactions, we acquire an exclusive row
+        lock on the group (``with_for_update()``) before evaluating the conditional
+        UPDATE requiring that NO sibling of that group is currently RUNNING.
+        This serializes all sibling claims within a group so two children can never
+        both be claimed/RUNNING simultaneously. Standalone (group-less) runs omit
+        ``group_id`` and rely on the single-row atomic guard.
         """
         now = datetime.now(UTC)
+        filters = [
+            BenchmarkRun.id == run_id,
+            BenchmarkRun.status == BenchmarkRunStatus.PENDING,
+        ]
+        if group_id is not None:
+            # Lock the group row to serialize sibling claims across concurrent transactions
+            # under PostgreSQL READ COMMITTED (MAJOR-A / INV-8).
+            # SQLite (test env) ignores with_for_update() and serializes via its database write lock.
+            self.db.query(BenchmarkRunGroup).filter(BenchmarkRunGroup.id == group_id).with_for_update().first()
+            sibling = aliased(BenchmarkRun)
+            running_sibling = (
+                self.db.query(sibling.id)
+                .filter(
+                    sibling.run_group_id == group_id,
+                    sibling.status == BenchmarkRunStatus.RUNNING,
+                )
+                .exists()
+            )
+            filters.append(~running_sibling)
         result = (
             self.db.query(BenchmarkRun)
-            .filter(
-                BenchmarkRun.id == run_id,
-                BenchmarkRun.status == BenchmarkRunStatus.PENDING,
-            )
+            .filter(*filters)
             .update(
                 {
                     BenchmarkRun.status: BenchmarkRunStatus.RUNNING,
@@ -938,6 +1037,31 @@ class BenchmarkService(BaseService):
             synchronize_session=False,
         )
 
+    def mark_run_group_running_if_pending(self, group_id: int) -> bool:
+        """Atomically transition a run-group PENDING→RUNNING if it has a running child.
+
+        Returns True iff this call transitioned the row (rowcount == 1).
+        """
+        if not self.find_running_group_child(group_id):
+            return False
+        now = datetime.now(UTC)
+        result = (
+            self.db.query(BenchmarkRunGroup)
+            .filter(
+                BenchmarkRunGroup.id == group_id,
+                BenchmarkRunGroup.status == BenchmarkRunStatus.PENDING,
+            )
+            .update(
+                {
+                    BenchmarkRunGroup.status: BenchmarkRunStatus.RUNNING,
+                    BenchmarkRunGroup.started_at: now,
+                    BenchmarkRunGroup.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        return result == 1
+
     def maybe_finalize_run_group(self, group_id: int) -> BenchmarkRunGroup | None:
         """Recompute group counts; roll up aggregate metrics when all children terminal.
 
@@ -949,11 +1073,7 @@ class BenchmarkService(BaseService):
         if not group:
             return None
 
-        children = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.run_group_id == group_id)
-            .all()
-        )
+        children = self.db.query(BenchmarkRun).filter(BenchmarkRun.run_group_id == group_id).all()
         terminal = BenchmarkRunStatus.terminal_states()
         completed = [r for r in children if r.status == BenchmarkRunStatus.COMPLETED]
         failed = [r for r in children if r.status == BenchmarkRunStatus.FAILED]
@@ -989,8 +1109,12 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Finalized run-group #%d status=%s (%d completed, %d failed, %d cancelled / %d total)",
-            group.id, group.status, group.completed_runs, group.failed_runs,
-            len(cancelled), group.total_runs,
+            group.id,
+            group.status,
+            group.completed_runs,
+            group.failed_runs,
+            len(cancelled),
+            group.total_runs,
         )
         return group
 
@@ -1013,9 +1137,7 @@ class BenchmarkService(BaseService):
     def register_agent(self, data: dict) -> BenchmarkAgent:
         """Register a test client agent (called via curl or script)."""
         # Upsert — if agent with same name exists, update it
-        existing = self.db.query(BenchmarkAgent).filter(
-            BenchmarkAgent.name == data["name"]
-        ).first()
+        existing = self.db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data["name"]).first()
 
         if existing:
             existing.hostname = data.get("hostname", existing.hostname)
@@ -1076,11 +1198,7 @@ class BenchmarkService(BaseService):
 
     def compare_runs(self, run_ids: list[int]) -> dict:
         """Compare multiple benchmark runs side-by-side (proxy comparison)."""
-        runs = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.id.in_(run_ids))
-            .all()
-        )
+        runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.id.in_(run_ids)).all()
 
         if len(runs) != len(run_ids):
             found_ids = {r.id for r in runs}
@@ -1107,26 +1225,28 @@ class BenchmarkService(BaseService):
                     if isinstance(metric_data, dict) and metric_data.get("avg") is not None:
                         aiperf[out_key] = metric_data["avg"]
 
-            run_metrics.append({
-                "run_id": run.id,
-                "proxy": run.proxy,
-                "model": run.model,
-                "tool": run.tool,
-                "run_label": run.run_label,
-                "config_id": run.config_id,
-                "scenario_key": run.scenario_key,
-                "variant_label": run.variant_label,
-                "status": run.status,
-                "total_requests": run.total_requests,
-                "success_rate_pct": run.success_rate_pct,
-                "latency_p50": run.latency_p50,
-                "latency_p99": run.latency_p99,
-                "overall_rps": run.overall_rps,
-                "peak_rps": run.peak_rps,
-                "tokens_per_sec": run.tokens_per_sec,
-                "duration_seconds": run.duration_seconds,
-                **aiperf,
-            })
+            run_metrics.append(
+                {
+                    "run_id": run.id,
+                    "proxy": run.proxy,
+                    "model": run.model,
+                    "tool": run.tool,
+                    "run_label": run.run_label,
+                    "config_id": run.config_id,
+                    "scenario_key": run.scenario_key,
+                    "variant_label": run.variant_label,
+                    "status": run.status,
+                    "total_requests": run.total_requests,
+                    "success_rate_pct": run.success_rate_pct,
+                    "latency_p50": run.latency_p50,
+                    "latency_p99": run.latency_p99,
+                    "overall_rps": run.overall_rps,
+                    "peak_rps": run.peak_rps,
+                    "tokens_per_sec": run.tokens_per_sec,
+                    "duration_seconds": run.duration_seconds,
+                    **aiperf,
+                }
+            )
 
         # Determine winners per metric
         winners = {}
@@ -1148,10 +1268,7 @@ class BenchmarkService(BaseService):
         # Proxies and variants are deliberately-varied comparison dimensions on the Compare tab.
         config_ids = {m["config_id"] for m in run_metrics}
         scenario_keys = {m["scenario_key"] for m in run_metrics}
-        context_mismatch = (
-            len(config_ids) > 1
-            or len(scenario_keys) > 1
-        )
+        context_mismatch = len(config_ids) > 1 or len(scenario_keys) > 1
 
         return {
             "runs": run_metrics,
@@ -1166,15 +1283,9 @@ class BenchmarkService(BaseService):
     def get_summary(self) -> dict:
         """Get dashboard summary of benchmark activity."""
         total_runs = self.db.query(BenchmarkRun).count()
-        completed_runs = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.COMPLETED
-        ).count()
-        failed_runs = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.FAILED
-        ).count()
-        running_count = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.RUNNING
-        ).count()
+        completed_runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.COMPLETED).count()
+        failed_runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.FAILED).count()
+        running_count = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.RUNNING).count()
 
         # Average metrics across completed runs
         avg_p50 = (
@@ -1203,19 +1314,11 @@ class BenchmarkService(BaseService):
         )
 
         # Last run
-        last_run = (
-            self.db.query(BenchmarkRun)
-            .order_by(BenchmarkRun.created_at.desc())
-            .first()
-        )
+        last_run = self.db.query(BenchmarkRun).order_by(BenchmarkRun.created_at.desc()).first()
 
         # Runs in last 7 days
         seven_days_ago = datetime.now(UTC) - timedelta(days=7)
-        runs_last_7d = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.created_at >= seven_days_ago)
-            .count()
-        )
+        runs_last_7d = self.db.query(BenchmarkRun).filter(BenchmarkRun.created_at >= seven_days_ago).count()
 
         # Runs by proxy
         proxy_stats = (
@@ -1269,6 +1372,7 @@ class BenchmarkService(BaseService):
 # ================================================================
 # Helpers
 # ================================================================
+
 
 def _aggregate_children(
     completed: list[BenchmarkRun],

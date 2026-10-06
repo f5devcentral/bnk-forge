@@ -114,11 +114,18 @@ class TestValidateAwsRegion:
         validate_aws_region("us-narnia-1")
         validate_aws_region("ap-southeast-99")
 
-    def test_freeform_label_passes_through(self):
-        """Non-AWS-pattern strings (e.g., 'on-prem', 'eu-fr2') should not raise."""
-        validate_aws_region("on-prem")
-        validate_aws_region("datacenter-nyc")
-        validate_aws_region("eu-fr2")
+    def test_invalid_aws_region_raises(self):
+        """Non-AWS-pattern strings should raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid AWS region"):
+            validate_aws_region("on-prem")
+        with pytest.raises(ValueError, match="Invalid AWS region"):
+            validate_aws_region("datacenter-nyc")
+        with pytest.raises(ValueError, match="Invalid AWS region"):
+            validate_aws_region("us_east_1")
+
+    def test_custom_field_name_in_error(self):
+        with pytest.raises(ValueError, match="cloud_region"):
+            validate_aws_region("garbage", field_name="cloud_region")
 
     def test_valid_regions_set_is_not_empty(self):
         """Sanity check that the region set is populated."""
@@ -144,10 +151,13 @@ class TestValidateIbmRegion:
         """Any IBM-shaped region should be accepted (new MZRs)."""
         validate_ibm_region("eu-abc")
 
-    def test_freeform_label_passes_through(self):
-        """Free-form labels (e.g., 'eu-fr2', 'on-prem') should not raise."""
-        validate_ibm_region("eu-fr2")
-        validate_ibm_region("on-prem")
+    def test_invalid_ibm_region_raises(self):
+        with pytest.raises(ValueError, match="Invalid IBM Cloud region"):
+            validate_ibm_region("bad_region")
+        with pytest.raises(ValueError, match="Invalid IBM Cloud region"):
+            validate_ibm_region("us-east-1")
+        with pytest.raises(ValueError, match="Invalid IBM Cloud region"):
+            validate_ibm_region("invalid_123")
 
 
 class TestValidateAzureRegion:
@@ -161,10 +171,13 @@ class TestValidateAzureRegion:
         validate_azure_region(None)
         validate_azure_region("")
 
-    def test_freeform_label_passes_through(self):
-        """Any free-form label (e.g., 'eu-fr2', 'on-prem') should be accepted."""
-        validate_azure_region("eu-fr2")
-        validate_azure_region("on-prem")
+    def test_invalid_azure_region_raises(self):
+        with pytest.raises(ValueError, match="Invalid Azure region"):
+            validate_azure_region("eu-fr2")
+        with pytest.raises(ValueError, match="Invalid Azure region"):
+            validate_azure_region("on-prem")
+        with pytest.raises(ValueError, match="Invalid Azure region"):
+            validate_azure_region("bad_region!")
 
 
 class TestValidateGcpRegion:
@@ -178,7 +191,10 @@ class TestValidateGcpRegion:
         validate_gcp_region(None)
         validate_gcp_region("")
 
-    def test_freeform_label_passes_through(self):
-        """Any free-form label (e.g., 'eu-fr2', 'on-prem') should be accepted."""
-        validate_gcp_region("eu-fr2")
-        validate_gcp_region("on-prem")
+    def test_invalid_gcp_region_raises(self):
+        with pytest.raises(ValueError, match="Invalid GCP region"):
+            validate_gcp_region("on-prem")
+        with pytest.raises(ValueError, match="Invalid GCP region"):
+            validate_gcp_region("bad-gcp")
+        with pytest.raises(ValueError, match="Invalid GCP region"):
+            validate_gcp_region("us_central_1")
