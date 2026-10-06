@@ -187,8 +187,7 @@ def _detect_cwc_namespace(api_client: k8s_client.ApiClient) -> str:
         logger.debug(f"Cluster-wide CWC service sweep failed (non-fatal): {e}")
 
     logger.warning(
-        f"CWC service '{CWC_SERVICE}' not found in any namespace. "
-        f"Falling back to '{CWC_DEFAULT_NAMESPACE}'."
+        f"CWC service '{CWC_SERVICE}' not found in any namespace. Falling back to '{CWC_DEFAULT_NAMESPACE}'."
     )
     return CWC_DEFAULT_NAMESPACE
 
@@ -196,9 +195,7 @@ def _detect_cwc_namespace(api_client: k8s_client.ApiClient) -> str:
 def _is_issuer_ready(item: dict) -> bool:
     """True if a ClusterIssuer object's status.conditions reports Ready=True."""
     conditions = item.get("status", {}).get("conditions", []) or []
-    return any(
-        c.get("type") == "Ready" and c.get("status") == "True" for c in conditions
-    )
+    return any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions)
 
 
 def _detect_cluster_issuer(api_client: k8s_client.ApiClient) -> str | None:
@@ -220,9 +217,7 @@ def _detect_cluster_issuer(api_client: k8s_client.ApiClient) -> str | None:
     # Fast path: check known candidates by name
     for candidate in CLUSTER_ISSUER_CANDIDATES:
         try:
-            custom_api.get_cluster_custom_object(
-                "cert-manager.io", "v1", "clusterissuers", candidate
-            )
+            custom_api.get_cluster_custom_object("cert-manager.io", "v1", "clusterissuers", candidate)
             logger.debug(f"ClusterIssuer found: {candidate}")
             return candidate
         except k8s_client.rest.ApiException:
@@ -230,9 +225,7 @@ def _detect_cluster_issuer(api_client: k8s_client.ApiClient) -> str | None:
 
     # Slow path: list all ClusterIssuers and pick a Ready, non-bootstrap one
     try:
-        issuers = custom_api.list_cluster_custom_object(
-            "cert-manager.io", "v1", "clusterissuers"
-        )
+        issuers = custom_api.list_cluster_custom_object("cert-manager.io", "v1", "clusterissuers")
         items = issuers.get("items", [])
 
         named_matches: list[str] = []
@@ -255,9 +248,7 @@ def _detect_cluster_issuer(api_client: k8s_client.ApiClient) -> str | None:
 
         if named_matches:
             chosen = sorted(named_matches)[0]
-            logger.info(
-                f"ClusterIssuer discovered by BNK/CNE/F5 name match (Ready): {chosen}"
-            )
+            logger.info(f"ClusterIssuer discovered by BNK/CNE/F5 name match (Ready): {chosen}")
             return chosen
     except k8s_client.rest.ApiException:
         logger.debug("cert-manager ClusterIssuer CRD not available on this cluster")
@@ -300,21 +291,14 @@ def _find_cert_secret(api_client: k8s_client.ApiClient, cwc_namespace: str) -> d
     core_v1 = k8s_client.CoreV1Api(api_client)
     for candidate in CWC_CERT_SECRET_CANDIDATES:
         try:
-            secret = core_v1.read_namespaced_secret(
-                candidate["name"], cwc_namespace
-            )
-            if (
-                secret.data
-                and candidate["cert"] in secret.data
-                and candidate["key"] in secret.data
-            ):
+            secret = core_v1.read_namespaced_secret(candidate["name"], cwc_namespace)
+            if secret.data and candidate["cert"] in secret.data and candidate["key"] in secret.data:
                 logger.info(f"Using cert secret: {candidate['name']}")
                 return candidate
         except k8s_client.rest.ApiException:
             continue
     raise QKViewError(
-        "No CWC mTLS certificates found. Tried: "
-        + ", ".join(c["name"] for c in CWC_CERT_SECRET_CANDIDATES)
+        "No CWC mTLS certificates found. Tried: " + ", ".join(c["name"] for c in CWC_CERT_SECRET_CANDIDATES)
     )
 
 
@@ -454,9 +438,7 @@ def _create_client_pod(
             except (json.JSONDecodeError, TypeError):
                 # Fallback to raw body string (truncated for readability)
                 error_detail = str(e.body)[:300]
-        raise QKViewError(
-            f"Failed to create qkview client pod: {error_detail}", e.status
-        )
+        raise QKViewError(f"Failed to create qkview client pod: {error_detail}", e.status)
 
     # Wait for pod to be ready
     deadline = time.time() + CLIENT_POD_TIMEOUT_SEC
@@ -467,23 +449,20 @@ def _create_client_pod(
                 logger.info(f"Qkview client pod ready: {pod_name}")
                 return pod_name
             if p.status and p.status.phase in ("Failed", "Unknown"):
-                raise QKViewError(
-                    f"Qkview client pod failed to start: {p.status.phase}"
-                )
+                raise QKViewError(f"Qkview client pod failed to start: {p.status.phase}")
         except k8s_client.rest.ApiException:
             pass
         time.sleep(1)
 
     # Timed out — clean up
     _delete_client_pod(api_client, pod_name)
-    raise QKViewError(
-        f"Qkview client pod did not become ready within "
-        f"{CLIENT_POD_TIMEOUT_SEC}s"
-    )
+    raise QKViewError(f"Qkview client pod did not become ready within {CLIENT_POD_TIMEOUT_SEC}s")
 
 
 def _delete_client_pod(
-    api_client: k8s_client.ApiClient, pod_name: str, cwc_namespace: str = CWC_DEFAULT_NAMESPACE,
+    api_client: k8s_client.ApiClient,
+    pod_name: str,
+    cwc_namespace: str = CWC_DEFAULT_NAMESPACE,
 ):
     """Delete a client pod. Best-effort, never raises."""
     core_v1 = k8s_client.CoreV1Api(api_client)
@@ -499,8 +478,37 @@ def _delete_client_pod(
         logger.warning(f"Failed to delete qkview client pod {pod_name}: {e}")
 
 
+# CWC client metadata (namespace, cert secret, REST port) is shared through the
+# cache. The admin token stays in process memory so it never lands in Redis.
+_CWC_META_TTL_SEC = 300
+_cwc_token_cache: dict[str, tuple[float, str]] = {}
+
+
+def _sweep_cwc_token_cache() -> None:
+    now = time.monotonic()
+    expired = [k for k, (exp, _) in _cwc_token_cache.items() if exp <= now]
+    for k in expired:
+        _cwc_token_cache.pop(k, None)
+
+
+def _cwc_meta_key(api_client: k8s_client.ApiClient) -> str:
+    cluster_id = getattr(api_client, "_forge_cluster_id", None)
+    if cluster_id is not None:
+        return f"cwc:client_meta:{cluster_id}"
+    return f"cwc:client_meta:{getattr(api_client.configuration, 'host', 'default')}"
+
+
+def _invalidate_cwc_client_meta(api_client: k8s_client.ApiClient) -> None:
+    key = _cwc_meta_key(api_client)
+    cache.delete(key)
+    _cwc_token_cache.pop(key, None)
+    _sweep_cwc_token_cache()
+
+
 def _cleanup_all_client_pods(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_DEFAULT_NAMESPACE):
     """Delete ALL bnk-forge agent pods (both new and legacy labels)."""
+    # The certs these pods mount changed, so the cached client metadata is stale too.
+    _invalidate_cwc_client_meta(api_client)
     core_v1 = k8s_client.CoreV1Api(api_client)
     for label in [CLIENT_POD_LABEL, "bnk-forge-qkview-client"]:
         try:
@@ -523,9 +531,7 @@ def _get_admin_token(api_client: k8s_client.ApiClient, cwc_namespace: str) -> st
     """Read the CWC admin Bearer token from the cwc-auth-token secret."""
     core_v1 = k8s_client.CoreV1Api(api_client)
     try:
-        secret = core_v1.read_namespaced_secret(
-            CWC_AUTH_TOKEN_SECRET, cwc_namespace
-        )
+        secret = core_v1.read_namespaced_secret(CWC_AUTH_TOKEN_SECRET, cwc_namespace)
         if secret.data and "token" in secret.data:
             return base64.b64decode(secret.data["token"]).decode("utf-8").strip()
     except k8s_client.rest.ApiException:
@@ -557,11 +563,18 @@ def _build_curl_command(
     key_file = f"/certs/{cert_secret['key']}"
 
     parts = [
-        "curl", "-s", "-S", "-k",
-        "--cert", cert_file,
-        "--key", key_file,
-        "-X", method.upper(),
-        "-w", r"\n---HTTP_STATUS:%{http_code}---",
+        "curl",
+        "-s",
+        "-S",
+        "-k",
+        "--cert",
+        cert_file,
+        "--key",
+        key_file,
+        "-X",
+        method.upper(),
+        "-w",
+        r"\n---HTTP_STATUS:%{http_code}---",
     ]
 
     if bearer_token:
@@ -702,11 +715,24 @@ def _cwc_request(
         raw_body: Raw string body (sent as-is, for /reactivate and /receipt)
         stream: If True, return raw bytes (for binary downloads)
     """
-    cwc_ns = _detect_cwc_namespace(api_client)
-    cert_secret = _find_cert_secret(api_client, cwc_ns)
-    cwc_port = _get_cwc_rest_port(api_client, cwc_ns)
+    meta_key = _cwc_meta_key(api_client)
+    cached_meta = cache.get(meta_key)
+    if isinstance(cached_meta, list) and len(cached_meta) == 3:
+        cwc_ns, cert_secret, cwc_port = cached_meta
+    else:
+        cwc_ns = _detect_cwc_namespace(api_client)
+        cert_secret = _find_cert_secret(api_client, cwc_ns)
+        cwc_port = _get_cwc_rest_port(api_client, cwc_ns)
+        cache.set(meta_key, [cwc_ns, cert_secret, cwc_port], ttl_seconds=_CWC_META_TTL_SEC)
     cwc_url = f"https://{CWC_SERVICE}.{cwc_ns}:{cwc_port}{path}"
-    bearer_token = _get_admin_token(api_client, cwc_ns)
+    _sweep_cwc_token_cache()
+    token_entry = _cwc_token_cache.get(meta_key)
+    if token_entry and token_entry[0] > time.monotonic():
+        bearer_token: str | None = token_entry[1]
+    else:
+        bearer_token = _get_admin_token(api_client, cwc_ns)
+        if bearer_token:
+            _cwc_token_cache[meta_key] = (time.monotonic() + _CWC_META_TTL_SEC, bearer_token)
 
     pod_name = _get_or_create_client_pod(api_client, cert_secret, cwc_ns)
 
@@ -717,7 +743,10 @@ def _cwc_request(
             # This is reliable for large files (40MB+ tarballs) unlike
             # piping binary through the k8s exec websocket directly.
             dl_cmd = _build_curl_command(
-                cert_secret, cwc_url, method, body,
+                cert_secret,
+                cwc_url,
+                method,
+                body,
                 raw_body=raw_body,
                 output_file="/tmp/download.bin",
                 bearer_token=bearer_token,
@@ -728,7 +757,8 @@ def _cwc_request(
 
             # Verify file was written
             size_resp = _exec_in_pod(
-                api_client, pod_name,
+                api_client,
+                pod_name,
                 ["sh", "-c", "stat -c %s /tmp/download.bin 2>/dev/null || echo 0"],
                 cwc_ns,
             )
@@ -740,20 +770,22 @@ def _cwc_request(
             # Copy from pod to local temp file via tar stream
             local_tmp = tempfile.mktemp(suffix=".tar.gz", dir="/tmp")
             try:
-                _copy_file_from_pod(
-                    api_client, pod_name, "/tmp/download.bin", local_tmp, cwc_ns
-                )
+                _copy_file_from_pod(api_client, pod_name, "/tmp/download.bin", local_tmp, cwc_ns)
                 with open(local_tmp, "rb") as f:
                     return f.read()
             finally:
                 try:
                     import os
+
                     os.unlink(local_tmp)
                 except OSError:
                     pass
         else:
             cmd = _build_curl_command(
-                cert_secret, cwc_url, method, body,
+                cert_secret,
+                cwc_url,
+                method,
+                body,
                 raw_body=raw_body,
                 bearer_token=bearer_token,
             )
@@ -777,15 +809,11 @@ def _check_curl_status(response: str, path: str):
             status_code = int(status_part)
             if status_code >= 400:
                 body = response.split(marker)[0].strip()
-                raise QKViewError(
-                    f"CWC API error ({status_code}): {body[:500]}", status_code
-                )
+                raise QKViewError(f"CWC API error ({status_code}): {body[:500]}", status_code)
         except ValueError:
             pass
     elif response.strip().startswith("curl:"):
-        raise QKViewError(
-            f"CWC connection failed: {response.strip()[:300]}"
-        )
+        raise QKViewError(f"CWC connection failed: {response.strip()[:300]}")
     else:
         # Absent marker with no curl error prefix means the HTTP exchange never
         # completed — websocket dropout, pod exec killed mid-stream, CWC
@@ -812,9 +840,7 @@ def _parse_curl_response(response: str, path: str) -> dict:
             pass
 
         if status_code >= 400:
-            raise QKViewError(
-                f"CWC API error ({status_code}): {body[:500]}", status_code
-            )
+            raise QKViewError(f"CWC API error ({status_code}): {body[:500]}", status_code)
 
         if not body:
             return {}
@@ -828,9 +854,7 @@ def _parse_curl_response(response: str, path: str) -> dict:
             return {"raw": body[:1000]}
 
     if response.strip().startswith("curl:"):
-        raise QKViewError(
-            f"CWC connection failed: {response.strip()[:300]}"
-        )
+        raise QKViewError(f"CWC connection failed: {response.strip()[:300]}")
 
     # Absent marker with no curl error prefix means the HTTP exchange never
     # completed — websocket dropout, pod exec killed mid-stream, CWC returned
@@ -852,23 +876,17 @@ def _check_cert_manager_available(api_client: k8s_client.ApiClient) -> bool:
     return _detect_cluster_issuer(api_client) is not None
 
 
-def _cert_exists(
-    api_client: k8s_client.ApiClient, name: str, namespace: str
-) -> bool:
+def _cert_exists(api_client: k8s_client.ApiClient, name: str, namespace: str) -> bool:
     """Check if a cert-manager Certificate CR exists."""
     custom_api = k8s_client.CustomObjectsApi(api_client)
     try:
-        custom_api.get_namespaced_custom_object(
-            "cert-manager.io", "v1", namespace, "certificates", name
-        )
+        custom_api.get_namespaced_custom_object("cert-manager.io", "v1", namespace, "certificates", name)
         return True
     except k8s_client.rest.ApiException:
         return False
 
 
-def _secret_exists(
-    api_client: k8s_client.ApiClient, name: str, namespace: str
-) -> bool:
+def _secret_exists(api_client: k8s_client.ApiClient, name: str, namespace: str) -> bool:
     """Check if a K8s Secret exists and has data."""
     core_v1 = k8s_client.CoreV1Api(api_client)
     try:
@@ -922,9 +940,7 @@ def _create_cert_manager_certificate(
     if common_name:
         cert_body["spec"]["commonName"] = common_name
 
-    custom_api.create_namespaced_custom_object(
-        "cert-manager.io", "v1", namespace, "certificates", cert_body
-    )
+    custom_api.create_namespaced_custom_object("cert-manager.io", "v1", namespace, "certificates", cert_body)
     logger.info(f"Created cert-manager Certificate: {namespace}/{name}")
 
 
@@ -943,20 +959,14 @@ def _wait_for_secret(
     while time.time() < deadline:
         try:
             secret = core_v1.read_namespaced_secret(secret_name, namespace)
-            if (
-                secret.data
-                and "tls.crt" in secret.data
-                and "tls.key" in secret.data
-                and "ca.crt" in secret.data
-            ):
+            if secret.data and "tls.crt" in secret.data and "tls.key" in secret.data and "ca.crt" in secret.data:
                 logger.info(f"Secret '{secret_name}' is ready")
                 return secret.data
         except k8s_client.rest.ApiException:
             pass
         time.sleep(2)
     raise QKViewError(
-        f"Timed out waiting for cert-manager to issue '{secret_name}' "
-        f"({timeout_sec}s). Check cert-manager logs."
+        f"Timed out waiting for cert-manager to issue '{secret_name}' ({timeout_sec}s). Check cert-manager logs."
     )
 
 
@@ -1015,9 +1025,7 @@ _CWC_POD_LABEL_CANDIDATES = ("app=cwc", "app=f5-spk-cwc")
 _CWC_POD_NAME_PREFIX = "f5-spk-cwc"
 
 
-def _find_cwc_pod(
-    core_v1: k8s_client.CoreV1Api, cwc_namespace: str
-) -> tuple[str | None, str | None]:
+def _find_cwc_pod(core_v1: k8s_client.CoreV1Api, cwc_namespace: str) -> tuple[str | None, str | None]:
     """
     Find the CWC pod by trying label selectors, then falling back to pod
     name prefix matching.
@@ -1035,7 +1043,7 @@ def _find_cwc_pod(
 
     # Strategy 2: fall back to pod name prefix
     all_pods = core_v1.list_namespaced_pod(cwc_namespace)
-    for p in (all_pods.items or []):
+    for p in all_pods.items or []:
         name = p.metadata.name or ""
         if name.startswith(_CWC_POD_NAME_PREFIX):
             logger.info(f"CWC pod found via name prefix '{_CWC_POD_NAME_PREFIX}': {name}")
@@ -1073,24 +1081,20 @@ def _restart_cwc_pod(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_
     while time.time() < deadline:
         if label_sel:
             new_pods = core_v1.list_namespaced_pod(
-                cwc_namespace, label_selector=label_sel,
+                cwc_namespace,
+                label_selector=label_sel,
             )
         else:
             # Found by name prefix — scan all pods again
             all_pods = core_v1.list_namespaced_pod(cwc_namespace)
             new_pods_items = [
-                p for p in (all_pods.items or [])
-                if (p.metadata.name or "").startswith(_CWC_POD_NAME_PREFIX)
+                p for p in (all_pods.items or []) if (p.metadata.name or "").startswith(_CWC_POD_NAME_PREFIX)
             ]
             # Create a simple namespace to match the label_selector path
             new_pods = type("Pods", (), {"items": new_pods_items})()
 
         for p in new_pods.items:
-            if (
-                p.metadata.name == pod_name
-                or not p.status
-                or p.status.phase != "Running"
-            ):
+            if p.metadata.name == pod_name or not p.status or p.status.phase != "Running":
                 continue
             # Phase=Running is not enough — the CWC HTTPS listener on port 38081
             # binds only after the readiness probe passes. Wait for every
@@ -1099,9 +1103,7 @@ def _restart_cwc_pod(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_
             # /reactivate after force-renew hits the port too early and gets
             # `curl: (7) Failed to connect`.
             container_statuses = p.status.container_statuses or []
-            all_containers_ready = bool(container_statuses) and all(
-                cs.ready for cs in container_statuses
-            )
+            all_containers_ready = bool(container_statuses) and all(cs.ready for cs in container_statuses)
             pod_ready_condition = next(
                 (c for c in (p.status.conditions or []) if c.type == "Ready"),
                 None,
@@ -1121,9 +1123,7 @@ def _restart_cwc_pod(api_client: k8s_client.ApiClient, cwc_namespace: str = CWC_
 # ---------------------------------------------------------------------------
 
 
-def check_setup_status(
-    k8s_service: KubernetesService, cluster_id: int, force: bool = False
-) -> dict[str, Any]:
+def check_setup_status(k8s_service: KubernetesService, cluster_id: int, force: bool = False) -> dict[str, Any]:
     """
     Check whether QKView mTLS setup has been completed for this cluster.
 
@@ -1160,12 +1160,8 @@ def check_setup_status(
 
     cwc_ns = _detect_cwc_namespace(api_client)
     cert_manager_ok = _check_cert_manager_available(api_client)
-    server_cert_ok = _secret_exists(
-        api_client, CWC_SERVER_CERT_SECRET, cwc_ns
-    )
-    client_cert_ok = _secret_exists(
-        api_client, CWC_CLIENT_CERT_SECRET, cwc_ns
-    )
+    server_cert_ok = _secret_exists(api_client, CWC_SERVER_CERT_SECRET, cwc_ns)
+    client_cert_ok = _secret_exists(api_client, CWC_CLIENT_CERT_SECRET, cwc_ns)
     setup_complete = server_cert_ok and client_cert_ok
 
     if setup_complete:
@@ -1196,9 +1192,7 @@ def check_setup_status(
     return res
 
 
-def setup_cwc_api_certs(
-    k8s_service: KubernetesService, cluster_id: int
-) -> dict[str, Any]:
+def setup_cwc_api_certs(k8s_service: KubernetesService, cluster_id: int) -> dict[str, Any]:
     """
     One-time QKView mTLS setup for CWC REST API access.
 
@@ -1265,11 +1259,13 @@ def setup_cwc_api_certs(
 
     # Step 4: Restart CWC pod
     deleted_pod = _restart_cwc_pod(api_client, cwc_ns)
-    steps.append({
-        "step": "cwc_pod_restart",
-        "status": "ok",
-        "detail": f"Deleted pod: {deleted_pod}",
-    })
+    steps.append(
+        {
+            "step": "cwc_pod_restart",
+            "status": "ok",
+            "detail": f"Deleted pod: {deleted_pod}",
+        }
+    )
 
     # Step 5: Create client cert (or skip if already exists)
     if _cert_exists(api_client, CWC_CLIENT_CERT_NAME, cwc_ns):
@@ -1302,7 +1298,7 @@ def setup_cwc_api_certs(
     # Invalidate cached CWC status
     cache.delete(f"cwc:setup_status:{cluster_id}")
     cache.delete(f"cwc:available:{cluster_id}")
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
 
     return {
         "success": True,
@@ -1315,9 +1311,7 @@ def setup_cwc_api_certs(
 setup_qkview_certs = setup_cwc_api_certs
 
 
-def check_cwc_available(
-    k8s_service: KubernetesService, cluster_id: int, force: bool = False
-) -> dict[str, Any]:
+def check_cwc_available(k8s_service: KubernetesService, cluster_id: int, force: bool = False) -> dict[str, Any]:
     """
     Check if the CWC service is available and the mTLS certs are accessible.
 
@@ -1370,9 +1364,7 @@ def check_cwc_available(
         }
 
 
-def list_qkviews(
-    k8s_service: KubernetesService, cluster_id: int, force: bool = False
-) -> list[dict]:
+def list_qkviews(k8s_service: KubernetesService, cluster_id: int, force: bool = False) -> list[dict]:
     """List all QKView jobs on the cluster."""
     cache_key = f"cwc:qkviews:{cluster_id}"
     if not force:
@@ -1412,9 +1404,7 @@ def create_qkview(
     return result if isinstance(result, dict) else {"id": str(result)}
 
 
-def get_qkview(
-    k8s_service: KubernetesService, cluster_id: int, qkview_id: str
-) -> dict:
+def get_qkview(k8s_service: KubernetesService, cluster_id: int, qkview_id: str) -> dict:
     """Get details of a specific QKView by ID."""
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -1422,9 +1412,7 @@ def get_qkview(
     return result if isinstance(result, dict) else {}
 
 
-def get_qkview_status(
-    k8s_service: KubernetesService, cluster_id: int, qkview_id: str
-) -> dict:
+def get_qkview_status(k8s_service: KubernetesService, cluster_id: int, qkview_id: str) -> dict:
     """Get the status of a specific QKView."""
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -1432,56 +1420,40 @@ def get_qkview_status(
     return result if isinstance(result, dict) else {"status": str(result)}
 
 
-def download_qkview(
-    k8s_service: KubernetesService, cluster_id: int, qkview_id: str
-) -> bytes:
+def download_qkview(k8s_service: KubernetesService, cluster_id: int, qkview_id: str) -> bytes:
     """Download the QKView tarball as bytes."""
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
-    result = _cwc_request(
-        api_client, "GET", f"/v1/qkview/{qkview_id}/download", stream=True
-    )
+    result = _cwc_request(api_client, "GET", f"/v1/qkview/{qkview_id}/download", stream=True)
     if isinstance(result, bytes):
         return result
     raise QKViewError("Expected binary data from download endpoint")
 
 
-def delete_qkview(
-    k8s_service: KubernetesService, cluster_id: int, qkview_id: str
-) -> dict:
+def delete_qkview(k8s_service: KubernetesService, cluster_id: int, qkview_id: str) -> dict:
     """Delete a specific QKView by ID."""
     cache.delete(f"cwc:qkviews:{cluster_id}")
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
     try:
-        result = _cwc_request(
-            api_client, "DELETE", f"/v1/qkview/{qkview_id}"
-        )
+        result = _cwc_request(api_client, "DELETE", f"/v1/qkview/{qkview_id}")
         return result if isinstance(result, dict) else {"deleted": True}
     except QKViewError as e:
         if e.status_code == 409:
-            raise QKViewError(
-                "QKView is still in progress — cancel it first", 409
-            )
+            raise QKViewError("QKView is still in progress — cancel it first", 409)
         raise
 
 
-def cancel_qkview(
-    k8s_service: KubernetesService, cluster_id: int, qkview_id: str
-) -> dict:
+def cancel_qkview(k8s_service: KubernetesService, cluster_id: int, qkview_id: str) -> dict:
     """Cancel a running QKView job."""
     cache.delete(f"cwc:qkviews:{cluster_id}")
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
-    result = _cwc_request(
-        api_client, "POST", f"/v1/qkview/{qkview_id}/cancel"
-    )
+    result = _cwc_request(api_client, "POST", f"/v1/qkview/{qkview_id}/cancel")
     return result if isinstance(result, dict) else {"cancelled": True}
 
 
-def cleanup_client_pods(
-    k8s_service: KubernetesService, cluster_id: int
-) -> dict:
+def cleanup_client_pods(k8s_service: KubernetesService, cluster_id: int) -> dict:
     """Manually clean up all qkview client pods. Exposed for admin use."""
     cluster = k8s_service.get_cluster(cluster_id)
     api_client = k8s_service.load_kubeconfig(cluster)
@@ -1562,11 +1534,7 @@ def _normalize_cwc_status(raw: dict[str, Any]) -> dict[str, Any]:
     # Extract fields
     license_state = license_status_obj.get("State", "")
     error = license_status_obj.get("Error") or license_status_obj.get("ErrString") or None
-    suggested_action = (
-        license_status_obj.get("SuggestedAction")
-        or license_status_obj.get("OperatorAction")
-        or None
-    )
+    suggested_action = license_status_obj.get("SuggestedAction") or license_status_obj.get("OperatorAction") or None
 
     entitlement_type = license_details.get("EntitlementType", "")
     digital_asset_id = license_details.get("DigitalAssetID", "")
@@ -1655,9 +1623,13 @@ def _format_switch_failure_message(
     )
 
 
-def get_license_status(
-    k8s_service: KubernetesService, cluster_id: int, force: bool = False
-) -> dict[str, Any]:
+def invalidate_license_status(cluster_id: int) -> None:
+    """Drop the cached license status and the CWC status payload that embeds it."""
+    cache.delete(f"license:status:{cluster_id}")
+    cache.delete(f"cwc:status:{cluster_id}")
+
+
+def get_license_status(k8s_service: KubernetesService, cluster_id: int, force: bool = False) -> dict[str, Any]:
     """
     Get CWC license and telemetry status for a cluster.
 
@@ -1666,7 +1638,7 @@ def get_license_status(
     status, etc.  The raw CWC response is included as ``raw_cwc_response``
     for debugging.
 
-    Results are cached for 30 seconds per cluster; pass ``force=True`` to
+    Results are cached for 120 seconds per cluster; pass ``force=True`` to
     bypass the cache.
     """
     cache_key = f"license:status:{cluster_id}"
@@ -1680,13 +1652,11 @@ def get_license_status(
     result = _cwc_request(api_client, "GET", "/status")
     normalized = _normalize_cwc_status(result if isinstance(result, dict) else {})
     response = {"success": True, **normalized}
-    cache.set(cache_key, response, ttl_seconds=30)
+    cache.set(cache_key, response, ttl_seconds=120)
     return response
 
 
-def get_license_report(
-    k8s_service: KubernetesService, cluster_id: int, force: bool = False
-) -> dict[str, Any]:
+def get_license_report(k8s_service: KubernetesService, cluster_id: int, force: bool = False) -> dict[str, Any]:
     """
     Get CWC telemetry report for a cluster.
 
@@ -1710,9 +1680,7 @@ def get_license_report(
     return response
 
 
-def activate_license(
-    k8s_service: KubernetesService, cluster_id: int, jwt_data: str
-) -> dict[str, Any]:
+def activate_license(k8s_service: KubernetesService, cluster_id: int, jwt_data: str) -> dict[str, Any]:
     """
     Reactivate/switch CWC license on a cluster.
 
@@ -1758,17 +1726,13 @@ def activate_license(
     _allow_list = {"active", "licensed", "verification complete"}
     post_state_lower = (post.get("license_state") or "").strip().lower()
     pre_state_lower = (pre.get("license_state") or "").strip().lower()
-    asset_changed = bool(
-        post.get("digital_asset_id") and post["digital_asset_id"] != pre.get("digital_asset_id")
-    )
+    asset_changed = bool(post.get("digital_asset_id") and post["digital_asset_id"] != pre.get("digital_asset_id"))
     expiry_changed = bool(
         post.get("license_expiry_date") and post["license_expiry_date"] != pre.get("license_expiry_date")
     )
 
     accepted = (
-        asset_changed
-        or expiry_changed
-        or (post_state_lower in _allow_list and post_state_lower != pre_state_lower)
+        asset_changed or expiry_changed or (post_state_lower in _allow_list and post_state_lower != pre_state_lower)
     )
 
     # Benign re-activate: pre was already healthy and state did not change — idempotent success.
@@ -1809,14 +1773,12 @@ def activate_license(
 
     # Activation changed license state; invalidate cached status/report so the
     # next read reflects the new state instead of a stale cached value.
-    cache.delete(f"license:status:{cluster_id}")
+    invalidate_license_status(cluster_id)
     cache.delete(f"license:report:{cluster_id}")
     return response
 
 
-def post_license_receipt(
-    k8s_service: KubernetesService, cluster_id: int, manifest_data: str
-) -> dict[str, Any]:
+def post_license_receipt(k8s_service: KubernetesService, cluster_id: int, manifest_data: str) -> dict[str, Any]:
     """
     Send signed manifest (receipt) back to CWC.
 
@@ -1874,7 +1836,7 @@ F5_STATIC_JWKS: dict[str, Any] = {
 }
 
 # ConfigMap names created by the FLO Helm chart
-CPCL_KEY_CM = "cpcl-key-cm"        # JWKS public key for JWT verification
+CPCL_KEY_CM = "cpcl-key-cm"  # JWKS public key for JWT verification
 CPCL_CONFIG_CM = "cpcl-config-cm"  # JWT + license config
 
 # Minimum length of a valid RSA modulus (base64url-encoded).
@@ -1908,7 +1870,9 @@ def _patch_configmap(
     core_v1 = k8s_client.CoreV1Api(api_client)
     try:
         core_v1.patch_namespaced_config_map(
-            name, namespace, body={"data": data},
+            name,
+            namespace,
+            body={"data": data},
         )
         logger.info(f"Patched ConfigMap '{namespace}/{name}'")
     except k8s_client.rest.ApiException as e:
@@ -1925,7 +1889,8 @@ def _patch_configmap(
             logger.info(f"Created ConfigMap '{namespace}/{name}'")
         else:
             raise QKViewError(
-                f"Failed to patch ConfigMap '{name}': {e.reason}", e.status,
+                f"Failed to patch ConfigMap '{name}': {e.reason}",
+                e.status,
             )
 
 
@@ -1994,9 +1959,7 @@ def _fetch_f5_jwks() -> dict[str, Any]:
             parsed: dict[str, Any] = json.loads(data)
             return parsed
     except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
-        raise QKViewError(
-            f"Failed to fetch F5 JWKS from {F5_JWKS_URL}: {e}"
-        )
+        raise QKViewError(f"Failed to fetch F5 JWKS from {F5_JWKS_URL}: {e}")
 
 
 def _detect_cwc_operator_namespace(api_client: k8s_client.ApiClient) -> str:
@@ -2024,10 +1987,7 @@ def _detect_cwc_operator_namespace(api_client: k8s_client.ApiClient) -> str:
         except k8s_client.rest.ApiException:
             continue
 
-    raise QKViewError(
-        f"ConfigMap '{CPCL_KEY_CM}' not found in any BNK namespace. "
-        "Is FLO installed?"
-    )
+    raise QKViewError(f"ConfigMap '{CPCL_KEY_CM}' not found in any BNK namespace. Is FLO installed?")
 
 
 def ensure_valid_jwks(
@@ -2067,9 +2027,7 @@ def ensure_valid_jwks(
         return {"status": "valid", "namespace": operator_ns}
 
     # JWKS is invalid (placeholder or missing) — fetch real keys from F5
-    logger.warning(
-        f"JWKS in '{CPCL_KEY_CM}' has placeholder data — fetching real keys from F5"
-    )
+    logger.warning(f"JWKS in '{CPCL_KEY_CM}' has placeholder data — fetching real keys from F5")
     try:
         real_jwks = _fetch_f5_jwks()
     except QKViewError:
@@ -2121,7 +2079,9 @@ def _patch_cpcl_config_jwt(
 
     # Patch with new JWT
     _patch_configmap(
-        api_client, CPCL_CONFIG_CM, operator_ns,
+        api_client,
+        CPCL_CONFIG_CM,
+        operator_ns,
         {**cm_data, "jwt": jwt_data.strip()},
     )
     return {
@@ -2164,22 +2124,14 @@ def _delete_cpcl_state_secrets(
                 skipped.append(secret_name)
             else:
                 # Log but don't fail — best-effort cleanup
-                logger.warning(
-                    f"Failed to delete CPCL secret '{secret_name}': "
-                    f"{e.status} {e.reason}"
-                )
+                logger.warning(f"Failed to delete CPCL secret '{secret_name}': {e.status} {e.reason}")
                 skipped.append(secret_name)
 
-    logger.info(
-        f"CPCL cleanup: {len(deleted)} deleted, {len(skipped)} skipped "
-        f"in namespace '{cwc_namespace}'"
-    )
+    logger.info(f"CPCL cleanup: {len(deleted)} deleted, {len(skipped)} skipped in namespace '{cwc_namespace}'")
     return {"deleted": deleted, "skipped": skipped}
 
 
-def switch_license(
-    k8s_service: KubernetesService, cluster_id: int, jwt_data: str
-) -> dict[str, Any]:
+def switch_license(k8s_service: KubernetesService, cluster_id: int, jwt_data: str) -> dict[str, Any]:
     """
     Clean license switch using CWC REST APIs — no pod restart, no
     secret deletion.
@@ -2221,11 +2173,13 @@ def switch_license(
     # Step 2: Ensure JWKS is valid
     try:
         jwks_result = ensure_valid_jwks(api_client, operator_ns)
-        steps.append({
-            "step": "ensure_jwks",
-            "status": "ok",
-            "detail": jwks_result.get("status"),
-        })
+        steps.append(
+            {
+                "step": "ensure_jwks",
+                "status": "ok",
+                "detail": jwks_result.get("status"),
+            }
+        )
     except QKViewError as e:
         # Non-fatal — JWKS might already be correct or CWC might not
         # use the ConfigMap (some versions read from secret instead)
@@ -2249,11 +2203,13 @@ def switch_license(
         pre_status_raw = _cwc_request(api_client, "GET", "/status")
         pre_status: dict[str, Any] = pre_status_raw if isinstance(pre_status_raw, dict) else {}
         normalized_pre = _normalize_cwc_status(pre_status)
-        steps.append({
-            "step": "pre_check_status",
-            "status": "ok",
-            "license_state": normalized_pre.get("license_state", "unknown"),
-        })
+        steps.append(
+            {
+                "step": "pre_check_status",
+                "status": "ok",
+                "license_state": normalized_pre.get("license_state", "unknown"),
+            }
+        )
     except QKViewError as e:
         steps.append({"step": "pre_check_status", "status": "error", "error": str(e)})
         return {
@@ -2269,7 +2225,10 @@ def switch_license(
     activate_result: dict[str, Any] = {}
     try:
         raw = _cwc_request(
-            api_client, "POST", "/reactivate", raw_body=jwt_data,
+            api_client,
+            "POST",
+            "/reactivate",
+            raw_body=jwt_data,
         )
         activate_result = raw if isinstance(raw, dict) else {}
         steps.append({"step": "reactivate", "status": "ok"})
@@ -2277,10 +2236,7 @@ def switch_license(
         steps.append({"step": "reactivate", "status": "error", "error": str(e)})
         return {
             "success": False,
-            "error_message": (
-                f"CWC /reactivate failed: {e}. "
-                "The JWT may be invalid, or CWC may need a force renewal."
-            ),
+            "error_message": (f"CWC /reactivate failed: {e}. The JWT may be invalid, or CWC may need a force renewal."),
             "steps": steps,
         }
 
@@ -2305,20 +2261,28 @@ def switch_license(
                 break
             if attempt < 3:
                 time.sleep(2)
-        steps.append({
-            "step": "verify_status",
-            "status": "ok",
-            "license_state": normalized_post.get("license_state", "unknown"),
-            "switch_state": switch_state,
-            "polls": attempt + 1,
-        })
+        steps.append(
+            {
+                "step": "verify_status",
+                "status": "ok",
+                "license_state": normalized_post.get("license_state", "unknown"),
+                "switch_state": switch_state,
+                "polls": attempt + 1,
+            }
+        )
     except QKViewError as e:
         logger.warning(f"Post-switch status check failed: {e}")
         steps.append({"step": "verify_status", "status": "warning", "error": str(e)})
 
     accepted = (
-        (normalized_post.get("digital_asset_id") and normalized_post["digital_asset_id"] != normalized_pre.get("digital_asset_id"))
-        or (normalized_post.get("license_expiry_date") and normalized_post["license_expiry_date"] != normalized_pre.get("license_expiry_date"))
+        (
+            normalized_post.get("digital_asset_id")
+            and normalized_post["digital_asset_id"] != normalized_pre.get("digital_asset_id")
+        )
+        or (
+            normalized_post.get("license_expiry_date")
+            and normalized_post["license_expiry_date"] != normalized_pre.get("license_expiry_date")
+        )
         or (
             normalized_post.get("license_state", "").lower() in {"active", "licensed", "verification complete"}
             and normalized_post.get("license_state") != normalized_pre.get("license_state")
@@ -2343,11 +2307,13 @@ def switch_license(
     # Step 7: Persist the validated JWT to cpcl-config-cm (only after CWC confirmed it)
     try:
         jwt_patch_result = _patch_cpcl_config_jwt(api_client, jwt_data, operator_ns)
-        steps.append({
-            "step": "patch_jwt_configmap",
-            "status": "ok",
-            "detail": jwt_patch_result.get("status"),
-        })
+        steps.append(
+            {
+                "step": "patch_jwt_configmap",
+                "status": "ok",
+                "detail": jwt_patch_result.get("status"),
+            }
+        )
     except QKViewError as e:
         logger.warning(f"JWT ConfigMap patch failed (non-fatal): {e}")
         steps.append({"step": "patch_jwt_configmap", "status": "warning", "error": str(e)})
@@ -2363,9 +2329,7 @@ def switch_license(
     }
 
 
-def force_renew_license(
-    k8s_service: KubernetesService, cluster_id: int, jwt_data: str
-) -> dict[str, Any]:
+def force_renew_license(k8s_service: KubernetesService, cluster_id: int, jwt_data: str) -> dict[str, Any]:
     """
     Nuclear license renewal — deletes CPCL state, restarts CWC pod,
     reactivates with new JWT.
@@ -2402,11 +2366,13 @@ def force_renew_license(
     # Step 2: Ensure JWKS is valid (BEFORE restart so new CWC pod reads good data)
     try:
         jwks_result = ensure_valid_jwks(api_client, operator_ns)
-        steps.append({
-            "step": "ensure_jwks",
-            "status": "ok",
-            "detail": jwks_result.get("status"),
-        })
+        steps.append(
+            {
+                "step": "ensure_jwks",
+                "status": "ok",
+                "detail": jwks_result.get("status"),
+            }
+        )
     except QKViewError as e:
         logger.warning(f"JWKS validation failed (continuing anyway): {e}")
         steps.append({"step": "ensure_jwks", "status": "warning", "error": str(e)})
@@ -2424,21 +2390,25 @@ def force_renew_license(
 
     # Step 4: Delete CPCL state secrets
     cleanup = _delete_cpcl_state_secrets(api_client, cwc_ns)
-    steps.append({
-        "step": "cpcl_cleanup",
-        "status": "ok",
-        "deleted_count": len(cleanup["deleted"]),
-        "skipped_count": len(cleanup["skipped"]),
-    })
+    steps.append(
+        {
+            "step": "cpcl_cleanup",
+            "status": "ok",
+            "deleted_count": len(cleanup["deleted"]),
+            "skipped_count": len(cleanup["skipped"]),
+        }
+    )
 
     # Step 5: Restart CWC pod
     try:
         old_pod = _restart_cwc_pod(api_client, cwc_ns)
-        steps.append({
-            "step": "cwc_restart",
-            "status": "ok",
-            "old_pod": old_pod,
-        })
+        steps.append(
+            {
+                "step": "cwc_restart",
+                "status": "ok",
+                "old_pod": old_pod,
+            }
+        )
     except QKViewError as e:
         steps.append({"step": "cwc_restart", "status": "error", "error": str(e)})
         return {
@@ -2464,7 +2434,10 @@ def force_renew_license(
     for attempt in range(6):
         try:
             raw = _cwc_request(
-                api_client, "POST", "/reactivate", raw_body=jwt_data,
+                api_client,
+                "POST",
+                "/reactivate",
+                raw_body=jwt_data,
             )
             activate_result = raw if isinstance(raw, dict) else {}
             steps.append({"step": "activate", "status": "ok", "attempts": attempt + 1})
@@ -2513,27 +2486,29 @@ def force_renew_license(
                 break
             if attempt < 3:
                 time.sleep(2)
-        steps.append({
-            "step": "verify",
-            "status": "ok",
-            "license_state": normalized_post.get("license_state", "unknown"),
-            "switch_state": switch_state,
-            "polls": attempt + 1,
-        })
+        steps.append(
+            {
+                "step": "verify",
+                "status": "ok",
+                "license_state": normalized_post.get("license_state", "unknown"),
+                "switch_state": switch_state,
+                "polls": attempt + 1,
+            }
+        )
     except QKViewError as e:
         logger.warning(f"License status check after renewal failed: {e}")
         steps.append({"step": "verify", "status": "warning", "error": str(e)})
 
     accepted = normalized_post.get("license_state", "").lower() in {
-        "active", "licensed", "verification complete",
+        "active",
+        "licensed",
+        "verification complete",
     }
 
     if not accepted:
         switch_state, switch_error = _extract_switch_error(status_result)
         if switch_error:
-            error_message = (
-                f"CWC rejected the JWT even after CPCL reset (state={switch_state!r}): {switch_error}"
-            )
+            error_message = f"CWC rejected the JWT even after CPCL reset (state={switch_state!r}): {switch_error}"
         else:
             error_message = (
                 f"CWC restarted and accepted the JWT but license state did not reach active "
@@ -2552,11 +2527,13 @@ def force_renew_license(
     # Step 9: Persist the validated JWT — only after CWC confirmed acceptance
     try:
         jwt_patch_result = _patch_cpcl_config_jwt(api_client, jwt_data, operator_ns)
-        steps.append({
-            "step": "patch_jwt_configmap",
-            "status": "ok",
-            "detail": jwt_patch_result.get("status"),
-        })
+        steps.append(
+            {
+                "step": "patch_jwt_configmap",
+                "status": "ok",
+                "detail": jwt_patch_result.get("status"),
+            }
+        )
     except QKViewError as e:
         logger.warning(f"JWT ConfigMap patch failed (non-fatal): {e}")
         steps.append({"step": "patch_jwt_configmap", "status": "warning", "error": str(e)})

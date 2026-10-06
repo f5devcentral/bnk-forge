@@ -89,7 +89,7 @@ describe('buildBnkCategories', () => {
     expect(system?.items.map((i) => i.key)).toContain('things.example.com');
   });
 
-  it('routes a real curated slug ("networking") into its actual curated tab, not "Other"', () => {
+  it('routes a real curated slug ("networking") into its actual curated tab', () => {
     const result = buildBnkCategories([
       crd({ name: 'vlans.k8s.f5.com', kind: 'Vlan', plural: 'vlans', group: 'k8s.f5.com', category: 'networking' }),
     ]);

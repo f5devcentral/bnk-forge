@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api", tags=["k8s-topology"])
 def get_cluster_topology(
     cluster_id: int,
     namespace: str = "default",
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
     """Return a topology graph (nodes + edges) for a cluster namespace.
@@ -38,6 +39,7 @@ def get_cluster_topology(
     - Edges: Service→Pod (kind='selects') and Workload→Pod (kind='owns').
     - Cluster unreachable → 503 code=NETWORK_UNREACHABLE (via @with_breaker).
     - Namespace with >300 pods → truncated graph with non-null ``info``.
+    - Cached for 60 seconds per namespace; ``force=true`` rebuilds it.
     """
     k8s = KubernetesService(db)
-    return build_namespace_topology(k8s, cluster_id, namespace)
+    return build_namespace_topology(k8s, cluster_id, namespace, force=force)

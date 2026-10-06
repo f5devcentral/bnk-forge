@@ -44,9 +44,10 @@ import {
   Terminal, FileOutput, Rocket,
   Database, Plus, GitBranch, ChevronDown,
   CloudCog, Shield, Server, Layers, Camera, UserCheck, AlertTriangle, Search, CheckCircle, CircuitBoard, Cpu,
-  Clock, FileText, ScrollText,
+  Clock, FileText, ScrollText, RefreshCw,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { usePageRefresh } from '@/hooks/usePageRefresh';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/authStore';
@@ -124,6 +125,8 @@ export default function ProjectDetailV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const projectId = parseInt(id || '0');
+
+  const { refresh: handlePageRefresh, isRefreshing: isPageRefreshing } = usePageRefresh();
 
   const currentUser = useAuthStore((s) => s.user);
   const { data: project, isLoading: projectLoading } = useProject(projectId);
@@ -220,6 +223,19 @@ export default function ProjectDetailV2() {
       return prev;
     }, { replace: true });
   }, [setSearchParams, defaultTab]);
+
+  // Open edit dialog if deep linked via ?tab=settings or ?action=edit, then drop
+  // the params so later URL updates (tab switches, Back) don't reopen it.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'settings' || searchParams.get('action') === 'edit') {
+      setShowEditDialog(true);
+      setSearchParams(prev => {
+        prev.delete('action');
+        if (prev.get('tab') === 'settings') prev.delete('tab');
+        return prev;
+      }, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [pipelineCollapsed, setPipelineCollapsed] = useState(() => {
     const stored = localStorage.getItem(`bnk-forge:project-${projectId}:pipeline-collapsed`);
     return stored !== null ? stored === 'true' : false;
@@ -579,6 +595,17 @@ export default function ProjectDetailV2() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-9 p-0"
+                onClick={handlePageRefresh}
+                disabled={isPageRefreshing}
+                title="Refresh project"
+                aria-label="Refresh project"
+              >
+                <RefreshCw className={cn('h-4 w-4', isPageRefreshing && 'animate-spin')} aria-hidden="true" />
+              </Button>
             </div>
           )}
         </div>
@@ -695,7 +722,7 @@ export default function ProjectDetailV2() {
                 <p className="text-sm mb-4 text-muted-foreground">
                   View and manage Kubernetes resources (pods, deployments, services, etc.) on the dedicated K8s page.
                 </p>
-                <Button variant="outline" size="sm" onClick={() => navigate(`/kubernetes?project=${projectId}`)}>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/kubernetes?project=${projectId}&view=advanced`)}>
                   <CloudCog className="h-4 w-4 mr-1.5" />Go to Kubernetes page
                 </Button>
               </div>

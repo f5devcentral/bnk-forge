@@ -215,7 +215,10 @@ class KubernetesServiceBase:
         # bound on the wire attempt itself.
         cfg = client.Configuration.get_default_copy()
         cfg.retries = 0
-        return client.ApiClient(cfg)
+        cfg.connection_pool_maxsize = 128
+        api_client = client.ApiClient(cfg)
+        setattr(api_client, "_forge_cluster_id", cluster.id)
+        return api_client
 
     @staticmethod
     def _generate_eks_token(cluster: KubernetesCluster, aws_env: dict) -> str | None:
@@ -460,20 +463,36 @@ class KubernetesServiceBase:
             logger.error(f"Connection test failed: {e}")
             return {"success": False, "message": str(e)}
 
-    def list_namespaces(self, cluster_id: int) -> list[str]:
+    def list_namespaces(self, cluster_id: int, force: bool = False) -> list[str]:
         """List all namespaces in a cluster."""
+        cache_key = f"k8s:namespaces:{cluster_id}"
+        if not force:
+            cached = cache.get(cache_key)
+            if cached is not None and isinstance(cached, list):
+                return cached
+
         cluster = self.get_cluster(cluster_id)
         api_client = self.load_kubeconfig(cluster)
         v1 = client.CoreV1Api(api_client)
 
         namespaces = v1.list_namespace()
-        return [ns.metadata.name for ns in namespaces.items]
+        result = [ns.metadata.name for ns in namespaces.items]
+        cache.set(cache_key, result, ttl_seconds=60)
+        return result
 
-    def get_node_count(self, cluster_id: int) -> int:
+    def get_node_count(self, cluster_id: int, force: bool = False) -> int:
         """Get the total number of nodes in a cluster."""
+        cache_key = f"k8s:nodes:count:{cluster_id}"
+        if not force:
+            cached = cache.get(cache_key)
+            if cached is not None and isinstance(cached, int):
+                return cached
+
         cluster = self.get_cluster(cluster_id)
         api_client = self.load_kubeconfig(cluster)
         v1 = client.CoreV1Api(api_client)
 
         nodes = v1.list_node()
-        return len(nodes.items)
+        result = len(nodes.items)
+        cache.set(cache_key, result, ttl_seconds=60)
+        return result

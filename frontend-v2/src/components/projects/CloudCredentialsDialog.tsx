@@ -300,7 +300,7 @@ export function CloudCredentialsDialog({
                             size="sm"
                             onClick={() => {
                               onOpenChange(false);
-                              navigate('/settings?tab=cloud');
+                              navigate('/auth-templates');
                             }}
                           >
                             <ExternalLink className="h-3 w-3 mr-1" />

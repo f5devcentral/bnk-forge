@@ -715,10 +715,16 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [sortField, setSortField] = useState<SortField>('status');
   const [sortAsc, setSortAsc] = useState(true);
+  const [localRefreshing, setLocalRefreshing] = useState(false);
 
-  const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['fleet'] });
-    queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', 'connectivity'] });
+  const handleRefresh = useCallback(async () => {
+    setLocalRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['fleet'] }),
+      queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', 'connectivity'] }),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    setLocalRefreshing(false);
   }, [queryClient]);
 
   // When scoped to a fleet, filter operators to those in the fleet's cluster members.
@@ -752,7 +758,7 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
   const handleViewHealth = useCallback(
     (op: FleetOperatorHealth) => {
       localStorage.setItem('bnk-forge-bnk-cluster', String(op.cluster_id));
-      navigate('/bnk');
+      navigate(`/bnk?cluster=${op.cluster_id}`);
     },
     [navigate],
   );
@@ -760,7 +766,7 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
   const handleViewConfig = useCallback(
     (op: FleetOperatorHealth) => {
       localStorage.setItem('bnk-forge-k8s-cluster', String(op.cluster_id));
-      navigate('/kubernetes');
+      navigate(`/kubernetes?cluster=${op.cluster_id}&view=advanced`);
     },
     [navigate],
   );
@@ -791,11 +797,11 @@ function OverviewView({ fleetId }: { fleetId?: number }) {
               variant="outline"
               size="sm"
               onClick={handleRefresh}
-              disabled={isFetching}
+              disabled={isFetching || localRefreshing}
               title="Re-check connectivity for all clusters"
             >
-              <RefreshCw className={cn('h-4 w-4 mr-1.5', isFetching && 'animate-spin')} />
-              {isFetching && !isLoading ? 'Checking…' : 'Refresh'}
+              <RefreshCw className={cn('h-4 w-4 mr-1.5', (isFetching || localRefreshing) && 'animate-spin')} />
+              {(isFetching || localRefreshing) && !isLoading ? 'Checking…' : 'Refresh'}
             </Button>
           )}
           {canCompare && (
@@ -3311,6 +3317,7 @@ function FleetsView() {
 type FleetView = 'overview' | 'bnk' | 'fleets' | 'inventory' | 'bulkops' | 'compliance';
 
 export default function Fleet() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // D-022 P6 Slice B: ?fleet=<id> triggers the per-fleet detail drill-down.
@@ -3318,11 +3325,21 @@ export default function Fleet() {
   const fleetDetailId = fleetParam ? Number(fleetParam) : null;
 
   // backward compat with ?view=overview etc. (dpf deep-links now redirect to /infrastructure)
-  const urlView = searchParams.get('view') ?? searchParams.get('tab');
+  const rawView = searchParams.get('view') ?? searchParams.get('tab');
+  const urlView = rawView === 'operators' ? 'overview' : rawView;
   const validViews: FleetView[] = ['overview', 'bnk', 'fleets', 'inventory', 'bulkops', 'compliance'];
   const initialView: FleetView =
     urlView && validViews.includes(urlView as FleetView) ? (urlView as FleetView) : 'overview';
   const [activeView, setActiveView] = useState<FleetView>(initialView);
+
+  // Redirect legacy DPF deep-links to /infrastructure
+  useEffect(() => {
+    const raw = searchParams.get('tab') ?? searchParams.get('view');
+    if (raw === 'dpf' || raw === 'dpus') {
+      const cluster = searchParams.get('cluster');
+      navigate(`/infrastructure?tab=dpus${cluster ? `&cluster=${cluster}` : ''}`, { replace: true });
+    }
+  }, [searchParams, navigate]);
 
   const handleSelectView = useCallback(
     (view: string) => {

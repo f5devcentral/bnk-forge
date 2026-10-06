@@ -30,6 +30,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
+import { refreshLicensing } from '@/hooks/useLicensing';
 import { keepPreviousForScope } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
@@ -389,7 +390,7 @@ export default function F5BNK() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const redirectToFleetDpf = useCallback((clusterId: number) => {
-    navigate(`/fleet?tab=dpf&cluster=${clusterId}`, { replace: true });
+    navigate(`/infrastructure?tab=dpus&cluster=${clusterId}`, { replace: true });
   }, [navigate]);
 
   // Project and cluster selection (persisted to localStorage)
@@ -416,7 +417,7 @@ export default function F5BNK() {
     return stored ? parseInt(stored) : null;
   });
 
-  const { data: clusters = [] } = useProjectClusters(selectedProject ?? 0, {
+  const { data: clusters = [], isLoading: isLoadingClusters } = useProjectClusters(selectedProject ?? 0, {
     pollingEnabled: false,
   });
 
@@ -461,7 +462,7 @@ export default function F5BNK() {
     );
     if (fromUrl) {
       if (fromUrl === VIEW_DPF_INFRA) {
-        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        setTimeout(() => navigate('/infrastructure?tab=dpus'), 0);
         return VIEW_TOPOLOGY;
       }
       return fromUrl;
@@ -470,9 +471,9 @@ export default function F5BNK() {
     const initialView = localStorage.getItem('bnk-forge-bnk-initial-view');
     if (initialView) {
       localStorage.removeItem('bnk-forge-bnk-initial-view');
-      // DPF moved to Fleet — redirect if deep-link targets it
+      // DPF moved to Infrastructure — redirect if deep-link targets it
       if (initialView === VIEW_DPF_INFRA) {
-        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
+        setTimeout(() => navigate('/infrastructure?tab=dpus'), 0);
         return VIEW_TOPOLOGY;
       }
       return initialView;
@@ -563,7 +564,7 @@ export default function F5BNK() {
 
   // Clear cluster selection when project changes
   useEffect(() => {
-    if (linkPending) return;
+    if (linkPending || isLoadingClusters) return;
     if (selectedProject && selectedCluster) {
       const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
       if (!clusterExistsInProject && visibleClusters.length > 0) {
@@ -572,7 +573,7 @@ export default function F5BNK() {
         setSelectedCluster(null);
       }
     }
-  }, [linkPending, selectedProject, visibleClusters, selectedCluster]);
+  }, [linkPending, isLoadingClusters, selectedProject, visibleClusters, selectedCluster]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
@@ -604,6 +605,9 @@ export default function F5BNK() {
     enabled: !!selectedCluster && clusterReachable,
   });
   const namespaces = namespacesResponse?.namespaces || [];
+
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const isRefreshingAny = isRefreshing || isManualRefreshing;
 
   // Filter resources by search
   const filteredResources: K8sResource[] = (resources?.resources?.filter((resource: K8sResource) => {
@@ -638,7 +642,7 @@ export default function F5BNK() {
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     if (!selectedCluster) return;
     // Invalidate ALL queries related to this cluster:
     //   - 'bnk-resources' → resource list views (gateways, routes, policies, etc.)
@@ -647,14 +651,25 @@ export default function F5BNK() {
     //   - 'tmm-debug' → TMM debug pod discovery
     //   - 'qkview' → QKView operations
     //   - 'licensing' → BNK licensing status
-    queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
-    queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    queryClient.invalidateQueries({ queryKey: ['runbooks'] });
-    queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
-    queryClient.invalidateQueries({ queryKey: ['qkview'] });
-    queryClient.invalidateQueries({ queryKey: ['licensing'] });
-    // Last, so its forced BNK data fetch is not cancelled by the broader invalidations above.
-    refreshBnkData(queryClient, selectedCluster);
+    // The spinner tracks the BNK data on screen; the slower diagnostics queries
+    // (QKView pod exec, CWC licensing) refresh in the background.
+    void queryClient.invalidateQueries({ queryKey: ['runbooks'] });
+    void queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
+    void queryClient.invalidateQueries({ queryKey: ['qkview'] });
+    void refreshLicensing(queryClient, selectedCluster);
+    setIsManualRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await Promise.all([
+        minWait,
+        queryClient.invalidateQueries({ queryKey: ['bnk-resources'] }),
+        queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] }),
+        // Last, so its forced BNK data fetch is not cancelled by the broader invalidations above.
+        refreshBnkData(queryClient, selectedCluster),
+      ]);
+    } finally {
+      setIsManualRefreshing(false);
+    }
   };
 
   const handleDescribe = (resource: K8sResource) => {
@@ -944,7 +959,7 @@ export default function F5BNK() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
+        isRefreshing={isRefreshingAny}
       >
         {selectedCluster && !isSpecialView(selectedResourceType) && (
           <Badge variant="outline" className="text-xs h-7">

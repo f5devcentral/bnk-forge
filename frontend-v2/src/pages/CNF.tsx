@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/queryKeys';
@@ -33,7 +33,7 @@ import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import { useClusterResources } from '@/hooks/useK8sResources';
 import { useCrds } from '@/hooks/useCrds';
-import { useTopology } from '@/hooks/useTopology';
+import { refreshTopology, useTopology } from '@/hooks/useTopology';
 import { parseApiError } from '@/lib/error-handler';
 import { STORAGE_KEYS } from '@/lib/storage-keys';
 import type { K8sResource } from '@/types/kubernetes';
@@ -50,6 +50,12 @@ import {
 // Main Component
 // ---------------------------------------------------------------------------
 
+// The integer id in a URL param or localStorage value, or null.
+function parseId(value: string | null): number | null {
+  const id = value ? parseInt(value, 10) : NaN;
+  return Number.isNaN(id) ? null : id;
+}
+
 export default function CNF() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -57,19 +63,33 @@ export default function CNF() {
 
   // Project and cluster selection (persisted to localStorage)
   const { data: projects } = useProjects();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: allClustersResponse } = useAllClusters();
   const allClusters = allClustersResponse?.clusters ?? [];
 
   const [selectedProject, setSelectedProject] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_PROJECT);
-    return stored ? parseInt(stored) : null;
+    return parseId(searchParams.get('project')) ?? parseId(localStorage.getItem(STORAGE_KEYS.CNF_PROJECT));
   });
   const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_CLUSTER);
-    return stored ? parseInt(stored) : null;
+    return parseId(searchParams.get('cluster')) ?? parseId(localStorage.getItem(STORAGE_KEYS.CNF_CLUSTER));
   });
 
-  const { data: clusters = [] } = useProjectClusters(selectedProject ?? 0, {
+  useEffect(() => {
+    const p = parseId(searchParams.get('project'));
+    const c = parseId(searchParams.get('cluster'));
+    if (p !== null) setSelectedProject(p);
+    if (c !== null) setSelectedCluster(c);
+
+    const paramsToClean = ['project', 'cluster'];
+    const hasAny = paramsToClean.some((param) => searchParams.has(param));
+    if (hasAny) {
+      const next = new URLSearchParams(searchParams);
+      paramsToClean.forEach((param) => next.delete(param));
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  const { data: clusters = [], isLoading: isLoadingClusters } = useProjectClusters(selectedProject ?? 0, {
     pollingEnabled: false,
   });
 
@@ -125,15 +145,16 @@ export default function CNF() {
 
   // Clear cluster when project changes and cluster no longer belongs to it
   useEffect(() => {
+    if (isLoadingClusters) return;
     if (selectedProject && selectedCluster) {
       const exists = visibleClusters.some((c) => c.id === selectedCluster);
       if (!exists && visibleClusters.length > 0) setSelectedCluster(visibleClusters[0].id);
       else if (!exists) setSelectedCluster(null);
     }
-  }, [selectedProject, visibleClusters, selectedCluster]);
+  }, [isLoadingClusters, selectedProject, visibleClusters, selectedCluster]);
 
   // CRD discovery
-  const { data: crdsData, isLoading: crdsLoading, error: crdsError } = useCrds(
+  const { data: crdsData, isLoading: crdsLoading, isFetching: crdsFetching, error: crdsError } = useCrds(
     selectedCluster ?? 0,
     { enabled: !!selectedCluster && clusterReachable }
   );
@@ -174,7 +195,7 @@ export default function CNF() {
 
   // Resource list for selected CRD
   const namespace = selectedNamespace === 'all' ? undefined : selectedNamespace;
-  const { data: resourcesData, isLoading: resourcesLoading, error: resourcesError } = useClusterResources(
+  const { data: resourcesData, isLoading: resourcesLoading, isFetching: resourcesFetching, error: resourcesError } = useClusterResources(
     selectedCluster ?? 0,
     selectedCrdKey ?? '',
     namespace ? { namespace } : undefined,
@@ -184,7 +205,7 @@ export default function CNF() {
   const resources: K8sResource[] = (resourcesData?.resources ?? []) as K8sResource[];
 
   // Namespaces for selector
-  const { data: namespacesResponse } = useClusterNamespaces(selectedCluster ?? 0, {
+  const { data: namespacesResponse, isFetching: namespacesFetching } = useClusterNamespaces(selectedCluster ?? 0, {
     enabled: !!selectedCluster && clusterReachable,
   });
   const namespaces = namespacesResponse?.namespaces ?? [];
@@ -194,6 +215,7 @@ export default function CNF() {
   const {
     data: topologyData,
     isLoading: topologyLoading,
+    isFetching: topologyFetching,
     error: topologyError,
   } = useTopology(selectedCluster ?? 0, topologyNamespace, {
     enabled: view === 'topology' && !!selectedCluster && clusterReachable,
@@ -211,13 +233,31 @@ export default function CNF() {
     setDescribeOpen(true);
   };
 
-  // Refresh — invalidate the three cluster-scoped caches used by this page
-  const handleRefresh = useCallback(() => {
+  // Refresh — invalidate cluster-scoped caches used by this page (including topology)
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
     if (!selectedCluster) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.crds(selectedCluster) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.allResources(selectedCluster) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.namespaces(selectedCluster) });
+    setIsManualRefreshing(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await Promise.all([
+        minWait,
+        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.crds(selectedCluster) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.allResources(selectedCluster) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.namespaces(selectedCluster) }),
+        refreshTopology(queryClient, selectedCluster),
+      ]);
+    } finally {
+      setIsManualRefreshing(false);
+    }
   }, [queryClient, selectedCluster]);
+
+  const isRefreshing =
+    isManualRefreshing ||
+    crdsFetching ||
+    resourcesFetching ||
+    namespacesFetching ||
+    (view === 'topology' && topologyFetching);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -565,7 +605,14 @@ export default function CNF() {
           variant="ghost"
           size="sm"
           className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => navigate('/kubernetes')}
+          onClick={() => {
+            const params = new URLSearchParams();
+            if (selectedProject) params.set('project', String(selectedProject));
+            if (selectedCluster) params.set('cluster', String(selectedCluster));
+            params.set('view', 'crds');
+            if (selectedCrdKey) params.set('crd', selectedCrdKey);
+            navigate(`/kubernetes?${params.toString()}`);
+          }}
         >
           <ExternalLink className="h-3.5 w-3.5" />
           Raw K8s CRD Explorer
@@ -598,7 +645,7 @@ export default function CNF() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
-        isRefreshing={false}
+        isRefreshing={isRefreshing}
       >
         {selectedCluster && crdsData && crdsData.crds.length > 0 && (
           <Badge variant="outline" className="text-xs h-7">

@@ -18,9 +18,11 @@ import type {
 
 export const licensingApi = {
   /** Get CWC license and telemetry status for a cluster */
-  getStatus: (clusterId: number) =>
+  getStatus: (clusterId: number, force?: boolean) =>
     apiClient
-      .get<LicenseStatusResponse>(`/api/licensing/${clusterId}/status`)
+      .get<LicenseStatusResponse>(`/api/licensing/${clusterId}/status`, {
+        params: force ? { force: true } : undefined,
+      })
       .then((res) => res.data),
 
   /** Get CWC telemetry report for a cluster */
@@ -54,8 +56,10 @@ export const licensingApi = {
       .then((res) => res.data),
 
   /** Full CWC connectivity and certificate status check */
-  getCWCStatus: (clusterId: number) =>
+  getCWCStatus: (clusterId: number, force?: boolean) =>
     apiClient
-      .get<CWCStatusResponse>(`/api/licensing/${clusterId}/cwc-status`)
+      .get<CWCStatusResponse>(`/api/licensing/${clusterId}/cwc-status`, {
+        params: force ? { force: true } : undefined,
+      })
       .then((res) => res.data),
 };

@@ -58,9 +58,12 @@ router = APIRouter(prefix="/api", tags=["k8s-clusters"])
 # Cluster CRUD
 # ============================================================================
 
+
 @router.post("/projects/{project_id}/k8s/clusters/detect-eks")
 @handle_route_errors("detect managed clusters")
-def detect_and_register_eks_clusters(project_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)):
+def detect_and_register_eks_clusters(
+    project_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)
+):
     """Detect deployed managed-cluster modules in the project and register them (owner or admin only)."""
     return ClusterManagementService(db).detect_managed_clusters(project_id)
 
@@ -68,9 +71,7 @@ def detect_and_register_eks_clusters(project_id: int, user: User = Depends(requi
 @router.post("/projects/{project_id}/k8s/clusters/detect-credentials")
 @handle_route_errors("detect clusters from credentials")
 def detect_and_register_clusters_from_credentials(
-    project_id: int,
-    user: User = Depends(require_project_owner),
-    db: Session = Depends(get_db)
+    project_id: int, user: User = Depends(require_project_owner), db: Session = Depends(get_db)
 ):
     """Discover Kubernetes clusters via the project's bound cloud credential template."""
     result = ClusterDiscoveryService(db).detect_clusters_from_credentials(project_id)
@@ -82,7 +83,12 @@ def detect_and_register_clusters_from_credentials(
 
 @router.post("/projects/{project_id}/k8s/clusters", response_model=ClusterCreateResponse)
 @handle_route_errors("add cluster")
-def add_cluster_to_project(project_id: int, cluster_data: ClusterCreateRequest, user: User = Depends(require_project_owner), db: Session = Depends(get_db)):
+def add_cluster_to_project(
+    project_id: int,
+    cluster_data: ClusterCreateRequest,
+    user: User = Depends(require_project_owner),
+    db: Session = Depends(get_db),
+):
     """Add a Kubernetes cluster configuration to a project (owner or admin only)."""
     result = ClusterManagementService(db).create_cluster(project_id, cluster_data)
     db.commit()
@@ -97,23 +103,33 @@ def list_all_clusters(db: Session = Depends(get_db)):
     return ClusterManagementService(db).list_all_clusters()
 
 
-@router.get("/k8s/clusters/connectivity", response_model=BatchConnectivityResponse, dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/connectivity", response_model=BatchConnectivityResponse, dependencies=[Depends(require_viewer)]
+)
 @handle_route_errors("batch connectivity check")
 def batch_connectivity_check(db: Session = Depends(get_db)):
     """Probe connectivity for all clusters in parallel. Fast, lightweight network check."""
     from services.connectivity_probe_service import ConnectivityProbeService
+
     return ConnectivityProbeService(db).probe_all_clusters()
 
 
-@router.get("/projects/{project_id}/connectivity", response_model=BatchConnectivityResponse, dependencies=[Depends(require_viewer)])
+@router.get(
+    "/projects/{project_id}/connectivity",
+    response_model=BatchConnectivityResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("project batch connectivity check")
 def project_batch_connectivity_check(project_id: int, db: Session = Depends(get_db)):
     """Probe connectivity for all clusters in a project in parallel."""
     from services.connectivity_probe_service import ConnectivityProbeService
+
     return ConnectivityProbeService(db).probe_project_clusters(project_id)
 
 
-@router.get("/projects/{project_id}/k8s/clusters", response_model=ClusterListResponse, dependencies=[Depends(require_viewer)])
+@router.get(
+    "/projects/{project_id}/k8s/clusters", response_model=ClusterListResponse, dependencies=[Depends(require_viewer)]
+)
 @handle_route_errors("list project clusters")
 def list_project_clusters(project_id: int, db: Session = Depends(get_db)):
     """List all Kubernetes clusters for a project."""
@@ -129,7 +145,12 @@ def get_cluster_details(cluster_id: int, db: Session = Depends(get_db)):
 
 @router.put("/k8s/clusters/{cluster_id}", response_model=ClusterSummary)
 @handle_route_errors("update cluster")
-def update_cluster(cluster_id: int, cluster_data: ClusterUpdateRequest, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def update_cluster(
+    cluster_id: int,
+    cluster_data: ClusterUpdateRequest,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
     """Update cluster configuration (owner or admin only)."""
     result = ClusterManagementService(db).update_cluster(cluster_id, cluster_data)
     db.commit()
@@ -167,9 +188,12 @@ def delete_project_cluster(
 # Cluster Operations (delegated to KubernetesService)
 # ============================================================================
 
+
 @router.post("/k8s/clusters/{cluster_id}/refresh-kubeconfig", response_model=ClusterRefreshResponse)
 @handle_route_errors("refresh kubeconfig")
-def refresh_cluster_kubeconfig(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def refresh_cluster_kubeconfig(
+    cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)
+):
     """Refresh kubeconfig — EKS via AWS CLI or on-prem via SSH probe (owner or admin only)."""
     result = ClusterManagementService(db).refresh_kubeconfig(cluster_id)
     db.commit()
@@ -179,26 +203,34 @@ def refresh_cluster_kubeconfig(cluster_id: int, user: User = Depends(require_clu
 
 @router.post("/k8s/clusters/{cluster_id}/test", response_model=ClusterConnectionTestResponse)
 @handle_route_errors("test cluster connection")
-def test_cluster_connection(cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def test_cluster_connection(
+    cluster_id: int, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)
+):
     """Test connection to Kubernetes cluster (owner or admin only)."""
     return KubernetesService(db).test_connection(cluster_id)
 
 
-@router.get("/k8s/clusters/{cluster_id}/namespaces", response_model=NamespaceListResponse, dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/namespaces",
+    response_model=NamespaceListResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("list cluster namespaces")
-def list_cluster_namespaces(cluster_id: int, db: Session = Depends(get_db)):
+def list_cluster_namespaces(cluster_id: int, force: bool = False, db: Session = Depends(get_db)):
     """List all namespaces in a cluster."""
     k8s_service = KubernetesService(db)
-    namespaces = k8s_service.list_namespaces(cluster_id)
+    namespaces = k8s_service.list_namespaces(cluster_id, force=force)
     namespace_objects = [{"name": ns, "status": "Active", "created_at": None} for ns in namespaces]
     return {"namespaces": namespace_objects, "count": len(namespace_objects), "cluster_id": cluster_id}
 
 
-@router.get("/k8s/clusters/{cluster_id}/nodes/count", response_model=NodeCountResponse, dependencies=[Depends(require_viewer)])
+@router.get(
+    "/k8s/clusters/{cluster_id}/nodes/count", response_model=NodeCountResponse, dependencies=[Depends(require_viewer)]
+)
 @handle_route_errors("get cluster node count")
-def get_cluster_node_count(cluster_id: int, db: Session = Depends(get_db)):
+def get_cluster_node_count(cluster_id: int, force: bool = False, db: Session = Depends(get_db)):
     """Get the total number of nodes in a cluster."""
-    return {"cluster_id": cluster_id, "node_count": KubernetesService(db).get_node_count(cluster_id)}
+    return {"cluster_id": cluster_id, "node_count": KubernetesService(db).get_node_count(cluster_id, force=force)}
 
 
 @router.get("/k8s/resource-types", response_model=ResourceTypeCatalogResponse, dependencies=[Depends(require_viewer)])
@@ -208,12 +240,19 @@ def list_supported_resource_types():
     resource_types = list_resource_types()
     result = []
     for key, rt in resource_types.items():
-        result.append({
-            "key": key, "kind": rt.kind, "api_group": rt.api_group,
-            "api_version": rt.api_version, "plural": rt.plural,
-            "namespaced": rt.namespaced, "display_name": rt.display_name,
-            "description": rt.description, "category": rt.category
-        })
+        result.append(
+            {
+                "key": key,
+                "kind": rt.kind,
+                "api_group": rt.api_group,
+                "api_version": rt.api_version,
+                "plural": rt.plural,
+                "namespaced": rt.namespaced,
+                "display_name": rt.display_name,
+                "description": rt.description,
+                "category": rt.category,
+            }
+        )
     result.sort(key=lambda x: (x["category"], x["display_name"]))
     return {"resource_types": result, "count": len(result)}
 
@@ -222,11 +261,17 @@ def list_supported_resource_types():
 # Cluster Connectivity Probes
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/connectivity", response_model=ClusterConnectivityResponse, dependencies=[Depends(require_viewer)])
+
+@router.get(
+    "/k8s/clusters/{cluster_id}/connectivity",
+    response_model=ClusterConnectivityResponse,
+    dependencies=[Depends(require_viewer)],
+)
 @handle_route_errors("cluster connectivity check")
 def check_cluster_connectivity(cluster_id: int, db: Session = Depends(get_db)):
     """Probe connectivity to a single cluster. Tests ICMP, TCP port, and K8s API."""
     from services.connectivity_probe_service import ConnectivityProbeService
+
     return ConnectivityProbeService(db).probe_cluster(cluster_id)
 
 
@@ -283,7 +328,12 @@ def scan_cluster(
 
 @router.post("/k8s/clusters/{cluster_id}/adaptive-modules")
 @handle_route_errors("get adaptive module plan")
-def get_adaptive_module_plan(cluster_id: int, request: AdaptiveModuleRequest, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def get_adaptive_module_plan(
+    cluster_id: int,
+    request: AdaptiveModuleRequest,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
     """Scan a cluster and produce an adaptive deployment plan (owner or admin only)."""
     from services.adaptive_module_selector import AdaptiveModuleSelector
     from services.cluster_scanner import ClusterScanner
@@ -359,7 +409,12 @@ def probe_node_readiness(
 
 @router.post("/k8s/clusters/{cluster_id}/adaptive-modules/from-scan")
 @handle_route_errors("get adaptive module plan from scan")
-def get_adaptive_module_plan_from_scan(cluster_id: int, request: AdaptiveModuleRequest, user: User = Depends(require_cluster_owner), db: Session = Depends(get_db)):
+def get_adaptive_module_plan_from_scan(
+    cluster_id: int,
+    request: AdaptiveModuleRequest,
+    user: User = Depends(require_cluster_owner),
+    db: Session = Depends(get_db),
+):
     """Produce an adaptive deployment plan from cached scan results (owner or admin only)."""
     from services.adaptive_module_selector import AdaptiveModuleSelector
     from services.cluster_scanner import ClusterScanner

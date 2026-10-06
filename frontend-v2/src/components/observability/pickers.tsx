@@ -26,7 +26,7 @@ export function ClusterPicker({ value, onChange, allowAll = true }: ClusterPicke
 
   return (
     <Select
-      value={value === null ? '__all__' : value != null ? String(value) : undefined}
+      value={value === null ? '__all__' : value != null ? String(value) : ''}
       onValueChange={(v) => onChange(v === '__all__' ? null : Number(v))}
     >
       <SelectTrigger className="h-8 w-[220px] text-xs font-medium" aria-label="Cluster">

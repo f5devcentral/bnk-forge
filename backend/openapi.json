@@ -2101,7 +2101,7 @@
           "k8s-topology"
         ],
         "summary": "Get Cluster Topology",
-        "description": "Return a topology graph (nodes + edges) for a cluster namespace.\n\n- Nodes: Services, Pods, and the owning Deployment/StatefulSet/DaemonSet.\n- Edges: Service\u2192Pod (kind='selects') and Workload\u2192Pod (kind='owns').\n- Cluster unreachable \u2192 503 code=NETWORK_UNREACHABLE (via @with_breaker).\n- Namespace with >300 pods \u2192 truncated graph with non-null ``info``.",
+        "description": "Return a topology graph (nodes + edges) for a cluster namespace.\n\n- Nodes: Services, Pods, and the owning Deployment/StatefulSet/DaemonSet.\n- Edges: Service\u2192Pod (kind='selects') and Workload\u2192Pod (kind='owns').\n- Cluster unreachable \u2192 503 code=NETWORK_UNREACHABLE (via @with_breaker).\n- Namespace with >300 pods \u2192 truncated graph with non-null ``info``.\n- Cached for 60 seconds per namespace; ``force=true`` rebuilds it.",
         "operationId": "get_cluster_topology_api_k8s_clusters__cluster_id__topology_get",
         "parameters": [
           {
@@ -2121,6 +2121,16 @@
               "type": "string",
               "default": "default",
               "title": "Namespace"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
             }
           }
         ],
@@ -26528,7 +26538,7 @@
           "licensing"
         ],
         "summary": "Get Cwc Status Endpoint",
-        "description": "Full CWC connectivity and certificate status check.\n\nReturns: certs_mounted, cwc_service_found, cwc_reachable, setup_complete,\ncert_manager_available, and the full CWC /status response if reachable.",
+        "description": "Full CWC connectivity and certificate status check.\n\nReturns: certs_mounted, cwc_service_found, cwc_reachable, setup_complete,\ncert_manager_available, and the full CWC /status response if reachable.\nCached for 120 seconds (cleared by CWC setup and license changes); pass\nforce=true to bypass the cache.",
         "operationId": "get_cwc_status_endpoint_api_licensing__cluster_id__cwc_status_get",
         "parameters": [
           {
@@ -26538,6 +26548,16 @@
             "schema": {
               "type": "integer",
               "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
             }
           }
         ],

@@ -951,6 +951,7 @@ export interface paths {
          *     - Edges: Service→Pod (kind='selects') and Workload→Pod (kind='owns').
          *     - Cluster unreachable → 503 code=NETWORK_UNREACHABLE (via @with_breaker).
          *     - Namespace with >300 pods → truncated graph with non-null ``info``.
+         *     - Cached for 60 seconds per namespace; ``force=true`` rebuilds it.
          */
         get: operations["get_cluster_topology_api_k8s_clusters__cluster_id__topology_get"];
         put?: never;
@@ -10394,6 +10395,8 @@ export interface paths {
          *
          *     Returns: certs_mounted, cwc_service_found, cwc_reachable, setup_complete,
          *     cert_manager_available, and the full CWC /status response if reachable.
+         *     Cached for 120 seconds (cleared by CWC setup and license changes); pass
+         *     force=true to bypass the cache.
          */
         get: operations["get_cwc_status_endpoint_api_licensing__cluster_id__cwc_status_get"];
         put?: never;
@@ -26280,6 +26283,7 @@ export interface operations {
         parameters: {
             query?: {
                 namespace?: string;
+                force?: boolean;
             };
             header?: never;
             path: {
@@ -41981,7 +41985,9 @@ export interface operations {
     };
     get_cwc_status_endpoint_api_licensing__cluster_id__cwc_status_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 cluster_id: number;

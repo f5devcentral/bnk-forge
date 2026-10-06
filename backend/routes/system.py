@@ -361,6 +361,8 @@ def get_container_status(db: Session = Depends(get_db)):
             ["docker", "ps", "-a", "--filter", "name=bnk-forge", "--format", "{{.Names}}|{{.Status}}|{{.State}}"],
             capture_output=True, text=True, timeout=10
         )
+    except FileNotFoundError:
+        return {"containers": [], "total": 0, "available": False, "reason": "Docker CLI not found in environment"}
     except subprocess.TimeoutExpired:
         from core.errors import TimeoutError
         raise TimeoutError("Docker command")

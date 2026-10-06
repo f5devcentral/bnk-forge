@@ -5,7 +5,7 @@
  * operator pod → CWC REST API via mTLS.
  */
 import { useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { hashKey, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { licensingApi } from '@/lib/api/licensing';
 
 import type {
@@ -111,11 +111,31 @@ function parseLicenseStatus(data: LicenseStatusResponse | undefined): LicenseInf
   };
 }
 
+// Hashes of licensing queries whose next fetch must bypass the backend cache.
+const forceNextLicensingFetch = new Set<string>();
+
+/** Refetch license status and CWC status past the backend cache (explicit Refresh). */
+export function refreshLicensing(queryClient: QueryClient, clusterId?: number | null) {
+  const queryKey = clusterId ? (['licensing', clusterId] as const) : LICENSING_KEYS.all;
+  for (const query of queryClient.getQueryCache().findAll({ queryKey })) {
+    forceNextLicensingFetch.add(query.queryHash);
+  }
+  return queryClient.invalidateQueries({ queryKey });
+}
+
 /** Get CWC license and telemetry status for a cluster */
 export function useLicenseStatus(clusterId: number, enabled = true) {
   const query = useQuery({
     queryKey: LICENSING_KEYS.status(clusterId),
-    queryFn: () => licensingApi.getStatus(clusterId),
+    queryFn: async ({ queryKey }) => {
+      const qHash = hashKey(queryKey);
+      const force = forceNextLicensingFetch.has(qHash) || undefined;
+      try {
+        return await licensingApi.getStatus(clusterId, force);
+      } finally {
+        forceNextLicensingFetch.delete(qHash);
+      }
+    },
     enabled: enabled && clusterId > 0,
     staleTime: 60_000, // 1 minute — license status changes infrequently
     retry: 1,
@@ -144,7 +164,15 @@ export function useLicenseReport(clusterId: number, enabled = true) {
 export function useCWCStatus(clusterId: number, enabled = true) {
   return useQuery({
     queryKey: LICENSING_KEYS.cwcStatus(clusterId),
-    queryFn: () => licensingApi.getCWCStatus(clusterId),
+    queryFn: async ({ queryKey }) => {
+      const qHash = hashKey(queryKey);
+      const force = forceNextLicensingFetch.has(qHash) || undefined;
+      try {
+        return await licensingApi.getCWCStatus(clusterId, force);
+      } finally {
+        forceNextLicensingFetch.delete(qHash);
+      }
+    },
     enabled: enabled && clusterId > 0,
     staleTime: 60_000,
     retry: 1,
