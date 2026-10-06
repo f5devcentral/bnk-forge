@@ -23,8 +23,6 @@ import services.proxy_deploy_service as pds
 from core.errors import BadRequestError
 from services.proxy_deploy_service import (
     AWS_INTERNAL_NLB_ANNOTATIONS,
-    ENVOY_GATEWAY_CLASS_NAME,
-    ENVOY_GATEWAY_CONTROLLER,
     PROXY_LISTEN_PORT,
     ProxyDeployService,
     _backend_svc_name,
@@ -55,8 +53,8 @@ class TestEnvoyDataplaneManifest:
             "GatewayClass", "EnvoyProxy", "Gateway", "HTTPRoute",
         ]
 
-    def test_envoyproxy_uses_clusterip_for_bare_metal(self):
-        """EnvoyProxy doc forces ClusterIP so bare-metal gateways get an address."""
+    def test_envoyproxy_default_is_pinned_nodeport(self):
+        """EnvoyProxy doc pins the listener to a fixed NodePort for the external load generator."""
         docs = _parse_docs(_build_envoy_dataplane_manifest(
             "perf-envoy-x", "perf-proxies", _target(),
         ))
@@ -65,15 +63,19 @@ class TestEnvoyDataplaneManifest:
         assert ep["metadata"]["namespace"] == "perf-proxies"
         assert ep["metadata"]["name"] == "perf-envoy-x"
         svc_type = ep["spec"]["provider"]["kubernetes"]["envoyService"]["type"]
-        assert svc_type == "ClusterIP"
+        assert svc_type == "NodePort"
+        patch = ep["spec"]["provider"]["kubernetes"]["envoyService"]["patch"]
+        assert patch["value"]["spec"]["ports"] == [{"port": 10080, "nodePort": 30892}]
 
-    def test_gatewayclass_uses_envoy_controller(self):
+    def test_gatewayclass_is_the_release_own(self):
+        # Own class + controller per release, so the shared `eg` controller of
+        # envoy-ai-gateway never reconciles it (and vice versa).
         docs = _parse_docs(_build_envoy_dataplane_manifest(
             "perf-envoy-x", "perf-proxies", _target(),
         ))
         gc = docs[0]
-        assert gc["metadata"]["name"] == ENVOY_GATEWAY_CLASS_NAME
-        assert gc["spec"]["controllerName"] == ENVOY_GATEWAY_CONTROLLER
+        assert gc["metadata"]["name"] == "perf-envoy-x"
+        assert gc["spec"]["controllerName"] == "gateway.envoyproxy.io/perf-envoy-x"
 
     def test_gateway_listener_uses_proxy_listen_port_and_allows_all_namespaces(self):
         docs = _parse_docs(_build_envoy_dataplane_manifest(
@@ -82,7 +84,7 @@ class TestEnvoyDataplaneManifest:
         gw = docs[2]
         assert gw["kind"] == "Gateway"
         assert gw["metadata"]["namespace"] == "perf-proxies"
-        assert gw["spec"]["gatewayClassName"] == ENVOY_GATEWAY_CLASS_NAME
+        assert gw["spec"]["gatewayClassName"] == "perf-envoy-x"
         listener = gw["spec"]["listeners"][0]
         assert listener["port"] == PROXY_LISTEN_PORT
         assert listener["protocol"] == "HTTP"
@@ -152,27 +154,27 @@ class TestEnvoyProxyNLBOptIn:
     ClusterIP shape with no ``annotations`` key.
     """
 
-    def test_default_no_tags_is_clusterip_no_annotations(self):
-        """Non-opted target (tags=None) must produce ClusterIP with no annotations key."""
+    def test_default_no_tags_is_nodeport_no_annotations(self):
+        """Non-opted target (tags=None) gets the pinned NodePort and no annotations key."""
         docs = _parse_docs(_build_envoy_dataplane_manifest(
             "perf-envoy-x", "perf-proxies", _target_with_tags(tags=None),
         ))
         ep = docs[1]
         assert ep["kind"] == "EnvoyProxy"
         envoy_svc = ep["spec"]["provider"]["kubernetes"]["envoyService"]
-        assert envoy_svc["type"] == "ClusterIP"
-        assert "annotations" not in envoy_svc, (
-            "ClusterIP path must NOT emit annotations key (byte-identical to prior behaviour)"
-        )
+        assert envoy_svc["type"] == "NodePort"
+        # Any node forwards to the Envoy pod (Envoy Gateway defaults to Local).
+        assert envoy_svc["externalTrafficPolicy"] == "Cluster"
+        assert "annotations" not in envoy_svc
 
-    def test_empty_tags_dict_is_clusterip_no_annotations(self):
-        """Explicit empty dict tags also stays on the ClusterIP path."""
+    def test_empty_tags_dict_is_nodeport_no_annotations(self):
+        """Explicit empty dict tags also gets the pinned NodePort."""
         docs = _parse_docs(_build_envoy_dataplane_manifest(
             "perf-envoy-x", "perf-proxies", _target_with_tags(tags={}),
         ))
         ep = docs[1]
         envoy_svc = ep["spec"]["provider"]["kubernetes"]["envoyService"]
-        assert envoy_svc["type"] == "ClusterIP"
+        assert envoy_svc["type"] == "NodePort"
         assert "annotations" not in envoy_svc
 
     def test_internal_nlb_opt_in_sets_loadbalancer_type(self):
@@ -212,15 +214,24 @@ class TestEnvoyProxyNLBOptIn:
         emitted["extra-key"] = "mutated"
         assert "extra-key" not in AWS_INTERNAL_NLB_ANNOTATIONS
 
-    def test_unrecognised_expose_intent_falls_back_to_clusterip(self):
-        """An unknown proxy_expose value must not break deploy — defaults to ClusterIP."""
+    def test_unrecognised_expose_intent_falls_back_to_nodeport(self):
+        """An unknown proxy_expose value must not break deploy — defaults to the pinned NodePort."""
         docs = _parse_docs(_build_envoy_dataplane_manifest(
             "perf-envoy-x", "perf-proxies",
             _target_with_tags(tags={"proxy_expose": "future-unknown-type"}),
         ))
         ep = docs[1]
         envoy_svc = ep["spec"]["provider"]["kubernetes"]["envoyService"]
-        assert envoy_svc["type"] == "ClusterIP"
+        assert envoy_svc["type"] == "NodePort"
+
+    def test_clusterip_opt_out(self):
+        """``proxy_expose: clusterip`` keeps the data plane in-cluster only."""
+        docs = _parse_docs(_build_envoy_dataplane_manifest(
+            "perf-envoy-x", "perf-proxies",
+            _target_with_tags(tags={"proxy_expose": "clusterip"}),
+        ))
+        envoy_svc = docs[1]["spec"]["provider"]["kubernetes"]["envoyService"]
+        assert envoy_svc == {"type": "ClusterIP"}
 
 
 class TestBackendSvcNameAndPort:
@@ -488,6 +499,10 @@ class TestPreUninstallEnvoyRouteNamespace:
             deletes.append((resource, namespace))
 
         monkeypatch.setattr(pds, "_kubectl_delete", _rec)
+        monkeypatch.setattr(
+            pds, "_kubectl_delete_cluster_scoped",
+            lambda kubeconfig_path, resource, **kwargs: deletes.append((resource, None)),
+        )
         return deletes
 
     def test_deletes_httproute_from_upstream_namespace(self, monkeypatch):
@@ -516,3 +531,11 @@ class TestPreUninstallEnvoyRouteNamespace:
         )
         route_delete = next(d for d in deletes if d[0] == "httproute/perf-envoy-x")
         assert route_delete[1] == "dynamo-system"
+        assert ("gatewayclass/perf-envoy-x", None) in deletes
+
+
+class TestEnvoyValues:
+    def test_controller_name_is_per_release(self):
+        deploy = MagicMock(helm_release="perf-envoy-x", proxy_type="envoy")
+        values = _service()._values_envoy(deploy, _target())
+        assert values["config"]["envoyGateway"]["gateway"]["controllerName"] == "gateway.envoyproxy.io/perf-envoy-x"

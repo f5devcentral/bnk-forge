@@ -419,6 +419,26 @@ RESOURCE_REGISTRY: dict[str, K8sResourceType] = {
         "F5BigAnalyzer", "f5-big-analyzers", "F5 AI Analyzer",
         "AI-powered load balancing analyzer for LLM inference workloads (EA feature)",
         api_version="v1alpha1"),
+    "f5epp": K8sResourceType(
+        api_group="inference.k8s.f5.com",
+        api_version="v1alpha1",
+        kind="F5EPP",
+        plural="f5-epps",
+        namespaced=True,
+        display_name="F5 Endpoint Picker",
+        description="AI inference routing analyzer server with KV-cache awareness, prompt prefix affinity, and prefill-decode disaggregation",
+        category=ResourceCategory.F5_BNK
+    ),
+    "observer": K8sResourceType(
+        api_group=ApiGroups.F5_K8S,
+        api_version="v1",
+        kind="Observer",
+        plural="observers",
+        namespaced=True,
+        display_name="F5 Observer Telemetry",
+        description="Multi-tenant performance monitoring and Prometheus metric extraction",
+        category=ResourceCategory.F5_BNK
+    ),
 
     # --- IPAM (fic.f5.com) ---
     "ipamrange": K8sResourceType(

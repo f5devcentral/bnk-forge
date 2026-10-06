@@ -273,13 +273,35 @@ class BenchmarkCompareRunMetrics(BaseModel):
     peak_rps: float | None
     tokens_per_sec: float | None
     duration_seconds: float | None
-    # aiperf-specific metrics (avg values for comparison)
+    # aiperf tail-latency + service-level metrics (latencies in ms) — run_point_metrics()
     ttft_avg: float | None = None
+    ttft_p50: float | None = None
+    ttft_p90: float | None = None
+    ttft_p99: float | None = None
     itl_avg: float | None = None
+    itl_p50: float | None = None
+    itl_p99: float | None = None
     tst_avg: float | None = None
     osl_avg: float | None = None
     isl_avg: float | None = None
     per_user_throughput_avg: float | None = None
+    per_user_throughput_p50: float | None = None
+    goodput: float | None = None
+    good_request_pct: float | None = None
+    error_rate_pct: float | None = None
+    requested_osl: float | None = None
+    effective_concurrency: float | None = None
+    # What the router did, from the model-server pods (result_json.model_server).
+    cache_hit_pct: float | None = None
+    load_spread: float | None = None
+    max_share_pct: float | None = None
+    preemptions: float | None = None
+    ttft_p10: float | None = None
+    ttft_p25: float | None = None
+    pods: list[dict] | None = None
+    # Model server, router and workload, for the comparison header.
+    tags: dict | None = None
+    config_snapshot: dict | None = None
 
 
 class BenchmarkCompareResponse(BaseModel):
@@ -290,6 +312,8 @@ class BenchmarkCompareResponse(BaseModel):
     # frontend shows a "comparing mismatched configs" warning instead of silently
     # implying an apples-to-apples comparison.
     context_mismatch: bool = False
+    # True when the runs were served differently (simulator vs real model, replica count).
+    server_mismatch: bool = False
 
 
 # =============================================================================
@@ -381,6 +405,7 @@ class ProxyDeploymentResponse(BaseModel):
     helm_values: dict | None
     proxy_url: str | None
     external_url: str | None
+    routing_info: dict | None = None
     status: str
     status_message: str | None
     celery_task_id: str | None = None
@@ -455,6 +480,21 @@ class ProxyDeploymentUpdate(BaseModel):
 # Run Orchestration (Phase 4d)
 # =============================================================================
 
+def reject_internal_override_keys(v: dict | None, forbidden: frozenset[str] = frozenset({"trace_url"})) -> dict | None:
+    """Overrides may tune aiperf, not pick what the agent fetches: ``trace_url``
+    and any ``_``-prefixed (Forge-internal) key are server-side only (SSRF defence)."""
+    if v is None:
+        return v
+    bad = (forbidden & v.keys()) | {k for k in v if k.startswith("_")}
+    if bad:
+        raise ValueError(
+            f"Override key(s) not permitted: {sorted(bad)}. "
+            "Keys 'trace_url' and any key starting with '_' are reserved for "
+            "server-side use and cannot be supplied by callers."
+        )
+    return v
+
+
 class TriggerRunRequest(BaseModel):
     """Request to trigger a benchmark run against a deployed proxy.
 
@@ -469,6 +509,16 @@ class TriggerRunRequest(BaseModel):
     total_requests: int | None = Field(default=None, description="Override total requests count")
     max_tokens: int | None = Field(default=None, description="Override max output tokens per request")
     timeout: int | None = Field(default=None, description="Override HTTP request timeout (seconds)")
+    overrides: dict | None = Field(
+        default=None,
+        description="aiperf settings applied over the saved config (e.g. {'concurrency': 64}). "
+        "url/model/endpoint always come from the target/proxy.",
+    )
+
+    @field_validator("overrides")
+    @classmethod
+    def no_internal_keys(cls, v: dict | None) -> dict | None:
+        return reject_internal_override_keys(v)
 
 
 class TriggerRunResponse(BaseModel):
@@ -493,6 +543,12 @@ class ScenarioCatalogItem(BaseModel):
     trace_driven: bool
     child_run_count: int = Field(description="Number of child runs this scenario expands into")
     tags: list[str] = Field(default_factory=list)
+    # Sweep presets: which aiperf setting the steps set, and the default steps.
+    sweep_param: str | None = None
+    default_steps: list[float] = Field(default_factory=list)
+    step_warmup_s: int | None = None
+    step_duration_floor_s: int | None = None
+    step_min_requests: int | None = None
 
 
 class ScenarioCatalogResponse(BaseModel):
@@ -516,6 +572,12 @@ class ScenarioRunRequest(BaseModel):
         default=None,
         description="Per-child aiperf flag overrides applied to every child config (e.g. {'model': '...'}).",
     )
+    steps: list[float] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=12,
+        description="Load steps for a sweep preset (e.g. request rates in req/s); replaces its default steps.",
+    )
 
     # Keys that callers must never be allowed to override — they control which
     # dataset/endpoint the agent fetches and must be set exclusively by the
@@ -525,18 +587,7 @@ class ScenarioRunRequest(BaseModel):
     @field_validator("overrides")
     @classmethod
     def no_internal_keys(cls, v: dict | None) -> dict | None:
-        if v is None:
-            return v
-        forbidden_exact = cls._FORBIDDEN_OVERRIDE_KEYS & v.keys()
-        forbidden_prefix = {k for k in v if k.startswith("_")}
-        bad = forbidden_exact | forbidden_prefix
-        if bad:
-            raise ValueError(
-                f"Override key(s) not permitted: {sorted(bad)}. "
-                "Keys 'trace_url' and any key starting with '_' are reserved for "
-                "server-side use and cannot be supplied by callers."
-            )
-        return v
+        return reject_internal_override_keys(v, cls._FORBIDDEN_OVERRIDE_KEYS)
 
 
 class RunGroupChildSummary(BaseModel):
@@ -545,10 +596,17 @@ class RunGroupChildSummary(BaseModel):
     variant_label: str | None
     status: str
     concurrency: int | None = None
+    request_rate: float | None = None
     latency_p50: float | None = None
     latency_p99: float | None = None
     overall_rps: float | None = None
     tokens_per_sec: float | None = None
+    # What the router did and what it bought (ms; see run_point_metrics).
+    cache_hit_pct: float | None = None
+    ttft_avg: float | None = None
+    ttft_p50: float | None = None
+    ttft_p99: float | None = None
+    error_rate_pct: float | None = None
 
 
 class RunGroupSummary(BaseModel):
@@ -586,6 +644,57 @@ class RunGroupResponse(RunGroupSummary):
     completed_at: datetime | None
     updated_at: datetime
     runs: list[RunGroupChildSummary] = Field(default_factory=list)
+
+
+class RunGroupListResponse(BaseModel):
+    """Response from GET /api/benchmarks/run-groups."""
+    groups: list[RunGroupSummary]
+    total: int
+
+
+class RunGroupCurvesRequest(BaseModel):
+    """Sweeps to plot against each other (one line per group)."""
+    group_ids: list[int] = Field(..., min_length=1, max_length=8)
+
+
+class CurvePoint(BaseModel):
+    """One load point of a sweep (a completed child run); latencies in ms except latency_p50/p99 (s)."""
+    run_id: int
+    variant_label: str | None
+    concurrency: float | None = None
+    request_rate: float | None = None
+    benchmark_duration: float | None = None
+    total_requests: int | None = None
+    latency_p50: float | None = None
+    latency_p99: float | None = None
+    overall_rps: float | None = None
+    tokens_per_sec: float | None = None
+    success_rate_pct: float | None = None
+    ttft_p50: float | None = None
+    ttft_p99: float | None = None
+    itl_p50: float | None = None
+    itl_p99: float | None = None
+    per_user_throughput_p50: float | None = None
+    goodput: float | None = None
+    good_request_pct: float | None = None
+    error_rate_pct: float | None = None
+    osl_avg: float | None = None
+    requested_osl: float | None = None
+    effective_concurrency: float | None = None
+
+
+class CurveGroup(RunGroupSummary):
+    points: list[CurvePoint]
+    load_axis: str = "concurrency"
+    # Goodput targets the sweep ran with, e.g. {"time_to_first_token": 2000} (ms).
+    goodput_targets: dict[str, float] = Field(default_factory=dict)
+
+
+class RunGroupCurvesResponse(BaseModel):
+    """Load curves for several sweeps, aligned by variant label."""
+    groups: list[CurveGroup]
+    # Why the curves may not be comparable (different scenario, model or target).
+    mismatch_reasons: list[str] = Field(default_factory=list)
 
 
 class ScenarioRunResponse(BaseModel):
