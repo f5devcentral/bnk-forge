@@ -46,9 +46,9 @@ import {
   CloudCog, Shield, Server, Layers, Camera, UserCheck, AlertTriangle, Search, CheckCircle, CircuitBoard, Cpu,
   Clock, FileText, ScrollText, RefreshCw,
 } from 'lucide-react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { usePageRefresh } from '@/hooks/usePageRefresh';
 import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/authStore';
 import { useProject, useDeleteProject } from '@/hooks/useProjects';
@@ -126,25 +126,7 @@ export default function ProjectDetailV2() {
   const navigate = useNavigate();
   const projectId = parseInt(id || '0');
 
-  const queryClient = useQueryClient();
-  const [isPageRefreshing, setIsPageRefreshing] = useState(false);
-
-  const handlePageRefresh = useCallback(async () => {
-    setIsPageRefreshing(true);
-    const minWait = new Promise((resolve) => setTimeout(resolve, 400));
-    try {
-      await Promise.all([
-        minWait,
-        queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.modules.project.byProject(projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.drift.all }),
-        queryClient.invalidateQueries({ queryKey: ['tasks', 'project', projectId] }),
-      ]);
-    } finally {
-      setIsPageRefreshing(false);
-    }
-  }, [queryClient, projectId]);
+  const { refresh: handlePageRefresh, isRefreshing: isPageRefreshing } = usePageRefresh();
 
   const currentUser = useAuthStore((s) => s.user);
   const { data: project, isLoading: projectLoading } = useProject(projectId);

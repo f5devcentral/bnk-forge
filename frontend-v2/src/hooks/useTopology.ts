@@ -4,6 +4,7 @@
  * Fetches GET /api/k8s/clusters/{id}/topology?namespace=<ns>.
  * Gated on cluster reachability and a real (non-"all") namespace selection.
  */
+import { useEffect } from 'react';
 import { hashKey, useQuery, type QueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -32,10 +33,21 @@ export function useTopology(
   const reachable = useClusterReachable(clusterId);
   const isNamespaceSelected = !!namespace && namespace !== 'all';
 
+  useEffect(() => {
+    forceNextFetch.clear();
+  }, [clusterId]);
+
   return useQuery({
     queryKey: queryKeys.k8s.clusters.topology(clusterId, namespace),
-    queryFn: ({ queryKey }) =>
-      api.getTopology(clusterId, namespace, forceNextFetch.delete(hashKey(queryKey)) || undefined),
+    queryFn: async ({ queryKey }) => {
+      const qHash = hashKey(queryKey);
+      const force = forceNextFetch.has(qHash) || undefined;
+      try {
+        return await api.getTopology(clusterId, namespace, force);
+      } finally {
+        forceNextFetch.delete(qHash);
+      }
+    },
     enabled:
       options?.enabled !== false &&
       !!clusterId &&

@@ -64,10 +64,12 @@ const sumSeries = (series: LlmSeries[]): number =>
 const requestSeriesColor = (name: string): string =>
   name.toLowerCase().includes('error') ? ERROR_COLOR : SUCCESS_COLOR;
 
+const LLM_REFRESH_KEYS = [['llm-observability']] as const;
+
 export default function LlmDashboard() {
   const f = useObservabilityFilters('overview');
   const { data: filterData } = useLlmFilterData(f.clusterId, f.range);
-  const { refresh, isRefreshing } = usePageRefresh([['llm-observability']]);
+  const { refresh, isRefreshing } = usePageRefresh(LLM_REFRESH_KEYS);
 
   return (
     <div className="space-y-6 p-6">

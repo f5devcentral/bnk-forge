@@ -63,7 +63,7 @@ export default function CNF() {
 
   // Project and cluster selection (persisted to localStorage)
   const { data: projects } = useProjects();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: allClustersResponse } = useAllClusters();
   const allClusters = allClustersResponse?.clusters ?? [];
 
@@ -79,7 +79,15 @@ export default function CNF() {
     const c = parseId(searchParams.get('cluster'));
     if (p !== null) setSelectedProject(p);
     if (c !== null) setSelectedCluster(c);
-  }, [searchParams]);
+
+    const paramsToClean = ['project', 'cluster'];
+    const hasAny = paramsToClean.some((param) => searchParams.has(param));
+    if (hasAny) {
+      const next = new URLSearchParams(searchParams);
+      paramsToClean.forEach((param) => next.delete(param));
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { data: clusters = [], isLoading: isLoadingClusters } = useProjectClusters(selectedProject ?? 0, {
     pollingEnabled: false,

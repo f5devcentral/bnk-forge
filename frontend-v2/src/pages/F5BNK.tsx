@@ -30,6 +30,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
 import { refreshBnkData, useBnkData } from '@/hooks/k8s/useBnk';
+import { refreshLicensing } from '@/hooks/useLicensing';
 import { keepPreviousForScope } from '@/lib/queryKeys';
 import { useAllClusters } from '@/hooks/useK8sClusters';
 import { useProjects } from '@/hooks/useProjects';
@@ -655,7 +656,7 @@ export default function F5BNK() {
     void queryClient.invalidateQueries({ queryKey: ['runbooks'] });
     void queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     void queryClient.invalidateQueries({ queryKey: ['qkview'] });
-    void queryClient.invalidateQueries({ queryKey: ['licensing'] });
+    void refreshLicensing(queryClient, selectedCluster);
     setIsManualRefreshing(true);
     const minWait = new Promise((resolve) => setTimeout(resolve, 400));
     try {

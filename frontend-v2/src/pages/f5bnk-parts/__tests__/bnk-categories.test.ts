@@ -70,15 +70,13 @@ describe('buildBnkCategories', () => {
     expect(keys).toContain('f5spkvlan');
   });
 
-  it('ignores an unknown/unmapped CRD (accessible via /kubernetes instead)', () => {
+  it('collapses an unknown CRD group into "Other" (never a raw-group tab)', () => {
     const result = buildBnkCategories([
       crd({ kind: 'Widget', plural: 'widgets', group: 'custom.io', category: null }),
     ]);
     const names = result.map((c) => c.category);
-    expect(names).not.toContain('Other');
+    expect(names).toContain('Other');
     expect(names).not.toContain('custom.io');
-    const allKeys = result.flatMap((c) => c.items.map((i) => i.key));
-    expect(allKeys).not.toContain('widgets.custom.io');
   });
 
   it('routes an unmapped backend category slug ("f5-bnk") into System & Configuration', () => {
@@ -102,13 +100,13 @@ describe('buildBnkCategories', () => {
     expect(system?.items.map((i) => i.key)).toContain('vlans.k8s.f5.com');
   });
 
-  it('stays strictly curated even with many uncategorized CRDs (no Other category)', () => {
+  it('stays curated + at most one "Other" even with many uncategorized CRDs (regression)', () => {
     const many = ['k8s.f5.com', 'monitoring.coreos.com', 'gateway.envoyproxy.io', 'cert-manager', 'tawon.mantisnet.com']
       .map((g, i) => crd({ kind: `K${i}`, plural: `k${i}s`, group: g, category: null }));
     const names = buildBnkCategories(many).map((c) => c.category);
     const curated = bnkResourceCategories.map((c) => c.category);
-    expect(names).not.toContain('Other');
-    expect(names).toEqual(curated); // exactly the curated domains
+    expect(names.filter((n) => n === 'Other')).toHaveLength(1);
+    expect(names).toEqual([...curated, 'Other']); // exactly curated + Other, no per-group tabs
   });
 
   it('does not duplicate a static item (kind-based dedup, mismatched plural)', () => {
@@ -158,7 +156,7 @@ describe('buildBnkCategories', () => {
     expect(secPolicyItems).toHaveLength(1);
   });
 
-  it('a genuinely unknown CRD (kind not present in any curated bucket) does not land in BNK navigation', () => {
+  it('a genuinely unknown CRD (kind not present in any curated bucket) still lands in "Other"', () => {
     const result = buildBnkCategories([
       crd({
         name: 'somethings.monitoring.coreos.com', kind: 'ServiceMonitor', plural: 'somethings',
@@ -166,7 +164,7 @@ describe('buildBnkCategories', () => {
       }),
     ]);
     const other = result.find((c) => c.category === 'Other');
-    expect(other).toBeUndefined();
+    expect(other?.items.map((i) => i.key)).toContain('somethings.monitoring.coreos.com');
   });
 
   it('does not mutate the original bnkResourceCategories', () => {
@@ -178,12 +176,11 @@ describe('buildBnkCategories', () => {
     expect(after).toEqual(before);
   });
 
-  it('uses display_name as label when provided for a mapped category', () => {
+  it('uses display_name as label when provided (item lands under "Other")', () => {
     const result = buildBnkCategories([
-      crd({ name: 'custom.k8s.f5.com', kind: 'MyKind', plural: 'mykinds', display_name: 'Custom Resource', category: 'networking', group: 'k8s.f5.com' }),
+      crd({ kind: 'MyKind', plural: 'mykinds', display_name: 'Custom Resource', group: 'custom.io' }),
     ]);
-    const cat = result.find((c) => c.category === 'System & Configuration');
-    const item = cat?.items.find((i) => i.key === 'custom.k8s.f5.com');
-    expect(item?.label).toBe('Custom Resource');
+    const cat = result.find((c) => c.category === 'Other');
+    expect(cat?.items[0].label).toBe('Custom Resource');
   });
 });

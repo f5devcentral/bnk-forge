@@ -76,6 +76,7 @@ class LicenseActivateRequest(BaseModel):
     The jwt field contains raw JWT object data (NOT JSON-wrapped).
     Per F5 docs, /reactivate expects raw JWT data sent with -d <JWT>.
     """
+
     jwt: str = Field(..., description="Raw JWT string for license activation")
 
 
@@ -87,6 +88,7 @@ class LicenseReceiptRequest(BaseModel):
     the F5 telemetry server. Per F5 docs, /receipt expects raw manifest
     data without curly brackets or quotes.
     """
+
     manifest: str = Field(..., description="Raw manifest string from F5 telemetry server")
 
 
@@ -97,6 +99,7 @@ class LicenseRenewRequest(BaseModel):
     Default: Clean license switch via CWC /reactivate API.
     force=True: Nuclear renewal (CPCL cleanup + CWC restart + reactivate).
     """
+
     jwt: str = Field(..., description="Raw JWT string for the new/renewed license")
     force: bool = Field(
         False,
@@ -219,8 +222,7 @@ async def _try_operator_dispatch(
     except (ConnectionError, TimeoutError) as e:
         # Operator was connected but command failed — log and fall back to legacy
         logger.warning(
-            f"Operator dispatch failed for {action} on cluster {cluster_id}: {e}. "
-            "Falling back to legacy CWC path."
+            f"Operator dispatch failed for {action} on cluster {cluster_id}: {e}. Falling back to legacy CWC path."
         )
         return None
 
@@ -251,7 +253,9 @@ async def get_license_status_endpoint(
 
     # Try operator path
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_license_status",
+        db,
+        cluster_id,
+        "cwc_license_status",
     )
     if result is not None:
         if not result.get("success"):
@@ -300,7 +304,10 @@ async def get_license_report_endpoint(
 
     # Try operator path
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_license_report", timeout=30.0,
+        db,
+        cluster_id,
+        "cwc_license_report",
+        timeout=30.0,
     )
     if result is not None:
         if not result.get("success"):
@@ -344,7 +351,9 @@ async def activate_license_endpoint(
 
     # Try operator path
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_license_activate",
+        db,
+        cluster_id,
+        "cwc_license_activate",
         payload={"jwt": request.jwt},
     )
     if result is not None:
@@ -410,7 +419,9 @@ async def renew_license_endpoint(
     action = "cwc_license_force_renew" if request.force else "cwc_license_renew"
     timeout = 180.0 if request.force else 60.0
     result = await _try_operator_dispatch(
-        db, cluster_id, action,
+        db,
+        cluster_id,
+        action,
         payload={"jwt": request.jwt, "force": request.force},
         timeout=timeout,
     )
@@ -428,7 +439,10 @@ async def renew_license_endpoint(
     try:
         k8s_service = KubernetesService(db)
         result = legacy_renew_license(
-            k8s_service, cluster_id, request.jwt, force=request.force,
+            k8s_service,
+            cluster_id,
+            request.jwt,
+            force=request.force,
         )
     except QKViewError as e:
         raise HTTPException(
@@ -466,7 +480,9 @@ async def post_license_receipt_endpoint(
 
     # Try operator path
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_license_receipt",
+        db,
+        cluster_id,
+        "cwc_license_receipt",
         payload={"manifest": request.manifest},
     )
     if result is not None:
@@ -482,7 +498,9 @@ async def post_license_receipt_endpoint(
     try:
         k8s_service = KubernetesService(db)
         result = legacy_post_license_receipt(
-            k8s_service, cluster_id, request.manifest,
+            k8s_service,
+            cluster_id,
+            request.manifest,
         )
     except QKViewError as e:
         raise HTTPException(
@@ -549,9 +567,7 @@ async def get_cwc_setup_status_endpoint(
             "client_cert_exists": result.get("client_cert_exists", False),
             "certs_mounted": result.get("certs_mounted", False),
             "message": (
-                "CWC API mTLS setup is complete"
-                if result.get("setup_complete")
-                else "CWC API mTLS setup is required"
+                "CWC API mTLS setup is complete" if result.get("setup_complete") else "CWC API mTLS setup is required"
             ),
             "operator_dispatch": True,
         }
@@ -571,7 +587,10 @@ async def run_cwc_setup_endpoint(
 ):
     """Run one-time cert-manager setup for the shared CWC REST API mTLS certs."""
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_setup_certs", timeout=120.0,
+        db,
+        cluster_id,
+        "cwc_setup_certs",
+        timeout=120.0,
     )
     if result is not None:
         if not result.get("success"):
@@ -614,11 +633,15 @@ async def get_cwc_status_endpoint(
 
     # Try operator path
     result = await _try_operator_dispatch(
-        db, cluster_id, "cwc_check_status", timeout=30.0,
+        db,
+        cluster_id,
+        "cwc_check_status",
+        timeout=30.0,
     )
     if result is not None:
         response = {**result, "operator_dispatch": True}
-        cache.set(cache_key, response, ttl_seconds=120)
+        if result.get("success"):
+            cache.set(cache_key, response, ttl_seconds=120)
         return response
 
     # Legacy fallback — check CWC availability + cert-manager via kubeconfig
@@ -633,6 +656,7 @@ async def get_cwc_status_endpoint(
             cluster = k8s_service.get_cluster(cluster_id)
             api_client = k8s_service.load_kubeconfig(cluster)
             from services.qkview_service import _check_cert_manager_available
+
             cert_manager_ok = _check_cert_manager_available(api_client)
         except Exception:
             pass
@@ -648,6 +672,7 @@ async def get_cwc_status_endpoint(
                 _detect_cwc_namespace,
                 _secret_exists,
             )
+
             cwc_ns = _detect_cwc_namespace(api_client)
             cwc_license_certs_ok = _secret_exists(api_client, CWC_LICENSE_CERTS_SECRET, cwc_ns)
         except Exception:
@@ -664,13 +689,16 @@ async def get_cwc_status_endpoint(
 
         # When CWC is reachable, include the raw CWC /status payload so callers
         # get the full health check, not just boolean flags (FEAT-0261 / ERR-0008).
+        status_ok = True
         if cwc_found:
             try:
                 response["status"] = legacy_get_license_status(k8s_service, cluster_id, force=force)
             except Exception as status_err:
+                status_ok = False
                 logger.debug("Could not fetch CWC /status payload: %s", status_err)
 
-        cache.set(cache_key, response, ttl_seconds=120)
+        if cwc_found and status_ok:
+            cache.set(cache_key, response, ttl_seconds=120)
         return response
     except QKViewError as e:
         return {

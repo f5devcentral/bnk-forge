@@ -81,11 +81,7 @@ export function buildBnkCategories(crds: CRDInfo[]): BnkCategory[] {
   for (const crd of crds) {
     const rawCategory = crd.category?.toLowerCase() || '';
     const mappedDomain = domainSlugMap[rawCategory] || (curatedNames.has(crd.category ?? '') ? crd.category : undefined);
-    // Unmapped CRDs (internal operator controller CRDs like rabbitmq, fluentd, dwbld, etc.)
-    // are accessible in Kubernetes Explorer (/kubernetes) and should not clutter the curated BNK navigation.
-    if (!mappedDomain) continue;
-
-    const categoryName = mappedDomain;
+    const categoryName = mappedDomain || (curatedNames.has(crd.group) ? crd.group : 'Other');
     const label = crd.display_name ?? crd.kind;
     const key = crd.name;
     const registryKey = crd.kind.toLowerCase();
