@@ -56,6 +56,7 @@ interface RunsTabProps {
   onToggleCompare: (id: number) => void;
   onCompare: () => void;
   onViewTrends?: () => void;
+  selectedClusterId?: number;
 }
 
 export function BenchmarkRunsTab({
@@ -63,10 +64,12 @@ export function BenchmarkRunsTab({
   statusFilter, onStatusFilterChange,
   searchQuery, onSearchChange,
   onSelectRun, compareRunIds, onToggleCompare, onCompare, onViewTrends,
+  selectedClusterId,
 }: RunsTabProps) {
   const { data, isLoading } = useBenchmarkRuns({
     proxy: proxyFilter || undefined,
     status: statusFilter || undefined,
+    cluster_id: selectedClusterId,
     pollingEnabled: true,
   });
   const cancelRun = useCancelBenchmarkRun();

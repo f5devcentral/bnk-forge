@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from core.auth_context import effective_role
 from core.config import settings
-from core.errors import BadRequestError, ForbiddenError, NotFoundError, handle_route_errors
+from core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError, handle_route_errors
 from database import get_db
 from models.benchmark import BenchmarkAgent
 from models.enums import BenchmarkAgentStatus, BenchmarkRunStatus, ProxyDeploymentStatus
@@ -165,9 +165,11 @@ def ingest_benchmark_result(request: Request, data: BenchmarkResultPush, db: Ses
     BenchmarkResult JSON after a run completes. We extract key fields for
     denormalization and store the full result as-is.
     """
-    _require_agent_bearer(request)
+    claims = _require_agent_bearer(request)
+    result_data = data.model_dump()
+    result_data["agent_name"] = _bootstrap_agent_name(claims, db, result_data.get("agent_name"))
     svc = BenchmarkService(db)
-    run = svc.ingest_result(data.model_dump())
+    run = svc.ingest_result(result_data)
     db.commit()
     return {
         "id": run.id,
@@ -220,7 +222,7 @@ def ingest_aiperf_result(
       proxy_deployment_id — link to a ProxyDeployment row
       dataset_name        — dataset label (stored in result_json)
     """
-    _require_agent_bearer(request)
+    agent_name = _bootstrap_agent_name(_require_agent_bearer(request), db, agent_name)
     svc = BenchmarkService(db)
     run = svc.ingest_aiperf_result(
         raw,
@@ -322,13 +324,22 @@ def list_benchmark_runs(
     tool: str | None = Query(None),
     model: str | None = Query(None),
     status: str | None = Query(None),
+    cluster_id: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     """List benchmark runs with optional filters."""
     svc = BenchmarkService(db)
-    runs, total = svc.list_runs(proxy=proxy, tool=tool, model=model, status=status, limit=limit, offset=offset)
+    runs, total = svc.list_runs(
+        proxy=proxy,
+        tool=tool,
+        model=model,
+        status=status,
+        cluster_id=cluster_id,
+        limit=limit,
+        offset=offset,
+    )
     return {"runs": runs, "total": total, "limit": limit, "offset": offset}
 
 
@@ -453,9 +464,20 @@ def register_benchmark_agent(request: Request, data: BenchmarkAgentRegister, db:
     Called via curl or script. If an agent with the same name
     already exists, it updates its info and marks it as connected.
     """
-    _require_agent_bearer(request)
+    claims = _require_agent_bearer(request) or _optional_bearer_claims(request)
+    bootstrap = _is_bootstrap_token(claims)
+    builtin_row = _is_builtin_agent(db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data.name).first())
+    if bootstrap:
+        _check_bootstrap_register(db, data.name)
+    elif builtin_row and settings.BENCHMARK_AGENT_AUTH_REQUIRED:
+        # Only the bootstrap token may re-register the built-in agent. With agent
+        # auth off every caller (the built-in agent included) is anonymous, so the
+        # row is kept marked instead.
+        raise ConflictError("benchmark_agent", f"Agent '{data.name}' is the built-in agent")
+    payload = data.model_dump()
+    payload["tags"] = _server_owned_builtin_tags(payload.get("tags"), builtin=bootstrap or builtin_row)
     svc = BenchmarkService(db)
-    result = svc.register_agent(data.model_dump())
+    result = svc.register_agent(payload)
     db.commit()
     return result
 
@@ -1203,7 +1225,7 @@ def trigger_benchmark_run(
 
     # 3. Build RunConfig — keys map directly to aiperf CLI flags
     #    See: https://github.com/ai-dynamo/aiperf/blob/main/docs/cli-options.md
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     config_json: dict = {
         "url": base_url,
@@ -1380,7 +1402,7 @@ def run_benchmark_scenario(
             code="AGENT_NOT_CONNECTED",
         )
 
-    base_url = deploy.proxy_url or target.llm_base_url
+    base_url = deploy.external_url or deploy.proxy_url or target.llm_base_url
 
     # 3. Expand scenario into a run-group + child runs
     group, runs = bench_svc.create_run_group_from_scenario(
@@ -1463,6 +1485,7 @@ def _serialize_run_group(group) -> RunGroupResponse:
         run_label=group.run_label,
         status=group.status,
         target_id=group.target_id,
+        cluster_name=group.cluster_name,
         proxy=group.proxy,
         model=group.model,
         total_runs=group.total_runs,
@@ -1569,6 +1592,106 @@ def _agent_owns_run(svc: "BenchmarkService", agent_id: int, run_id: int) -> bool
     return True
 
 
+_BOOTSTRAP_TOKEN_SUB = "forge-builtin-agent"
+
+
+def _optional_bearer_claims(request: Request) -> dict:
+    """Claims of a valid bearer token, or {}. With agent auth off the built-in agent
+    still sends its bootstrap token; recognising it keeps its row marked, which the
+    WS layer binds that token to."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {}
+    from core.errors import UnauthorizedError
+    from services.auth_service import decode_token
+
+    try:
+        return decode_token(auth_header.split(" ", 1)[1])
+    except UnauthorizedError:
+        return {}
+
+
+def _is_bootstrap_token(payload: dict) -> bool:
+    """True for the built-in agent's claimless bootstrap token (startup_steps).
+
+    A user login token carries sub=<username> and the user's role (never
+    "agent"), so a user named like the bootstrap subject does not pass.
+    """
+    return (
+        payload.get("sub") == _BOOTSTRAP_TOKEN_SUB
+        and payload.get("role") == "agent"
+        and payload.get("agent_id") is None
+    )
+
+
+# Server-owned tag marking the agent row the bootstrap token registered. Clients
+# cannot set it (forge_agent.py sends tags.builtin=true for EVERY agent it runs).
+_BUILTIN_TAG = "_forge_builtin"
+# The compose default AGENT_NAME of the built-in agent, for adopting its row
+# registered before the marker existed.
+_LEGACY_BUILTIN_NAME = "forge-local"
+
+
+def _is_builtin_agent(agent: BenchmarkAgent | None) -> bool:
+    """True for the unmanaged agent row the bootstrap token registered."""
+    return bool(agent and not agent.managed and (agent.tags or {}).get(_BUILTIN_TAG) is True)
+
+
+def _server_owned_builtin_tags(tags: dict | None, *, builtin: bool) -> dict | None:
+    """Drop client-supplied built-in markers; set them only for the bootstrap token."""
+    if tags is None and not builtin:
+        return None
+    owned = {k: v for k, v in (tags or {}).items() if k not in ("builtin", _BUILTIN_TAG)}
+    if builtin:
+        owned.update({"builtin": True, _BUILTIN_TAG: True})
+    return owned
+
+
+def _check_bootstrap_register(db: Session, name: str) -> None:
+    """The bootstrap token may create a new agent or re-register the built-in one.
+
+    Upserting another agent's row would let it connect and report as that agent.
+    A pre-marker built-in row (legacy name, unmanaged) is adopted once, while no
+    marked row exists.
+    """
+    existing = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == name).first()
+    if existing is None or _is_builtin_agent(existing):
+        return
+    if (
+        existing.name == _LEGACY_BUILTIN_NAME
+        and not existing.managed
+        and not any(_is_builtin_agent(a) for a in db.query(BenchmarkAgent).filter(BenchmarkAgent.managed.is_(False)))
+    ):
+        if existing.id in _agent_ws_connections:
+            # A live agent (an external one may use the legacy name) keeps its row.
+            raise ConflictError("benchmark_agent", f"Agent '{name}' is connected; not adopting it")
+        return
+    raise BadRequestError(
+        f"Bootstrap token may not re-register agent '{name}'",
+        code="AGENT_AUTH_FORBIDDEN",
+    )
+
+
+def _bootstrap_agent_name(claims: dict, db: Session, agent_name: str | None) -> str | None:
+    """The bootstrap token writes results only as the built-in agent (or no agent)."""
+    if not _is_bootstrap_token(claims) or agent_name is None:
+        return agent_name
+    agent = db.query(BenchmarkAgent).filter(BenchmarkAgent.name == agent_name).first()
+    if not _is_builtin_agent(agent):
+        raise BadRequestError(
+            f"Bootstrap token may not write results as agent '{agent_name}'",
+            code="AGENT_AUTH_FORBIDDEN",
+        )
+    return agent_name
+
+
+def _is_builtin_agent_id(agent_id: int) -> bool:
+    from database import get_db_context
+
+    with get_db_context() as db:
+        return _is_builtin_agent(db.get(BenchmarkAgent, agent_id))
+
+
 def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
     """Validate the agent WS handshake JWT (M2 + agent-auth layer).
 
@@ -1614,6 +1737,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
         # claim is mandatory, not merely honoured when present.
         token_agent_id = payload.get("agent_id")
         if token_agent_id is None:
+            # The built-in agent container connects with the claimless bootstrap
+            # token (startup_steps). It may connect only as a built-in agent row.
+            if _is_bootstrap_token(payload) and _is_builtin_agent_id(agent_id):
+                return None
             logger.warning(
                 "Agent %d WS rejected: token carries no agent_id claim (agent auth required)",
                 agent_id,
@@ -1648,6 +1775,10 @@ def _agent_ws_authorized(websocket: WebSocket, agent_id: int) -> int | None:
 
         payload = decode_token(token)
     except Exception:
+        return 4001
+    # The claimless bootstrap token sits in a shared file; it connects only as the
+    # built-in agent (as in layer 1), so it cannot supersede another agent.
+    if _is_bootstrap_token(payload) and not _is_builtin_agent_id(agent_id):
         return 4001
     # #186 (bonnyr-f5 r4, INV-10): decode_token validates the signature/expiry
     # only, so this path waved a must-change human admin straight through.

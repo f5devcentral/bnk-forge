@@ -2111,6 +2111,29 @@ class TestRunBenchmarkScenario:
         # WS dispatched exactly one command (the first child) at trigger time.
         assert mock_send.call_count == 1
 
+    def test_first_child_claimed_before_dispatch(self, client, operator_headers, make_k8s_cluster, db):
+        """The first child is RUNNING (claimed + committed) while dispatch is in flight,
+        so a concurrent connect-drain cannot dispatch it a second time."""
+        cluster = make_k8s_cluster(name="scenario-claim-cluster")
+        target = _make_target(db, cluster.id, name="scenario-claim-target")
+        proxy = _make_proxy(db, target.id, status="ready")
+        agent = _make_agent(db, name="scenario-claim-agent", status="connected")
+        seen = []
+
+        def _dispatch(agent_id, command):
+            db.expire_all()
+            seen.append(db.query(BenchmarkRun).get(command["run_id"]).status)
+            return True
+
+        with patch("routes.benchmarks.dispatch_to_agent", side_effect=_dispatch):
+            resp = client.post(
+                f"/api/benchmarks/targets/{target.id}/proxies/{proxy.id}/run-scenario",
+                json={"scenario_key": "baseline", "agent_id": agent.id},
+                headers=operator_headers,
+            )
+        assert resp.status_code == 201
+        assert seen == ["running"]
+
     @patch("routes.benchmarks.dispatch_to_agent")
     def test_mooncake_single_child_trace(self, mock_send, client, operator_headers, make_k8s_cluster, db):
         mock_send.return_value = True
