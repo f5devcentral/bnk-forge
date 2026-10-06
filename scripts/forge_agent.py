@@ -511,6 +511,8 @@ class ForgeAgent:
         "input_file": "--input-file",
         "artifact_dir": "--artifact-dir",
         "output_artifact_dir": "--output-artifact-dir",
+        "arrival_pattern": "--arrival-pattern",
+        "warmup_duration": "--warmup-duration",
     }
 
     # Boolean flags: present without a value when truthy.

@@ -83,9 +83,7 @@ class BenchmarkService(BaseService):
         agent_id = None
         agent_name = result_data.get("agent_name")
         if agent_name:
-            agent = self.db.query(BenchmarkAgent).filter(
-                BenchmarkAgent.name == agent_name
-            ).first()
+            agent = self.db.query(BenchmarkAgent).filter(BenchmarkAgent.name == agent_name).first()
             if agent:
                 agent_id = agent.id
 
@@ -98,7 +96,10 @@ class BenchmarkService(BaseService):
         if config_id is not None and not self.db.query(BenchmarkConfig).filter(BenchmarkConfig.id == config_id).first():
             config_id = None
         proxy_deployment_id = result_data.get("proxy_deployment_id")
-        if proxy_deployment_id is not None and not self.db.query(ProxyDeployment).filter(ProxyDeployment.id == proxy_deployment_id).first():
+        if (
+            proxy_deployment_id is not None
+            and not self.db.query(ProxyDeployment).filter(ProxyDeployment.id == proxy_deployment_id).first()
+        ):
             proxy_deployment_id = None
 
         total_requests = result_data.get("total_requests")
@@ -118,7 +119,6 @@ class BenchmarkService(BaseService):
             error_message=None if total_requests else NO_REQUESTS_ERROR,
             config_snapshot=config,
             result_json=result_data,
-
             # Denormalized metrics
             duration_seconds=result_data.get("duration_seconds"),
             total_requests=total_requests,
@@ -131,7 +131,6 @@ class BenchmarkService(BaseService):
             peak_rps=throughput.get("peak_rps"),
             tokens_per_sec=throughput.get("gen_tokens_per_sec"),
             total_output_tokens=result_data.get("total_output_tokens"),
-
             # Timestamps from the result
             started_at=_parse_iso(result_data.get("run_start")),
             completed_at=_parse_iso(result_data.get("run_end")),
@@ -141,8 +140,11 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Ingested benchmark result: run_id=%d proxy=%s model=%s p50=%.3fs rps=%.1f",
-            run.id, proxy, run.model,
-            run.latency_p50 or 0, run.overall_rps or 0,
+            run.id,
+            proxy,
+            run.model,
+            run.latency_p50 or 0,
+            run.overall_rps or 0,
         )
         return run
 
@@ -265,7 +267,10 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Completed run #%d with aiperf result: proxy=%s p50=%.3fs rps=%.1f",
-            run.id, run.proxy, run.latency_p50 or 0, run.overall_rps or 0,
+            run.id,
+            run.proxy,
+            run.latency_p50 or 0,
+            run.overall_rps or 0,
         )
 
         # Roll up the parent run-group aggregate once all children are terminal.
@@ -358,8 +363,11 @@ class BenchmarkService(BaseService):
         # a missing key simply omits the block rather than raising.
         http_timing: dict | None = None
         _timing_keys = (
-            "http_req_blocked", "http_req_dns_lookup", "http_req_connecting",
-            "http_req_waiting", "http_req_sending",
+            "http_req_blocked",
+            "http_req_dns_lookup",
+            "http_req_connecting",
+            "http_req_waiting",
+            "http_req_sending",
         )
         _timing_data = {k: raw.get(k) for k in _timing_keys if raw.get(k) is not None}
         if _timing_data:
@@ -385,7 +393,8 @@ class BenchmarkService(BaseService):
                 "proxy": proxy,
                 "model": model,
                 "base_url": url,
-                "endpoint": (aiperf_config.get("endpoint") or {}).get("type") or aiperf_config.get("endpoint_type", "chat"),
+                "endpoint": (aiperf_config.get("endpoint") or {}).get("type")
+                or aiperf_config.get("endpoint_type", "chat"),
                 "run_label": run_label or f"aiperf-{proxy}",
             },
             "tags": {
@@ -490,9 +499,7 @@ class BenchmarkService(BaseService):
 
     def create_config(self, data: dict) -> BenchmarkConfig:
         """Create a new benchmark config."""
-        existing = self.db.query(BenchmarkConfig).filter(
-            BenchmarkConfig.name == data["name"]
-        ).first()
+        existing = self.db.query(BenchmarkConfig).filter(BenchmarkConfig.name == data["name"]).first()
         if existing:
             raise ConflictError("benchmark_config", f"Config with name '{data['name']}' already exists")
 
@@ -506,9 +513,7 @@ class BenchmarkService(BaseService):
         config = self.get_config(config_id)
 
         if data.get("name") and data["name"] != config.name:
-            existing = self.db.query(BenchmarkConfig).filter(
-                BenchmarkConfig.name == data["name"]
-            ).first()
+            existing = self.db.query(BenchmarkConfig).filter(BenchmarkConfig.name == data["name"]).first()
             if existing:
                 raise ConflictError("benchmark_config", f"Config with name '{data['name']}' already exists")
 
@@ -561,19 +566,18 @@ class BenchmarkService(BaseService):
             )
         if q:
             like = f"%{q}%"
-            query = query.filter(or_(
-                BenchmarkRun.run_label.ilike(like),
-                BenchmarkRun.model.ilike(like),
-                BenchmarkRun.proxy.ilike(like),
-            ))
+            query = query.filter(
+                or_(
+                    BenchmarkRun.run_label.ilike(like),
+                    BenchmarkRun.model.ilike(like),
+                    BenchmarkRun.proxy.ilike(like),
+                )
+            )
 
         total = query.count()
         column = getattr(BenchmarkRun, RUN_SORT_COLUMNS.get(sort, "created_at"))
         ordered = column.asc() if order == "asc" else column.desc()
-        runs = (
-            query.order_by(ordered.nulls_last(), desc(BenchmarkRun.id))
-            .limit(limit).offset(offset).all()
-        )
+        runs = query.order_by(ordered.nulls_last(), desc(BenchmarkRun.id)).limit(limit).offset(offset).all()
         self._attach_baseline_context(runs)
         return runs, total
 
@@ -828,11 +832,7 @@ class BenchmarkService(BaseService):
         group = self.db.query(BenchmarkRunGroup).get(group_id)
         if not group:
             return
-        children = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.run_group_id == group_id)
-            .all()
-        )
+        children = self.db.query(BenchmarkRun).filter(BenchmarkRun.run_group_id == group_id).all()
         completed = [r for r in children if r.status == BenchmarkRunStatus.COMPLETED]
         failed = [r for r in children if r.status == BenchmarkRunStatus.FAILED]
         group.completed_runs = len(completed)
@@ -886,9 +886,7 @@ class BenchmarkService(BaseService):
         try:
             preset = get_scenario(scenario_key)
         except KeyError as exc:
-            raise BadRequestError(
-                f"Unknown scenario '{scenario_key}'", code="UNKNOWN_SCENARIO"
-            ) from exc
+            raise BadRequestError(f"Unknown scenario '{scenario_key}'", code="UNKNOWN_SCENARIO") from exc
 
         try:
             child_configs = expand_scenario(
@@ -899,7 +897,7 @@ class BenchmarkService(BaseService):
                 overrides=overrides,
                 steps=steps,
             )
-        except ValueError as exc:
+        except (ValueError, OverflowError) as exc:
             raise BadRequestError(str(exc), code="INVALID_SCENARIO_STEPS") from exc
         if proxy_id:
             # What is being tested comes from the proxy, never from overrides.
@@ -951,7 +949,9 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Created run-group #%d scenario=%s with %d child runs",
-            group.id, scenario_key, len(runs),
+            group.id,
+            scenario_key,
+            len(runs),
         )
         return group, runs
 
@@ -1002,31 +1002,48 @@ class BenchmarkService(BaseService):
                 if run.status != BenchmarkRunStatus.COMPLETED:
                     continue
                 snap = run.config_snapshot if isinstance(run.config_snapshot, dict) else {}
-                points.append({
-                    "run_id": run.id,
-                    "variant_label": run.variant_label,
-                    "concurrency": snap.get("concurrency"),
-                    "request_rate": snap.get("request_rate"),
-                    "benchmark_duration": snap.get("benchmark_duration"),
-                    "total_requests": run.total_requests,
-                    "latency_p50": run.latency_p50,
-                    "latency_p99": run.latency_p99,
-                    "overall_rps": run.overall_rps,
-                    "tokens_per_sec": run.tokens_per_sec,
-                    "success_rate_pct": run.success_rate_pct,
-                    **run_point_metrics(run),
-                })
+                points.append(
+                    {
+                        "run_id": run.id,
+                        "variant_label": run.variant_label,
+                        "concurrency": snap.get("concurrency"),
+                        "request_rate": snap.get("request_rate"),
+                        "benchmark_duration": snap.get("benchmark_duration"),
+                        "total_requests": run.total_requests,
+                        "latency_p50": run.latency_p50,
+                        "latency_p99": run.latency_p99,
+                        "overall_rps": run.overall_rps,
+                        "tokens_per_sec": run.tokens_per_sec,
+                        "success_rate_pct": run.success_rate_pct,
+                        **run_point_metrics(run),
+                    }
+                )
             first = next((r.config_snapshot for r in runs if isinstance(r.config_snapshot, dict)), {})
-            out.append({
-                **{c: getattr(group, c) for c in (
-                    "id", "scenario_key", "scenario_name", "run_label", "status", "target_id", "proxy",
-                    "model", "total_runs", "completed_runs", "failed_runs", "created_at",
-                )},
-                "points": points,
-                # Open-loop sweeps step the request rate; the rest step concurrency.
-                "load_axis": "request_rate" if first.get("request_rate") is not None else "concurrency",
-                "goodput_targets": parse_goodput(first.get("goodput")),
-            })
+            out.append(
+                {
+                    **{
+                        c: getattr(group, c)
+                        for c in (
+                            "id",
+                            "scenario_key",
+                            "scenario_name",
+                            "run_label",
+                            "status",
+                            "target_id",
+                            "proxy",
+                            "model",
+                            "total_runs",
+                            "completed_runs",
+                            "failed_runs",
+                            "created_at",
+                        )
+                    },
+                    "points": points,
+                    # Open-loop sweeps step the request rate; the rest step concurrency.
+                    "load_axis": "request_rate" if first.get("request_rate") is not None else "concurrency",
+                    "goodput_targets": parse_goodput(first.get("goodput")),
+                }
+            )
 
         reasons = []
         for attr, label in (("scenario_key", "scenarios"), ("model", "models"), ("target_id", "targets")):
@@ -1143,14 +1160,34 @@ class BenchmarkService(BaseService):
                 disconnected.append(agent.id)
 
         failed: dict[int, str] = {}
-        active = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status.in_([BenchmarkRunStatus.RUNNING, BenchmarkRunStatus.PENDING])
-        ).all()
+        active = (
+            self.db.query(BenchmarkRun)
+            .filter(BenchmarkRun.status.in_([BenchmarkRunStatus.RUNNING, BenchmarkRunStatus.PENDING]))
+            .all()
+        )
+        agent_ids = {r.agent_id for r in active if r.agent_id}
+        agent_map = (
+            {a.id: a for a in self.db.query(BenchmarkAgent).filter(BenchmarkAgent.id.in_(agent_ids)).all()}
+            if agent_ids
+            else {}
+        )
+
+        def _is_agent_live(agent_id: int | None) -> bool:
+            if not agent_id:
+                return False
+            if agent_id in live:
+                return True
+            agent = agent_map.get(agent_id)
+            if agent is None or agent.status == BenchmarkAgentStatus.DISCONNECTED:
+                return False
+            return not _older(agent.last_heartbeat, stale_before)
+
         # A sweep runs its children one at a time, so a pending child of a group
         # that is still progressing is queued, not stuck.
         progressing_groups = {
-            r.run_group_id for r in active
-            if r.run_group_id and r.status == BenchmarkRunStatus.RUNNING and r.agent_id in live
+            r.run_group_id
+            for r in active
+            if r.run_group_id and r.status == BenchmarkRunStatus.RUNNING and _is_agent_live(r.agent_id)
         }
         for run in active:
             if run.id in in_flight_run_ids:
@@ -1159,7 +1196,7 @@ class BenchmarkService(BaseService):
                 continue
             if run.status == BenchmarkRunStatus.RUNNING:
                 started = run.started_at or run.updated_at or run.created_at
-                if run.agent_id not in live and _older(started, stale_before):
+                if not _is_agent_live(run.agent_id) and _older(started, stale_before):
                     failed[run.id] = "agent not connected; run cannot report back"
                 elif _older(started, now - timedelta(seconds=RUN_MAX_SECONDS)):
                     failed[run.id] = f"still running after {RUN_MAX_SECONDS // 3600}h; timed out"
@@ -1232,17 +1269,18 @@ class BenchmarkService(BaseService):
                 synchronize_session=False,
             )
         )
-        if result == 1:
-            self._record_model_server_start(run_id)
         return result == 1
 
-    def _record_model_server_start(self, run_id: int) -> None:
+    def record_model_server_start(self, run_id: int) -> None:
         """Snapshot the target's model-server counters as the run starts (see model_server_stats)."""
         run = self.db.get(BenchmarkRun, run_id)
         target = self.db.get(BenchmarkTarget, run.target_id) if run and run.target_id else None
         snap = model_server_stats.snapshot(self.db, target) if target else None
         if snap:
             run.result_json = {"model_server_before": snap}
+            self.db.commit()
+
+    _record_model_server_start = record_model_server_start
 
     def _model_server_stats(self, run: BenchmarkRun) -> dict | None:
         """Counter deltas since the run started, or None when there is no start snapshot."""
@@ -1306,11 +1344,7 @@ class BenchmarkService(BaseService):
         if not group:
             return None
 
-        children = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.run_group_id == group_id)
-            .all()
-        )
+        children = self.db.query(BenchmarkRun).filter(BenchmarkRun.run_group_id == group_id).all()
         terminal = BenchmarkRunStatus.terminal_states()
         completed = [r for r in children if r.status == BenchmarkRunStatus.COMPLETED]
         failed = [r for r in children if r.status == BenchmarkRunStatus.FAILED]
@@ -1346,8 +1380,12 @@ class BenchmarkService(BaseService):
         self.db.flush()
         logger.info(
             "Finalized run-group #%d status=%s (%d completed, %d failed, %d cancelled / %d total)",
-            group.id, group.status, group.completed_runs, group.failed_runs,
-            len(cancelled), group.total_runs,
+            group.id,
+            group.status,
+            group.completed_runs,
+            group.failed_runs,
+            len(cancelled),
+            group.total_runs,
         )
         return group
 
@@ -1371,9 +1409,7 @@ class BenchmarkService(BaseService):
     def register_agent(self, data: dict) -> BenchmarkAgent:
         """Register a test client agent (called via curl or script)."""
         # Upsert — if agent with same name exists, update it
-        existing = self.db.query(BenchmarkAgent).filter(
-            BenchmarkAgent.name == data["name"]
-        ).first()
+        existing = self.db.query(BenchmarkAgent).filter(BenchmarkAgent.name == data["name"]).first()
 
         if existing:
             existing.hostname = data.get("hostname", existing.hostname)
@@ -1435,11 +1471,7 @@ class BenchmarkService(BaseService):
 
     def compare_runs(self, run_ids: list[int]) -> dict:
         """Compare multiple benchmark runs side-by-side (proxy comparison)."""
-        runs = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.id.in_(run_ids))
-            .all()
-        )
+        runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.id.in_(run_ids)).all()
 
         if len(runs) != len(run_ids):
             found_ids = {r.id for r in runs}
@@ -1449,30 +1481,33 @@ class BenchmarkService(BaseService):
         # Build per-run metrics
         run_metrics = []
         for run in runs:
-            run_metrics.append({
-                "run_id": run.id,
-                "proxy": run.proxy,
-                "model": run.model,
-                "tool": run.tool,
-                "run_label": run.run_label,
-                "config_id": run.config_id,
-                "scenario_key": run.scenario_key,
-                "variant_label": run.variant_label,
-                "status": run.status,
-                "total_requests": run.total_requests,
-                "success_rate_pct": run.success_rate_pct,
-                "latency_p50": run.latency_p50,
-                "latency_p99": run.latency_p99,
-                "overall_rps": run.overall_rps,
-                "peak_rps": run.peak_rps,
-                "tokens_per_sec": run.tokens_per_sec,
-                "duration_seconds": run.duration_seconds,
-                "tags": run.tags,
-                "config_snapshot": run.config_snapshot,
-                "pods": ((run.result_json or {}).get("model_server") or {}).get("pods")
-                if isinstance(run.result_json, dict) else None,
-                **run_point_metrics(run),
-            })
+            run_metrics.append(
+                {
+                    "run_id": run.id,
+                    "proxy": run.proxy,
+                    "model": run.model,
+                    "tool": run.tool,
+                    "run_label": run.run_label,
+                    "config_id": run.config_id,
+                    "scenario_key": run.scenario_key,
+                    "variant_label": run.variant_label,
+                    "status": run.status,
+                    "total_requests": run.total_requests,
+                    "success_rate_pct": run.success_rate_pct,
+                    "latency_p50": run.latency_p50,
+                    "latency_p99": run.latency_p99,
+                    "overall_rps": run.overall_rps,
+                    "peak_rps": run.peak_rps,
+                    "tokens_per_sec": run.tokens_per_sec,
+                    "duration_seconds": run.duration_seconds,
+                    "tags": run.tags,
+                    "config_snapshot": run.config_snapshot,
+                    "pods": ((run.result_json or {}).get("model_server") or {}).get("pods")
+                    if isinstance(run.result_json, dict)
+                    else None,
+                    **run_point_metrics(run),
+                }
+            )
 
         # Determine winners per metric
         winners = {}
@@ -1480,16 +1515,34 @@ class BenchmarkService(BaseService):
         if completed_metrics:
             # Lower is better
             for metric in [
-                "latency_p50", "latency_p99", "ttft_avg", "ttft_p10", "ttft_p25", "ttft_p50", "ttft_p90", "ttft_p99",
-                "itl_avg", "itl_p99", "tst_avg", "error_rate_pct", "load_spread", "preemptions",
+                "latency_p50",
+                "latency_p99",
+                "ttft_avg",
+                "ttft_p10",
+                "ttft_p25",
+                "ttft_p50",
+                "ttft_p90",
+                "ttft_p99",
+                "itl_avg",
+                "itl_p99",
+                "tst_avg",
+                "error_rate_pct",
+                "load_spread",
+                "preemptions",
             ]:
                 vals = [(m["run_id"], m.get(metric)) for m in completed_metrics if m.get(metric) is not None]
                 if vals:
                     winners[metric] = min(vals, key=lambda x: x[1])[0]
             # Higher is better
             for metric in [
-                "overall_rps", "peak_rps", "tokens_per_sec", "success_rate_pct",
-                "per_user_throughput_avg", "per_user_throughput_p50", "goodput", "good_request_pct",
+                "overall_rps",
+                "peak_rps",
+                "tokens_per_sec",
+                "success_rate_pct",
+                "per_user_throughput_avg",
+                "per_user_throughput_p50",
+                "goodput",
+                "good_request_pct",
                 "cache_hit_pct",
             ]:
                 vals = [(m["run_id"], m.get(metric)) for m in completed_metrics if m.get(metric) is not None]
@@ -1501,10 +1554,7 @@ class BenchmarkService(BaseService):
         # Proxies and variants are deliberately-varied comparison dimensions on the Compare tab.
         config_ids = {m["config_id"] for m in run_metrics}
         scenario_keys = {m["scenario_key"] for m in run_metrics}
-        context_mismatch = (
-            len(config_ids) > 1
-            or len(scenario_keys) > 1
-        )
+        context_mismatch = len(config_ids) > 1 or len(scenario_keys) > 1
         # Simulated and real model servers (or different replica counts) are not comparable.
         server_mismatch = len({_model_server_key(r.tags) for r in runs}) > 1
 
@@ -1522,15 +1572,9 @@ class BenchmarkService(BaseService):
     def get_summary(self) -> dict:
         """Get dashboard summary of benchmark activity."""
         total_runs = self.db.query(BenchmarkRun).count()
-        completed_runs = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.COMPLETED
-        ).count()
-        failed_runs = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.FAILED
-        ).count()
-        running_count = self.db.query(BenchmarkRun).filter(
-            BenchmarkRun.status == BenchmarkRunStatus.RUNNING
-        ).count()
+        completed_runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.COMPLETED).count()
+        failed_runs = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.FAILED).count()
+        running_count = self.db.query(BenchmarkRun).filter(BenchmarkRun.status == BenchmarkRunStatus.RUNNING).count()
 
         # Average metrics across completed runs
         avg_p50 = (
@@ -1559,19 +1603,11 @@ class BenchmarkService(BaseService):
         )
 
         # Last run
-        last_run = (
-            self.db.query(BenchmarkRun)
-            .order_by(BenchmarkRun.created_at.desc())
-            .first()
-        )
+        last_run = self.db.query(BenchmarkRun).order_by(BenchmarkRun.created_at.desc()).first()
 
         # Runs in last 7 days
         seven_days_ago = datetime.now(UTC) - timedelta(days=7)
-        runs_last_7d = (
-            self.db.query(BenchmarkRun)
-            .filter(BenchmarkRun.created_at >= seven_days_ago)
-            .count()
-        )
+        runs_last_7d = self.db.query(BenchmarkRun).filter(BenchmarkRun.created_at >= seven_days_ago).count()
 
         # Runs by proxy
         proxy_stats = (

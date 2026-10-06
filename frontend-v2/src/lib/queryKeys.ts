@@ -424,7 +424,7 @@ export const queryKeys = {
       all: ['benchmarks', 'run-groups'] as const,
       detail: (groupId: number) => ['benchmarks', 'run-groups', 'detail', groupId] as const,
       list: (params?: { scenario_key?: string; limit?: number }) => ['benchmarks', 'run-groups', 'list', params] as const,
-      curves: (groupIds: number[]) => ['benchmarks', 'run-groups', 'curves', groupIds] as const,
+      curves: (groupIds: number[]) => ['benchmarks', 'run-groups', 'curves', [...groupIds].sort((a, b) => a - b)] as const,
     },
     trends: (params?: { target_id?: number; proxy?: string; scenario_key?: string; config_id?: number; limit?: number }) =>
       ['benchmarks', 'trends', params] as const,

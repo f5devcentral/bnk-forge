@@ -11,6 +11,7 @@ real GPUs. Best effort: a scrape failure never fails a run.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,7 @@ COUNTERS = {
     "vllm:num_preemptions_total": "preemptions",
 }
 _TIMEOUT = 5
+_SNAPSHOT_DEADLINE = 10.0
 
 
 def parse_counters(text: str) -> dict[str, float]:
@@ -47,7 +49,7 @@ def parse_counters(text: str) -> dict[str, float]:
 
 def _pod_port(svc: Any, svc_port: int, pods: list) -> int | None:
     """The pod port behind ``svc_port`` (named targetPorts resolved from the pods)."""
-    for port in (svc.spec.ports or []):
+    for port in svc.spec.ports or []:
         if port.port != svc_port and len(svc.spec.ports) > 1:
             continue
         target = port.target_port if port.target_port is not None else port.port
@@ -77,23 +79,36 @@ def snapshot(db: Any, target: Any) -> dict | None:
         selector = ",".join(f"{k}={v}" for k, v in (svc.spec.selector or {}).items())
         if not selector:
             return None
-        pods = [p for p in core.list_namespaced_pod(namespace, label_selector=selector, _request_timeout=_TIMEOUT).items
-                if p.status and p.status.phase == "Running"]
+        pods = [
+            p
+            for p in core.list_namespaced_pod(namespace, label_selector=selector, _request_timeout=_TIMEOUT).items
+            if p.status and p.status.phase == "Running"
+        ]
         port = _pod_port(svc, _svc_port(target.llm_base_url), pods)
         if not pods or not port:
             return None
         counters: dict[str, dict] = {}
+        deadline = time.monotonic() + _SNAPSHOT_DEADLINE
         for pod in pods:
+            if time.monotonic() > deadline:
+                logger.warning("model server snapshot deadline exceeded for target %s", getattr(target, "id", "?"))
+                break
             name = pod.metadata.name
             try:
                 text = core.connect_get_namespaced_pod_proxy_with_path(
-                    f"{name}:{port}", namespace, "metrics", _request_timeout=_TIMEOUT,
+                    f"{name}:{port}",
+                    namespace,
+                    "metrics",
+                    _request_timeout=_TIMEOUT,
                 )
             except Exception as exc:  # one pod down must not hide the others
                 logger.warning("metrics scrape of %s/%s failed: %s", namespace, name, exc)
                 continue
             # A fresh pod lists no counter series until its first request: it starts from zero.
-            counters[name] = {**parse_counters(text if isinstance(text, str) else str(text)), "node": pod.spec.node_name}
+            counters[name] = {
+                **parse_counters(text if isinstance(text, str) else str(text)),
+                "node": pod.spec.node_name,
+            }
     except Exception as exc:
         logger.warning("model server snapshot for target %s failed: %s", getattr(target, "id", "?"), exc)
         return None
