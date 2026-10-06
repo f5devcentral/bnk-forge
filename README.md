@@ -17,47 +17,56 @@
 
 **F5 BIG-IP Next for Kubernetes (BNK)** delivers high-performance L4–L7 ingress, carrier-grade resilience, DPDK/SR-IOV hardware acceleration, and advanced application security to cloud-native Kubernetes environments.
 
-Operating modern Gateway API architectures across multi-cloud and hybrid clusters can be daunting: managing 38+ Custom Resource Definitions (CRDs), manual YAML manifests, complex DPDK/TMM networking, and fragmented Day 2 troubleshooting.
+Operating modern Gateway API architectures across multi-cloud and hybrid clusters requires coordinating 38+ Custom Resource Definitions (CRDs), manual YAML manifests, DPDK/TMM networking, and multi-layered Day 2 troubleshooting.
 
-**BNK Forge 4.0.0** solves these challenges. Built specifically to support **F5 BNK releases 2.2, 2.3, and 2.4**, BNK Forge provides a unified management plane that bridges the gap between raw Kubernetes primitives and enterprise operations. From automated Day 1 deployments to interactive traffic topology, multi-cluster fleet governance, one-click QKView diagnostics, and AI-operable MCP automation, BNK Forge enables teams to maximize the value of F5 BNK with confidence.
-
----
-
-## Value by Role
-
-### For Customers & Platform Engineers
-* **Accelerated Time-to-Value**: Deploy complete, production-grade BNK stacks in under 10 minutes with pre-packaged, validated blueprints.
-* **Bridge NetOps & DevOps**: Provide platform teams with standard Kubernetes Gateway API routing while giving security and network engineers familiar F5 policies (Firewalls, DDoS, WAF, iRules).
-* **Eliminate Guesswork & Drift**: Visualize live Gateway topologies, detect out-of-band changes automatically, and promote configurations safely across Dev, Staging, and Production clusters.
-* **Direct & Non-Invasive**: Kubeconfig-first fleet architecture connects securely to existing clusters without requiring complex in-cluster daemons.
-* **Enterprise Security**: Built-in RBAC (Admin, Operator, Viewer), JWT authentication, forced password rotation, and an immutable audit trail for all mutating operations.
-
-### For F5 Field Sales & Solution Architects (SEs / SAs)
-* **10-Minute Live PoCs**: Turn multi-hour manual setups into rapid, impressive demonstrations. Walk into a customer meeting and spin up a running BNK deployment live.
-* **Visual Storytelling**: Replace 20 terminal windows and thousands of lines of YAML with an interactive topology graph showing real-time traffic flows, listener attachments, and policy enforcement.
-* **AI & Modern Workload Showcase**: Demonstrate F5 BNK as the premier high-throughput AI Gateway for LLM inference (vLLM, Ollama, TensorRT-LLM) using built-in latency and concurrency benchmark suites.
-* **Proven ROI & Risk Reduction**: Provide decision-makers with concrete evidence of reduced engineering overhead, accelerated migrations from legacy BIG-IP / CIS, and minimized operational risk.
-* *See the [DevCentral Field & Solutions Guide](docs/DEVCENTRAL_OVERVIEW.md) for demo scripts, customer battlecards, and objection handling.*
-
-### For Internal F5 Engineers, TAC, & Developers
-* **Instant Lab & Bug Reproduction**: Recreate customer topologies in minutes across AWS EKS, Azure AKS, Google GKE, Red Hat OpenShift, IBM Cloud ROKS, or Bare Metal / DPF SmartNICs.
-* **1-Click Diagnostic Capture**: Generate full BNK QKView diagnostic tarballs directly from CWC and inspect live TMM debug data (`tmctl` packet drops, `configview` compiled CRD state, `bdt_cli` routing/ARP tables).
-* **Multi-Version Lifecycle**: Tested and validated lifecycle management across F5 BNK releases 2.2, 2.3, and 2.4.
-* **AI-Operated Fleet (MCP)**: 91 governed Model Context Protocol tools allow AI assistants (Claude, Antigravity, custom agents) to inspect, triage, and remediate cluster states programmatically.
+**BNK Forge 4.0.0** is an orchestration and management plane purpose-built for **F5 BNK releases 2.2, 2.3, and 2.4**. It provides a single control point for automated multi-cloud deployments, interactive traffic topology visualization, multi-cluster fleet synchronization, one-click QKView diagnostics, and AI-operable MCP automation.
 
 ---
 
-## Before vs After: Realized Value Matrix
+## Key Technical Capabilities
 
-| Operation / Challenge | Without BNK Forge (Manual CLI & YAML) | With BNK Forge (Management Plane) | Tangible Impact / ROI |
-|---|---|---|---|
-| **Deploying BNK to a Cluster** | Hours of writing custom OpenTofu/Terraform scripts, Helm values, and 200+ lines of raw YAML | Select a Blueprint &rarr; Click Deploy &rarr; Live dependency pipeline visualization | **Hours &rarr; &lt; 10 minutes**<br>Eliminates configuration mistakes |
-| **Understanding Traffic Flow** | Reading disparate Gateway, Route, and Policy manifests across multiple namespaces | Interactive **Gateway Topology** graph showing Gateways, Listeners, Policies, and Backends | **Guesswork &rarr; Instant Clarity**<br>Visual verification across all layers |
-| **Day-2 Incident Triage & TAC** | Execing into TMM pods, chasing logs, manually running shell diagnostics | 1-click **QKView** generation, built-in TMM debug (`tmctl`, `bdt_cli`), automated runbooks | **Hours &rarr; Minutes**<br>80% faster support case turnaround |
-| **Promoting Config Across Clusters** | Manual YAML exports, diffing with command-line tools, copy-pasting into production | Built-in configuration snapshotting, visual cluster diffing, and one-click promotion | **Days &rarr; Minutes**<br>Zero-drift staging to production promotion |
-| **Fleet Health & Visibility** | Looping `kubectl` commands across separate cloud consoles, VPNs, and kubeconfigs | Unified **Command Center & Fleet Dashboard** tracking TMM status across all clouds | **30 min &rarr; 10 seconds**<br>Proactive multi-cloud health at a glance |
-| **AI Inference Gateway Validation** | Ad-hoc curl scripts; unknown time-to-first-token (TTFT) or concurrency drop-off | Integrated **AI Performance Benchmarks** measuring latency, throughput, and error curves | **Verifiable SLAs**<br>Confidently size LLM gateway clusters |
-| **AI-Assisted Operations** | High risk of unintended mutations; zero role governance or structured recovery | 91 governed **MCP Tools** with risk classifications, RBAC, and audit logs | **Safe Agentic Ops**<br>Natural-language infrastructure operations |
+### Declarative Blueprint Deployment
+* **Pre-Packaged Blueprints**: Turnkey infrastructure and BNK stacks for AWS EKS, Azure AKS, Google GKE, Red Hat OpenShift, IBM Cloud ROKS, and On-Premises Bare-Metal / DPF BlueField-3.
+* **Automated Dependency Resolution**: Computes module execution order and wires outputs (VPC &rarr; EKS &rarr; BNK &rarr; Gateway API) with concurrent layer provisioning.
+* **Isolated Container Runner**: Executes OpenTofu and Helm automation inside dedicated, ephemeral containers to guarantee zero host dependency pollution.
+
+### Gateway API & Traffic Topology
+* **Interactive Topology Graph**: Graphical visualization of Gateways, Listeners, Routes, Policies, and Backend services.
+* **Visual Policy Management**: Inspect and configure Firewall policies, DDoS profiles, WAF rules, and iRules attached to Gateway listeners without writing manual YAML.
+* **Backend Service Mapping**: Traces routes and listeners across namespaces to verify service exposure, health, and port allocations.
+
+### Multi-Cluster Fleet Governance
+* **Direct Kubeconfig Integration**: Manages clusters non-invasively through standard Kubernetes API server credentials without requiring in-cluster daemons.
+* **Automated Drift Detection**: Regularly polls target clusters to identify out-of-band modifications to managed resources.
+* **Configuration Snapshots & Promotion**: Captures resource states, generates semantic side-by-side cluster diffs, and promotes configurations across Dev, Staging, and Production.
+
+### Day 2 Runtime Diagnostics
+* **1-Click QKView Extraction**: Direct extraction of diagnostic bundles via Cloud Workspace Controller (CWC) for F5 iHealth and TAC analysis.
+* **Live In-Memory TMM Debugging**: Direct console execution of `tmctl` (packet drops and stats), `configview` (effective in-memory configuration), and `bdt_cli` (ARP and routing tables).
+* **Automated Runbooks**: Scripted diagnostic tests covering certificate validity, controller reconciliation, and network connectivity.
+
+### AI Inference Gateway Benchmarks
+* **LLM Benchmark Suite**: Stress-tests AI gateways and model servers (vLLM, TensorRT-LLM, Triton, Ollama).
+* **Latency & Throughput Telemetry**: Measures Time-To-First-Token (TTFT), token throughput per second, concurrency scaling, and latency percentiles.
+* **AI Analyzer Validation**: Verifies performance optimizations of F5 BNK AI load-balancing analyzers (`F5BigAnalyzer`).
+
+### Governed Automation (REST API & MCP)
+* **OpenAPI 3.0 REST API**: Over 200 endpoints covering all platform capabilities with role-based access control (Admin, Operator, Viewer).
+* **Model Context Protocol (MCP)**: 91 AI-operable tools with tiered risk controls (Read-Only, Mutate, Destructive) and structured audit logging.
+
+---
+
+## Operational Comparison: Manual CLI vs BNK Forge
+
+| Operational Area | Manual CLI & Manifests | BNK Forge Management Plane |
+|---|---|---|
+| **Cluster Provisioning** | Manual OpenTofu/Terraform scripts, Helm values, and custom YAML pipelines | Pre-packaged blueprints with automated variable wiring and dependency resolution |
+| **Topology & Traffic Flow** | Inspecting disparate Gateway, Route, and Policy manifests across namespaces via CLI | Interactive visual graph mapping Gateways, Listeners, Policies, Routes, and Backends |
+| **Diagnostics & Troubleshooting** | Manual `kubectl exec` into TMM pods, container log chasing, and manual tarball extraction | Direct CWC QKView export, live `tmctl`/`bdt_cli`/`configview` inspection, automated runbooks |
+| **Cross-Cluster Promotion** | Manual YAML file export, text-based diffing, and manual `kubectl apply` | Snapshot engine with semantic cluster-to-cluster diffing and one-click promotion |
+| **Fleet Monitoring** | Shell scripts looping `kubectl` across separate cloud consoles and kubeconfigs | Centralized Command Center monitoring TMM health, gateway status, and configuration drift |
+| **AI Gateway Benchmarking** | Ad-hoc curl scripts without standardized metrics or concurrency analysis | Integrated benchmark suite tracking TTFT, token throughput, and latency percentiles |
+| **Automated Tooling** | Uncontrolled shell scripts or ad-hoc API calls without unified audit logging | 200+ RBAC-controlled REST endpoints and 91 governed MCP tools with risk classifications |
 
 ---
 
@@ -70,7 +79,7 @@ BNK Forge 4.0.0 runs as a lightweight, modular Docker Compose stack that connect
 ```mermaid
 flowchart TB
     subgraph LayerAccess["1. User & Automation Access"]
-        UI["Web Console\nPlatform Engineers, SecOps, Sales Demos"]
+        UI["Web Console\nPlatform Engineers, SREs, NetOps"]
         CLI["Automation & CI/CD\nGitOps, Terraform, REST API"]
         AI["AI Agents & Assistants\nMCP Clients (Claude, Antigravity)"]
     end
@@ -431,7 +440,7 @@ bnk-forge/
 
 | Guide | Description | Target Audience |
 |---|---|---|
-| [**DevCentral Field & Solutions Guide**](docs/DEVCENTRAL_OVERVIEW.md) | Comprehensive field battlecards, 10-min demo scripts, and TAC diagnostic workflows | Customers, SEs, Solutions Architects, TAC |
+| [**DevCentral Technical Reference**](docs/DEVCENTRAL_OVERVIEW.md) | Technical architecture, Gateway API topology, diagnostic tooling, and operational reference | Platform Engineers, SREs, NetOps, TAC |
 | [**User Guide**](docs/USER_GUIDE.md) | Complete walkthrough of all UI features, workflows, and configuration options | Platform Engineers, Operators, Administrators |
 | [**API Reference**](docs/API_REFERENCE.md) | Full catalog of 200+ REST API endpoints with request/response schemas | DevOps, Automation Engineers, Developers |
 | [**Installation Guide**](docs/INSTALLATION.md) | Detailed installation steps for laptop, bare-metal, VM, and cloud environments | Systems Administrators, DevOps |
