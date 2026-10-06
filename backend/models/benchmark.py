@@ -300,7 +300,7 @@ class BenchmarkAgent(Base):
     def token_version(self, value: int) -> None:
         current = dict(self.readiness) if isinstance(self.readiness, dict) else {}
         current["_token_version"] = int(value)
-        self.readiness = current
+        self.readiness = current  # type: ignore[assignment]
 
     # True = Forge-managed remote host; False = self-registered built-in agent
     managed = Column(Boolean, nullable=False, default=False)
