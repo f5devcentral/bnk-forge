@@ -61,6 +61,7 @@ import type {
   HealthPodDetail,
 } from '@/types';
 import { SEVERITY_CONFIG } from '@/lib/health-severity';
+import { formatAvailabilityZone } from '@/lib/cloud-providers';
 
 // --- Severity config (shared via PLAT-REL-001 / UX-OPS-002) ---
 
@@ -82,11 +83,11 @@ interface HealthDetailCardProps {
   /** Available remediation actions */
   remediationActions: HealthRemediationAction[];
   /** Namespaces the component's pods run in */
-  namespaces: string[];
+  namespaces?: string[];
   /** Availability zones the component's pods run in */
-  zones: string[];
+  zones?: string[];
   /** Node names the component's pods are scheduled on */
-  nodes: string[];
+  nodes?: string[];
   /** K8s cluster ID for API calls */
   clusterId: number;
   /** Additional content to render in the collapsed view */
@@ -104,9 +105,9 @@ export function HealthDetailCard({
   explanation,
   podDetails,
   remediationActions,
-  namespaces,
-  zones,
-  nodes,
+  namespaces = [],
+  zones = [],
+  nodes = [],
   clusterId,
   children,
   onViewLogs,
@@ -293,8 +294,8 @@ export function HealthDetailCard({
                                 </span>
                               </TableCell>
                               <TableCell className="py-1.5 px-2">
-                                <span className="truncate block max-w-[100px] text-[10px] text-muted-foreground">
-                                  {pod.nodeZone || '--'}
+                                <span className="truncate block max-w-[120px] text-[10px] text-muted-foreground" title={formatAvailabilityZone(pod.nodeZone)}>
+                                  {formatAvailabilityZone(pod.nodeZone)}
                                 </span>
                               </TableCell>
                               <TableCell className="py-1.5 px-2">
@@ -352,7 +353,7 @@ export function HealthDetailCard({
                       <div className="flex flex-wrap gap-1.5">
                         {zones.map((zone) => (
                           <Badge key={zone} variant="outline" className="text-[10px] font-normal">
-                            {zone}
+                            {formatAvailabilityZone(zone)}
                           </Badge>
                         ))}
                       </div>

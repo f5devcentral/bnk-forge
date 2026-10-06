@@ -614,6 +614,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/k8s/clusters/{cluster_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Project Cluster
+         * @description Delete a cluster of this project (owner or admin only); 404 if it belongs elsewhere.
+         */
+        delete: operations["delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/refresh-kubeconfig": {
         parameters: {
             query?: never;
@@ -1472,6 +1492,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global Search
+         * @description Unified global multi-cluster and infrastructure search.
+         *
+         *     Searches across:
+         *     - Ingresses, HTTPRoutes, VirtualServers, and Services in all reachable clusters
+         *     - Clusters (by name, cloud provider, region)
+         *     - Projects (by name, description, cloud provider, region)
+         */
+        get: operations["global_search_api_k8s_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/f5bnk/data": {
         parameters: {
             query?: never;
@@ -1831,6 +1876,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Stats
+         * @description Summary tiles: total requests, success rate, avg latency, tokens, cost, models.
+         */
+        get: operations["get_llm_stats_api_k8s_llm_observability_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/histogram": {
         parameters: {
             query?: never;
@@ -1843,6 +1908,26 @@ export interface paths {
          * @description Time-series for one metric (requests|tokens|cost|models|latency).
          */
         get: operations["get_llm_histogram_api_k8s_clusters__cluster_id__llm_observability_histogram_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/histogram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Histogram
+         * @description Time-series for one metric (requests|tokens|cost|models|latency).
+         */
+        get: operations["get_llm_histogram_api_k8s_llm_observability_histogram_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1871,6 +1956,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/rankings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Rankings
+         * @description Per-model rows with window-over-window trend deltas.
+         */
+        get: operations["get_llm_rankings_api_k8s_llm_observability_rankings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/provider-usage": {
         parameters: {
             query?: never;
@@ -1883,6 +1988,26 @@ export interface paths {
          * @description Time-series folded to inferred provider (cost|tokens|latency).
          */
         get: operations["get_llm_provider_usage_api_k8s_clusters__cluster_id__llm_observability_provider_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/provider-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Provider Usage
+         * @description Time-series folded to inferred provider (cost|tokens|latency).
+         */
+        get: operations["get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1911,6 +2036,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/llm-observability/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Logs
+         * @description Per-request log rows, newest first; ``next_end`` is the load-older cursor.
+         */
+        get: operations["get_llm_logs_api_k8s_llm_observability_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/llm-observability/filterdata": {
         parameters: {
             query?: never;
@@ -1923,6 +2068,26 @@ export interface paths {
          * @description Distinct model + status label values for filter dropdowns.
          */
         get: operations["get_llm_filterdata_api_k8s_clusters__cluster_id__llm_observability_filterdata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/llm-observability/filterdata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Filterdata
+         * @description Distinct model + status label values for filter dropdowns.
+         */
+        get: operations["get_llm_filterdata_api_k8s_llm_observability_filterdata_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -14469,6 +14634,10 @@ export interface components {
             cluster_id: number;
             /** Cluster Name */
             cluster_name: string;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
             /** Reachable */
             reachable: boolean;
             /** Bnk Installed */
@@ -15678,6 +15847,25 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ClusterSearchResult */
+        ClusterSearchResult: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Project Id */
+            project_id?: number | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Status */
+            status: string;
+            /** Node Count */
+            node_count?: number | null;
+            /** Detected Platform Profile */
+            detected_platform_profile?: string | null;
+        };
         /**
          * ClusterSummary
          * @description Single cluster in list response.
@@ -16207,8 +16395,11 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
-            /** Provider */
-            provider: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "aws" | "azure" | "gcp" | "ibm" | "ssh";
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -16427,7 +16618,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Provider */
-            provider?: string | null;
+            provider?: ("aws" | "azure" | "gcp" | "ibm" | "ssh") | null;
             /** Aws Auth Method */
             aws_auth_method?: string | null;
             /** Aws Profile */
@@ -18182,6 +18373,19 @@ export interface components {
              */
             git_ref: string;
         };
+        /** GlobalSearchResultResponse */
+        GlobalSearchResultResponse: {
+            /** Query */
+            query: string;
+            /** Ingresses */
+            ingresses?: components["schemas"]["IngressSearchResult"][];
+            /** Clusters */
+            clusters?: components["schemas"]["ClusterSearchResult"][];
+            /** Projects */
+            projects?: components["schemas"]["ProjectSearchResult"][];
+            /** Timed Out Clusters */
+            timed_out_clusters?: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -18759,6 +18963,36 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** IngressSearchResult */
+        IngressSearchResult: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Matched Host */
+            matched_host: string;
+            /** All Hosts */
+            all_hosts?: string[];
+            /** Cluster Id */
+            cluster_id: number;
+            /** Cluster Name */
+            cluster_name: string;
+            /** Project Id */
+            project_id?: number | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Target Service */
+            target_service?: string | null;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+        };
         /** InstallChartRequest */
         InstallChartRequest: {
             /**
@@ -19180,6 +19414,10 @@ export interface components {
             req_body: string;
             /** Resp Body */
             resp_body: string;
+            /** Cluster Id */
+            cluster_id?: number | null;
+            /** Cluster Name */
+            cluster_name?: string | null;
         };
         /**
          * LoginRequest
@@ -20691,6 +20929,34 @@ export interface components {
             name?: string | null;
             /** Message */
             message: string;
+        };
+        /** ProjectSearchResult */
+        ProjectSearchResult: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Cloud Provider */
+            cloud_provider?: string | null;
+            /** Region */
+            region?: string | null;
+            /**
+             * Module Count
+             * @default 0
+             */
+            module_count: number;
+            /**
+             * Deployed Count
+             * @default 0
+             */
+            deployed_count: number;
+            /**
+             * Failed Count
+             * @default 0
+             */
+            failed_count: number;
         };
         /**
          * ProjectUpdate
@@ -25527,6 +25793,38 @@ export interface operations {
             };
         };
     };
+    delete_project_cluster_api_projects__project_id__k8s_clusters__cluster_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     refresh_cluster_kubeconfig_api_k8s_clusters__cluster_id__refresh_kubeconfig_post: {
         parameters: {
             query?: never;
@@ -26885,6 +27183,39 @@ export interface operations {
             };
         };
     };
+    global_search_api_k8s_search_get: {
+        parameters: {
+            query: {
+                /** @description Search query string (FQDN, hostname, IP, cluster, project) */
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSearchResultResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_bnk_data_api_k8s_clusters__cluster_id__f5bnk_data_get: {
         parameters: {
             query?: {
@@ -27402,11 +27733,49 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmStatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_stats_api_k8s_llm_observability_stats_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -27438,11 +27807,50 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmHistogramResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_histogram_api_k8s_llm_observability_histogram_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                metric?: string;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -27473,11 +27881,49 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmRankingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_rankings_api_k8s_llm_observability_rankings_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -27509,11 +27955,50 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_provider_usage_api_k8s_llm_observability_provider_usage_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                metric?: string;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -27548,11 +28033,53 @@ export interface operations {
                 content_search?: string | null;
                 /** @description nanosecond cursor for load-older */
                 end?: number | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmLogsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_logs_api_k8s_llm_observability_logs_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                model?: string | null;
+                status?: string | null;
+                limit?: number;
+                content_search?: string | null;
+                /** @description nanosecond cursor for load-older */
+                end?: number | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -27581,11 +28108,47 @@ export interface operations {
         parameters: {
             query?: {
                 range?: string;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
-                cluster_id: number;
+                cluster_id: number | null;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmFilterDataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_filterdata_api_k8s_llm_observability_filterdata_get: {
+        parameters: {
+            query?: {
+                cluster_id?: number | null;
+                range?: string;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
