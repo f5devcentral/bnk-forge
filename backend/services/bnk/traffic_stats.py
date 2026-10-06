@@ -70,6 +70,7 @@ def _get_tmm_configview_executor() -> ThreadPoolExecutor:
 def _tmm_traffic_stats_cache_key(cluster_id: int) -> str:
     return f"bnk:tmm_stats:{cluster_id}"
 
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -164,16 +165,24 @@ def fetch_tmm_traffic_stats(
 
     try:
         vs_result = exec_tmctl(
-            api_client, pod_name, namespace,
-            _VIRTUAL_SERVER_STAT_TABLE, _VIRTUAL_SERVER_COLUMNS,
-            directory=_TMCTL_DIRECTORY, timeout=timeout,
+            api_client,
+            pod_name,
+            namespace,
+            _VIRTUAL_SERVER_STAT_TABLE,
+            _VIRTUAL_SERVER_COLUMNS,
+            directory=_TMCTL_DIRECTORY,
+            timeout=timeout,
             cluster_id=cluster_id,
             force=force,
         )
         fw_result = exec_tmctl(
-            api_client, pod_name, namespace,
-            _FW_RULE_STAT_TABLE, _FW_RULE_COLUMNS,
-            directory=_TMCTL_DIRECTORY, timeout=timeout,
+            api_client,
+            pod_name,
+            namespace,
+            _FW_RULE_STAT_TABLE,
+            _FW_RULE_COLUMNS,
+            directory=_TMCTL_DIRECTORY,
+            timeout=timeout,
             cluster_id=cluster_id,
             force=force,
         )
@@ -367,7 +376,7 @@ def _parse_configview_uuid_output(raw: str) -> dict[str, str]:
         if not match:
             continue
         key = match.group(1).lower().replace("-", "").replace("_", "")
-        value = match.group(2).strip().strip('"\'')
+        value = match.group(2).strip().strip("\"'")
         if key in ("name", "virtualserver", "virtualservername", "vs"):
             hints["virtual_server_name"] = value
         elif key in ("gateway", "gatewayname"):
@@ -458,7 +467,6 @@ def _build_listener_index(topology: list[dict]) -> dict[str, dict[str, Any]]:
                 _normalize_name(f"{gw_ns}_{gw_name}_{listener_name}"),
                 _normalize_name(f"{gw_name}-{listener_name}"),
                 _normalize_name(f"{gw_ns}_{gw_name}-{listener_name}"),
-                _normalize_name(listener_name),
                 _normalize_name(f"{gw_name}{listener_name}"),
             }
             for key in candidates:
@@ -575,10 +583,10 @@ def _match_virtual_server_row(
 
     # 4. Substring fallback: virtual-server name contains a listener or egress key
     for key, listener in listener_index.items():
-        if key and (key in normalized or normalized in key):
+        if key and len(key) >= 4 and key in normalized:
             return "listener", listener
     for key, egress in egress_index.items():
-        if key and (key in normalized or normalized in key):
+        if key and len(key) >= 4 and key in normalized:
             return "egress", egress
 
     return None, None
@@ -673,7 +681,7 @@ def _analyze_firewall_rule_stats(
     for policy in policies:
         policy_name = resource_name(policy)
         policy_ns = resource_ns(policy)
-        for rule in (policy.get("spec", {}).get("rule", []) or []):
+        for rule in policy.get("spec", {}).get("rule", []) or []:
             rule_name = rule.get("name", "")
             if not rule_name:
                 continue
@@ -710,30 +718,36 @@ def _analyze_firewall_rule_stats(
             key = (policy_ns, policy_name, rule.get("name", ""))
             if key in seen:
                 # Sum hits if the same rule appears in multiple TMM rows
-                existing = next(r for r in results if r["policyName"] == policy_name
-                                and r["namespace"] == policy_ns
-                                and r["ruleName"] == rule["name"])
+                existing = next(
+                    r
+                    for r in results
+                    if r["policyName"] == policy_name and r["namespace"] == policy_ns and r["ruleName"] == rule["name"]
+                )
                 existing["hitCount"] += hit_count
             else:
                 seen.add(key)
-                results.append({
-                    "policyName": policy_name,
-                    "namespace": policy_ns,
-                    "ruleName": rule.get("name", ""),
-                    "action": rule.get("action", ""),
-                    "ipProtocol": rule.get("ipProtocol", ""),
-                    "hitCount": hit_count,
-                })
+                results.append(
+                    {
+                        "policyName": policy_name,
+                        "namespace": policy_ns,
+                        "ruleName": rule.get("name", ""),
+                        "action": rule.get("action", ""),
+                        "ipProtocol": rule.get("ipProtocol", ""),
+                        "hitCount": hit_count,
+                    }
+                )
         else:
             # Unmatched rule — still surface the raw hit count for observability
-            results.append({
-                "policyName": "",
-                "namespace": "",
-                "ruleName": raw_name,
-                "action": row.get("action", ""),
-                "ipProtocol": "",
-                "hitCount": hit_count,
-            })
+            results.append(
+                {
+                    "policyName": "",
+                    "namespace": "",
+                    "ruleName": raw_name,
+                    "action": row.get("action", ""),
+                    "ipProtocol": "",
+                    "hitCount": hit_count,
+                }
+            )
 
     return results
 

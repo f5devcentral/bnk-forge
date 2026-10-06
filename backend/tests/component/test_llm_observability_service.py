@@ -46,9 +46,7 @@ def _streams(*lines: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         "status": "success",
         "data": {
             "resultType": "streams",
-            "result": [
-                {"stream": {"job": "llm-gateway"}, "values": [[str(ns), json.dumps(rec)] for ns, rec in lines]}
-            ],
+            "result": [{"stream": {"job": "llm-gateway"}, "values": [[str(ns), json.dumps(rec)] for ns, rec in lines]}],
         },
     }
 
@@ -275,12 +273,36 @@ class TestRankings:
 class TestLogs:
     def test_parses_lines_and_sets_cursor(self):
         lines = (
-            (1700000002000000000, {"model": "gpt-4o", "userq": "hi", "status": "200",
-                                   "latency_ms": 120, "prompt_tk": 10, "comp_tk": 20,
-                                   "total_tk": 30, "cost": 0.01, "req_body": "{}", "resp_body": "{}"}),
-            (1700000001000000000, {"model": "claude-3", "userq": "yo", "status": "500",
-                                   "latency_ms": 90, "prompt_tk": 5, "comp_tk": 0,
-                                   "total_tk": 5, "cost": 0.0, "req_body": "{}", "resp_body": "{}"}),
+            (
+                1700000002000000000,
+                {
+                    "model": "gpt-4o",
+                    "userq": "hi",
+                    "status": "200",
+                    "latency_ms": 120,
+                    "prompt_tk": 10,
+                    "comp_tk": 20,
+                    "total_tk": 30,
+                    "cost": 0.01,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
+            (
+                1700000001000000000,
+                {
+                    "model": "claude-3",
+                    "userq": "yo",
+                    "status": "500",
+                    "latency_ms": 90,
+                    "prompt_tk": 5,
+                    "comp_tk": 0,
+                    "total_tk": 5,
+                    "cost": 0.0,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
         )
 
         def _router(sub, query, params):
@@ -387,9 +409,7 @@ class TestMultiClusterObservability:
     def test_multi_cluster_histogram_latency_returns_per_cluster_series(self):
         def _router(sub, query, params):
             # Canned latency response with avg series
-            return _matrix(
-                _series({"__name__": "avg"}, (1700000000, 120.0), (1700000060, 140.0))
-            )
+            return _matrix(_series({"__name__": "avg"}, (1700000000, 120.0), (1700000060, 140.0)))
 
         svc, _ = _make_service(_router)
         c1 = MagicMock()
@@ -469,6 +489,7 @@ class TestMultiClusterObservability:
         clusters ran disjoint model sets. c1 has 3 models / 100 reqs, c2 has 4
         models / 50 reqs, so the fleet reports 7 models (3+4), not 4 (max).
         """
+
         def _router_for(models_count: int, requests: int, tokens: int, cost: float):
             def _router(sub, query, params):
                 if "count by (model)" in query:
@@ -482,6 +503,7 @@ class TestMultiClusterObservability:
                 if 'status=~"2.."' in query:
                     return _instant(_vector(requests))  # all successful
                 return _instant(_vector(requests))  # total_requests
+
             return _router
 
         svc, _ = _make_service(_router_for(3, 100, 5000, 1.0))
@@ -508,6 +530,7 @@ class TestMultiClusterObservability:
 
     def test_multi_cluster_stats_all_unavailable_degrades(self):
         """When every cluster's Loki is unreachable, the fleet stat degrades."""
+
         def _boom(sub, query, params):
             raise ApiException(status=503, reason="Service Unavailable")
 
@@ -525,14 +548,38 @@ class TestMultiClusterObservability:
 
     def test_multi_cluster_logs_merges_sorts_and_annotates_clusters(self):
         lines_c1 = (
-            (1700000002000000000, {"model": "gpt-4o", "userq": "q from c1", "status": "200",
-                                   "latency_ms": 100, "prompt_tk": 5, "comp_tk": 10,
-                                   "total_tk": 15, "cost": 0.01, "req_body": "{}", "resp_body": "{}"}),
+            (
+                1700000002000000000,
+                {
+                    "model": "gpt-4o",
+                    "userq": "q from c1",
+                    "status": "200",
+                    "latency_ms": 100,
+                    "prompt_tk": 5,
+                    "comp_tk": 10,
+                    "total_tk": 15,
+                    "cost": 0.01,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
         )
         lines_c2 = (
-            (1700000003000000000, {"model": "claude-3", "userq": "q from c2", "status": "200",
-                                   "latency_ms": 150, "prompt_tk": 8, "comp_tk": 12,
-                                   "total_tk": 20, "cost": 0.02, "req_body": "{}", "resp_body": "{}"}),
+            (
+                1700000003000000000,
+                {
+                    "model": "claude-3",
+                    "userq": "q from c2",
+                    "status": "200",
+                    "latency_ms": 150,
+                    "prompt_tk": 8,
+                    "comp_tk": 12,
+                    "total_tk": 20,
+                    "cost": 0.02,
+                    "req_body": "{}",
+                    "resp_body": "{}",
+                },
+            ),
         )
 
         def _router(sub, query, params):
@@ -564,7 +611,6 @@ class TestMultiClusterObservability:
         assert out["rows"][1]["message"] == "q from c1"
         assert out["rows"][1]["cluster_name"] == "us-east"
         assert out["rows"][1]["cluster_id"] == 1
-
 
 
 class TestFleetFanOut:
@@ -617,6 +663,7 @@ class TestFleetFanOut:
             def _r(sub, query, params):
                 seen[cid].add(threading.get_ident())
                 return _instant(_vector(1, {"model": "gpt-4o"}))
+
             return _r
 
         svc = self._fleet_service({1: _router_for(1), 2: _router_for(2)})
@@ -650,3 +697,50 @@ class TestFleetFanOut:
         assert out["available"] is False
         assert "502" in out["reason"]
         assert set(out["errors"]) == {"cluster-1"}
+
+    def test_unscoped_fleet_logs_redact_req_and_resp_body(self):
+        log_entry = {
+            "model": "gpt-4o",
+            "latency_ms": 100.0,
+            "prompt_tk": 10,
+            "comp_tk": 20,
+            "total_tk": 30,
+            "cost": 0.05,
+            "status": "200",
+            "userq": "secret prompt",
+            "req_body": '{"sensitive": "data"}',
+            "resp_body": '{"sensitive": "answer"}',
+        }
+        svc = self._fleet_service(
+            {
+                1: lambda s, q, p: _streams((1700000000_000000000, log_entry)),
+            }
+        )
+        # Unscoped fleet logs (cluster_id=None, project_id=None) -> redacted
+        out_unscoped = svc.logs(cluster_id=None, range_="1h", project_id=None)
+        assert out_unscoped["available"] is True
+        assert len(out_unscoped["rows"]) == 1
+        assert out_unscoped["rows"][0]["req_body"] == "[REDACTED - project scope required]"
+        assert out_unscoped["rows"][0]["resp_body"] == "[REDACTED - project scope required]"
+
+        # Scoped fleet logs (project_id=10) -> kept
+        out_scoped = svc.logs(cluster_id=None, range_="1h", project_id=10)
+        assert out_scoped["available"] is True
+        assert len(out_scoped["rows"]) == 1
+        assert out_scoped["rows"][0]["req_body"] == '{"sensitive": "data"}'
+        assert out_scoped["rows"][0]["resp_body"] == '{"sensitive": "answer"}'
+
+    def test_kubeconfig_and_worker_error_sanitization(self):
+        svc = self._fleet_service({1: lambda s, q, p: _instant(_vector(1)), 2: lambda s, q, p: _instant(_vector(1))})
+        # Mock client loading failure for cluster-1
+        original_client = svc._client
+
+        def _failing_client(c):
+            if c.id == 1:
+                raise ValueError("private/internal/path/kubeconfig.yaml: access denied token=secret123")
+            return original_client(c)
+
+        svc._client = _failing_client
+
+        out = svc.stats(cluster_id=None, range_="1h")
+        assert out["errors"]["cluster-1"] == "kubeconfig"

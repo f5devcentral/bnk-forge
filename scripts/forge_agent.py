@@ -42,13 +42,19 @@ try:
     import websockets
     import websockets.exceptions
 except ImportError:
-    print("ERROR: 'websockets' package required. Install: pip install websockets", file=sys.stderr)
+    print(
+        "ERROR: 'websockets' package required. Install: pip install websockets",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 try:
     import requests
 except ImportError:
-    print("ERROR: 'requests' package required. Install: pip install requests", file=sys.stderr)
+    print(
+        "ERROR: 'requests' package required. Install: pip install requests",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 logging.basicConfig(
@@ -94,6 +100,7 @@ def _raise_fd_limit(target: int = 65536) -> None:
     """
     try:
         import resource
+
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         want = target if hard == resource.RLIM_INFINITY else min(target, hard)
         if soft < want:
@@ -134,6 +141,7 @@ class ForgeAgent:
             requests.packages.urllib3.disable_warnings()
         self.agent_id: int | None = None
         self.running = True
+        self.parked = False
         self.current_process: asyncio.subprocess.Process | None = None
         # Serialize runs: one aiperf at a time. A run-group dispatches all of its
         # child runs at once, but running multiple aiperf processes concurrently
@@ -189,12 +197,18 @@ class ForgeAgent:
         url = f"{self.forge_url}/api/benchmarks/agents"
         log.info("Registering agent '%s' at %s ...", self.agent_name, url)
         resp = requests.post(
-            url, json=payload, headers=self.headers, verify=not self.insecure, timeout=10
+            url,
+            json=payload,
+            headers=self.headers,
+            verify=not self.insecure,
+            timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
         self.agent_id = data["id"]
-        log.info("Registered as agent #%d (status=%s)", self.agent_id, data.get("status"))
+        log.info(
+            "Registered as agent #%d (status=%s)", self.agent_id, data.get("status")
+        )
         return self.agent_id
 
     def _refresh_token_from_file(self) -> None:
@@ -271,11 +285,28 @@ class ForgeAgent:
                     for t in (*pending, *done):
                         try:
                             await t
-                        except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
+                        except (
+                            asyncio.CancelledError,
+                            websockets.exceptions.ConnectionClosed,
+                        ):
                             pass
                         except Exception as e:
                             log.warning("Connection task ended: %s", e)
-                    log.info("Connection ended — reconnecting")
+                    if ws.close_code == 4409:
+                        # Forge closed us for a newer connection on the same agent
+                        # (duplicate process / AGENT_NAME). Park instead of exiting: a
+                        # supervisor (compose restart policy, systemd Restart=always)
+                        # restarts a clean exit, and the two agents would flap forever.
+                        log.error(
+                            "Superseded by another agent using the same agent row (#%s); not reconnecting — "
+                            "stop the duplicate and restart this agent",
+                            self.agent_id,
+                        )
+                        self.parked = True
+                        while self.running:
+                            await asyncio.sleep(1)
+                    else:
+                        log.info("Connection ended — reconnecting")
 
             except Exception as e:
                 log.error("Connection error: %s", e)
@@ -314,11 +345,20 @@ class ForgeAgent:
         socket the OS hasn't torn down yet."""
         while True:
             try:
-                await asyncio.wait_for(ws.send(json.dumps({
-                    "type": "heartbeat",
-                    "status": "running" if self.current_process else "connected",
-                    "timestamp": time.time(),
-                })), timeout=10)
+                await asyncio.wait_for(
+                    ws.send(
+                        json.dumps(
+                            {
+                                "type": "heartbeat",
+                                "status": "running"
+                                if self.current_process
+                                else "connected",
+                                "timestamp": time.time(),
+                            }
+                        )
+                    ),
+                    timeout=10,
+                )
             except Exception as e:
                 log.warning("Heartbeat send failed/timed out (%s) — reconnecting", e)
                 return
@@ -329,7 +369,10 @@ class ForgeAgent:
         at a time. If a run-group dispatches N children at once, they queue here
         and run sequentially instead of colliding."""
         if self._run_lock.locked():
-            log.info("Run #%s queued — waiting for the in-flight run to finish", msg.get("run_id"))
+            log.info(
+                "Run #%s queued — waiting for the in-flight run to finish",
+                msg.get("run_id"),
+            )
         async with self._run_lock:
             await self._handle_run(ws, msg)
 
@@ -341,12 +384,16 @@ class ForgeAgent:
         log.info("Config: %s", json.dumps(config, indent=2)[:500])
 
         try:
-            await ws.send(json.dumps({
-                "type": "progress",
-                "run_id": run_id,
-                "status": "running",
-                "message": "aiperf profile starting...",
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "progress",
+                        "run_id": run_id,
+                        "status": "running",
+                        "message": "aiperf profile starting...",
+                    }
+                )
+            )
         except Exception:
             pass
 
@@ -404,13 +451,17 @@ class ForgeAgent:
                 # Send progress every 10 lines
                 if line_count % 10 == 0:
                     try:
-                        await ws.send(json.dumps({
-                            "type": "progress",
-                            "run_id": run_id,
-                            "status": "running",
-                            "message": line[:200],
-                            "lines": line_count,
-                        }))
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "progress",
+                                    "run_id": run_id,
+                                    "status": "running",
+                                    "message": line[:200],
+                                    "lines": line_count,
+                                }
+                            )
+                        )
                     except Exception:
                         pass
 
@@ -433,11 +484,13 @@ class ForgeAgent:
                 result_data = json.load(f)
 
             # Send the result back to Forge
-            msg_payload = json.dumps({
-                "type": "run_completed",
-                "run_id": run_id,
-                "result": result_data,
-            })
+            msg_payload = json.dumps(
+                {
+                    "type": "run_completed",
+                    "run_id": run_id,
+                    "result": result_data,
+                }
+            )
             log.info("Sending run_completed (%d bytes)...", len(msg_payload))
             await ws.send(msg_payload)
             log.info("run_completed sent successfully for Run #%d", run_id)
@@ -446,11 +499,15 @@ class ForgeAgent:
             log.error("=== Run #%d FAILED: %s ===", run_id, e)
             self.current_process = None
             try:
-                await ws.send(json.dumps({
-                    "type": "run_failed",
-                    "run_id": run_id,
-                    "error": str(e)[:2000],
-                }))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "run_failed",
+                            "run_id": run_id,
+                            "error": str(e)[:2000],
+                        }
+                    )
+                )
             except Exception as send_err:
                 log.error("Failed to send run_failed: %s", send_err)
 
@@ -552,7 +609,10 @@ class ForgeAgent:
         count = self._dilate_trace(raw_path, dilated_path, dilation)
         log.info(
             "Time-scaled %d trace records by %.2fx (timestamps / %.2f -> slower arrivals) -> %s",
-            count, dilation, dilation, dilated_path,
+            count,
+            dilation,
+            dilation,
+            dilated_path,
         )
 
         new_config = {k: v for k, v in config.items() if k != "trace_url"}
@@ -592,7 +652,11 @@ class ForgeAgent:
             resp.raise_for_status()
             # Fast-path reject when the server advertises an oversize body.
             declared = resp.headers.get("Content-Length")
-            if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+            if (
+                declared is not None
+                and declared.isdigit()
+                and int(declared) > max_bytes
+            ):
                 raise ValueError(
                     f"trace exceeds max size: Content-Length {declared} > {max_bytes} bytes"
                 )
@@ -673,7 +737,9 @@ class ForgeAgent:
         try:
             await asyncio.wait_for(proc.wait(), timeout=10)
         except TimeoutError:
-            log.warning("Run #%s ignored SIGTERM; sending SIGKILL to group %d", run_id, pgid)
+            log.warning(
+                "Run #%s ignored SIGTERM; sending SIGKILL to group %d", run_id, pgid
+            )
             self._signal_group(pgid, signal.SIGKILL)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
@@ -782,7 +848,10 @@ def main():
             except OSError:
                 pass
             if time.monotonic() >= deadline:
-                log.warning("Token file %s not readable after 60s — continuing without a token", args.token_file)
+                log.warning(
+                    "Token file %s not readable after 60s — continuing without a token",
+                    args.token_file,
+                )
                 break
             time.sleep(2)
     if not args.token:
@@ -803,6 +872,7 @@ def main():
 
     def sighandler(sig, frame):
         agent.shutdown()
+
     signal.signal(signal.SIGINT, sighandler)
     signal.signal(signal.SIGTERM, sighandler)
 
@@ -814,7 +884,9 @@ def main():
             agent.register()
             break
         except Exception as e:
-            log.warning("Registration failed (%s), retrying in %ds...", e, register_delay)
+            log.warning(
+                "Registration failed (%s), retrying in %ds...", e, register_delay
+            )
             time.sleep(register_delay)
             register_delay = min(register_delay * 2, MAX_RECONNECT_DELAY)
 

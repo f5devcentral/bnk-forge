@@ -2,7 +2,7 @@
  * FU-009: lib/queryKeys — query key factory structure
  */
 import { describe, it, expect } from 'vitest';
-import { queryKeys } from '../queryKeys';
+import { keepPreviousForCluster, keepPreviousForScope, queryKeys } from '../queryKeys';
 
 describe('queryKeys', () => {
   it('has all top-level domain keys', () => {
@@ -73,6 +73,44 @@ describe('queryKeys', () => {
       ];
       const uniqueKeys = new Set(allKeys);
       expect(uniqueKeys.size).toBe(allKeys.length);
+    });
+  });
+
+  describe('keepPreviousForScope and keepPreviousForCluster helpers', () => {
+    it('keepPreviousForCluster retains data when cluster id matches', () => {
+      const helper = keepPreviousForCluster(42);
+      const prevData = { count: 1 };
+      const result = helper(prevData, { queryKey: ['cluster', 42, 'resources'] });
+      expect(result).toBe(prevData);
+    });
+
+    it('keepPreviousForCluster discards data when cluster id differs', () => {
+      const helper = keepPreviousForCluster(42);
+      const prevData = { count: 1 };
+      const result = helper(prevData, { queryKey: ['cluster', 99, 'resources'] });
+      expect(result).toBeUndefined();
+    });
+
+    it('keepPreviousForScope retains data when all scope tokens match', () => {
+      const helper = keepPreviousForScope(1, 'Gateway', 'default');
+      const prevData = { items: ['gw-1'] };
+      const result = helper(prevData, { queryKey: ['bnk-resources', 1, 'Gateway', 'default'] });
+      expect(result).toBe(prevData);
+    });
+
+    it('keepPreviousForScope discards data when namespace differs', () => {
+      const helper = keepPreviousForScope(1, 'Gateway', 'staging');
+      const prevData = { items: ['gw-1'] };
+      // Previous query was from 'prod', current scope expects 'staging'
+      const result = helper(prevData, { queryKey: ['bnk-resources', 1, 'Gateway', 'prod'] });
+      expect(result).toBeUndefined();
+    });
+
+    it('keepPreviousForScope discards data when resource type differs', () => {
+      const helper = keepPreviousForScope(1, 'HTTPRoute', 'default');
+      const prevData = { items: ['gw-1'] };
+      const result = helper(prevData, { queryKey: ['bnk-resources', 1, 'Gateway', 'default'] });
+      expect(result).toBeUndefined();
     });
   });
 });

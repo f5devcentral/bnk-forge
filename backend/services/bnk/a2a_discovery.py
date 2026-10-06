@@ -15,7 +15,7 @@ import ast
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 from services.bnk.helpers import build_route_ref_map
@@ -28,6 +28,8 @@ _AGENT_CARD_PATHS = (".well-known/agent-card.json", ".well-known/agent.json", "a
 # Per-candidate probe bounds: attempts and wall-clock seconds.
 _MAX_PROBES_PER_CANDIDATE = 12
 _PROBE_BUDGET_SECONDS = 15.0
+_AGGREGATE_PROBE_DEADLINE_SECONDS = 30.0
+_PLAUSIBLE_HTTP_PORTS = {80, 443, 3000, 5000, 8000, 8080, 8443, 8888, 9000, 9090}
 
 
 # ---------------------------------------------------------------------------
@@ -123,17 +125,19 @@ def _find_http_backend_services(
             for p in (spec.get("ports") or [])
         ]
 
-        candidates.append({
-            "name": svc_name,
-            "namespace": svc_ns,
-            "ports": ports,
-            "clusterIP": spec.get("clusterIP"),
-            "selector": spec.get("selector") or {},
-            "routeRefs": deduped_http_refs,
-            "gateways": sorted(list({r["gatewayName"] for r in deduped_http_refs if r.get("gatewayName")})),
-            "agentCard": None,       # Populated by probe
-            "probeStatus": "pending",  # pending | success | error | skipped
-        })
+        candidates.append(
+            {
+                "name": svc_name,
+                "namespace": svc_ns,
+                "ports": ports,
+                "clusterIP": spec.get("clusterIP"),
+                "selector": spec.get("selector") or {},
+                "routeRefs": deduped_http_refs,
+                "gateways": sorted(list({r["gatewayName"] for r in deduped_http_refs if r.get("gatewayName")})),
+                "agentCard": None,  # Populated by probe
+                "probeStatus": "pending",  # pending | success | error | skipped
+            }
+        )
 
     candidates.sort(key=lambda c: (c["namespace"], c["name"]))
     return candidates
@@ -190,10 +194,13 @@ def _candidate_probe_ports(candidate: dict) -> list[int]:
         if (p_info.get("name") or "").lower() in preferred_names:
             ports_to_try.append(port_num)
 
-    # 3. All other service ports
+    # 3. Plausibly-HTTP service ports
     for p_info in candidate.get("ports", []):
         port_num = p_info.get("port")
-        if port_num and port_num not in ports_to_try:
+        if not port_num or port_num in ports_to_try:
+            continue
+        app_proto = (p_info.get("appProtocol") or "").lower()
+        if app_proto in {"http", "https"} or port_num in _PLAUSIBLE_HTTP_PORTS:
             ports_to_try.append(port_num)
 
     return ports_to_try
@@ -315,8 +322,17 @@ def _probe_agent_cards(
     max_workers = min(len(candidates), 10)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(probe_one, c): c for c in candidates}
-        for future in as_completed(futures):
-            future.result()  # propagate exceptions (caught inside)
+        done, not_done = wait(futures.keys(), timeout=_AGGREGATE_PROBE_DEADLINE_SECONDS)
+        for f in not_done:
+            f.cancel()
+            c = futures[f]
+            if not c.get("probeStatus") or c.get("probeStatus") == "pending":
+                c["probeStatus"] = "error"
+        for f in done:
+            try:
+                f.result()
+            except Exception:
+                pass
 
 
 def _scalar_dict(value: Any) -> dict | None:
@@ -358,9 +374,7 @@ def _normalize_agent_card(card: Any) -> dict | None:
         capabilities = {
             "streaming": bool(raw_caps.get("streaming")),
             "pushNotifications": bool(
-                raw_caps.get("pushNotifications")
-                or raw_caps.get("push_notifications")
-                or raw_caps.get("push")
+                raw_caps.get("pushNotifications") or raw_caps.get("push_notifications") or raw_caps.get("push")
             ),
         }
     else:
@@ -372,17 +386,21 @@ def _normalize_agent_card(card: Any) -> dict | None:
     if isinstance(raw_skills, list):
         for s in raw_skills:
             if isinstance(s, dict):
-                normalized_skills.append({
-                    "id": str(s.get("id") or s.get("name") or ""),
-                    "name": str(s.get("name") or s.get("id") or s.get("title") or ""),
-                    "description": str(s.get("description") or s.get("desc") or ""),
-                })
+                normalized_skills.append(
+                    {
+                        "id": str(s.get("id") or s.get("name") or ""),
+                        "name": str(s.get("name") or s.get("id") or s.get("title") or ""),
+                        "description": str(s.get("description") or s.get("desc") or ""),
+                    }
+                )
             elif isinstance(s, str) and s.strip():
-                normalized_skills.append({
-                    "id": s.strip(),
-                    "name": s.strip(),
-                    "description": "",
-                })
+                normalized_skills.append(
+                    {
+                        "id": s.strip(),
+                        "name": s.strip(),
+                        "description": "",
+                    }
+                )
 
     return {
         "name": str(name),
@@ -398,4 +416,3 @@ def _normalize_agent_card(card: Any) -> dict | None:
         "governance": _scalar_dict(card.get("governance")),
         "iconUrl": card.get("iconUrl") or card.get("icon_url"),
     }
-

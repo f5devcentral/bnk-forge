@@ -60,12 +60,20 @@ async def get_llm_stats(
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Summary tiles: total requests, success rate, avg latency, tokens, cost, models."""
-    return await asyncio.to_thread(
-        LlmObservabilityService(db).stats, cluster_id, time_range, model, status
-    )
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).stats,
+            cluster_id,
+            time_range,
+            model,
+            status,
+            project_id=project_id,
+        )
+    return await asyncio.to_thread(LlmObservabilityService(db).stats, cluster_id, time_range, model, status)
 
 
 @router.get(
@@ -85,12 +93,21 @@ async def get_llm_histogram(
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Time-series for one metric (requests|tokens|cost|models|latency)."""
-    return await asyncio.to_thread(
-        LlmObservabilityService(db).histogram, cluster_id, time_range, metric, model, status
-    )
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).histogram,
+            cluster_id,
+            time_range,
+            metric,
+            model,
+            status,
+            project_id=project_id,
+        )
+    return await asyncio.to_thread(LlmObservabilityService(db).histogram, cluster_id, time_range, metric, model, status)
 
 
 @router.get(
@@ -109,12 +126,20 @@ async def get_llm_rankings(
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Per-model rows with window-over-window trend deltas."""
-    return await asyncio.to_thread(
-        LlmObservabilityService(db).rankings, cluster_id, time_range, model, status
-    )
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).rankings,
+            cluster_id,
+            time_range,
+            model,
+            status,
+            project_id=project_id,
+        )
+    return await asyncio.to_thread(LlmObservabilityService(db).rankings, cluster_id, time_range, model, status)
 
 
 @router.get(
@@ -134,9 +159,20 @@ async def get_llm_provider_usage(
     time_range: str = Query(default="1h", alias="range"),
     model: str | None = None,
     status: str | None = None,
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Time-series folded to inferred provider (cost|tokens|latency)."""
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).provider_usage,
+            cluster_id,
+            time_range,
+            metric,
+            model,
+            status,
+            project_id=project_id,
+        )
     return await asyncio.to_thread(
         LlmObservabilityService(db).provider_usage, cluster_id, time_range, metric, model, status
     )
@@ -161,9 +197,22 @@ async def get_llm_logs(
     limit: int = Query(default=50, ge=1, le=1000),
     content_search: str | None = None,
     end: int | None = Query(default=None, description="nanosecond cursor for load-older"),
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Per-request log rows, newest first; ``next_end`` is the load-older cursor."""
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).logs,
+            cluster_id,
+            time_range,
+            model,
+            status,
+            limit,
+            content_search,
+            end,
+            project_id=project_id,
+        )
     return await asyncio.to_thread(
         LlmObservabilityService(db).logs,
         cluster_id,
@@ -190,9 +239,15 @@ async def get_llm_logs(
 async def get_llm_filterdata(
     cluster_id: int | None = None,
     time_range: str = Query(default="1h", alias="range"),
+    project_id: int | None = Query(default=None, description="Optional project ID to filter clusters"),
     db: Session = Depends(get_db),
 ):
     """Distinct model + status label values for filter dropdowns."""
-    return await asyncio.to_thread(
-        LlmObservabilityService(db).filterdata, cluster_id, time_range
-    )
+    if project_id is not None:
+        return await asyncio.to_thread(
+            LlmObservabilityService(db).filterdata,
+            cluster_id,
+            time_range,
+            project_id=project_id,
+        )
+    return await asyncio.to_thread(LlmObservabilityService(db).filterdata, cluster_id, time_range)
