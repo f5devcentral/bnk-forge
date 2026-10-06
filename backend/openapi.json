@@ -3882,7 +3882,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "minLength": 3,
               "description": "Search query string (FQDN, hostname, IP, cluster, project)",
               "title": "Q"
             },
@@ -4876,6 +4876,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -4968,6 +4986,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5070,6 +5106,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5172,6 +5226,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5264,6 +5336,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5356,6 +5446,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5458,6 +5566,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5560,6 +5686,24 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5698,6 +5842,24 @@
               "title": "End"
             },
             "description": "nanosecond cursor for load-older"
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5836,6 +5998,24 @@
               "title": "End"
             },
             "description": "nanosecond cursor for load-older"
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5896,6 +6076,24 @@
               "default": "1h",
               "title": "Range"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {
@@ -5956,6 +6154,24 @@
               "default": "1h",
               "title": "Range"
             }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project ID to filter clusters",
+              "title": "Project Id"
+            },
+            "description": "Optional project ID to filter clusters"
           }
         ],
         "responses": {

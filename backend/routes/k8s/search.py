@@ -9,6 +9,7 @@ Provides unified, multi-cluster search for:
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, wait
+from threading import Lock
 
 from fastapi import APIRouter, Depends, Query
 from kubernetes import client as k8s_client
@@ -16,6 +17,7 @@ from kubernetes.client.rest import ApiException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
 
+from core.cache import cache
 from core.errors import handle_route_errors
 from database import SessionLocal, get_db
 from models.kubernetes import KubernetesCluster
@@ -31,6 +33,22 @@ router = APIRouter(prefix="/api/k8s", tags=["k8s-search"])
 # Overall wall-clock budget for the live cluster scan. Clusters still running
 # when it expires are reported in ``timed_out_clusters``.
 SCAN_DEADLINE_SECONDS = 6.0
+
+_SEARCH_WORKERS = 8
+_search_executor: ThreadPoolExecutor | None = None
+_search_executor_lock = Lock()
+
+
+def _get_search_executor() -> ThreadPoolExecutor:
+    global _search_executor
+    if _search_executor is None:
+        with _search_executor_lock:
+            if _search_executor is None:
+                _search_executor = ThreadPoolExecutor(
+                    max_workers=_SEARCH_WORKERS,
+                    thread_name_prefix="k8s-search",
+                )
+    return _search_executor
 
 
 class IngressSearchResult(BaseModel):
@@ -108,13 +126,13 @@ def _scan_cluster_for_query(
     try:
         networking = k8s_client.NetworkingV1Api(api_client)
         ingresses = networking.list_ingress_for_all_namespaces(_request_timeout=3)
-        for ing in (ingresses.items or []):
+        for ing in ingresses.items or []:
             name = ing.metadata.name or ""
             ns = ing.metadata.namespace or "default"
             hosts: list[str] = []
             target_svc: str | None = None
 
-            for rule in (ing.spec.rules or []):
+            for rule in ing.spec.rules or []:
                 if rule.host:
                     hosts.append(rule.host)
                 if rule.http and rule.http.paths:
@@ -126,7 +144,7 @@ def _scan_cluster_for_query(
                                 port = f":{path.backend.service.port.number or path.backend.service.port.name or ''}"
                             target_svc = f"{svc_name}{port}"
 
-            for tls in (ing.spec.tls or []):
+            for tls in ing.spec.tls or []:
                 if tls.hosts:
                     hosts.extend(tls.hosts)
 
@@ -137,19 +155,21 @@ def _scan_cluster_for_query(
                 matched_host = unique_hosts[0] if unique_hosts else name
 
             if matched_host or q in name.lower():
-                results.append(IngressSearchResult(
-                    kind="Ingress",
-                    name=name,
-                    namespace=ns,
-                    matched_host=matched_host or name,
-                    all_hosts=unique_hosts,
-                    cluster_id=cluster_id,
-                    cluster_name=cluster_name,
-                    cloud_provider=cloud_provider,
-                    region=region,
-                    target_service=target_svc,
-                    status="active",
-                ))
+                results.append(
+                    IngressSearchResult(
+                        kind="Ingress",
+                        name=name,
+                        namespace=ns,
+                        matched_host=matched_host or name,
+                        all_hosts=unique_hosts,
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        cloud_provider=cloud_provider,
+                        region=region,
+                        target_service=target_svc,
+                        status="active",
+                    )
+                )
     except Exception as e:
         logger.debug(f"Ingress scan error on cluster {cluster_name}: {e}")
 
@@ -164,7 +184,7 @@ def _scan_cluster_for_query(
                 plural="httproutes",
                 _request_timeout=3,
             )
-            for item in (http_routes.get("items") or []):
+            for item in http_routes.get("items") or []:
                 metadata = item.get("metadata", {})
                 name = metadata.get("name", "")
                 ns = metadata.get("namespace", "default")
@@ -172,19 +192,21 @@ def _scan_cluster_for_query(
                 hostnames = spec.get("hostnames", [])
                 matched_host = next((h for h in hostnames if q in h.lower()), None)
                 if matched_host or q in name.lower():
-                    results.append(IngressSearchResult(
-                        kind="HTTPRoute",
-                        name=name,
-                        namespace=ns,
-                        matched_host=matched_host or (hostnames[0] if hostnames else name),
-                        all_hosts=hostnames,
-                        cluster_id=cluster_id,
-                        cluster_name=cluster_name,
-                        cloud_provider=cloud_provider,
-                        region=region,
-                        target_service="Gateway Route",
-                        status="active",
-                    ))
+                    results.append(
+                        IngressSearchResult(
+                            kind="HTTPRoute",
+                            name=name,
+                            namespace=ns,
+                            matched_host=matched_host or (hostnames[0] if hostnames else name),
+                            all_hosts=hostnames,
+                            cluster_id=cluster_id,
+                            cluster_name=cluster_name,
+                            cloud_provider=cloud_provider,
+                            region=region,
+                            target_service="Gateway Route",
+                            status="active",
+                        )
+                    )
         except Exception as e:  # CRD not installed, or the list timed out
             logger.debug(f"HTTPRoute scan error on cluster {cluster_name}: {e}")
 
@@ -196,7 +218,7 @@ def _scan_cluster_for_query(
                 plural="virtualservers",
                 _request_timeout=3,
             )
-            for item in (vs_items.get("items") or []):
+            for item in vs_items.get("items") or []:
                 metadata = item.get("metadata", {})
                 name = metadata.get("name", "")
                 ns = metadata.get("namespace", "default")
@@ -206,19 +228,21 @@ def _scan_cluster_for_query(
                 hosts = [h for h in [host, vip] if h]
                 matched_host = next((h for h in hosts if q in h.lower()), None)
                 if matched_host or q in name.lower():
-                    results.append(IngressSearchResult(
-                        kind="VirtualServer",
-                        name=name,
-                        namespace=ns,
-                        matched_host=matched_host or (hosts[0] if hosts else name),
-                        all_hosts=hosts,
-                        cluster_id=cluster_id,
-                        cluster_name=cluster_name,
-                        cloud_provider=cloud_provider,
-                        region=region,
-                        target_service=vip or "BNK VIP",
-                        status="active",
-                    ))
+                    results.append(
+                        IngressSearchResult(
+                            kind="VirtualServer",
+                            name=name,
+                            namespace=ns,
+                            matched_host=matched_host or (hosts[0] if hosts else name),
+                            all_hosts=hosts,
+                            cluster_id=cluster_id,
+                            cluster_name=cluster_name,
+                            cloud_provider=cloud_provider,
+                            region=region,
+                            target_service=vip or "BNK VIP",
+                            status="active",
+                        )
+                    )
         except Exception as e:
             logger.debug(f"VirtualServer scan error on cluster {cluster_name}: {e}")
 
@@ -232,7 +256,7 @@ def _scan_cluster_for_query(
                         plural="f5-spk-egresses",
                         _request_timeout=3,
                     )
-                    for item in (egress_items.get("items") or []):
+                    for item in egress_items.get("items") or []:
                         metadata = item.get("metadata", {})
                         name = metadata.get("name", "")
                         ns = metadata.get("namespace", "default")
@@ -240,19 +264,21 @@ def _scan_cluster_for_query(
                         subnet = spec.get("dnsNat46Ipv4Subnet", "") or spec.get("nat64Ipv6Subnet", "")
                         hosts = [subnet] if subnet else []
                         if q in name.lower() or q in ns.lower() or (subnet and q in subnet.lower()):
-                            results.append(IngressSearchResult(
-                                kind="Egress",
-                                name=name,
-                                namespace=ns,
-                                matched_host=name,
-                                all_hosts=hosts,
-                                cluster_id=cluster_id,
-                                cluster_name=cluster_name,
-                                cloud_provider=cloud_provider,
-                                region=region,
-                                target_service=subnet or "Egress Gateway",
-                                status="active",
-                            ))
+                            results.append(
+                                IngressSearchResult(
+                                    kind="Egress",
+                                    name=name,
+                                    namespace=ns,
+                                    matched_host=name,
+                                    all_hosts=hosts,
+                                    cluster_id=cluster_id,
+                                    cluster_name=cluster_name,
+                                    cloud_provider=cloud_provider,
+                                    region=region,
+                                    target_service=subnet or "Egress Gateway",
+                                    status="active",
+                                )
+                            )
                     break
                 except ApiException:
                     continue
@@ -273,24 +299,26 @@ def _scan_cluster_for_query(
                         plural=pl,
                         _request_timeout=3,
                     )
-                    for item in (gw_items.get("items") or []):
+                    for item in gw_items.get("items") or []:
                         metadata = item.get("metadata", {})
                         name = metadata.get("name", "")
                         ns = metadata.get("namespace", "default")
                         if q in name.lower() or q in ns.lower():
-                            results.append(IngressSearchResult(
-                                kind=kd,
-                                name=name,
-                                namespace=ns,
-                                matched_host=name,
-                                all_hosts=[],
-                                cluster_id=cluster_id,
-                                cluster_name=cluster_name,
-                                cloud_provider=cloud_provider,
-                                region=region,
-                                target_service=kd,
-                                status="active",
-                            ))
+                            results.append(
+                                IngressSearchResult(
+                                    kind=kd,
+                                    name=name,
+                                    namespace=ns,
+                                    matched_host=name,
+                                    all_hosts=[],
+                                    cluster_id=cluster_id,
+                                    cluster_name=cluster_name,
+                                    cloud_provider=cloud_provider,
+                                    region=region,
+                                    target_service=kd,
+                                    status="active",
+                                )
+                            )
                 except Exception as e:
                     logger.debug(f"{kd} scan error on cluster {cluster_name}: {e}")
         except Exception as e:
@@ -302,7 +330,7 @@ def _scan_cluster_for_query(
     try:
         core_api = k8s_client.CoreV1Api(api_client)
         services = core_api.list_service_for_all_namespaces(_request_timeout=3)
-        for svc in (services.items or []):
+        for svc in services.items or []:
             name = svc.metadata.name or ""
             ns = svc.metadata.namespace or "default"
             spec = svc.spec
@@ -322,19 +350,21 @@ def _scan_cluster_for_query(
 
             matched_ip = next((ip for ip in ips if q in ip.lower()), None)
             if matched_ip or (q in name.lower() and spec.type in ["LoadBalancer", "NodePort"]):
-                results.append(IngressSearchResult(
-                    kind="Service",
-                    name=name,
-                    namespace=ns,
-                    matched_host=matched_ip or name,
-                    all_hosts=ips,
-                    cluster_id=cluster_id,
-                    cluster_name=cluster_name,
-                    cloud_provider=cloud_provider,
-                    region=region,
-                    target_service=f"{name} ({spec.type})",
-                    status="active",
-                ))
+                results.append(
+                    IngressSearchResult(
+                        kind="Service",
+                        name=name,
+                        namespace=ns,
+                        matched_host=matched_ip or name,
+                        all_hosts=ips,
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        cloud_provider=cloud_provider,
+                        region=region,
+                        target_service=f"{name} ({spec.type})",
+                        status="active",
+                    )
+                )
     except Exception as e:
         logger.debug(f"Service scan error on cluster {cluster_name}: {e}")
 
@@ -348,7 +378,7 @@ def _scan_cluster_for_query(
 )
 @handle_route_errors("global k8s search")
 def global_search(
-    q: str = Query(..., min_length=1, description="Search query string (FQDN, hostname, IP, cluster, project)"),
+    q: str = Query(..., min_length=3, description="Search query string (FQDN, hostname, IP, cluster, project)"),
     limit: int = Query(default=25, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
@@ -362,6 +392,23 @@ def global_search(
     """
     clean_q = q.strip()
     clean_q_lower = clean_q.lower()
+
+    if len(clean_q) < 3:
+        return GlobalSearchResultResponse(
+            query=clean_q,
+            ingresses=[],
+            clusters=[],
+            projects=[],
+            timed_out_clusters=[],
+        )
+
+    cache_key = f"k8s:search:{clean_q_lower}:{limit}"
+    cached = cache.get(cache_key)
+    if cached and isinstance(cached, dict):
+        try:
+            return GlobalSearchResultResponse(**cached)
+        except Exception:
+            pass
 
     # 1. DB Search: Clusters
     all_db_clusters = db.query(KubernetesCluster).all()
@@ -414,9 +461,8 @@ def global_search(
         )
         if not matched and p.project_modules:
             for pm in p.project_modules:
-                if (
-                    (pm.path_in_project and clean_q_lower in pm.path_in_project.lower())
-                    or (pm.library_module and clean_q_lower in pm.library_module.name.lower())
+                if (pm.path_in_project and clean_q_lower in pm.path_in_project.lower()) or (
+                    pm.library_module and clean_q_lower in pm.library_module.name.lower()
                 ):
                     matched = True
                     break
@@ -435,42 +481,39 @@ def global_search(
                 )
             )
 
-    # 3. Parallel Live Cluster Scanning
+    # 3. Parallel Live Cluster Scanning via shared bounded executor
     found_ingresses: list[IngressSearchResult] = []
     timed_out_clusters: list[str] = []
 
     if active_clusters_to_scan:
-        executor = ThreadPoolExecutor(max_workers=min(10, len(active_clusters_to_scan)))
-        try:
-            futures = {
-                executor.submit(
-                    _scan_cluster_for_query,
-                    cluster.id,
-                    cluster.name,
-                    cluster.cloud_provider,
-                    cluster.region,
-                    clean_q,
-                ): cluster
-                for cluster in active_clusters_to_scan
-            }
-            done, _ = wait(futures, timeout=SCAN_DEADLINE_SECONDS)
-            for future, cluster in futures.items():
-                if future not in done:
-                    timed_out_clusters.append(cluster.name)
-                    continue
-                try:
-                    cluster_results = future.result()
-                except Exception as e:
-                    logger.debug(f"Search thread failed: {e}")
-                    continue
-                for r in cluster_results:
-                    r.project_id = cluster.project_id
-                found_ingresses.extend(cluster_results)
-            if timed_out_clusters:
-                logger.debug(f"Search scan deadline hit; timed out: {timed_out_clusters}")
-        finally:
-            # Don't block the response on stragglers; queued scans are dropped.
-            executor.shutdown(wait=False, cancel_futures=True)
+        executor = _get_search_executor()
+        futures = {
+            executor.submit(
+                _scan_cluster_for_query,
+                cluster.id,
+                cluster.name,
+                cluster.cloud_provider,
+                cluster.region,
+                clean_q,
+            ): cluster
+            for cluster in active_clusters_to_scan
+        }
+        done, not_done = wait(futures.keys(), timeout=SCAN_DEADLINE_SECONDS)
+        for future, cluster in futures.items():
+            if future not in done:
+                future.cancel()
+                timed_out_clusters.append(cluster.name)
+                continue
+            try:
+                cluster_results = future.result()
+            except Exception as e:
+                logger.debug(f"Search thread failed: {e}")
+                continue
+            for r in cluster_results:
+                r.project_id = cluster.project_id
+            found_ingresses.extend(cluster_results)
+        if timed_out_clusters:
+            logger.debug(f"Search scan deadline hit; timed out: {timed_out_clusters}")
 
     # Deduplicate live resource results
     seen_keys: set[tuple[str, int, str, str]] = set()
@@ -481,10 +524,12 @@ def global_search(
             seen_keys.add(key)
             deduped_ingresses.append(ing)
 
-    return GlobalSearchResultResponse(
+    response = GlobalSearchResultResponse(
         query=clean_q,
         ingresses=deduped_ingresses[:limit],
         clusters=matching_clusters[:limit],
         projects=matching_projects[:limit],
         timed_out_clusters=timed_out_clusters,
     )
+    cache.set(cache_key, response.model_dump(), ttl_seconds=15)
+    return response

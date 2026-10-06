@@ -27733,6 +27733,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -27769,6 +27771,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -27803,6 +27807,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -27840,6 +27846,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -27873,6 +27881,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -27909,6 +27919,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -27943,6 +27955,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -27980,6 +27994,8 @@ export interface operations {
                 range?: string;
                 model?: string | null;
                 status?: string | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -28017,6 +28033,8 @@ export interface operations {
                 content_search?: string | null;
                 /** @description nanosecond cursor for load-older */
                 end?: number | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -28057,6 +28075,8 @@ export interface operations {
                 content_search?: string | null;
                 /** @description nanosecond cursor for load-older */
                 end?: number | null;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -28088,6 +28108,8 @@ export interface operations {
         parameters: {
             query?: {
                 range?: string;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path: {
@@ -28122,6 +28144,8 @@ export interface operations {
             query?: {
                 cluster_id?: number | null;
                 range?: string;
+                /** @description Optional project ID to filter clusters */
+                project_id?: number | null;
             };
             header?: never;
             path?: never;
