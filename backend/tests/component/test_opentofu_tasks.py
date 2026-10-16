@@ -543,7 +543,12 @@ class TestRunOpenTofuApply:
         assert result["success"] is True
         assert mock_workspace.clear_plan.call_count == 2
         assert all(call.args == (module,) for call in mock_workspace.clear_plan.call_args_list)
-        mock_engine.run_plan.assert_called_once_with("/tmp/workspace", {})
+        # run_plan is now called with an additive on_output= streaming callback
+        # (#195); assert on the positional args and ignore the sink kwarg.
+        mock_engine.run_plan.assert_called_once()
+        plan_args, plan_kwargs = mock_engine.run_plan.call_args
+        assert plan_args == ("/tmp/workspace", {})
+        assert set(plan_kwargs) <= {"on_output"}
 
         db.refresh(task)
         assert "=== RECONCILIATION INVALIDATED SAVED PLAN ===" in (task.logs or "")
@@ -719,3 +724,148 @@ class TestManagedClusterScanEnqueue:
             enqueue_cluster_scan(cluster.id)
 
         mock_scan_task.delay.assert_called_once_with(55)
+
+
+# ── #195: Incremental log streaming during a run ─────────────────────────────
+
+class TestOpenTofuTaskLogStreaming:
+    """logs_full_size must grow while the task is in_progress, not jump from 0
+    to its final value only at completion (issue #195)."""
+
+    @patch(f"{_MOD}.update_project_counts")
+    @patch(f"{_MOD}.create_deployment_record")
+    @patch(f"{_MOD}._notify_task_started")
+    @patch(f"{_MOD}.module_lock")
+    @patch(f"{_MOD}.get_cloud_credentials_env", return_value={})
+    @patch(f"{_MOD}.check_dependencies", return_value=(True, []))
+    @patch(f"{_MOD}.OpenTofuRuntime")
+    @patch(f"{_MOD}.get_db_context")
+    @patch(f"{_MOD}.datetime")
+    def test_plan_persists_growing_logs_before_completion(
+        self, mock_dt, mock_db_ctx, mock_runtime_cls, _mock_deps, _mock_creds,
+        mock_lock, _mock_notify, _mock_deploy, _mock_counts, db,
+    ):
+        from sqlalchemy import func
+
+        from tasks._tofu_helpers import TofuLogStreamer
+
+        naive_now = datetime.utcnow()
+        mock_dt.now.return_value = naive_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        project = _make_project(db)
+        lib = _make_library(db)
+        module = _make_module(db, project, lib, status="initialized")
+        task = _make_task(db, project, module, "plan")
+        db.commit()
+
+        mock_db_ctx.return_value.__enter__ = MagicMock(return_value=db)
+        mock_db_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        mock_lock.return_value.__enter__ = MagicMock(
+            return_value=ModuleLock(module_id=module.id, task_id=task.id, fence_token=0),
+        )
+        mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+
+        # As each line streams, record what a concurrent GET /api/tasks/{id}
+        # would observe: the persisted logs_full_size (SQL length, exactly the
+        # detail endpoint's computation) and the task status. This is measured
+        # from the DB, not the in-memory buffer, so it proves the flush.
+        observed_sizes: list[int] = []
+        observed_status: list[str] = []
+
+        def streaming_run_plan(work_dir, env, on_output=None, timeout=None):
+            assert on_output is not None, "plan task must pass an on_output sink (#195)"
+            for i in range(1, 6):
+                on_output(f"tofu progress line {i}")
+                size = db.query(func.length(TaskModel.logs)).filter(
+                    TaskModel.id == task.id
+                ).scalar()
+                status = db.query(TaskModel.status).filter(
+                    TaskModel.id == task.id
+                ).scalar()
+                observed_sizes.append(size or 0)
+                observed_status.append(status)
+            return (0, "".join(f"tofu progress line {i}\n" for i in range(1, 6)))
+
+        mock_engine = MagicMock()
+        mock_engine.prepare_persistent_workspace.return_value = "/tmp/workspace"
+        mock_engine.run_plan.side_effect = streaming_run_plan
+        mock_runtime_cls.return_value = mock_engine
+
+        mock_workspace = MagicMock()
+        mock_workspace.is_initialized.return_value = True
+        mock_workspace.needs_reinit.return_value = (False, None)
+
+        # Force interval=0 so every streamed line flushes — otherwise the 2s
+        # throttle would coalesce this fast test's lines into a single flush.
+        def _fast_streamer(t, d, **_kw):
+            return TofuLogStreamer(t, d, interval=0)
+
+        with patch("services.workspace_manager.WorkspaceManager", return_value=mock_workspace), \
+             patch(f"{_MOD}.TofuLogStreamer", _fast_streamer):
+            from tasks.opentofu_tasks import run_opentofu_plan
+            result = run_opentofu_plan(task.id, module.id)
+
+        assert result["success"] is True
+
+        # (a) The bug reproduced: without streaming every one of these would be
+        #     0. Instead the size is non-zero from the first line and grows.
+        assert len(observed_sizes) == 5
+        assert all(s > 0 for s in observed_sizes), observed_sizes
+        assert observed_sizes == sorted(observed_sizes)
+        assert len(set(observed_sizes)) == 5, f"not strictly growing: {observed_sizes}"
+        # (b) …and this all happened while the task was still running.
+        assert observed_status == ["in_progress"] * 5
+
+        # Final state intact: complete log persisted, size == detail's len().
+        db.refresh(task)
+        assert task.status == "completed"
+        assert "tofu progress line 5" in task.logs
+        assert len(task.logs) >= observed_sizes[-1]
+
+    @patch(f"{_MOD}.update_project_counts")
+    @patch(f"{_MOD}.create_deployment_record")
+    @patch(f"{_MOD}._notify_task_started")
+    @patch(f"{_MOD}.module_lock")
+    @patch(f"{_MOD}.get_cloud_credentials_env", return_value={})
+    @patch(f"{_MOD}.check_dependencies", return_value=(True, []))
+    @patch(f"{_MOD}.OpenTofuRuntime")
+    @patch(f"{_MOD}.get_db_context")
+    @patch(f"{_MOD}.datetime")
+    def test_plan_passes_on_output_sink_to_runtime(
+        self, mock_dt, mock_db_ctx, mock_runtime_cls, _mock_deps, _mock_creds,
+        mock_lock, _mock_notify, _mock_deploy, _mock_counts, db,
+    ):
+        """Guard: the plan task must hand run_plan a callable on_output sink."""
+        naive_now = datetime.utcnow()
+        mock_dt.now.return_value = naive_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        project = _make_project(db)
+        lib = _make_library(db)
+        module = _make_module(db, project, lib, status="initialized")
+        task = _make_task(db, project, module, "plan")
+        db.commit()
+
+        mock_db_ctx.return_value.__enter__ = MagicMock(return_value=db)
+        mock_db_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        mock_lock.return_value.__enter__ = MagicMock(
+            return_value=ModuleLock(module_id=module.id, task_id=task.id, fence_token=0),
+        )
+        mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.prepare_persistent_workspace.return_value = "/tmp/workspace"
+        mock_engine.run_plan.return_value = (0, "Plan: 1 to add")
+        mock_runtime_cls.return_value = mock_engine
+
+        mock_workspace = MagicMock()
+        mock_workspace.is_initialized.return_value = True
+        mock_workspace.needs_reinit.return_value = (False, None)
+
+        with patch("services.workspace_manager.WorkspaceManager", return_value=mock_workspace):
+            from tasks.opentofu_tasks import run_opentofu_plan
+            run_opentofu_plan(task.id, module.id)
+
+        _args, kwargs = mock_engine.run_plan.call_args
+        assert callable(kwargs.get("on_output"))
