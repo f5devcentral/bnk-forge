@@ -200,6 +200,35 @@ vm-bnk-forge/              # cloud-init harness: fresh KVM/cloud VM that self-in
 - **Components:** shadcn/ui (Radix primitives) + TailwindCSS in `src/components/ui/`
 - **Mutation + polling pattern:** When a mutation triggers an async backend process whose status is tracked by a polling `refetchInterval` hook, the mutation's `onSuccess` MUST use `await queryClient.refetchQueries({ queryKey: ... })` (not `invalidateQueries`) for the query key that the polling hook reads. This ensures the fresh transitional status (e.g., "pending", "deploying") is in cache before the interval evaluator decides whether to poll. `invalidateQueries` is fine for other keys that don't feed polling hooks.
 
+### Design System Invariants (ADR D-036)
+
+- **Rules D1–D8**:
+  - **D1 (Scope "all")**: Scope "all" = `null` in state; omitted from URL query parameters.
+  - **D2 (Shared Project Scope)**: App-wide shared project scope; selecting a cluster outside the current project clears project to `null`.
+  - **D3 (Namespace Default)**: Namespace default is `"default"`, persisted per cluster.
+  - **D4 (ScopePicker Placement)**: Canonical `ScopePicker` slot: sticky toolbar in Resource Explorer (REL) pages; `PageHeader actions` slot in content pages.
+  - **D5 (Page Width & Shell)**: REL explorer pages are full-bleed (`h-full flex-col`); content pages wrap in `PageShell` (`max-w-7xl mx-auto p-6 space-y-6`).
+  - **D6 (Strict Mono Rule)**: `font-mono` is strictly reserved for code, CLI commands, identifiers, hashes, IP/CIDRs, YAML, and logs. Numeric values use `tabular-nums`. `font-mono` is forbidden on headings (`text-xl`, `text-2xl`), badges, and select triggers.
+  - **D7 (Self-Hosted Typography)**: Inter and JetBrains Mono are self-hosted via `@fontsource/*`. Zero external Google Fonts CDN links.
+  - **D8 (Status Palette)**: Canonical status palette mapped through `src/lib/status-colors.ts` and `<StatusBadge />` (success, warning, destructive, info, neutral). Raw palette classes (e.g. `text-emerald-400`, `bg-sky-500`) are blocked by ESLint.
+
+- **Primitive Inventory (`src/components/` & `src/components/ui/`)**:
+  - `PageShell`: Standard content container enforcing `max-w-7xl mx-auto p-6 space-y-6`.
+  - `PageHeader`: Standard top header with `title`, `description`, optional `breadcrumbs`, and `actions` slot.
+  - `ResourceExplorerLayout` (REL): Full-bleed layout container for Kubernetes/CRD/CNF/BNK explorers.
+  - `ResourceViewTabs`: Unified segmented tabs component replacing page-level `TabsList`.
+  - `SectionCard`: Rounded container with standard border and card tokens (`rounded-xl border border-border bg-card p-6`).
+  - `StatusBadge`: Unified status pill mapping state strings to canonical semantic design tokens.
+  - `StatTile`: Metric summary tile with label, value (`tabular-nums`), and optional trend indicator.
+  - `EmptyState`: Standard empty illustration, heading, description, and action button.
+  - `ErrorState`: Standard error container with retry action.
+  - `SkeletonTable`: Standard skeleton loader for tabular data.
+
+- **Typography & Micro-label Tokens**:
+  - **11px Micro-labels**: Use `text-2xs` (never arbitrary `text-[10px]` or `text-[11px]`).
+  - **`.label-caps` Pattern**: Standardized uppercase micro-headers (`text-2xs font-semibold uppercase tracking-wider text-muted-foreground`).
+  - **Lint Guards**: ESLint flat config blocks arbitrary `text-[Npx]`, heading `font-mono`, raw `<select>` elements, and page-level `TabsList` imports.
+
 ---
 
 ## Testing Conventions

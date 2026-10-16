@@ -21,18 +21,20 @@ context an autonomous agent needs and a human does not.
 
 ## Behavioral Guidelines
 
-Bias toward caution over speed. For trivial tasks, use judgment.
+Bias toward direct action, low turn count, and surgical execution. Never run open-ended repository audits or sequential file chunking when a targeted edit is requested.
 
-### 1. Think Before Coding
+### 1. In-Place Fixes & Code Reuse (Fix Existing, Don't Reinvent)
 
-Don't assume. Don't hide confusion. Surface tradeoffs.
-
-Before implementing:
-- Check whether it already exists. Grep for the capability by name and by what it shells out to (`docker`/`buildx`, `helm`, `kubectl`, Make targets) before writing new code — extend the existing path, don't fork a parallel one.
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- **Fix Existing Code In-Place**: Feedback or requests regarding existing functionality mean **fix or extend the existing code directly in-place**. Never create parallel implementations, duplicate functions (e.g., `_v2`), new route variants, or wrapper abstractions when existing code already handles that domain.
+- **Fast 1-Step Discovery (No Wandering Audits)**:
+  - To locate existing functionality, run **one targeted grep** (e.g., `git grep -n 'def <name>'` or `git grep -n '<feature_keyword>'`).
+  - Find the existing home in **1 step**, jump directly to that line number, and modify it in-place.
+  - **Anti-Pattern (Audit Wandering)**: Do NOT conduct wide multi-system audits, live container/docker queries, or read files in sequential chunks just to check for prior art. One targeted grep is sufficient.
+- **Direct Edit from Grep (Zero Redundant Viewing)**: When `git grep -n` reveals the line number and code to edit (e.g. badges, labels, strings, flags, configs), **DO NOT call `view_file`**. Jump immediately from `git grep -n` to `replace_file_content`. Viewing lines already in grep output is pure turn waste.
+- **When `view_file` is Needed**: Only use `view_file` for complex multi-line logic design. In that case, view the entire block in ONE single call (up to 250 lines). Micro-slicing and window chaining (e.g. 240-285, then 285-315) are strictly forbidden.
+- **Zero Pre-Flight Hoarding (Task-by-Task Execution)**: When executing a multi-task audit or phase (e.g. Tasks 1 to 7), execute Task 1 immediately. Never read files for Tasks 2–7 before applying code for Task 1. Reading 20 files before making a single edit is strictly forbidden.
+- **Batch Refactors & Multi-File Audits (> 3 files)**: Do not edit 15–30 files sequentially on the main thread (avoids 1,000-turn monster sessions). Dispatch 2–3 bounded `self` subagents grouped by functional area. Main coordinator aggregates results, verifies build/tests once, and stays under 20 turns.
+- **Zero Scope Bleed**: When editing `backend/`, NEVER tour `frontend-v2/`, database tables, or callers unless explicitly requested.
 
 ### 2. Simplicity First
 
