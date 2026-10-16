@@ -68,6 +68,9 @@ _ALLOWED_FIELDS_BY_TABLE: dict[str, frozenset[str]] = {
             "helm_release",
             "helm_values",
             "deployed_at",
+            "routing_info",
+            "helm_chart",
+            "helm_version",
         }
     ),
     "bnk_upgrades": frozenset(
@@ -556,7 +559,7 @@ def set_locked_entity_fields(
     )
 
     # JSON columns need an explicit bind type for SQLite portability.
-    json_cols = {"outputs", "step_results", "rollback_info", "pre_health", "post_health", "helm_values"}
+    json_cols = {"outputs", "step_results", "rollback_info", "pre_health", "post_health", "helm_values", "routing_info"}
     for col in json_cols:
         if col in fields:
             sql = sql.bindparams(sa.bindparam(col, type_=sa.JSON))

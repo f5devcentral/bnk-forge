@@ -9,7 +9,7 @@
 // Runs tab — Detail / Compare / Trends / Group drill-ins
 // ============================================================================
 
-export type RunsSubView = 'list' | 'detail' | 'compare' | 'trends' | 'group';
+export type RunsSubView = 'list' | 'detail' | 'compare' | 'trends' | 'curves' | 'group';
 
 export interface RunsViewState {
   subView: RunsSubView;
@@ -23,6 +23,8 @@ export interface RunsViewState {
   /** Parsed run-group id for the 'group' sub-view (scenario launches land
    * here). Null when `?group=` is present but not a valid positive integer. */
   selectedGroupId: number | null;
+  /** Run-group ids plotted on the 'curves' sub-view (`?view=curves&groups=4,5`). */
+  curveGroupIds: number[];
 }
 
 function parsePositiveInt(raw: string): number | null {
@@ -44,6 +46,7 @@ export function deriveRunsViewState(searchParams: URLSearchParams): RunsViewStat
       selectedRunId: parsePositiveInt(runIdParam),
       compareRunIds: [],
       selectedGroupId: null,
+      curveGroupIds: [],
     };
   }
 
@@ -53,6 +56,7 @@ export function deriveRunsViewState(searchParams: URLSearchParams): RunsViewStat
       selectedRunId: null,
       compareRunIds: [],
       selectedGroupId: parsePositiveInt(groupIdParam),
+      curveGroupIds: [],
     };
   }
 
@@ -61,14 +65,22 @@ export function deriveRunsViewState(searchParams: URLSearchParams): RunsViewStat
       .split(',')
       .map(parsePositiveInt)
       .filter((n): n is number => n !== null);
-    return { subView: 'compare', selectedRunId: null, compareRunIds, selectedGroupId: null };
+    return { subView: 'compare', selectedRunId: null, compareRunIds, selectedGroupId: null, curveGroupIds: [] };
   }
 
   if (viewParam === 'trends') {
-    return { subView: 'trends', selectedRunId: null, compareRunIds: [], selectedGroupId: null };
+    return { subView: 'trends', selectedRunId: null, compareRunIds: [], selectedGroupId: null, curveGroupIds: [] };
   }
 
-  return { subView: 'list', selectedRunId: null, compareRunIds: [], selectedGroupId: null };
+  if (viewParam === 'curves') {
+    const curveGroupIds = (searchParams.get('groups') ?? '')
+      .split(',')
+      .map(parsePositiveInt)
+      .filter((n): n is number => n !== null);
+    return { subView: 'curves', selectedRunId: null, compareRunIds: [], selectedGroupId: null, curveGroupIds };
+  }
+
+  return { subView: 'list', selectedRunId: null, compareRunIds: [], selectedGroupId: null, curveGroupIds: [] };
 }
 
 // ============================================================================

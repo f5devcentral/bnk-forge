@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import platform
+import re
 import signal
 import socket
 import ssl
@@ -65,6 +66,9 @@ logging.basicConfig(
 log = logging.getLogger("forge-agent")
 
 HEARTBEAT_INTERVAL = 15  # seconds (shorter to keep WS alive)
+
+# Config keys that are Forge/run metadata, never aiperf flags (not passed through).
+NON_FLAG_KEYS = {"tool", "description", "tags", "scenario_key", "scenario_name", "trace_url", "ui", "extra_inputs"}
 RECONNECT_DELAY = 5
 MAX_RECONNECT_DELAY = 60
 
@@ -143,6 +147,8 @@ class ForgeAgent:
         self.running = True
         self.parked = False
         self.current_process: asyncio.subprocess.Process | None = None
+        self._supported_flags: set[str] | None = None
+        self.ignored_settings: list[str] = []
         # Serialize runs: one aiperf at a time. A run-group dispatches all of its
         # child runs at once, but running multiple aiperf processes concurrently
         # collides on shared state AND invalidates the load numbers (the clients
@@ -408,6 +414,13 @@ class ForgeAgent:
 
             cmd = self._build_aiperf_command(config)
             log.info("Command: %s", " ".join(cmd))
+            if self.ignored_settings:
+                note = "Ignored settings this aiperf does not support: " + ", ".join(self.ignored_settings)
+                log.warning(note)
+                try:
+                    await ws.send(json.dumps({"type": "progress", "run_id": run_id, "status": "running", "message": note}))
+                except Exception:
+                    pass
 
             env = os.environ.copy()
             env["AIPERF_OUTPUT_DIR"] = str(work_dir)
@@ -533,6 +546,7 @@ class ForgeAgent:
         "seq_dist": "--seq-dist",
         "tokenizer": "--tokenizer",
         "random_seed": "--random-seed",
+        "num_dataset_entries": "--num-dataset-entries",
         "workers_max": "--workers-max",
         "profile_export_level": "--profile-export-level",
         "record_processors": "--record-processors",
@@ -541,6 +555,8 @@ class ForgeAgent:
         "input_file": "--input-file",
         "artifact_dir": "--artifact-dir",
         "output_artifact_dir": "--output-artifact-dir",
+        "arrival_pattern": "--arrival-pattern",
+        "warmup_duration": "--warmup-duration",
     }
 
     # Boolean flags: present without a value when truthy.
@@ -560,7 +576,9 @@ class ForgeAgent:
 
         for key, flag in self.SCALAR_FLAG_MAP.items():
             val = config.get(key)
-            if val is not None:
+            if isinstance(val, list):
+                cmd.extend([flag, ",".join(str(v) for v in val)])
+            elif val is not None:
                 cmd.extend([flag, str(val)])
 
         for key, flag in self.BOOL_FLAG_MAP.items():
@@ -575,10 +593,46 @@ class ForgeAgent:
             for item in extra_inputs:
                 cmd.extend(["--extra-inputs", str(item)])
 
+        # Any other setting passes through when the installed aiperf has a flag
+        # for it (snake_case key → --kebab-case flag), so every aiperf option can
+        # be set from a config without a code change here. A list passes as
+        # separate values (e.g. server_metrics → --server-metrics a:9090 b:9090).
+        supported = self._aiperf_flags()
+        self.ignored_settings = []
+        for key, val in config.items():
+            if key in self.SCALAR_FLAG_MAP or key in self.BOOL_FLAG_MAP or key in NON_FLAG_KEYS:
+                continue
+            if key.startswith("_") or val is None or val is False:
+                continue
+            flag = "--" + key.replace("_", "-")
+            if flag not in supported or isinstance(val, dict):
+                self.ignored_settings.append(key)
+                continue
+            if val is True:
+                cmd.append(flag)
+            elif isinstance(val, list):
+                cmd.extend([flag, *(str(v) for v in val)])
+            else:
+                cmd.extend([flag, str(val)])
+
         # UI mode — config may force "none"; otherwise default to non-TUI.
         cmd.extend(["--ui", str(config.get("ui", "none"))])
 
         return cmd
+
+    def _aiperf_flags(self) -> set[str]:
+        """Flags the installed aiperf accepts (read once from its --help; empty if unknown)."""
+        if self._supported_flags is None:
+            try:
+                env = {**os.environ, "COLUMNS": "300"}  # unwrapped help: long flags stay whole
+                out = subprocess.run(
+                    ["aiperf", "profile", "--help"], capture_output=True, text=True, timeout=30, env=env,
+                )
+                self._supported_flags = set(re.findall(r"--[a-z][a-z0-9-]+", out.stdout + out.stderr))
+            except Exception as e:
+                log.warning("Could not read aiperf flags (%s); only mapped settings pass through", e)
+                self._supported_flags = set()
+        return self._supported_flags
 
     def _prepare_trace_input(self, config: dict, work_dir: Path, run_id) -> dict:
         """Download the trace, apply time-scaling, and return a config with --input-file set.

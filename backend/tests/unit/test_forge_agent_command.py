@@ -36,6 +36,7 @@ def agent():
 # Command building — scalar, bool, list, and ui flags
 # ---------------------------------------------------------------------------
 
+
 def test_synthetic_config_basic_flags(agent):
     config = {
         "url": "http://proxy:10080",
@@ -145,6 +146,7 @@ def test_artifact_dir_vs_output_artifact_dir_distinct(agent):
 # Trace dilation transform
 # ---------------------------------------------------------------------------
 
+
 def test_dilate_trace_divides_timestamp(agent, tmp_path):
     src = tmp_path / "trace_raw.jsonl"
     records = [
@@ -160,7 +162,7 @@ def test_dilate_trace_divides_timestamp(agent, tmp_path):
 
     out = [json.loads(line) for line in dst.read_text().splitlines()]
     assert out[0]["timestamp"] == 0 / 0.80
-    assert out[1]["timestamp"] == 80 / 0.80   # 100.0
+    assert out[1]["timestamp"] == 80 / 0.80  # 100.0
     assert out[2]["timestamp"] == 160 / 0.80  # 200.0
     # Non-timestamp fields preserved
     assert out[1]["input_length"] == 200
@@ -188,6 +190,7 @@ def test_dilate_trace_passes_through_missing_timestamp(agent, tmp_path):
 # Run serialization — a run-group dispatches N children at once; the agent must
 # execute them one at a time (concurrent aiperf runs collide + distort load).
 # ---------------------------------------------------------------------------
+
 
 def test_runs_are_serialized(agent):
     import asyncio
@@ -220,6 +223,7 @@ def test_raise_fd_limit_is_safe_noop_for_low_target():
     """_raise_fd_limit must never lower the limit or crash (high-fan-out mooncake
     runs rely on it raising the soft fd limit so 200 workers can register)."""
     import resource
+
     mod = _load_agent_module()
     soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
     mod._raise_fd_limit(target=1)  # below current → must be a no-op
@@ -230,6 +234,7 @@ def test_raise_fd_limit_is_safe_noop_for_low_target():
 # Cancel — must signal the whole aiperf process GROUP, not just the launcher PID
 # ---------------------------------------------------------------------------
 
+
 def test_handle_cancel_signals_process_group_with_sigterm(monkeypatch):
     """Regression: cancel sent SIGTERM to only the launcher PID, orphaning
     aiperf's ~45 children (load kept running). It must killpg the group."""
@@ -238,6 +243,7 @@ def test_handle_cancel_signals_process_group_with_sigterm(monkeypatch):
 
     class FakeProc:
         pid = 4242
+
         async def wait(self):
             return -15
 
@@ -260,8 +266,10 @@ def test_handle_cancel_escalates_to_sigkill_on_timeout(monkeypatch):
 
     class StubbornProc:
         pid = 5555
+
         def __init__(self):
             self.calls = 0
+
         async def wait(self):
             self.calls += 1
             if self.calls == 1:
@@ -291,6 +299,7 @@ def test_handle_cancel_no_running_process_is_noop(monkeypatch):
 # ---------------------------------------------------------------------------
 # M2 — agent must send its JWT on WS connect as a ?token= query param
 # ---------------------------------------------------------------------------
+
 
 def test_ws_connect_url_carries_url_encoded_token(monkeypatch):
     """run_forever must connect to /ws/.../{agent_id}?token=<url-encoded JWT>.
@@ -378,14 +387,13 @@ def test_superseded_close_parks_without_reconnecting_or_exiting(monkeypatch):
 # H2 — one insecure flag drives ALL TLS-skip behavior
 # ---------------------------------------------------------------------------
 
+
 def test_insecure_defaults_true_and_disables_warnings(monkeypatch):
     """Default (lab) is insecure; constructing an insecure agent silences
     urllib3 warnings. A verifying agent must NOT silence them."""
     mod = _load_agent_module()
     calls = []
-    monkeypatch.setattr(
-        mod.requests.packages.urllib3, "disable_warnings", lambda *a, **k: calls.append(1)
-    )
+    monkeypatch.setattr(mod.requests.packages.urllib3, "disable_warnings", lambda *a, **k: calls.append(1))
     ag = mod.ForgeAgent(forge_url="https://forge.local", agent_name="t", token="tok")
     assert ag.insecure is True
     assert calls == [1]
@@ -477,9 +485,17 @@ def test_env_bool_parsing():
     try:
         assert mod._env_bool("FORGE_AGENT_INSECURE", default=True) is True
         assert mod._env_bool("FORGE_AGENT_INSECURE", default=False) is False
-        for v, expect in [("0", False), ("false", False), ("no", False), ("off", False),
-                          ("1", True), ("true", True), ("YES", True), ("On", True),
-                          ("garbage", True)]:
+        for v, expect in [
+            ("0", False),
+            ("false", False),
+            ("no", False),
+            ("off", False),
+            ("1", True),
+            ("true", True),
+            ("YES", True),
+            ("On", True),
+            ("garbage", True),
+        ]:
             _os.environ["FORGE_AGENT_INSECURE"] = v
             assert mod._env_bool("FORGE_AGENT_INSECURE", default=True) is expect, v
     finally:
@@ -491,6 +507,7 @@ def test_env_bool_parsing():
 # ---------------------------------------------------------------------------
 # M3 — trace download is a hardened sink: scheme allowlist + size cap
 # ---------------------------------------------------------------------------
+
 
 def test_download_trace_rejects_disallowed_scheme(agent, tmp_path):
     for bad in ["file:///etc/passwd", "ftp://host/x", "gopher://h/", "data:text/plain,hi", "/no/scheme"]:
@@ -616,6 +633,7 @@ def test_download_trace_verify_follows_insecure_flag(tmp_path, monkeypatch):
 # trace. This asserts the resulting request-rate direction, not just arithmetic.
 # ---------------------------------------------------------------------------
 
+
 def test_dilation_below_one_slows_arrival_rate(agent, tmp_path):
     """Two records 80 apart at dilation 0.80: the inter-arrival gap must GROW
     (slower arrivals / lower offered load), per the harness's "0.80x-slowed"."""
@@ -642,3 +660,20 @@ def test_dilation_above_one_speeds_arrival_rate(agent, tmp_path):
     new_gap = out[1]["timestamp"] - out[0]["timestamp"]
     assert new_gap < 80  # gap compressed -> requests arrive FASTER
     assert new_gap == 80 / 2.0  # exactly 40.0
+
+
+def test_poisson_step_config_emits_arrival_pattern_and_warmup(agent):
+    """A Poisson scenario step config must emit --arrival-pattern and --warmup-duration."""
+    config = {
+        "url": "http://proxy:10080",
+        "model": "meta-llama/Llama-3.1-70B-Instruct",
+        "request_rate": 8.0,
+        "arrival_pattern": "poisson",
+        "warmup_duration": 30,
+        "benchmark_duration": 60,
+    }
+    cmd = agent._build_aiperf_command(config)
+    assert "--arrival-pattern" in cmd
+    assert cmd[cmd.index("--arrival-pattern") + 1] == "poisson"
+    assert "--warmup-duration" in cmd
+    assert cmd[cmd.index("--warmup-duration") + 1] == "30"

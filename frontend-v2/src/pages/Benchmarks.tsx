@@ -29,6 +29,7 @@ import {
   ChevronDown,
   ChevronRight,
   SearchX,
+  LineChart,
 } from 'lucide-react';
 
 import { BenchmarkTargetsTab } from './BenchmarkTargetsTab';
@@ -39,6 +40,7 @@ import { BenchmarkRunDetail } from './BenchmarkRunDetail';
 import { BenchmarkCompareTab } from './BenchmarkCompareTab';
 import { BenchmarkTrendsView } from './BenchmarkTrendsView';
 import { BenchmarkRunGroupView } from './BenchmarkRunGroupView';
+import { BenchmarkCurvesView } from './BenchmarkCurvesView';
 import { BenchmarkOverviewTab } from './BenchmarkOverviewTab';
 import { RunBenchmarkWizard, type RunBenchmarkWizardLaunchResult } from './RunBenchmarkWizard';
 import { deriveRunsViewState, derivePrimaryTabState, type SetupSection } from './benchmark-runs-view';
@@ -204,7 +206,7 @@ function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingCompareIds, setPendingCompareIds] = useState<number[]>([]);
 
-  const { subView, selectedRunId, compareRunIds, selectedGroupId } = deriveRunsViewState(searchParams);
+  const { subView, selectedRunId, compareRunIds, selectedGroupId, curveGroupIds } = deriveRunsViewState(searchParams);
 
   const goToList = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -235,6 +237,14 @@ function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId
     const next = new URLSearchParams();
     next.set('tab', 'runs');
     next.set('view', 'trends');
+    setSearchParams(next);
+  }, [setSearchParams]);
+
+  const goToCurves = useCallback((ids: number[]) => {
+    const next = new URLSearchParams();
+    next.set('tab', 'runs');
+    next.set('view', 'curves');
+    if (ids.length) next.set('groups', ids.join(','));
     setSearchParams(next);
   }, [setSearchParams]);
 
@@ -273,6 +283,12 @@ function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to runs
         </Button>
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => goToCurves([selectedGroupId])}>
+            <LineChart className="h-3.5 w-3.5" />
+            Load curves
+          </Button>
+        </div>
         <BenchmarkRunGroupView groupId={selectedGroupId} />
       </div>
     );
@@ -295,6 +311,18 @@ function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId
             action={{ label: 'Back to runs', onClick: goToList, variant: 'outline' }}
           />
         )}
+      </div>
+    );
+  }
+
+  if (subView === 'curves') {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" size="sm" className="gap-1.5" onClick={goToList}>
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to runs
+        </Button>
+        <BenchmarkCurvesView groupIds={curveGroupIds} onGroupIdsChange={goToCurves} />
       </div>
     );
   }
@@ -324,6 +352,7 @@ function BenchmarkRunsSection({ searchParams, setSearchParams, selectedClusterId
       onToggleCompare={toggleCompare}
       onCompare={() => goToCompare(pendingCompareIds)}
       onViewTrends={goToTrends}
+      onViewCurves={() => goToCurves([])}
       selectedClusterId={selectedClusterId}
     />
   );
@@ -480,7 +509,7 @@ export default function Benchmarks() {
             onGoToRun={goToRunDetail}
             onGoToRunsList={() => goToPrimaryTab('runs')}
             onGoToTrends={goToTrends}
-            onOpenWizard={() => openWizard(false)}
+            onOpenWizard={openWizard}
             selectedClusterId={selectedClusterId}
           />
         </TabsContent>

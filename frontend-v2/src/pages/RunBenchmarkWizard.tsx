@@ -29,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, ArrowRight, History, Loader2, Play, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, History, Loader2, Play, AlertTriangle, SlidersHorizontal } from 'lucide-react';
 import {
   useBenchmarkTargets,
   useProxyDeployments,
@@ -43,6 +43,7 @@ import {
 import { parseApiError } from '@/lib/error-handler';
 import { ProxyBadge, targetOptionLabel } from './benchmark-utils';
 import type { SetupSection } from './benchmark-runs-view';
+import { AiperfSettingsEditor } from './AiperfSettingsEditor';
 import {
   emptyWizardState,
   eligibleProxies as computeEligibleProxies,
@@ -52,6 +53,11 @@ import {
   autoSelectAgentId,
   canAdvanceStep,
   prefillFromRun,
+  RUN_DEFAULTS,
+  effectiveSettings,
+  diffOverrides,
+  parseSteps,
+  rateSweepMinutes,
   type WizardMode,
   type WizardStep,
 } from './run-benchmark-wizard-logic';
@@ -96,6 +102,24 @@ export function RunBenchmarkWizard({
   const { data: configs } = useBenchmarkConfigs();
   const { data: scenarioCatalog } = useScenarios();
   const scenarios = scenarioCatalog?.scenarios ?? [];
+  const selectedScenario = scenarios.find((sc) => sc.key === state.scenarioKey);
+  const parsedSteps = parseSteps(state.steps);
+  const sweepSteps = selectedScenario?.sweep_param
+    ? (Array.isArray(parsedSteps) ? parsedSteps : selectedScenario.default_steps ?? [])
+    : [];
+  const sweepMinutes = selectedScenario?.step_duration_floor_s != null
+    ? rateSweepMinutes(sweepSteps, selectedScenario.step_warmup_s ?? 0, selectedScenario.step_duration_floor_s, selectedScenario.step_min_requests ?? 0)
+    : null;
+
+  // Settings edited at launch sit on top of the picked config (run mode) or are
+  // applied to every step of the scenario (scenario mode).
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const baseSettings = useMemo<Record<string, unknown>>(() => {
+    if (state.mode !== 'run') return {};
+    return (configs ?? []).find((c) => c.id === state.configId)?.config_json ?? {};
+  }, [state.mode, state.configId, configs]);
+  const editedSettings = useMemo(() => effectiveSettings(baseSettings, state.overrides), [baseSettings, state.overrides]);
+  const changedKeys = Object.keys(state.overrides);
 
   const { data: lastCompletedData } = useBenchmarkRuns({ status: 'completed', limit: 1, pollingEnabled: false });
   const lastCompletedRun = lastCompletedData?.runs?.[0];
@@ -108,11 +132,18 @@ export function RunBenchmarkWizard({
   // synchronously the instant handleLaunch runs.
   const submittingRef = useRef(false);
 
+  // The re-run's proxy eligibility must be judged against the LAST RUN's target,
+  // not the wizard's (still empty) selection, so load that target's proxies.
+  const reRunTargetId = open ? (lastCompletedRun?.target_id ?? undefined) : undefined;
+  const { data: reRunProxies, isFetched: reRunProxiesFetched } = useProxyDeployments(reRunTargetId);
+  const reRunReady = !!lastCompletedRun && agents !== undefined && (reRunTargetId == null || reRunProxiesFetched);
+
   const prefillFromLastRun = useCallback((jumpToLaunch: boolean) => {
     if (!lastCompletedRun) return;
-    setState(prefillFromRun(lastCompletedRun, connectedAgents.map((a) => a.id), jumpToLaunch, eligibleProxies.map((p) => p.id)));
+    const eligibleIds = computeEligibleProxies(reRunProxies ?? []).map((p) => p.id);
+    setState(prefillFromRun(lastCompletedRun, connectedAgents.map((a) => a.id), jumpToLaunch, eligibleIds));
     setPrefilledFromReRun(true);
-  }, [lastCompletedRun, connectedAgents, eligibleProxies]);
+  }, [lastCompletedRun, connectedAgents, reRunProxies]);
 
   // Reset on close; on open, either prefill from "re-run last" or start blank.
   useEffect(() => {
@@ -120,14 +151,15 @@ export function RunBenchmarkWizard({
       setState(emptyWizardState());
       setLaunchError(null);
       setPrefilledFromReRun(false);
+      setSettingsOpen(false);
       submittingRef.current = false;
       return;
     }
-    if (initialReRunLast && lastCompletedRun && !prefilledFromReRun) {
+    if (initialReRunLast && reRunReady && !prefilledFromReRun) {
       prefillFromLastRun(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialReRunLast, lastCompletedRun, prefilledFromReRun]);
+  }, [open, initialReRunLast, reRunReady, prefilledFromReRun]);
 
   // Auto-select the target when there's exactly one.
   useEffect(() => {
@@ -225,6 +257,8 @@ export function RunBenchmarkWizard({
           proxyId: state.proxyId,
           data: {
             scenario_key: state.scenarioKey,
+            overrides: changedKeys.length ? state.overrides : undefined,
+            steps: selectedScenario?.sweep_param && Array.isArray(parsedSteps) ? parsedSteps : undefined,
             agent_id: state.agentId,
             run_label: state.runLabel || undefined,
           },
@@ -246,6 +280,7 @@ export function RunBenchmarkWizard({
         proxyId: state.proxyId,
         data: {
           config_id: state.configId ?? undefined,
+          overrides: changedKeys.length ? state.overrides : undefined,
           agent_id: state.agentId,
           run_label: state.runLabel || undefined,
         },
@@ -269,11 +304,11 @@ export function RunBenchmarkWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className={state.step === 3 && settingsOpen ? 'sm:max-w-2xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg'}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
             <DialogTitle>Run benchmark</DialogTitle>
-            {lastCompletedRun && !prefilledFromReRun && (
+            {reRunReady && !prefilledFromReRun && (
               <Button
                 variant="ghost" size="sm" className="gap-1.5 text-xs"
                 onClick={() => prefillFromLastRun(true)}
@@ -372,7 +407,7 @@ export function RunBenchmarkWizard({
             <div className="space-y-3">
               <RadioGroup
                 value={state.mode}
-                onValueChange={(v) => setState((s) => ({ ...s, mode: v as WizardMode }))}
+                onValueChange={(v) => setState((s) => ({ ...s, mode: v as WizardMode, overrides: {} }))}
                 className="flex gap-4"
               >
                 <div className="flex items-center space-x-2">
@@ -390,7 +425,7 @@ export function RunBenchmarkWizard({
                   <Label className="text-xs text-muted-foreground">Config (optional — defaults if none picked)</Label>
                   <Select
                     value={state.configId != null ? String(state.configId) : 'none'}
-                    onValueChange={(v) => setState((s) => ({ ...s, configId: v === 'none' ? null : Number(v) }))}
+                    onValueChange={(v) => setState((s) => ({ ...s, configId: v === 'none' ? null : Number(v), overrides: {} }))}
                   >
                     <SelectTrigger><SelectValue placeholder="Default config" /></SelectTrigger>
                     <SelectContent>
@@ -406,7 +441,7 @@ export function RunBenchmarkWizard({
                   <Label className="text-xs text-muted-foreground">Scenario</Label>
                   <Select
                     value={state.scenarioKey ?? undefined}
-                    onValueChange={(v) => setState((s) => ({ ...s, scenarioKey: v }))}
+                    onValueChange={(v) => setState((s) => ({ ...s, scenarioKey: v, overrides: {}, steps: '' }))}
                   >
                     <SelectTrigger><SelectValue placeholder="Select a scenario" /></SelectTrigger>
                     <SelectContent>
@@ -417,6 +452,25 @@ export function RunBenchmarkWizard({
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedScenario && (
+                    <p className="text-xs text-muted-foreground">{selectedScenario.description}</p>
+                  )}
+                </div>
+              )}
+
+              {state.mode === 'scenario' && selectedScenario?.sweep_param === 'request_rate' && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Request rates (req/s)</Label>
+                  <Input
+                    value={state.steps}
+                    onChange={(e) => setState((s) => ({ ...s, steps: e.target.value }))}
+                    placeholder={(selectedScenario.default_steps ?? []).join(', ')}
+                  />
+                  <p className={parsedSteps === 'invalid' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+                    {parsedSteps === 'invalid'
+                      ? 'Enter 1–12 rates above 0, separated by commas.'
+                      : `${sweepSteps.length} steps, about ${sweepMinutes} min. Pick rates from light load to past the point where the proxy saturates.`}
+                  </p>
                 </div>
               )}
 
@@ -427,6 +481,37 @@ export function RunBenchmarkWizard({
                   onChange={(e) => setState((s) => ({ ...s, runLabel: e.target.value }))}
                   placeholder={selectedProxy ? `${selectedProxy.proxy_type}-${selectedTarget?.name ?? ''}` : ''}
                 />
+              </div>
+
+              <div className="rounded-md border border-border">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm"
+                  onClick={() => setSettingsOpen((o) => !o)}
+                >
+                  <span className="flex items-center gap-2">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    aiperf settings
+                    {changedKeys.length > 0 && <Badge variant="muted">{changedKeys.length} changed</Badge>}
+                  </span>
+                  {settingsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                </button>
+                {settingsOpen && (
+                  <div className="border-t border-border p-3">
+                    <AiperfSettingsEditor
+                      value={editedSettings}
+                      defaults={state.mode === 'run' ? { ...RUN_DEFAULTS, ...baseSettings } : {}}
+                      onChange={(next) => setState((s) => ({ ...s, overrides: diffOverrides(baseSettings, next) }))}
+                      lockedNote={
+                        state.mode === 'scenario'
+                          ? selectedScenario?.sweep_param === 'request_rate'
+                            ? `Applied to every step. Each step keeps its rate, at least ${selectedScenario.step_warmup_s} s warmup and ${selectedScenario.step_duration_floor_s} s measured; longer values here are kept.`
+                            : 'Applied to every step of the scenario. Leave load fields empty to keep its sweep.'
+                          : 'url, model and endpoint come from the target and proxy.'
+                      }
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -445,6 +530,18 @@ export function RunBenchmarkWizard({
                       : (configs ?? []).find((c) => c.id === state.configId)?.name ?? 'Default'
                   }
                 />
+                {state.mode === 'scenario' && sweepSteps.length > 0 && (
+                  <SummaryRow
+                    label="Request rates"
+                    value={`${sweepSteps.join(', ')} req/s · about ${sweepMinutes} min`}
+                  />
+                )}
+                {changedKeys.length > 0 && (
+                  <SummaryRow
+                    label="Settings changed"
+                    value={<span className="font-mono text-xs">{changedKeys.map((k) => `${k}=${JSON.stringify(state.overrides[k])}`).join(', ')}</span>}
+                  />
+                )}
               </div>
 
               {!selectedProxyStillEligible && (

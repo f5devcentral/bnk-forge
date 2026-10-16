@@ -145,6 +145,16 @@ def deploy_proxy_task(self, proxy_id: int) -> dict:
 
         except Exception as exc:
             logger.exception("deploy_proxy_task failed: proxy_id=%d", proxy_id)
+            # The service's own FAILED write rolls back with the failed
+            # transaction; record it here so the row does not stay pending.
+            if deploy:
+                try:
+                    db.rollback()
+                    deploy.status = "failed"  # type: ignore[assignment]
+                    deploy.status_message = f"Deploy failed: {exc}"[:2000]
+                    db.commit()
+                except Exception:
+                    db.rollback()
             _publish_proxy_event(
                 proxy_id,
                 "proxy_deploy_failed",

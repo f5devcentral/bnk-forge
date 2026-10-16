@@ -2,7 +2,7 @@
  * BenchmarkRunsTab — D-020: runs table + filters in a SectionCard.
  * Status conveyed via Badge variants only; action buttons are ghost icons.
  */
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,9 +31,15 @@ import {
   Trash2,
   Search,
   ArrowRight,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
   GitCompare,
   Star,
   LineChart,
+  Activity,
 } from 'lucide-react';
 import {
   useBenchmarkRuns,
@@ -42,7 +48,19 @@ import {
   useSetBenchmarkRunBaseline,
   useUnsetBenchmarkRunBaseline,
 } from '@/hooks/useBenchmarks';
+import { useDebounce } from '@/hooks/useDebounce';
 import { StatusBadge, ProxyBadge, RegressionBadge, fmtLatency, fmtNum, fmtPct } from './benchmark-utils';
+
+const PAGE_SIZE = 25;
+
+type SortKey =
+  | 'created_at'
+  | 'latency_p50'
+  | 'latency_p99'
+  | 'overall_rps'
+  | 'tokens_per_sec'
+  | 'success_rate_pct'
+  | 'total_requests';
 
 interface RunsTabProps {
   proxyFilter: string;
@@ -56,6 +74,7 @@ interface RunsTabProps {
   onToggleCompare: (id: number) => void;
   onCompare: () => void;
   onViewTrends?: () => void;
+  onViewCurves?: () => void;
   selectedClusterId?: number;
 }
 
@@ -63,13 +82,25 @@ export function BenchmarkRunsTab({
   proxyFilter, onProxyFilterChange,
   statusFilter, onStatusFilterChange,
   searchQuery, onSearchChange,
-  onSelectRun, compareRunIds, onToggleCompare, onCompare, onViewTrends,
+  onSelectRun, compareRunIds, onToggleCompare, onCompare, onViewTrends, onViewCurves,
   selectedClusterId,
 }: RunsTabProps) {
+  const [sort, setSort] = useState<{ key: SortKey; order: 'asc' | 'desc' }>({ key: 'created_at', order: 'desc' });
+  const [page, setPage] = useState(0);
+  const search = useDebounce(searchQuery.trim(), 300);
+  // Any filter / search / sort change starts again from the first page.
+  useEffect(() => setPage(0), [proxyFilter, statusFilter, search, selectedClusterId, sort]);
+
+  // Search, sort and paging run server-side so they cover every run, not just one page.
   const { data, isLoading } = useBenchmarkRuns({
     proxy: proxyFilter || undefined,
     status: statusFilter || undefined,
     cluster_id: selectedClusterId,
+    q: search || undefined,
+    sort: sort.key,
+    order: sort.order,
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
     pollingEnabled: true,
   });
   const cancelRun = useCancelBenchmarkRun();
@@ -77,16 +108,35 @@ export function BenchmarkRunsTab({
   const setBaseline = useSetBenchmarkRunBaseline();
   const unsetBaseline = useUnsetBenchmarkRunBaseline();
 
-  const runs = useMemo(() => data?.runs ?? [], [data?.runs]);
-  const filtered = useMemo(() => {
-    if (!searchQuery) return runs;
-    const q = searchQuery.toLowerCase();
-    return runs.filter(r =>
-      (r.run_label || '').toLowerCase().includes(q) ||
-      r.model.toLowerCase().includes(q) ||
-      r.proxy.toLowerCase().includes(q)
+  const runs = data?.runs ?? [];
+  const total = data?.total ?? 0;
+  const first = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const last = Math.min((page + 1) * PAGE_SIZE, total);
+  // Deleting the last run on the last page would otherwise strand an empty page.
+  useEffect(() => {
+    if (page > 0 && total > 0 && page * PAGE_SIZE >= total) setPage(Math.ceil(total / PAGE_SIZE) - 1);
+  }, [page, total]);
+
+  const toggleSort = (key: SortKey) =>
+    setSort(s => (s.key === key ? { key, order: s.order === 'desc' ? 'asc' : 'desc' } : { key, order: 'desc' }));
+  const sortHead = (key: SortKey, label: string, align: 'left' | 'right' = 'right') => {
+    const Icon = sort.key !== key ? ArrowUpDown : sort.order === 'desc' ? ArrowDown : ArrowUp;
+    return (
+      <TableHead
+        className={align === 'right' ? 'text-right' : undefined}
+        aria-sort={sort.key === key ? (sort.order === 'desc' ? 'descending' : 'ascending') : 'none'}
+      >
+        <button
+          type="button"
+          className={cn('inline-flex items-center gap-1 hover:text-foreground transition-colors', sort.key === key && 'text-foreground')}
+          onClick={() => toggleSort(key)}
+        >
+          {label}
+          <Icon className="h-3 w-3" />
+        </button>
+      </TableHead>
     );
-  }, [runs, searchQuery]);
+  };
 
   return (
     <div className="space-y-6">
@@ -129,6 +179,12 @@ export function BenchmarkRunsTab({
             Trends
           </Button>
         )}
+        {onViewCurves && (
+          <Button size="sm" variant="outline" onClick={onViewCurves}>
+            <Activity className="h-4 w-4 mr-1" />
+            Load curves
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -136,7 +192,7 @@ export function BenchmarkRunsTab({
         <SectionCard compact>
           <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
         </SectionCard>
-      ) : filtered.length === 0 ? (
+      ) : runs.length === 0 ? (
         <SectionCard>
           <div className="text-center py-8">
             <BarChart3 className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
@@ -146,7 +202,7 @@ export function BenchmarkRunsTab({
         </SectionCard>
       ) : (
         <SectionCard
-          title={`${filtered.length} ${filtered.length === 1 ? 'run' : 'runs'}`}
+          title={`${total} ${total === 1 ? 'run' : 'runs'}`}
           compact
         >
           <div className="overflow-x-auto">
@@ -159,19 +215,19 @@ export function BenchmarkRunsTab({
                   <TableHead>Tool</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Baseline</TableHead>
-                  <TableHead className="text-right">Latency P50</TableHead>
-                  <TableHead className="text-right">Latency P99</TableHead>
-                  <TableHead className="text-right">RPS</TableHead>
-                  <TableHead className="text-right">Tok/s</TableHead>
-                  <TableHead className="text-right">Success</TableHead>
+                  {sortHead('latency_p50', 'Latency P50')}
+                  {sortHead('latency_p99', 'Latency P99')}
+                  {sortHead('overall_rps', 'RPS')}
+                  {sortHead('tokens_per_sec', 'Tok/s')}
+                  {sortHead('success_rate_pct', 'Success')}
                   <TableHead className="text-right">Errors</TableHead>
-                  <TableHead className="text-right">Requests</TableHead>
-                  <TableHead>Created</TableHead>
+                  {sortHead('total_requests', 'Requests')}
+                  {sortHead('created_at', 'Created', 'left')}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map(run => (
+                {runs.map(run => (
                   <TableRow key={run.id} className="cursor-pointer" onClick={() => onSelectRun(run.id)}>
                     <TableCell onClick={e => e.stopPropagation()}>
                       <Checkbox
@@ -238,6 +294,19 @@ export function BenchmarkRunsTab({
                 ))}
               </TableBody>
             </Table>
+          </div>
+          <div className="flex items-center justify-between pt-3 text-xs text-muted-foreground">
+            <span>{first}–{last} of {total}</span>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" className="h-7" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                <ChevronLeft className="h-3.5 w-3.5 mr-1" />
+                Previous
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7" disabled={last >= total} onClick={() => setPage(p => p + 1)}>
+                Next
+                <ChevronRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </div>
           </div>
         </SectionCard>
       )}
