@@ -175,7 +175,6 @@ docker logs worker --tail 200 2>&1 | grep -i "unregistered"
 
 # 2. If you see "Received unregistered task of type 'tasks.xxx'":
 #    The task module is missing from celery_app.py's include= list.
-#    See PM-001 in docs/POST_MORTEMS.md for the full root cause analysis.
 
 # 3. Check worker is running and healthy
 docker compose ps | grep worker
@@ -223,7 +222,7 @@ Can't plan/apply module, shows dependency error
 
 **Solution:**
 1. Check which dependencies are missing in the UI
-2. Deploy dependencies first (they should show ✅)
+2. Deploy dependencies first (they should show green / success)
 3. Verify dependency outputs exist:
    ```bash
    docker exec -it bnk-forge-backend python -c "
